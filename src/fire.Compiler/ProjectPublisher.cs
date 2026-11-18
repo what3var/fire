@@ -16,6 +16,8 @@ namespace fire.Compiler
         public BuildMonitor? Monitor { get; init; }
         /// <summary>Build every project again, even when nothing changed.</summary>
         public bool Rebuild { get; init; }
+        /// <summary>The toolchain for every native build (`forge publish --toolchain`); null: the project's, else the compiler the machine chose for publishing.</summary>
+        public string? Toolchain { get; init; }
         /// <summary>Publish projects that have publishing off as well (a test, `forge publish --all`); the spark commands never do.</summary>
         public bool IncludeDisabled { get; init; }
     }
@@ -174,7 +176,7 @@ namespace fire.Compiler
                     config = NativeConfig.FindFor(project.FilePath);
                     if (plan.Settings.Linkage != null) config.Linkage = plan.Settings.Linkage;
                     target = config.ResolveTarget(targetName);
-                    var toolchain = config.ResolveToolchain(target, toolchainName);
+                    var toolchain = config.ResolveToolchain(target, options.Toolchain ?? toolchainName, fire.Native.ToolchainPurpose.Publish);
                     bool files = toolchain.EffectiveKind == "files";
                     output = plan.Settings.Output is { } fixedOutput && !files ? fixedOutput
                         : files ? ProjectOutput.Folder(project.Directory, target.Name, modeName)

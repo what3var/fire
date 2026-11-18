@@ -203,6 +203,17 @@ namespace fire.Editor
             box.SelectedItem = value ?? first;
         }
 
+        /// <summary>The compiler this machine uses for building or publishing when the project names none ("tcc (automatic, recommended)").</summary>
+        private static string MachineCompiler(fire.Native.ToolchainPurpose purpose)
+        {
+            try
+            {
+                var (toolchain, source) = fire.Native.MachineToolchains.Load().Resolve(purpose);
+                return toolchain == null ? "none found" : $"{toolchain.EffectiveKind} ({source})";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return "?"; }
+        }
+
         private string? InheritedOf(Func<ProjectSettings, string?> field, string? defaultKey, out string from)
         {
             if (_inherited != null && field(_inherited) is { } v) { from = "from solution"; return v; }
@@ -384,7 +395,9 @@ namespace fire.Editor
             try { defaultTarget = _native.ResolveTarget(_inherited?.Target).Name; }
             catch (fire.Native.NativeConfigException) { defaultTarget = "?"; }
             var target = Pick(_native.TargetNames, () => s.Target, v => s.Target = v, _inherited?.Target != null ? $"(from solution: {_inherited.Target})" : $"(default: {defaultTarget})");
-            var toolchain = Pick(_native.ToolchainNames, () => s.Toolchain, v => s.Toolchain = v, _inherited?.Toolchain != null ? $"(from solution: {_inherited.Toolchain})" : "(the toolchain of the target, or the one found on this machine)");
+            string machineBuild = MachineCompiler(fire.Native.ToolchainPurpose.Build), machinePublish = MachineCompiler(fire.Native.ToolchainPurpose.Publish);
+            var toolchain = Pick(_native.ToolchainNames, () => s.Toolchain, v => s.Toolchain = v, _inherited?.Toolchain != null ? $"(from solution: {_inherited.Toolchain})"
+                : _native.Toolchain != null ? $"(fire.native.json: {_native.Toolchain})" : $"(the IDE's: Build {machineBuild}, Publish {machinePublish})");
             var edit = new Button { Content = "Edit targets and toolchains..." };
             edit.Click += async (_, _) =>
             {
@@ -409,7 +422,9 @@ namespace fire.Editor
                 InheritedOf(x => x.Optimize, null, out string optimizeFrom), optimizeFrom, $"default: {defaultDirection}");
             return Page("Native & Toolchain", "The target a native build runs on and the C++ toolchain that compiles it. Used when General > Runs as is Native.",
                 Group("Target", Row("Target", target), Hint("The built-in targets and those of fire.native.json.")),
-                Group("Toolchain", Row("Toolchain", toolchain), Row("", edit)),
+                Group("Toolchain", Row("Toolchain", toolchain), Row("", edit),
+                    Hint("Which compiler is used, first to last: --toolchain (forge), this setting (or the solution's), the toolchain of the target, \"toolchain\" in fire.native.json, "
+                        + $"then the compilers of this machine in Tools > Options > Compilers - Build (Build, Run, Debug): {machineBuild}; Publish: {machinePublish}.")),
                 Group("Board (ESP32)",
                     Row("Serial port", BoardFields.Port(s.Port, _inherited?.Port, v => s.Port = v)),
                     Row("Baud rate", BoardFields.Baud(s.Baud, _inherited?.Baud, v => s.Baud = v)),
@@ -485,6 +500,9 @@ namespace fire.Editor
             try { defaultTarget = _native.ResolveTarget(_settings.Target ?? _inherited?.Target).Name; }
             catch (fire.Native.NativeConfigException) { defaultTarget = "?"; }
             var target = Pick(_native.TargetNames, () => pub.Target, v => pub.Target = v, $"(the project's target: {defaultTarget})");
+            string? projectToolchain = _settings.Toolchain ?? _inherited?.Toolchain ?? _native.Toolchain;
+            string publishCompiler = projectToolchain != null ? $"the project's: {projectToolchain}" : $"the IDE's Publish compiler: {MachineCompiler(fire.Native.ToolchainPurpose.Publish)}";
+            var publishToolchain = Pick(_native.ToolchainNames, () => pub.Toolchain, v => pub.Toolchain = v, $"({publishCompiler})");
             return Page("Publish", "Publish builds the program for handing out - again only when something changed - and copies it with what it needs into folders of your choice.",
                 Group("Publish", enabled,
                     Row("Folders", targets),
@@ -496,6 +514,8 @@ namespace fire.Editor
                     Row("Runs as", engine),
                     Row("Configuration", mode),
                     Row("Target (native)", target),
+                    Row("Toolchain (native)", publishToolchain),
+                    Hint("Not set here: the project's toolchain (Native & Toolchain), else the compiler this machine publishes with (Tools > Options > Compilers, Publish column)."),
                     Hint("The program, the shared libraries it needs (linkage shared), the files that belong to it and the files with the build action Copy (Properties of a file, keeping their folders) are copied. A library is published as its package (.fpk).")));
         }
 

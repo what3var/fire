@@ -112,7 +112,7 @@ namespace fire.Editor
             for (int i = 0; i < _model.Pages.Count; i++)
             {
                 bool current = i == _model.PageIndex;
-                string name = _model.Pages[i] switch { SetupPage.Welcome => "Welcome", SetupPage.Toolchains => "Toolchains", SetupPage.Model => "Assistant model", _ => "Summary" };
+                string name = _model.Pages[i] switch { SetupPage.Welcome => "Welcome", SetupPage.Toolchains => "Compilers", SetupPage.Model => "Assistant model", _ => "Summary" };
                 _steps.Children.Add(new Border
                 {
                     CornerRadius = new CornerRadius(4), Padding = new Thickness(10, 6),
@@ -147,7 +147,7 @@ namespace fire.Editor
             var p = new StackPanel();
             p.Children.Add(Para("spark asks a few things once and then sets them up for you: a C/C++ toolchain for native builds" +
                 (_model.Pages.Contains(SetupPage.Model) ? ", the AI model of the assistant" : "") + ", and the first build of the standard packages."));
-            p.Children.Add(Para("Everything is optional and can be changed later: Tools > Toolchain Settings, Tools > Assistant, and this wizard again in ? > Setup Wizard."));
+            p.Children.Add(Para("Everything is optional and can be changed later: Tools > Options (compilers, assistant, ...), and this wizard again in ? > Setup Wizard."));
             string os = env.IsWindows ? "Windows" : env.IsMacOS ? "macOS" : "Linux";
             string memory = env.Machine.MemoryMB > 0 ? $"{env.Machine.MemoryMB / 1024.0:0.#} GB memory" : "memory unknown";
             p.Children.Add(Heading("This computer"));
@@ -160,42 +160,30 @@ namespace fire.Editor
 
         private Control ToolchainPage()
         {
-            var env = _model.Environment;
             var p = new StackPanel();
-            p.Children.Add(Para("Native builds (Build, a run as a native program) and packages with C or C++ natives need a C/C++ compiler. spark uses the one it finds, in this order: " +
-                "the one chosen in the toolchain settings, the portable ones next to spark, the PATH."));
-            p.Children.Add(Heading("Found on this computer"));
-            if (env.Detected.Count == 0 && !env.W64devkitThere) p.Children.Add(Para("None.", EditorTheme.TextDim));
-            foreach (var d in env.Detected)
-                p.Children.Add(new DockPanel
-                {
-                    Margin = new Thickness(0, 0, 0, 6),
-                    Children =
-                    {
-                        Docked(new TextBlock { Text = "✓", Foreground = EditorTheme.Magenta, Width = 22, FontWeight = FontWeight.Bold }, Avalonia.Controls.Dock.Left),
-                        Docked(new TextBlock { Text = d.Name, Width = 200, FontWeight = FontWeight.SemiBold }, Avalonia.Controls.Dock.Left),
-                        new TextBlock { Text = d.Path, Foreground = EditorTheme.TextDim, TextTrimming = TextTrimming.CharacterEllipsis },
-                    },
-                });
-
-            if (_model.OffersToolchains || _model.Toolchains.Any(t => t.There))
+            p.Children.Add(Para("Native builds and packages with C or C++ natives need a C/C++ compiler. Choose one for building (Build, Run, Debug: fast) and one for publishing " +
+                "(Publish: optimised). Automatic takes the recommended one when it is there."));
+            p.Children.Add(new CompilerGrid(_model.Compilers, compact: true) { Margin = new Thickness(0, 0, 14, 10) });
+            var w = _model.Watcom;
+            if (w.Installable)
             {
-                p.Children.Add(Heading(_model.OffersToolchains ? "Download (portable, nothing is installed on the system)" : "Portable toolchains"));
-                foreach (var t in _model.Toolchains.Where(t => t.Installable || t.There))
+                var box = new CheckBox
                 {
-                    var head = new StackPanel { Orientation = Orientation.Horizontal };
-                    head.Children.Add(new TextBlock { Text = t.Name, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-                    head.Children.Add(new TextBlock { Text = "  " + (t.There ? "installed" : t.SizeText), Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center });
-                    if (t.Recommended && !t.There) head.Children.Add(Badge("recommended", EditorTheme.Magenta));
-                    var body = new StackPanel { Children = { head, new TextBlock { Text = t.Description, TextWrapping = TextWrapping.Wrap, Foreground = EditorTheme.TextDim, FontSize = 12 } } };
-                    var option = t;
-                    var box = new CheckBox { Content = body, IsChecked = t.Selected || t.There, IsEnabled = t.Installable, Margin = new Thickness(0, 0, 0, 10) };
-                    box.IsCheckedChanged += (_, _) => option.Selected = box.IsChecked == true;
-                    ToolTip.SetTip(box, "Kept in " + t.Folder);
-                    p.Children.Add(box);
-                }
+                    IsChecked = w.Selected, Margin = new Thickness(0, 0, 0, 6),
+                    Content = new StackPanel
+                    {
+                        Children =
+                        {
+                            new TextBlock { Text = $"Also {w.Name} ({w.SizeText})", FontWeight = FontWeight.SemiBold },
+                            new TextBlock { Text = w.Description, TextWrapping = TextWrapping.Wrap, Foreground = EditorTheme.TextDim, FontSize = 12 },
+                        },
+                    },
+                };
+                box.IsCheckedChanged += (_, _) => w.Selected = box.IsChecked == true;
+                ToolTip.SetTip(box, "Kept in " + w.Folder);
+                p.Children.Add(box);
             }
-            p.Children.Add(Heading(_model.OffersToolchains ? "Good to know" : "How to get one"));
+            p.Children.Add(Heading("Good to know"));
             foreach (string hint in _model.ToolchainHints)
                 p.Children.Add(new DockPanel
                 {
@@ -203,7 +191,7 @@ namespace fire.Editor
                     Children =
                     {
                         Docked(new TextBlock { Text = "•", Width = 16, Foreground = EditorTheme.TextDim }, Avalonia.Controls.Dock.Left),
-                        new SelectableTextBlock { Text = hint, TextWrapping = TextWrapping.Wrap, Foreground = EditorTheme.Text },
+                        new SelectableTextBlock { Text = hint, TextWrapping = TextWrapping.Wrap, Foreground = EditorTheme.Text, FontSize = 13 },
                     },
                 });
             return p;
@@ -264,8 +252,14 @@ namespace fire.Editor
                         new TextBlock { Text = line, TextWrapping = TextWrapping.Wrap },
                     },
                 });
+            var options = new CheckBox { Content = "Open Tools > Options afterwards (compilers, assistant, run engine, ...)", IsChecked = OpenOptions, Margin = new Thickness(0, 10, 0, 0) };
+            options.IsCheckedChanged += (_, _) => OpenOptions = options.IsChecked == true;
+            p.Children.Add(options);
             return p;
         }
+
+        /// <summary>The options of spark are opened after Start (the checkbox of the summary).</summary>
+        public bool OpenOptions { get; private set; }
 
         /// <summary>Saves every page as a PNG into <paramref name="folder"/> ("setup-1-welcome.png", ...) - to look at the layout without a screen (FIRE_SETUP_WIZARD_SHOTS).</summary>
         public void SaveShots(string folder)

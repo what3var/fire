@@ -445,6 +445,14 @@ kernel of the circuits package was measured this way.
 A native build and the natives of packages need a C++ compiler on the machine. fire looks for one in this order: the toolchain chosen for the machine (`Toolchain\toolchain.json` next to
 the program), the portable toolchains in `Toolchain\` next to the program (**w64devkit** first), well-known places (w64devkit, MSYS2, MinGW, LLVM) and the PATH (`g++`, `clang++`, `cl`).
 
+The same file keeps the compiler chosen for **building** and the one for **publishing** (`"build"`, `"publish"`: `tcc`, `gcc`, `clang`, `msvc` or `auto`; spark:
+*Tools > Options > Compilers* and the setup wizard). A native build of a program that names no toolchain itself (project, target, `fire.native.json`, `--toolchain`) uses
+them: `forge build`/`forge test` and spark's Build, Run and Debug the Build one, `forge publish` and spark's Publish the Publish one. `auto` is TinyCC for Build and GCC
+for Publish when they are there, else the first one found (Build: tcc, gcc, clang, msvc; Publish: gcc, clang/msvc, tcc). A file of an older fire without the two fields:
+its toolchain is the choice for both. When the Build compiler is TinyCC by that choice and the program has natives in C++, the build takes the next compiler that
+compiles C++ and says so in one line of the log ("TinyCC compiles only C and the program has natives in C++ (gui): built with gcc instead."); a toolchain the project
+names is not replaced - then the build reports that it compiles only C. The natives of packages for the virtual machine are compiled with the machine's toolchain as before.
+
 When there is none, nothing fails silently - the user is told *why* a compiler is needed ("The package 'x' contains native code (C++) ..." or "A native build translates the program to
 C++ ...") and offered:
 

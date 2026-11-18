@@ -161,14 +161,16 @@ namespace fire.Native
         [JsonIgnore]
         public IEnumerable<string> ToolchainNames => ToolchainDef.BuiltIn.Keys.Concat(Toolchains.Keys).Distinct(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>The toolchain to build <paramref name="target"/> with: the one asked for, the configured default, the target's, else the first compiler found on this machine.</summary>
-        public ToolchainDef ResolveToolchain(TargetProfile target, string? name = null)
+        /// <summary>The toolchain to build <paramref name="target"/> with: the one asked for, the target's, the configured default (the project's own choice); else, with a
+        /// <paramref name="purpose"/>, the compiler the machine chose for building or publishing (<see cref="MachineToolchains"/>: spark's Tools > Options > Compilers); else the
+        /// machine's toolchain or the first compiler found on this machine.</summary>
+        public ToolchainDef ResolveToolchain(TargetProfile target, string? name = null, ToolchainPurpose? purpose = null)
         {
-            var chosen = ResolveToolchainNamed(target, name);
+            var chosen = ResolveToolchainNamed(target, name, purpose);
             // a toolchain that cannot build for the target (gcc for DOS) is not used: the target's own, else the first it allows
             if (target.AllowsToolchain(chosen.EffectiveKind)) return chosen;
-            string own = target.Native.Toolchain is { } t && target.AllowsToolchain(ResolveToolchainNamed(target, t).EffectiveKind) ? t : target.Toolchains![0];
-            return ResolveToolchainNamed(target, own);
+            string own = target.Native.Toolchain is { } t && target.AllowsToolchain(ResolveToolchainNamed(target, t, null).EffectiveKind) ? t : target.Toolchains![0];
+            return ResolveToolchainNamed(target, own, null);
         }
 
         /// <summary>The targets in the order of their choice: the built-in ones and the configured ones, resolved (a broken one is left out).</summary>
@@ -186,7 +188,10 @@ namespace fire.Native
             }
         }
 
-        private ToolchainDef ResolveToolchainNamed(TargetProfile target, string? name)
+        /// <summary>Does the project itself (the name asked for, the target, fire.native.json) choose the toolchain - so that the machine's choice for <c>build</c>/<c>publish</c> is not used?</summary>
+        public bool NamesToolchain(TargetProfile target, string? name = null) => (name ?? target.Native.Toolchain ?? Toolchain) != null;
+
+        private ToolchainDef ResolveToolchainNamed(TargetProfile target, string? name, ToolchainPurpose? purpose)
         {
             name ??= target.Native.Toolchain ?? Toolchain;
             if (name != null)
@@ -196,6 +201,7 @@ namespace fire.Native
                 if (ToolchainDef.BuiltIn.TryGetValue(name, out var builtIn)) return builtIn;
                 throw new NativeConfigException($"unknown toolchain '{name}' (known: {string.Join(", ", ToolchainNames)})");
             }
+            if (purpose is { } p && MachineToolchains.Load().Resolve(p).Toolchain is { } forPurpose) return forPurpose;   // the compiler the machine chose for building / publishing
             if (ToolchainSetup.LoadMachineToolchain() is { } chosen && ToolchainDetector.Find(chosen) != null) return chosen;   // the toolchain chosen for the machine (or installed by fire)
             if (ToolchainSetup.Detect() is { } detected) return detected.Toolchain;
             return ToolchainDef.BuiltIn["gcc"];

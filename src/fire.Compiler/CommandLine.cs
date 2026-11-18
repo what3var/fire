@@ -93,7 +93,7 @@ namespace fire.Compiler
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--global-jobs safepoints|sleep|sync] [-- <arguments of the program>...]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--linkage source|static|shared|plugin] [--host <program>] [--global-jobs safepoints|sleep|sync]
-              fire.Compiler publish <solution.firesln>|<project.fireproj> [-p <project>]
+              fire.Compiler publish <solution.firesln>|<project.fireproj> [-p <project>] [--toolchain <name>]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--global-jobs safepoints|sleep|sync]
               fire.Compiler bytecode <file>... | <project.fireproj> [-o <out.fbc>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
               fire.Compiler dump  <file>... | <project.fireproj> | <program.fbc> [-o <file>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
@@ -118,6 +118,8 @@ namespace fire.Compiler
                     default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
             --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
                     toolchain (which C++ compiler), own targets. The editor edits the same file.
+            --toolchain  The compiler of a native build (gcc, clang, msvc, tcc, or one of fire.native.json). Without it: the project's own toolchain, else the
+                    compiler chosen for this machine (spark: Tools > Options > Compilers) - build and test use the Build compiler, publish the Publish compiler.
             --stripping 0-3  How much a native build leaves out of what the program does not reach (docs/spec/NATIVE_BACKEND.md; "stripping" in fire.native.json or the project):
                     0 none (everything stays, as in the VM), 1 protected (every class and public member stays), 2 methods (every class with its constructors, fields
                     and properties stays, a method only when it is used), 3 all (the default: only what the program reaches). Names work as well (--stripping methods).
@@ -234,7 +236,7 @@ namespace fire.Compiler
                 }
                 else if (TryOption(arg, "--toolchain", "--toolchain", out var toolchainInline))
                 {
-                    if (command is not (CommandKind.Build or CommandKind.Test)) return Fail(command, "--toolchain is only available with build and test.");
+                    if (command is not (CommandKind.Build or CommandKind.Test or CommandKind.Publish)) return Fail(command, "--toolchain is only available with build, test and publish.");
                     string? value = toolchainInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--toolchain must be followed by the toolchain name.");
                     toolchainName = Unquote(value);
@@ -557,7 +559,7 @@ namespace fire.Compiler
             try
             {
                 var target = config.ResolveTarget(options.TargetName);
-                var toolchain = config.ResolveToolchain(target, options.ToolchainName);
+                var toolchain = config.ResolveToolchain(target, options.ToolchainName, fire.Native.ToolchainPurpose.Build);
                 string output = options.OutputGiven ? options.OutputFile : NativeBuilder.DefaultOutput(target);
                 var result = NativeBuilder.Build(sources, config, target, toolchain, output, options.Mode, options.FloatWidth, options.KeepSources, basePath: BaseDirectory(options), defines: options.Defines, sourcePaths: SourceFiles(options));
                 stdout.Write(result.Log);
@@ -839,7 +841,7 @@ namespace fire.Compiler
                 if (engine == "native")
                 {
                     var target = config.ResolveTarget(options.TargetName ?? plan.Settings.Target);
-                    var toolchain = config.ResolveToolchain(target, options.ToolchainName ?? plan.Settings.Toolchain);
+                    var toolchain = config.ResolveToolchain(target, options.ToolchainName ?? plan.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
                     if (options.Linkage == null && plan.Settings.Linkage != null) config.Linkage = plan.Settings.Linkage;   // (the command line, then the project, then fire.native.json)
                     // without -o and `output`: <project>/bin/<target>-<mode>/<name> (the mode the program gets: -m, the project, the tags of its files)
                     string out2 = output ?? (toolchain.EffectiveKind == "files"
@@ -894,7 +896,7 @@ namespace fire.Compiler
             catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
             var monitor = new fire.Native.BuildMonitor(log: line => stdout.WriteLine(line));
             // (a project named on the command line, or the project file itself, is published even when its publishing is off)
-            var result = ProjectPublisher.Publish(workspace, projects, new PublishOptions { Monitor = monitor, IncludeDisabled = projects != null });
+            var result = ProjectPublisher.Publish(workspace, projects, new PublishOptions { Monitor = monitor, IncludeDisabled = projects != null, Toolchain = options.ToolchainName });
             foreach (var d in result.Diagnostics) stderr.WriteLine(d.ToLogLine());
             return result.Ok ? ExitOk : ExitScriptError;
         }

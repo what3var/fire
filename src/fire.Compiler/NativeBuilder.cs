@@ -162,6 +162,12 @@ namespace fire.Compiler
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
                 return WriteStaticFiles(sources, config, target, toolchain, output, mode, floatWidth, basePath, defines, plan, sourcePaths);
             var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind, OptimizeOf(config, plan, target), config.Stats);
+            // natives in C++, and the machine's compiler is C only (TinyCC): the next compiler builds it, the log says so in one line
+            if (program.Natives != null && CppFallback(toolchain) is { } cppToolchain)
+            {
+                var r = Build(sources, config, target, cppToolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
+                return r with { Log = CppFallbackNote(toolchain, cppToolchain, program.Natives) + "\n" + r.Log };
+            }
             string cpp = program.C;
             bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
@@ -275,6 +281,11 @@ namespace fire.Compiler
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
             try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), StrippingOf(config, plan), shared: shared, stats: config.Stats && !shared); }
             catch (NativeNotSupportedException ex) { return AsSource($"Linkage \"static\" is not possible for this program ({ex.Message}): built with linkage \"source\"."); }
+            if (staticPlan.Natives != null && CppFallback(toolchain) is { } cppToolchain)
+            {
+                var r = Build(sources, config, target, cppToolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
+                return r with { Log = CppFallbackNote(toolchain, cppToolchain, staticPlan.Natives) + "\n" + r.Log };
+            }
             log.Append(staticPlan.Log);
             log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
             BuildTimes.Lap($"C generator: the program and {staticPlan.Libraries.Count} library modules ({staticPlan.Libraries.Count(l => !l.Cached)} not in the cache)");
@@ -610,6 +621,25 @@ namespace fire.Compiler
                 CompilerCommand(toolchain, target, cFile, workDir, obj, gui: gui, language: "c", compileOnly: true),
                 CompilerCommand(toolchain, target, nativesFile, workDir, exe, gui: gui, language: "c++", extraInputs: new[] { obj }.Concat(libraries ?? Array.Empty<string>()), programFile: cFile),
             };
+        }
+
+        /// <summary>The compiler that stands in for the machine's C-only compiler (TinyCC, chosen in spark's options or automatically) when the program has natives in C++: the
+        /// next one of the machine that compiles C++ (<see cref="MachineToolchains.CppFallback"/>). Null: the toolchain compiles C++, the project named it (then the build says
+        /// that it compiles only C), or there is no other compiler. <paramref name="find"/>: for the tests.</summary>
+        public static ToolchainDef? CppFallback(ToolchainDef toolchain, Func<ToolchainDef, string?>? find = null, MachineToolchains? machine = null)
+        {
+            if (toolchain.CompilesCpp || !toolchain.MachineChoice || toolchain.EffectiveKind is "files" or "custom") return null;
+            return (machine ?? MachineToolchains.Load()).CppFallback(find);
+        }
+
+        /// <summary>The line of the build log about it: "TinyCC compiles only C - the natives in C++ (gui) are built with gcc."</summary>
+        public static string CppFallbackNote(ToolchainDef from, ToolchainDef to, string natives)
+        {
+            var names = natives.Split('\n').Where(l => l.StartsWith("// ---- package ", StringComparison.Ordinal))
+                .Select(l => l.Substring("// ---- package ".Length).Split(' ')[0].Trim()).Where(n => n.Length > 0).Distinct().ToList();
+            string what = names.Count > 0 ? string.Join(", ", names) : "a bridge of the compiler";
+            string fromName = from.EffectiveKind == "tcc" ? "TinyCC" : from.EffectiveKind;
+            return $"{fromName} compiles only C and the program has natives in C++ ({what}): built with {to.EffectiveKind} instead.";
         }
 
         /// <summary>What the natives in C++ of a program come from (the packages and bridges named in the file), for a message.</summary>

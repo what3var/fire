@@ -57,6 +57,22 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   shows where the time went (in the VM the lines with the most instructions, natively the lines that took the longest in microseconds, and how often each
   was entered) and every own file with the counts beside each line - hot lines in
   orange, lines with code that never ran in red (*Only what never ran* lists just those); a click on a line opens it in the editor.
+- **Options** (*Tools > Options...*; also from the end of the setup wizard): the settings of spark for this machine, on pages chosen at the left like the
+  project properties. *General*: the welcome window at the start, the engine of a script that is in no project (from `fire.native.json`, VM or native - also
+  *Run > Run Engine*), the assistant and the MCP server on or off, the ESP-IDF folder, and a button that runs the setup wizard again. *Compilers*: a grid with
+  one row per C/C++ toolchain - the ones found with their version and path, the ones fire can download marked "not installed - download (size)", the others
+  with how to get them (Linux: the package manager, e.g. `sudo apt install tcc` / `g++`) - and two columns of radio buttons: **Build** (spark's Build, Run,
+  Debug and Build Solution, `forge build`, `forge test`) and **Publish** (Publish, `forge publish`), one choice per column. *Automatic* (the first row) takes the
+  recommended compiler when it is there, else the best one there: for Build **TinyCC** (fast, barely optimised, C only), for Publish **GCC** (slow, proven,
+  optimised; on Windows w64devkit, without it Visual C++ when that is found). *Download missing toolchains (TCC/GCC)* (on by default, only where fire can
+  download one: Windows - the TinyCC zip, checked by its SHA-256, and w64devkit) makes *Apply* download the chosen ones that are not there, in the progress
+  window of the setup. The choice is kept in `Toolchain/toolchain.json` next to spark (`"build"`, `"publish"`: `tcc`, `gcc`, `clang`, `msvc` or `auto`).
+  A project's own toolchain goes first (*Project Properties > Native & Toolchain*, `toolchain` in `fire.native.json`, a target that names one, `--toolchain`);
+  both dialogs say so. Debug, Release and Performance stay the build *modes* - the compiler no longer depends on them. TinyCC compiles only C: when a
+  program has natives in C++ and Build is TinyCC (chosen or automatic), the build hands it to the next compiler (GCC, else Clang or MSVC) and the build log
+  says so in one line ([natives](../packages/natives.md#0-c-or-c)).
+- **Setup wizard** (at the first start, *? > Setup Wizard*): its page *Compilers* is the same grid with the same checkbox (and, on Windows, Open Watcom for
+  the old PC targets); Start saves the choice and downloads what it lists.
 - **Panels:** Output, Build log, Error list, Solution Explorer, Test Explorer ([testing](testing.md)), Todo ([notes](notes.md)), Devices
   ([devices](../devices/README.md)), Properties, Runtime. All of them dock, float or auto-hide; *View > Reset Layout* brings the start layout back.
 
@@ -116,5 +132,5 @@ points clicked in a 2D view, *Extrude* pulls faces out to a body, *Mirror* copie
 ## More
 
 - [Projects and solutions](projects.md), [templates](templates.md) (*File > New*), [git](git.md), [notes](notes.md)
-- *Tools > Package Manager (ember)*, *Tools > Toolchain Settings*, *Tools > Open the Standard Libraries (Source)*
+- *Tools > Package Manager (ember)*, *Tools > Toolchain Settings* (the targets and toolchains of `fire.native.json`), *Tools > Options*, *Tools > Open the Standard Libraries (Source)*
 - The Markdown viewer and editor (`.md`), the raster editor for pictures, the packet viewer (`.fplog`) of the device traces
