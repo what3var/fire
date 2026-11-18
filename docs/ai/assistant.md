@@ -71,6 +71,9 @@ its own way of speaking (a line in the system prompt). They are not, and do not 
 * as high as what it shows - from a small bubble up to Min(screen height - 120, 480) pixels; beyond that the text scrolls (and fades at the bottom edge). It grows
   upwards: the character stays where it is. Closed, the window is only the character;
 * a text that grows while the model writes - as high as the bubble when there are no choices and no question line;
+* while the model works and nothing of the answer came yet, a thought bubble: how far it is ("Reading: 812 of 3120 tokens (26%)" while it reads its
+  instructions, the conversation and what the tools said - on a slow or busy machine the longest part; then "Writing: 154 tokens, 3.9 per second", also for
+  what it thinks and the calls of tools, which are not shown) and the tools it called. An answer cut at the most tokens says so;
 * up to four **choices** as buttons ("Download", "Explain it", "Not now"); a long one breaks into lines;
 * after a poke, the question line ("Ask me..."; Enter asks).
 

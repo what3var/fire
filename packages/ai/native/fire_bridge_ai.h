@@ -12,6 +12,8 @@
 #endif
 
 enum { FIRE_AI_IDLE = 0, FIRE_AI_PROMPT = 1, FIRE_AI_GENERATING = 2, FIRE_AI_DONE = 3, FIRE_AI_FAILED = 4, FIRE_AI_CANCELLED = 5 };
+/* Why a generated text ended: the model ended it, the most tokens allowed, the context was full, a stop text, cancelled, failed. */
+enum { FIRE_AI_END_MODEL = 0, FIRE_AI_END_MAX_TOKENS = 1, FIRE_AI_END_CONTEXT = 2, FIRE_AI_END_STOP_TEXT = 3, FIRE_AI_END_CANCELLED = 4, FIRE_AI_END_FAILED = 5 };
 
 typedef struct FireAiJob {
     int choose;                 /* 0 generate, 1 weigh the options */
@@ -44,8 +46,10 @@ typedef struct FireAiSession {
     /* what the job produced: UTF-8, guarded by `lock` */
     char* out; size_t outLen, outCap, taken;
     char error[256];
-    int promptTokens, promptDone, generated;
+    int promptTokens, promptDone, generated, reused;
     double promptSeconds, genSeconds;
+    double promptStart, genStart;   /* (for the times while the job runs) */
+    int endReason;                  /* why the text ended: FIRE_AI_END_... */
     int best;
 } FireAiSession;
 
@@ -163,13 +167,23 @@ static void fire_aib_runJob(FireAiSession* a) {
     a->promptTokens = (int)tk.n;
     if ((int)tk.n >= s->ctx) { snprintf(a->error, sizeof a->error, "The prompt (%d tokens) does not fit into the context (%d tokens).", (int)tk.n, s->ctx); free(tk.t); a->state = FIRE_AI_FAILED; return; }
     t0 = fire_aib_now();
+    a->promptStart = t0;
     if (!j->choose) {
-        if (!fai_feed(s, tk.t, (int)tk.n, &a->stop)) { free(tk.t); a->state = a->stop ? FIRE_AI_CANCELLED : FIRE_AI_FAILED; if (!a->stop) snprintf(a->error, sizeof a->error, "The prompt could not be computed."); return; }
+        if (!fai_feed(s, tk.t, (int)tk.n, &a->stop)) {
+            free(tk.t);
+            a->endReason = a->stop ? FIRE_AI_END_CANCELLED : FIRE_AI_END_FAILED;
+            a->state = a->stop ? FIRE_AI_CANCELLED : FIRE_AI_FAILED;
+            if (!a->stop) snprintf(a->error, sizeof a->error, "The prompt could not be computed.");
+            return;
+        }
         a->promptDone = (int)tk.n;
+        a->reused = s->reused;
         a->promptSeconds = fire_aib_now() - t0;
         fai_checkpoint(s);   /* (a model with recurrent layers comes back here for the next question that starts with this prompt) */
-        a->state = FIRE_AI_GENERATING;
         t0 = fire_aib_now();
+        a->genStart = t0;
+        a->endReason = FIRE_AI_END_MAX_TOKENS;   /* (unless something else ends it first) */
+        a->state = FIRE_AI_GENERATING;
         {
             char piece[1024];
             /* the text so far, to find the stop strings (they are not given out) */
@@ -179,10 +193,10 @@ static void fire_aib_runJob(FireAiSession* a) {
                 int32_t t;
                 size_t n, k;
                 int stopAt = -1;
-                if (a->stop) { a->state = FIRE_AI_CANCELLED; break; }
+                if (a->stop) { a->state = FIRE_AI_CANCELLED; a->endReason = FIRE_AI_END_CANCELLED; break; }
                 t = fai_sample(s, &j->sampling, tk.t, (int)tk.n);
-                if (fai_isEnd(m, t)) break;
-                if ((int)tk.n + 1 >= s->ctx || !fai_push(&tk, t)) break;
+                if (fai_isEnd(m, t)) { a->endReason = FIRE_AI_END_MODEL; break; }
+                if ((int)tk.n + 1 >= s->ctx || !fai_push(&tk, t)) { a->endReason = FIRE_AI_END_CONTEXT; break; }
                 a->generated++;
                 n = fai_tokenBytes(m, t, 0, piece);
                 if (textLen + n + 1 > textCap) {
@@ -208,6 +222,7 @@ static void fire_aib_runJob(FireAiSession* a) {
                     if ((size_t)stopAt > given) fire_aib_append(a, text + given, (size_t)stopAt - given);
                     given = textLen;
                     stopped = 1;
+                    a->endReason = FIRE_AI_END_STOP_TEXT;
                     break;
                 }
                 {
@@ -224,7 +239,11 @@ static void fire_aib_runJob(FireAiSession* a) {
                     }
                     if (upTo > given) { fire_aib_append(a, text + given, upTo - given); given = upTo; }
                 }
-                if (!fai_feed(s, tk.t, (int)tk.n, &a->stop)) { a->state = a->stop ? FIRE_AI_CANCELLED : FIRE_AI_FAILED; break; }
+                if (!fai_feed(s, tk.t, (int)tk.n, &a->stop)) {
+                    a->state = a->stop ? FIRE_AI_CANCELLED : FIRE_AI_FAILED;
+                    a->endReason = a->stop ? FIRE_AI_END_CANCELLED : FIRE_AI_END_FAILED;
+                    break;
+                }
             }
             if (a->state == FIRE_AI_GENERATING && !stopped && given < textLen) fire_aib_append(a, text + given, textLen - given);
             free(text);
@@ -238,6 +257,7 @@ static void fire_aib_runJob(FireAiSession* a) {
         double bestScore = -1e300;
         if (!fai_feed(s, tk.t, (int)tk.n, &a->stop)) { free(tk.t); a->state = a->stop ? FIRE_AI_CANCELLED : FIRE_AI_FAILED; return; }
         a->promptDone = (int)tk.n;
+        a->reused = s->reused;
         a->promptSeconds = fire_aib_now() - t0;
         fai_checkpoint(s);   /* every option starts from here */
         for (o = 0; o < j->optionCount; o++) {
@@ -403,7 +423,7 @@ static Value fire_ai_CountTokens(Value h, Value text, Value special) {
     return Int(r);
 }
 
-/* A session of a model: `context` positions (0: 2048), `threads` for the products (0: as many as the machine has, 8 at most). */
+/* A session of a model: `context` positions (0: 2048), `threads` for the products (0: one fewer than the machine has, 8 at most). */
 static Value fire_ai_SessionNew(Value model, Value context, Value threads) {
     FaiModel* m = (FaiModel*)fire_aib_find(model, 1);
     FireAiSession* a;
@@ -452,7 +472,8 @@ static char** fire_aib_split(Value list, int* count) {
 static int fire_aib_startJob(FireAiSession* a) {
     a->state = FIRE_AI_PROMPT; a->stop = 0;
     a->outLen = 0; a->taken = 0; a->error[0] = 0;
-    a->promptTokens = a->promptDone = a->generated = 0; a->promptSeconds = a->genSeconds = 0; a->best = -1;
+    a->promptTokens = a->promptDone = a->generated = a->reused = 0; a->promptSeconds = a->genSeconds = 0; a->best = -1;
+    a->promptStart = a->genStart = fire_aib_now(); a->endReason = FIRE_AI_END_MODEL;
 #ifdef _WIN32
     a->thread = CreateThread(NULL, 0, fire_aib_thread, a, 0, NULL);
     if (a->thread == NULL) { a->state = FIRE_AI_IDLE; return 0; }
@@ -544,21 +565,49 @@ static Value fire_ai_Error(Value session, OwnList* list) {
     const char* t = a ? a->error : g_aiError;
     return fire_aib_str(t, strlen(t), list);
 }
-/* A number of the last job: 0 the tokens of the prompt, 1 those computed of it, 2 the tokens generated, 3 the milliseconds of the prompt, 4 those of the
- * generation, 5 the option chosen (-1: none), 6 the tokens in the cache. */
+/* A number of the last job: 0 the tokens of the prompt, 1 those computed of it (also while it works: a progress bar), 2 the tokens generated, 3 the
+ * milliseconds of the prompt, 4 those of the generation (both also while they run), 5 the option chosen (-1: none), 6 the tokens in the cache, 7 the tokens
+ * of the prompt that came from the cache, 8 why the text ended (FIRE_AI_END_...), 9 the threads of the products. */
 static Value fire_ai_Stat(Value session, Value what) {
     FireAiSession* a = (FireAiSession*)fire_aib_find(session, 2);
     int64_t v = 0;
-    if (a) switch (what.i) {
+    int st;
+    if (a == NULL) return Int(0);
+    st = a->state;
+    switch (what.i) {
         case 0: v = a->promptTokens; break;
-        case 1: v = a->promptDone; break;
+        case 1:
+            v = a->promptDone;
+            if (st == FIRE_AI_PROMPT && a->running) { v = a->s->cachedCount; if (v > a->promptTokens) v = a->promptTokens; }
+            break;
         case 2: v = a->generated; break;
-        case 3: v = (int64_t)(a->promptSeconds * 1000); break;
-        case 4: v = (int64_t)(a->genSeconds * 1000); break;
+        case 3: v = (int64_t)((st == FIRE_AI_PROMPT && a->running ? fire_aib_now() - a->promptStart : a->promptSeconds) * 1000); break;
+        case 4: v = (int64_t)((st == FIRE_AI_GENERATING && a->running ? fire_aib_now() - a->genStart : a->genSeconds) * 1000); break;
         case 5: v = a->best; break;
         case 6: v = a->s->cachedCount; break;
+        case 7: v = st == FIRE_AI_PROMPT && a->running ? a->s->reused : a->reused; break;
+        case 8: v = a->endReason; break;
+        case 9: v = a->pool.count + 1; break;
     }
     return Int(v);
+}
+
+/* The first tokens of `text` (written like a prompt: control tokens as text) begin every prompt to come: their state is kept (fai_keep). */
+static Value fire_ai_Keep(Value session, Value text) {
+    FireAiSession* a = (FireAiSession*)fire_aib_find(session, 2);
+    FaiTokens tk = {0};
+    size_t n;
+    char* s;
+    if (a == NULL) return Bool(false);
+    if (fire_aib_busy(a)) { fire_aib_fail("The session is still working (Cancel stops it)."); return Bool(false); }
+    fire_aib_join(a, 0);
+    s = fire_aib_utf8(text, &n);
+    if (s == NULL) { fire_aib_fail("Out of memory."); return Bool(false); }
+    if (n == 0) fai_keep(a->s, 0);
+    else if (fai_tokenize(a->s->m, s, n, 1, 1, &tk)) fai_keep(a->s, (int)tk.n);
+    free(s); free(tk.t);
+    fire_aib_ok();
+    return Bool(true);
 }
 /* The score (log-probability) of the option `index` of the last choice. */
 static Value fire_ai_Score(Value session, Value index) {
@@ -570,7 +619,8 @@ static Value fire_ai_Score(Value session, Value index) {
 static Value fire_ai_Forget(Value session) {
     FireAiSession* a = (FireAiSession*)fire_aib_find(session, 2);
     if (a == NULL || fire_aib_busy(a)) return Bool(false);
-    a->s->cachedCount = 0; a->s->logitsValid = 0;
+    fire_aib_join(a, 0);
+    fai_forget(a->s);
     return Bool(true);
 }
 /* The machine, to choose a model: 0 the processor threads, 1 the memory in MB, 2 the free memory in MB (-1: not known), 3 whether the products have SIMD

@@ -27,6 +27,9 @@ namespace AI {
     // What a session is doing: nothing, computing the prompt, generating, done, failed (Session.Error) or cancelled.
     enum State { Idle = 0, Prompt = 1, Generating = 2, Done = 3, Failed = 4, Cancelled = 5 }
 
+    // Why a generated text ended: the model ended it, Settings.MaxTokens, the context was full, a stop text, Cancel, an error.
+    enum End { Model = 0, MaxTokens = 1, Context = 2, StopText = 3, Cancelled = 4, Failed = 5 }
+
     // How the next token is chosen. Temperature 0: always the most likely one (the same answer every time).
     class Settings {
         float Temperature = 0.7
@@ -152,7 +155,7 @@ namespace AI {
         defined int handle = -1
         AI.Model model
 
-        // `context`: the tokens it can hold (prompt and answer); `threads` 0: as many as the machine has (8 at most).
+        // `context`: the tokens it can hold (prompt and answer); `threads` 0: one fewer than the machine has (8 at most).
         construct(AI.Model model, int context = 2048, int threads = 0) {
             this.model = model
             this.handle = __AiSessionNew(model.handle, context, threads)
@@ -199,13 +202,31 @@ namespace AI {
         string Error { get { return __AiError(this.handle) } }
         // Forgets what the cache holds.
         undefined Forget() { __AiForget(this.handle) }
+        // Every prompt to come begins with `start` (instructions): models with recurrent layers (Qwen 3.5, LFM 3) keep its state, so a prompt whose later
+        // part changed (a chat that left out its oldest turns, another question) does not compute it again. "": nothing kept. Not while a job runs.
+        undefined Keep(string start) { __AiKeep(this.handle, start) }
 
+        // The numbers of the job - also while it runs (a user interface shows the progress):
+        // the tokens of the prompt, those computed so far (with those from the cache), those from the cache (not computed again)
         int PromptTokens { get { return __AiStat(this.handle, 0) } }
-        // The tokens of the prompt computed so far (for a progress bar).
         int PromptDone { get { return __AiStat(this.handle, 1) } }
+        int PromptReused { get { return __AiStat(this.handle, 7) } }
+        // the tokens generated so far, the milliseconds of the prompt and of the generation
         int Generated { get { return __AiStat(this.handle, 2) } }
         int PromptMilliseconds { get { return __AiStat(this.handle, 3) } }
         int GenerateMilliseconds { get { return __AiStat(this.handle, 4) } }
+        // Why the text ended (Done: the model ended it, MaxTokens, a stop text ...).
+        AI.End EndReason { get { return __AiStat(this.handle, 8)!AI.End } }
+        // The threads that compute.
+        int Threads { get { return __AiStat(this.handle, 9) } }
+        // The tokens generated per second (0 before the first).
+        float TokensPerSecond {
+            get {
+                int ms = this.GenerateMilliseconds
+                if (ms <= 0) { return 0.0 }
+                return this.Generated * 1000.0 / ms
+            }
+        }
         // The option of the last choice that is the most likely (-1: none).
         int Choice { get { return __AiStat(this.handle, 5) } }
         // The score (log-probability) of an option of the last choice.

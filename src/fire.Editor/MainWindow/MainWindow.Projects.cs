@@ -23,8 +23,9 @@ namespace fire.Editor
         /// <summary>What is open of solutions and projects. Single files are always possible next to it: only the active document decides what Start and Build act on.</summary>
         private readonly Workspace _workspace = new();
 
-        // a command of the solution explorer ("Build / Run this project") acts on this project once, whatever the active document is
+        // a command of the solution explorer (Start Debugging, Build, Clean of a project) acts on this project once, whatever the active document is
         private LoadedProject? _projectOverride;
+        private bool _updatingStartProjectUi;
 
         private void InitProjects()
         {
@@ -90,6 +91,15 @@ namespace fire.Editor
             if (doc?.Script != null)
                 return FullPathOf(doc) is { } path ? _workspace.FindProjectOf(path) : null;
             return _workspace.Startup;
+        }
+
+        /// <summary>The project Start (F5, Ctrl+F5, the steps) runs: from every file of the solution - a file of any of its projects, a project file, the solution file, notes - the start
+        /// project of the solution (without a solution the project); null for a single script that belongs to no project (it runs alone). See Workspace.StartProjectFor.</summary>
+        private LoadedProject? StartProject()
+        {
+            if (_projectOverride != null) return _projectOverride;
+            var doc = ActiveDocument;
+            return _workspace.StartProjectFor(FullPathOf(doc), doc?.Script != null);
         }
 
         /// <summary>The project a Project menu command concerns: the one selected in the explorer when it has the focus's selection, else the context project, else the startup project.</summary>
@@ -214,9 +224,51 @@ namespace fire.Editor
             var doc = ActiveDocument;
             _solutionPanel.Refresh(_workspace, FullPathOf(doc), _gitRoot == null ? null : _gitStates, _gitBranch);
             var project = ContextProject();
+            var start = StartProject();
             ContextText.Text = project != null
-                ? $"Build: {project.Name} ({(project.Project.Type == OutputType.Library ? "library" : "project")})"
-                : doc?.Script != null ? $"Build: {doc.DisplayName} (single file)" : "";
+                ? $"Build: {project.Name} ({(project.Project.Type == OutputType.Library ? "library" : "project")})" + (start != null && !ReferenceEquals(start, project) ? $", Start: {start.Name}" : "")
+                : doc?.Script != null ? $"Build: {doc.DisplayName} (single file)" : start != null ? $"Start: {start.Name}" : "";
+            RefreshStartProjectCombo();
+            RefreshEngineMenu();
+        }
+
+        /// <summary>The box of the start project in the Run tool strip: the programs of the solution, the start project selected (a single project: it alone, fixed; nothing open: empty).</summary>
+        private void RefreshStartProjectCombo()
+        {
+            _updatingStartProjectUi = true;
+            try
+            {
+                var items = new List<ComboBoxItem>();
+                var startup = _workspace.Startup;
+                if (_workspace.Solution != null)
+                    foreach (var p in _workspace.Projects.Where(p => p.Project.Type == OutputType.Exe || ReferenceEquals(p, startup)))
+                        items.Add(new ComboBoxItem { Content = p.Name, Tag = p, FontWeight = ReferenceEquals(p, startup) ? Avalonia.Media.FontWeight.SemiBold : Avalonia.Media.FontWeight.Normal });
+                else if (startup != null) items.Add(new ComboBoxItem { Content = startup.Name, Tag = startup });
+                if (items.Count == 0) items.Add(new ComboBoxItem { Content = _workspace.IsOpen ? "(no program)" : "(no solution)", Tag = null });
+                cmbStartProject.ItemsSource = items;
+                cmbStartProject.SelectedIndex = Math.Max(0, items.FindIndex(i => ReferenceEquals(i.Tag, startup)));
+                cmbStartProject.IsEnabled = _workspace.Solution != null && items.Count > 1;
+            }
+            finally { _updatingStartProjectUi = false; }
+        }
+
+        private void cmbStartProject_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (_updatingStartProjectUi || cmbStartProject.SelectedItem is not ComboBoxItem { Tag: LoadedProject project } || ReferenceEquals(project, _workspace.Startup)) return;
+            SetStartProject(project);
+        }
+
+        /// <summary>Makes a project of the solution the start project (saved in the solution file as `startup`).</summary>
+        private void SetStartProject(LoadedProject? project)
+        {
+            if (project == null || _workspace.Solution == null) return;
+            if (project.Project.Type == OutputType.Library) { UpdateStatus($"{project.Name} is a library: it cannot be started."); return; }
+            try
+            {
+                _workspace.SetStartup(project);
+                UpdateStatus($"Start project: {project.Name} (saved in {Path.GetFileName(_workspace.Solution.FilePath)}).");
+            }
+            catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { _ = Dialogs.Message(this, ex.Message, "Start Project"); }
         }
 
         private void ShowSolutionExplorer()
@@ -226,6 +278,8 @@ namespace fire.Editor
             {
                 if (_factory.IsDockablePinned(tool, RootDock)) _factory.UnpinDockable(tool);
                 else if (!IsToolVisible(tool)) _factory.RestoreDockable(tool);
+                // the Git panel comes out with it, as the tab beside it (docs/tools/git.md)
+                if (_tools.TryGetValue("git", out var git) && _factory.IsDockablePinned(git, RootDock)) _factory.UnpinDockable(git);
                 _factory.SetActiveDockable(tool);
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
@@ -354,7 +408,7 @@ namespace fire.Editor
         private async void AddNewFile_Click(object? sender, RoutedEventArgs e) => await AddNewFile(CommandProject(), null, (sender as MenuItem)?.Tag as string ?? "file");
         private async void AddExistingFile_Click(object? sender, RoutedEventArgs e) => await AddExistingFile(CommandProject());
         private async void AddReference_Click(object? sender, RoutedEventArgs e) => await AddReference(CommandProject());
-        private void SetStartup_Click(object? sender, RoutedEventArgs e) { if (CommandProject() is { } p) _workspace.SetStartup(p); }
+        private void SetStartup_Click(object? sender, RoutedEventArgs e) => SetStartProject(CommandProject());
         private async void PackLibrary_Click(object? sender, RoutedEventArgs e) => await PackLibrary(CommandProject());
         private async void InstallLibrary_Click(object? sender, RoutedEventArgs e) => await InstallLibrary(CommandProject());
 
@@ -640,7 +694,7 @@ namespace fire.Editor
                 case var c when c.StartsWith("new:"): await AddNewFile(project, node?.Kind == ExplorerKind.Folder ? node.Path : null, c.Substring(4)); break;
                 case "add-existing-file": await AddExistingFile(project); break;
                 case "add-reference": await AddReference(project); break;
-                case "set-startup": if (project != null) _workspace.SetStartup(project); break;
+                case "set-startup": SetStartProject(project); break;
                 case "pack": await PackLibrary(project); break;
                 case "install-library": await InstallLibrary(project); break;
                 case "refresh": project?.Refresh(); _workspace.Refresh(); break;
@@ -649,6 +703,10 @@ namespace fire.Editor
                 case "open-todo": TodoOpen_Click(this, new RoutedEventArgs()); break;
                 case "solution-properties": await ShowProjectProperties(_workspace.Projects.FirstOrDefault(), solutionTab: true); break;
                 case "run-project": await RunProject(project); break;
+                case "build-project": await BuildProjectNative(project); break;
+                case "clean-project": await CleanProjects(project != null ? new[] { project } : Array.Empty<LoadedProject>(), project?.Name ?? ""); break;
+                case "build-solution": await BuildSolutionAsync(); break;
+                case "clean-solution": CleanSolution_Click(this, new RoutedEventArgs()); break;
                 case "reveal": Reveal(node); break;
                 case "remove": await RemoveNode(node); break;
                 case "add-resource": await AddResource(project, node); break;
@@ -748,15 +806,18 @@ namespace fire.Editor
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Delete File"); }
         }
 
+        /// <summary>Start Debugging of a project in the explorer: compiles that project again and starts it under the debugger, whichever project is the start project (the start project
+        /// stays). A library cannot run: the start project runs instead.</summary>
         private async Task RunProject(LoadedProject? project)
         {
             if (project == null) return;
-            _projectOverride = project;
-            try
+            if (project.Project.Type == OutputType.Library)
             {
-                if (project.Project.Type == OutputType.Library) { await PackLibrary(project); return; }
-                Restart_Click(this, new RoutedEventArgs());
+                if (_workspace.Startup is { Project.Type: OutputType.Exe } start) project = start;
+                else { await Dialogs.Message(this, $"{project.Name} is a library: it cannot be started (Build packs it).", "Start Debugging"); return; }
             }
+            _projectOverride = project;
+            try { Restart_Click(this, new RoutedEventArgs()); }   // (it takes the project before its first await)
             finally { _projectOverride = null; }
         }
 

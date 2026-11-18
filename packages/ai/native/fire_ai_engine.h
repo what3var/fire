@@ -518,10 +518,14 @@ static int fai_hardwareThreads(void) {
 #endif
 }
 
-/* `threads` <= 0: as many as the machine has (8 at most). */
+/* `threads` <= 0: one fewer than the machine has (the program that shows the answer, and the system, keep a core; 8 at most). */
 static void fai_poolStart(FaiPool* p, int threads) {
     memset(p, 0, sizeof *p);
-    if (threads <= 0) { threads = fai_hardwareThreads(); if (threads > 8) threads = 8; }
+    if (threads <= 0) {
+        threads = fai_hardwareThreads();
+        if (threads > 2) threads--;
+        if (threads > 8) threads = 8;
+    }
     if (threads > FAI_MAX_THREADS) threads = FAI_MAX_THREADS;
 #ifdef FAI_THREADS
     {
@@ -1453,6 +1457,11 @@ typedef struct FaiSession {
     float* checkpoint;    /* a copy of rs ... */
     float* checkpointLogits;
     int checkpointPos;    /* ... after this many tokens (-1: none) */
+    float* keep;          /* a second copy of rs after the first keepPos tokens (the instructions every prompt starts with: they stay computed when what
+                             follows them changes, e.g. older turns of a chat are left out) */
+    int keepPos;          /* 0: none */
+    int keepValid;        /* keep holds the state after cached[0 .. keepPos) */
+    int reused;           /* the tokens of the last fai_feed that came from the cache */
     int32_t* cached;      /* the tokens whose keys, values and states are in the cache */
     int cachedCount;
     /* the buffers of one step (FAI_BATCH tokens each) */
@@ -1466,7 +1475,7 @@ typedef struct FaiSession {
 
 static void fai_sessionFree(FaiSession* s) {
     if (s == NULL) return;
-    free(s->kv); free(s->kvOff); free(s->rs); free(s->rsOff); free(s->checkpoint); free(s->checkpointLogits); free(s->cached);
+    free(s->kv); free(s->kvOff); free(s->rs); free(s->rsOff); free(s->checkpoint); free(s->checkpointLogits); free(s->keep); free(s->cached);
     free(s->x); free(s->xb); free(s->xb2); free(s->q); free(s->k); free(s->v); free(s->g); free(s->ao); free(s->att); free(s->hb); free(s->hb2); free(s->mix); free(s->z);
     free(s->logits); free(s->ropeCos); free(s->ropeSin); free(s->ropeCosSwa); free(s->ropeSinSwa); free(s->xq);
     free(s);
@@ -1526,6 +1535,7 @@ static FaiSession* fai_sessionNew(const FaiModel* m, FaiPool* pool, int ctx, Fai
     s->kv = kvTotal ? (float*)malloc(kvTotal * sizeof(float)) : NULL;
     s->rs = rsTotal ? (float*)calloc(rsTotal, sizeof(float)) : NULL;
     s->checkpoint = rsTotal ? (float*)malloc(rsTotal * sizeof(float)) : NULL;
+    s->keep = rsTotal ? (float*)malloc(rsTotal * sizeof(float)) : NULL;
     s->cached = (int32_t*)malloc((size_t)ctx * sizeof(int32_t));
     s->x = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float)); s->xb = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float)); s->xb2 = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float));
     s->q = (float*)calloc(B * (size_t)s->qWidth, sizeof(float)); s->g = (float*)calloc(B * (size_t)fai_imax(qd, m->nHead), sizeof(float));
@@ -1538,7 +1548,7 @@ static FaiSession* fai_sessionNew(const FaiModel* m, FaiPool* pool, int ctx, Fai
     s->checkpointLogits = (float*)calloc((size_t)m->output->ne[1], sizeof(float));
     s->xqStride = maxDim / FAI_QK + 1;
     s->xq = (FaiQ8*)calloc(B * (size_t)s->xqStride, sizeof(FaiQ8));
-    if ((kvTotal && !s->kv) || (rsTotal && (!s->rs || !s->checkpoint)) || !s->cached || !s->x || !s->xb || !s->xb2 || !s->q || !s->g || !s->k || !s->v || !s->ao || !s->att ||
+    if ((kvTotal && !s->kv) || (rsTotal && (!s->rs || !s->checkpoint || !s->keep)) || !s->cached || !s->x || !s->xb || !s->xb2 || !s->q || !s->g || !s->k || !s->v || !s->ao || !s->att ||
         !s->hb || !s->hb2 || !s->mix || !s->z || !s->logits || !s->checkpointLogits || !s->xq) {
         fai_sessionFree(s); fai_fail(e, "Out of memory: the context does not fit (a smaller one needs less).", NULL); return NULL;
     }
@@ -1808,29 +1818,45 @@ static void fai_checkpoint(FaiSession* s) {
 }
 
 /* Brings the cache to `tokens`: what it holds of their start stays, the rest is computed; afterwards the logits are those after the last token.
- * `stop`: when it becomes non-zero (another thread), the work stops (returns 0). 0 also when they do not fit into the context. */
+ * `stop`: when it becomes non-zero (another thread), the work stops (returns 0). 0 also when they do not fit into the context. While it works, cachedCount
+ * is the number of tokens done (another thread may read it for a progress bar); `reused` says how many came from the cache. */
 static int fai_feed(FaiSession* s, const int32_t* tokens, int count, volatile int* stop) {
     int same = 0, i;
+    s->reused = 0;
     if (count > s->ctx || count <= 0) return 0;
     while (same < s->cachedCount && same < count && s->cached[same] == tokens[same]) same++;
-    if (same == count && same == s->cachedCount && s->logitsValid) return 1;
+    if (same == count && same == s->cachedCount && s->logitsValid) { s->reused = count; return 1; }
     if (s->rsSize > 0) {
-        /* the recurrent states cannot go back: to the checkpoint (when it is a start of the tokens), else to the beginning */
+        /* the recurrent states cannot go back: to the checkpoint (when it is a start of the tokens), else to the kept start, else to the beginning */
         if (same < s->cachedCount || (same == count && !s->logitsValid)) {
-            if (s->checkpointPos >= 0 && s->checkpointPos <= same && s->checkpointPos <= s->cachedCount) {
+            int atCheckpoint = s->checkpointPos >= 0 && s->checkpointPos <= same && s->checkpointPos <= s->cachedCount;
+            int atKeep = s->keepValid && s->keepPos > 0 && s->keepPos <= same && s->keepPos < count;
+            if (atCheckpoint && (!atKeep || s->checkpointPos >= s->keepPos)) {
                 memcpy(s->rs, s->checkpoint, s->rsSize * sizeof(float));
                 memcpy(s->logits, s->checkpointLogits, (size_t)s->m->output->ne[1] * sizeof(float));
                 same = s->checkpointPos;
                 s->cachedCount = same;
                 s->logitsValid = 1;
-                if (same == count) return 1;
+                if (same == count) { s->reused = count; return 1; }
+            }
+            else if (atKeep) {
+                memcpy(s->rs, s->keep, s->rsSize * sizeof(float));
+                same = s->keepPos;
+                s->cachedCount = same;
+                s->logitsValid = 0;
+                if (s->checkpointPos > same) s->checkpointPos = -1;
             }
             else { memset(s->rs, 0, s->rsSize * sizeof(float)); same = 0; s->checkpointPos = -1; }
         }
     }
     else if (same == count) same--;   /* the logits of the last one are needed again */
+    s->reused = same;
+    s->cachedCount = same;
+    if (same < s->keepPos) s->keepValid = 0;
     for (i = same; i < count;) {
         int b = count - i < FAI_BATCH ? count - i : FAI_BATCH;
+        /* (a batch ends where the kept start ends: the state there is copied) */
+        if (s->rsSize > 0 && i < s->keepPos && i + b > s->keepPos) b = s->keepPos - i;
         if (stop && *stop) {
             s->cachedCount = i; s->logitsValid = 0;
             if (s->rsSize > 0 && s->checkpointPos > i) s->checkpointPos = -1;
@@ -1840,9 +1866,23 @@ static int fai_feed(FaiSession* s, const int32_t* tokens, int count, volatile in
         memcpy(s->cached + i, tokens + i, (size_t)b * sizeof(int32_t));
         i += b;
         s->cachedCount = i;
+        if (s->rsSize > 0 && i == s->keepPos) { memcpy(s->keep, s->rs, s->rsSize * sizeof(float)); s->keepValid = 1; }
     }
     s->cachedCount = count;
     return 1;
+}
+
+/* The first `count` tokens of the prompts to come are the same (instructions): with recurrent layers their state is kept, so a prompt whose later part
+ * changed does not compute them again (attention layers keep every position anyway). */
+static void fai_keep(FaiSession* s, int count) {
+    if (count < 0 || count >= s->ctx) count = 0;
+    if (count != s->keepPos) { s->keepPos = count; s->keepValid = 0; }
+}
+
+/* Forgets what the cache holds: the next prompt is computed from its start. */
+static void fai_forget(FaiSession* s) {
+    s->cachedCount = 0; s->logitsValid = 0; s->checkpointPos = -1; s->keepValid = 0;
+    if (s->rsSize > 0) memset(s->rs, 0, s->rsSize * sizeof(float));
 }
 
 /* ---- sampling ----------------------------------------------------------------------------------------------------------------------------------------- */

@@ -151,11 +151,82 @@ namespace fire.Projects
             return _members.FirstOrDefault(p => p.Contains(full)) ?? _byPath.Values.FirstOrDefault(p => !p.InSolution && p.Contains(full));
         }
 
+        /// <summary>
+        /// The project that Start runs while <paramref name="activeFile"/> is the active document (docs/tools/spark.md, "The start project"): for every file that belongs to the
+        /// solution - a file of one of its projects (also of a library, or a project only referenced), a project file, the solution file, notes and other files - the start project
+        /// (<see cref="Startup"/>; without a solution: the project itself). A fire source that belongs to no project (and an unsaved script: <paramref name="activeFile"/> null with
+        /// <paramref name="isScript"/>) runs on its own: null. Nothing open: null.
+        /// </summary>
+        public LoadedProject? StartProjectFor(string? activeFile, bool isScript = false)
+        {
+            if (!IsOpen) return null;
+            if (string.IsNullOrEmpty(activeFile)) return isScript ? null : Startup;
+            string full = Path.GetFullPath(activeFile);
+            if ((isScript || FireProject.IsSourceFile(full)) && FindProjectOf(full) == null && !IsTestFileOfProject(full)) return null;
+            return Startup;
+        }
+
+        private bool IsTestFileOfProject(string full) => _byPath.Values.Any(p => p.TestFiles.Contains(full, ProjectFiles.PathComparer));
+
+        /// <summary>The projects that <paramref name="project"/> references directly (loaded; a reference whose file cannot be read is left out - the build plan reports it).</summary>
+        public IReadOnlyList<LoadedProject> ReferencedProjects(LoadedProject project)
+        {
+            var result = new List<LoadedProject>();
+            foreach (var r in project.Project.References)
+            {
+                if (!r.IsProject) continue;
+                string path = Path.GetFullPath(r.Project!.Replace('\\', '/'), project.Directory);
+                if (!File.Exists(path)) continue;
+                try { result.Add(LoadProject(path)); }
+                catch (ProjectException) { }
+            }
+            return result;
+        }
+
+        /// <summary>The projects of the solution (or the single project) in the order Build Solution builds them: every library before the projects that reference it (also through a
+        /// library that is only referenced, not in the solution), otherwise in the order of the solution file. A cycle of references does not hang: the project that closes it comes where
+        /// it is met first (its build reports the cycle).</summary>
+        public IReadOnlyList<LoadedProject> BuildOrder()
+        {
+            var ordered = new List<LoadedProject>();
+            var done = new HashSet<LoadedProject>();
+            var visiting = new HashSet<LoadedProject>();
+            void Visit(LoadedProject p)
+            {
+                if (done.Contains(p) || !visiting.Add(p)) return;
+                foreach (var dependency in ReferencedProjects(p)) Visit(dependency);
+                visiting.Remove(p);
+                done.Add(p);
+                if (_members.Contains(p)) ordered.Add(p);
+            }
+            foreach (var member in _members.ToList()) Visit(member);
+            return ordered;
+        }
+
         /// <summary>Reads the folders of all projects again (a file was added or deleted outside of the editor).</summary>
         public void Refresh()
         {
             foreach (var p in _byPath.Values) p.Refresh();
             RaiseChanged();
+        }
+
+        /// <summary>Loads the solution (or the single project) again from its file - it was changed outside of the editor (a git pull, a switch of the branch). Nothing open: nothing happens.</summary>
+        public void Reload()
+        {
+            if (FilePath is { } path) Load(path);
+        }
+
+        /// <summary>Loads one project again from its file (it was changed outside of the editor); the others stay as they are. false: the project is not loaded here.</summary>
+        public bool ReloadProject(string path)
+        {
+            string full = Path.GetFullPath(path);
+            if (!_byPath.TryGetValue(full, out var old)) return false;
+            var fresh = new LoadedProject(FireProject.Load(full), old.InSolution);
+            _byPath[full] = fresh;
+            int index = _members.IndexOf(old);
+            if (index >= 0) _members[index] = fresh;
+            RaiseChanged();
+            return true;
         }
 
         // -------------------------------------------------------------------------------------------------------------

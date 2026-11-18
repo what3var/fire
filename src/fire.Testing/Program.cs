@@ -12,6 +12,8 @@ using fire.Values;
 // own for this run (the C++ libraries of their natives are built on first use).
 // every check line numbered against the count of the last run ("OK: [12/530] ..."), every line flushed at once (TestUtils.cs, docs/tools/testing.md)
 TestProgress.Install();
+// FIRE_TESTS_ONLY=startproject: the start project of a solution, the order of Build Solution and Clean (seconds; before the standard libraries are installed, which it does not need)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "startproject") { Environment.ExitCode = StartProjectTests.Run() == 0 ? 0 : 1; return; }
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
 // scene3d's GPU path takes a Vulkan device that is a CPU (lavapipe) only with FIRE_S3D_GPU=cpu - without it the hardware checks only see the fallback to
@@ -48,12 +50,16 @@ Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
 // FIRE_TESTS_ONLY=linkage: linkage "static" of native builds (libraries in the cache, ROADMAP 9)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { LinkageTests.Run(); return; }
+// FIRE_TESTS_ONLY=registry: the package sources of ember against an index on the web (a local HTTP server; docs/packages/README.md)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "registry") { RegistryTests.Run(); return; }
 // FIRE_TESTS_ONLY=bios16: the targets without an operating system (ROADMAP 13.5: the boot sector, a build booted in QEMU)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "bios16") { BiosTests.RunAlone(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ai") { AiTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mcpserver") { McpServerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "aimodels") { AiModelsTests.Run(); return; }
+// FIRE_TESTS_ONLY=setupwizard: spark's setup wizard without a window (catalog, pages, plan, progress, the download of a model)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "setupwizard") { SetupWizardTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "blocks") { BlockModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mesh") { MeshModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
@@ -65,6 +71,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTest
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "completion") { CompletionTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { NotesTests.Run(); return; }
+// FIRE_TESTS_ONLY=git: git (GitTests) and the files that change under the editor, the Git panel (GitSyncTests); FIRE_TESTS_FILTER narrows the GitSync checks by title
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "git") { GitTests.Run(); GitSyncTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
@@ -11648,6 +11656,7 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 ProjectTests.Run();
+RegistryTests.Run();
 NotesTests.Run();
 McpServerTests.Run();
 AiModelsTests.Run();
@@ -11664,6 +11673,7 @@ DockingTests.Run();
 CircuitEditorTests.Run();
 ImageTests.Run();
 GitTests.Run();
+GitSyncTests.Run();
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Native backend (fire.Native): the same source runs in the VM and as generated C++ - the output must be identical

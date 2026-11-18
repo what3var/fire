@@ -76,6 +76,10 @@ namespace AI {
         int MaxSteps = 6
         // Let the model think first (Qwen 3.5, LFM 3): better for hard questions, slower; the thinking is not shown.
         bool Thinking = false
+        // The tokens it may think (per round): then its thinking is closed and it has to answer (a small model may think on and on otherwise).
+        int ThinkingBudget = 384
+        // A tool's answer longer than this (characters) is cut (a long file must not fill the context: the question would go, or the prompt not fit).
+        int MaxResultLength = 3000
         List tools = new List()
         // the conversation: the turns as the model read them, and as messages
         List turns = new List()
@@ -88,6 +92,13 @@ namespace AI {
         int steps = 0
         bool running = false
         List calls = new List()
+        List callKeys = new List()
+        // the turn of the question that is answered (older turns may go when the context is full, this one and those after it stay)
+        int questionTurn = 0
+        // the tokens written for the question in the rounds before this one; its thinking was closed by the budget
+        int generatedBefore = 0
+        bool thinkingCut = false
+        bool finalRound = false
         // What the model wrote last, as it wrote it (with the calls of tools and the thinking) - for finding out why it did what it did.
         string LastOutput = ""
         // Called with each call of a tool before it runs (a user interface shows "reading notes.txt ..."); undefined: none.
@@ -224,14 +235,16 @@ namespace AI {
             return b
         }
 
-        // What the model reads: the beginning, the turns so far and the start of the answer. Old turns go when it does not fit.
+        // What the model reads: the beginning, the turns so far and the start of the answer. Old turns go when it does not fit - never the question
+        // that is answered and what the tools said about it.
         string Prompt() {
             string begin = this.Begin()
             string all = ""
             foreach (t in this.turns) { all += t }
             string p = begin + all + this.AssistantStart() + this.raw
-            while (this.turns.Count > 1 && this.model.CountTokens(p) > this.contextTokens - this.Settings.MaxTokens - 16) {
+            while (this.questionTurn > 0 && this.model.CountTokens(p) > this.contextTokens - this.Settings.MaxTokens - 16) {
                 this.turns.RemoveAt(0)
+                this.questionTurn--
                 all = ""
                 foreach (t in this.turns) { all += t }
                 p = begin + all + this.AssistantStart() + this.raw
@@ -255,6 +268,7 @@ namespace AI {
         // Starts the answer to `text` (a question of the user); Update gives it while it comes.
         undefined Start(string text) {
             if (this.running) { this.Cancel() }
+            this.questionTurn = this.turns.Count
             this.turns.Add("<|im_start|>user\n" + text + "<|im_end|>\n")
             this.roles.Add("user")
             this.texts.Add(text)
@@ -262,14 +276,71 @@ namespace AI {
             this.shown = 0
             this.steps = 0
             this.calls.Clear()
+            this.callKeys.Clear()
+            this.generatedBefore = 0
+            this.thinkingCut = false
+            this.finalRound = false
+            this.LastEnd = AI.End.Model
             this.running = true
             this.Generate()
         }
 
+        // Reads the instructions and tools now, in the background (they are most of every prompt: on a slow or busy machine minutes), so the first
+        // question does not wait for them. A question that comes earlier goes on from where it got.
+        undefined Prepare() {
+            if (this.running || this.session.Busy) { return }
+            string begin = this.Begin()
+            if (begin == "") { return }
+            this.session.Keep(begin)
+            this.session.Start(begin, AI.Settings.Exact(1))
+        }
+
         undefined Generate() {
+            // (a Prepare that still runs stops: what it read stays in the cache)
+            if (this.session.Busy) { this.session.Cancel() }
             var s = copy this.Settings
-            s.Stops.Add("</tool_call>")
-            this.session.Start(this.Prompt(), s)
+            s.Stops.Add(this.finalRound ? "<tool_call>" : "</tool_call>")
+            // (the instructions and tools stay computed for every prompt, also when the turns after them change)
+            this.session.Keep(this.Begin())
+            string prompt = this.Prompt()
+            int tokens = this.model.CountTokens(prompt)
+            if (tokens + 16 > this.contextTokens) {
+                this.running = false
+                throw new AI.AIException("The question does not fit into the context of the model (" + tokens + " of " + this.contextTokens + " tokens): ask it shorter, or start a new topic.")
+            }
+            // (not more tokens than the context still holds)
+            if (s.MaxTokens <= 0 || s.MaxTokens > this.contextTokens - tokens - 8) { s.MaxTokens = this.contextTokens - tokens - 8 }
+            this.session.Start(prompt, s)
+        }
+
+        // ---- what it is doing (a user interface shows it while the answer does not come) ----
+
+        // The session that computes (its numbers: PromptDone, Generated, TokensPerSecond ...).
+        AI.Session Session { get { return this.session } }
+        // Whether it reads the prompt (its instructions, the conversation, what the tools said) - before it writes.
+        bool Reading { get { return this.running && this.session.State == AI.State.Prompt } }
+        // The tokens of the prompt read so far, and of all of it (without those it still had from before).
+        int ReadDone { get { return this.session.PromptDone - this.session.PromptReused } }
+        int ReadTotal { get { return this.session.PromptTokens - this.session.PromptReused } }
+        // The tokens written for the question so far (also the thinking and the calls of tools; all rounds).
+        int Written { get { return this.generatedBefore + this.session.Generated } }
+        // Whether it is thinking now (the thinking is not shown).
+        bool InThought { get { return this.running && AI.Agent.ThinkingOpen(this.raw, this.OpensThinking()) } }
+        // How the last answer ended: Model (complete), MaxTokens (cut at Settings.MaxTokens), Context (the context was full), Cancelled.
+        AI.End LastEnd = AI.End.Model
+        // The thinking of the last answer was closed at ThinkingBudget.
+        bool ThinkingCut { get { return this.thinkingCut } }
+
+        // Whether the prompt opens the thinking (Thinking, and a model that thinks first).
+        bool OpensThinking() {
+            string f = this.Family
+            return this.Thinking && (f == "qwen3" || f == "qwen35" || f == "lfm3")
+        }
+
+        // Whether `raw` (the answer so far) is in its thinking: after a <think> without its </think>, or from the start when the prompt opened it.
+        static bool ThinkingOpen(string raw, bool openedByPrompt) {
+            if (raw.IndexOf("</think>") >= 0) { return false }
+            return openedByPrompt || raw.TrimStart().StartsWith("<think>")
         }
 
         // Whether the agent is still at work (writing, or calling tools).
@@ -279,15 +350,28 @@ namespace AI {
         string Update() {
             if (!this.running) { return "" }
             this.raw += this.session.Take()
-            if (this.session.Busy) { return this.Visible(false) }
+            if (this.session.Busy) {
+                // thinking too long: its thinking is closed, the model goes on with the answer
+                if (this.ThinkingBudget > 0 && this.session.Generated >= this.ThinkingBudget && AI.Agent.ThinkingOpen(this.raw, this.OpensThinking())) {
+                    this.session.Cancel()
+                    this.raw += this.session.Take()
+                    this.generatedBefore += this.session.Generated
+                    this.raw = this.raw.TrimEnd() + "\n</think>\n\n"
+                    this.thinkingCut = true
+                    this.Generate()
+                    return ""
+                }
+                return this.Visible(false)
+            }
             if (this.session.State == AI.State.Failed) {
                 this.running = false
                 throw new AI.AIException(this.session.Error)
             }
             string shownNow = this.Visible(true)
             this.LastOutput = this.raw
+            this.generatedBefore += this.session.Generated
             int call = this.raw.IndexOf("<tool_call>")
-            if (call >= 0 && this.steps <= this.MaxSteps && this.session.State == AI.State.Done) {
+            if (call >= 0 && this.steps <= this.MaxSteps && this.session.State == AI.State.Done && !AI.Agent.ThinkingOpen(this.raw.Substring(0, call), this.OpensThinking())) {
                 // the model asked for tools: run them, give it the answers, let it go on - after MaxSteps rounds it gets no more answers but the request to
                 // answer with what it has (a small model goes on searching otherwise, and the question stays without an answer)
                 this.raw += "</tool_call>"
@@ -299,11 +383,19 @@ namespace AI {
                 this.raw = ""
                 this.shown = 0
                 this.steps++
+                // the last round: no tools (a call ends the text, what came before it is the answer), no thinking - the answer comes now
+                if (this.steps > this.MaxSteps) {
+                    this.finalRound = true
+                    if (this.OpensThinking()) { this.raw = "\n</think>\n\n" }
+                }
                 this.Generate()
                 return shownNow
             }
-            // the answer is complete
-            string answer = AI.Chat.WithoutThinking(this.raw)
+            // the answer is complete (an answer that is still thinking has none)
+            this.LastEnd = this.session.EndReason
+            string answer = this.raw
+            if (AI.Agent.ThinkingOpen(answer, this.OpensThinking())) { answer = "" }
+            answer = AI.Chat.WithoutThinking(answer)
             int at = answer.IndexOf("<tool_call>")
             if (at >= 0) { answer = answer.Substring(0, at) }
             this.turns.Add(this.AssistantStart() + this.raw + "<|im_end|>\n")
@@ -321,7 +413,7 @@ namespace AI {
             int think = text.IndexOf("</think>")
             var begin = 0
             if (think >= 0) { begin = think + 8 }
-            else if (text.IndexOf("<think>") >= 0) { return "" }
+            else if (AI.Agent.ThinkingOpen(text, this.OpensThinking())) { return "" }
             int end = text.IndexOf("<tool_call>")
             if (end < 0) {
                 end = text.Length
@@ -462,8 +554,17 @@ namespace AI {
             if (tool == undefined) { result = "Error: there is no tool '" + call.Name + "'." }
             else {
                 if (tool.schema != "") { AI.Agent.Coerce(call.Arguments, tool.schema) }
-                try { result = tool.handler(call.Arguments) }
-                catch (Exception e) { result = "Error: " + e.message }
+                // the same call again (a small model may ask for the same thing round after round): no new answer
+                string key = call.Name + " " + Json.Serialize(call.Arguments)
+                if (this.callKeys.Contains(key)) { result = "You called " + call.Name + " with these arguments already: its answer is above. Use it, or answer now." }
+                else {
+                    this.callKeys.Add(key)
+                    try { result = tool.handler(call.Arguments) }
+                    catch (Exception e) { result = "Error: " + e.message }
+                }
+            }
+            if (this.MaxResultLength > 0 && result.Length > this.MaxResultLength) {
+                result = result.Substring(0, this.MaxResultLength) + "\n... (cut: " + (result.Length - this.MaxResultLength) + " more characters)"
             }
             call.Result = result
             this.calls.Add(take call)
@@ -489,6 +590,8 @@ namespace AI {
             if (!this.running) { return }
             this.session.Cancel()
             this.raw += this.session.Take()
+            this.LastEnd = AI.End.Cancelled
+            if (AI.Agent.ThinkingOpen(this.raw, this.OpensThinking())) { this.raw += "\n</think>\n\n" }
             this.turns.Add(this.AssistantStart() + this.raw + "<|im_end|>\n")
             this.roles.Add("assistant")
             this.texts.Add(AI.Chat.WithoutThinking(this.raw).Trim())
@@ -515,6 +618,7 @@ namespace AI {
         // A new topic: the conversation is forgotten (the instructions and tools stay).
         undefined Forget() {
             if (this.running) { this.Cancel() }
+            this.questionTurn = 0
             this.turns.Clear()
             this.roles.Clear()
             this.texts.Clear()
@@ -525,6 +629,7 @@ namespace AI {
         // The index of the most likely of `options` as the answer to `question` (the model reads the options and the start of the answer and weighs
         // each option; it does not write). The conversation is not changed.
         int Choose(string question, string options[]) {
+            if (!this.running && this.session.Busy) { this.session.Cancel() }   // (a Prepare)
             string q = question + "\n\nOptions:\n"
             foreach (o in options) { q += "- " + o + "\n" }
             q += "\nAnswer with one of the options."
@@ -541,6 +646,7 @@ namespace AI {
 
         // The answer to `question` alone, outside the conversation (nothing is remembered, no tools).
         string Once(string question) {
+            if (!this.running && this.session.Busy) { this.session.Cancel() }   // (a Prepare)
             var s = copy this.Settings
             return this.session.Ask(this.Instructions, question, s)
         }

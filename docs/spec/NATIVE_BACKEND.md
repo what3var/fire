@@ -1056,7 +1056,7 @@ Filter höchstens weglassen könnte, sind 4 % des Funktionscodes (die meisten da
 `fire.Compiler build skript.fire [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep] [--stripping 0-3] [--keep-all]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
 eigenständige Datei mit der VM, wie bisher). Mit `native` wird für das Ziel übersetzt (`NativeBuilder`: C++ erzeugen, Runtime und Plattformpaket daneben legen) und mit der Toolchain gebaut;
 bei `files` ist `-o` ein Ordner. `fire.Compiler native ...` erzeugt weiter nur das C++ (samt Runtime und Plattformpaket des Ziels). Der Editor hat denselben Weg:
-**Tools > Toolchain Settings...** (Seiten links: *Build* mit der Standard-Engine, *Target* mit Plattform/Includes/Defines/Einsprung, *Toolchain* mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript bzw. Projekt; auch erreichbar über *Project Properties > Native & Toolchain*), **Run > Build Native...**,
+**Tools > Toolchain Settings...** (Seiten links: *Build* mit der Standard-Engine, *Target* mit Plattform/Includes/Defines/Einsprung, *Toolchain* mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript bzw. Projekt; auch erreichbar über *Project Properties > Native & Toolchain*), **Run > Build** (immer nativ),
 und **Build** folgt dem `engine` der Konfiguration.
 
 ### Ausführen und Debuggen aus spark (ROADMAP 8.7)

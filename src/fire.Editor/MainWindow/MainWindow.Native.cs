@@ -13,8 +13,8 @@ using fire.Projects;
 
 namespace fire.Editor
 {
-    // The engine of a run (ROADMAP 8.7): the virtual machine in spark, or a native build of the program. The engine box next to the mode box chooses it
-    // (saved in the project's settings.engine, for a single script in spark's settings). Native + Debug: built with -O0 -g into bin/<target>-dbg, started
+    // The engine of a run (ROADMAP 8.7): the virtual machine in spark (the default), or a native build of the program. Run > Run Engine chooses it
+    // (saved in the settings.engine of the project that Start runs, for a single script in spark's settings). Native + Debug: built with -O0 -g into bin/<target>-dbg, started
     // with FIRE_DEBUG and debugged over the protocol (NativeDebugTarget) - the same panels, without the operand stack. Native + Release/Performance: a
     // plain run of the program, its output in the Output panel. Target esp32: the program becomes an ESP-IDF project in bin/esp32-<mode> (its component
     // in main/), `idf.py build flash` puts it on the board, and spark opens the board's serial port itself - Debug: the debug agent of the debug build
@@ -38,30 +38,25 @@ namespace fire.Editor
         /// <summary>true while the stack panel is hidden because the engine is native (it comes back for the VM).</summary>
         private bool _stackHiddenForNative;
 
-        private bool _updatingEngineUi;
-
-        /// <summary>The engine of the active project/script: the project's settings (over the solution's), else spark's choice for single scripts, else the native build
-        /// configuration, else the VM.</summary>
+        /// <summary>The engine of what Start runs (the start project, see StartProject, or the single script): the project's settings (over the solution's), else spark's choice
+        /// for single scripts, else the native build configuration, else the VM.</summary>
         private string CurrentEngine()
         {
             string? engine = null;
-            if (ContextProject() is { } project) engine = ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings).Engine;
+            if (StartProject() is { } project) engine = ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings).Engine;
             engine ??= _settings.Engine;
             if (engine == null)
-                try { engine = LoadNativeConfig(out _).Engine; }
+                try { engine = LoadNativeConfig(out _, StartProject()).Engine; }
                 catch (fire.Native.NativeConfigException) { }
             return string.Equals(engine, "native", StringComparison.OrdinalIgnoreCase) ? "native" : "vm";
         }
 
         private bool UsesNativeEngine() => CurrentEngine() == "native";
 
-        /// <summary>Shows the engine of the active project/script in the box and the Run menu, and hides the stack panel for native.</summary>
-        private void RefreshEngineCombo()
+        /// <summary>Shows the engine of what Start runs in Run > Run Engine, and hides the stack panel for native.</summary>
+        private void RefreshEngineMenu()
         {
             bool native = UsesNativeEngine();
-            _updatingEngineUi = true;
-            cmbEngine.SelectedIndex = native ? 1 : 0;
-            _updatingEngineUi = false;
             mnuEngineVm.IsChecked = !native;
             mnuEngineNative.IsChecked = native;
             ApplyEngineToPanels(native);
@@ -84,20 +79,14 @@ namespace fire.Editor
             }
         }
 
-        private void cmbEngine_SelectionChanged(object? sender, SelectionChangedEventArgs e)
-        {
-            if (_updatingEngineUi || cmbEngine.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
-            _ = SetEngine(tag);
-        }
-
         private void mnuEngineVm_Click(object? sender, RoutedEventArgs e) => _ = SetEngine("vm");
         private void mnuEngineNative_Click(object? sender, RoutedEventArgs e) => _ = SetEngine("native");
 
-        /// <summary>Chooses the engine: for a project it goes into its settings.engine (saved), for a single script into spark's settings. A run of the other engine ends.</summary>
+        /// <summary>Chooses the engine: for the project Start runs it goes into its settings.engine (saved), for a single script into spark's settings. A run of the other engine ends.</summary>
         private async Task SetEngine(string engine)
         {
             if (CurrentEngine() != engine && (_session.HasProgram || _nativeRun != null)) Stop_Click(this, new RoutedEventArgs());
-            if (ContextProject() is { } project)
+            if (StartProject() is { } project)
             {
                 project.Project.Settings ??= new ProjectSettings();
                 project.Project.Settings.Engine = engine;
@@ -114,7 +103,7 @@ namespace fire.Editor
                 _settings.Save();
                 UpdateStatus($"Engine: {(engine == "native" ? "native" : "VM")}.");
             }
-            RefreshEngineCombo();
+            RefreshEngineMenu();
         }
 
         /// <summary>Ends a plain native run that is still going on.</summary>
@@ -167,7 +156,7 @@ namespace fire.Editor
             fire.Native.ToolchainDef toolchain;
             try
             {
-                config = LoadNativeConfig(out _);
+                config = LoadNativeConfig(out _, input.Project);
                 target = config.ResolveTarget(_nativeTargetChoice ?? input.Plan?.Settings.Target);
                 toolchain = config.ResolveToolchain(target, input.Plan?.Settings.Toolchain);
             }

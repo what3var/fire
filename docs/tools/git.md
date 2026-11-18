@@ -8,7 +8,43 @@ and macOS (x64 and arm64), so **nothing has to be installed**: git itself is not
 * **Solution Explorer**: a file that is not as in the last commit has a letter - `M` changed, `A` added (staged), `U` new (untracked), `D` deleted, `R` renamed, `!` conflict. A folder, a project and
   the solution have a dot when something below them is changed. The solution shows the branch (`git: main`).
 * **Status bar**: `git: main ↑1 ↓2  3 changed` - the branch, commits to push (↑) and to pull (↓), the number of changed files.
-* The state is read again when something is saved, when the solution changes, when the window gets the focus (git may have been used outside of the editor) and after every git command.
+* **Git panel**: the branch, the changes and the commit, as a tab beside the explorer (below).
+* The state is read again when something is saved, when the solution changes, when files change on disk, when the window gets the focus (git may have been used outside of the editor) and after
+  every git command.
+
+## The Git panel
+
+A tab beside the Solution Explorer (View > Git, or Git > Show Git Panel; it comes out with the explorer when a solution is opened):
+
+* **The branch** and how far it is from the server's branch: `↑2` commits to push, `↓1` to pull (as of the last fetch), "up to date", "not on the server yet" or "no server".
+* **Fetch, Pull, Push** and **⟳** (read the state again).
+* **The message** and **Commit** (Ctrl+Enter in the message) or **Commit & Push**. Commit takes what is staged; when nothing is staged it asks whether all changes go in. Unsaved documents are
+  saved first. Git asks for your name and e-mail address once (kept in this repository).
+* **The changed files** in three lists, each with its letter (`M` changed, `A` added, `D` deleted, `R` renamed, `U` new, `!` conflict) and its folder:
+  *Staged Changes* (what the next commit has; **−** unstages), *Changes* (changed, not staged; **+** stages, **↶** throws the changes away) and *Untracked* (new files; **+** stages, **↶**
+  deletes the file). The header of a list does the same for all of its files. Throwing away asks first. A file that is staged and then changed again is in both lists.
+* **A click** on a file shows its changes (staged ones for a row under *Staged Changes*), **a double click** opens it.
+* While a merge is not finished (conflicts after a pull) a line says so: solve the conflicts, stage the files (+), commit.
+
+The panel is read again after every git command, when a file is saved, when files change on disk (also `git add` or a commit outside of the editor) and when the window gets the focus.
+
+## Files that change on disk
+
+A pull, a switch of the branch, a discard - in the editor or with git outside of it - and any other program can change the files the editor holds. The editor remembers what each of them was like when it
+read or wrote it (the content, not only the time), watches the folders of the solution, the projects and the open documents (bursts of changes are bundled: it acts when nothing changed for 0.4 s),
+and compares everything after each of its own git commands:
+
+| what changed | what happens |
+|---|---|
+| the solution file | the solution is loaded again, with its projects (deleted: the solution is closed) |
+| a project file | that project is loaded again (deleted: the solution is loaded again and shows it as missing) |
+| files made or deleted in a project folder | the folders are read again (the explorer shows the new files) |
+| an open document without unsaved changes | it is read again silently (the caret stays on its line) |
+| an open document with unsaved changes | you decide: **Keep Mine** (the next save overwrites the file), **Take Theirs** (your changes are lost), **Show Diff** (the differences of the file on disk and the editor, then the question again) |
+| the file of an open document was deleted | the tab says `(deleted)`; saving makes the file again, and when it comes back (a switch back) it is read again |
+
+What a build writes (`bin/`, `obj/`) and the inside of `.git` (but its index and HEAD, for the Git panel) are not watched. The logic is in `src/fire.Editor/Git/WorkingTreeSync.cs` (no user interface;
+tested by `GitSyncTests`, alone with `FIRE_TESTS_ONLY=git`).
 
 ## The Git menu
 
@@ -25,8 +61,8 @@ and macOS (x64 and arm64), so **nothing has to be installed**: git itself is not
 | Show Changes / Discard Changes of This File | the differences of the active file; back to the last commit (asks first; an untracked file is deleted) |
 | Branches | the branches of the repository and of the server: switch (also to a server branch, which gets a local one), make a new one at the current commit |
 
-The context menus of the explorer have the same for the solution (commit, pull, push) and for files (show changes, commit this file, discard, history of this file). Open documents without unsaved
-changes are read again after a pull, a switch of the branch or a discard.
+The context menus of the explorer have the same for the solution (commit, pull, push) and for files (show changes, commit this file, discard, history of this file). What a pull, a switch of the
+branch or a discard changes is loaded again (see *Files that change on disk*).
 
 ## The server
 

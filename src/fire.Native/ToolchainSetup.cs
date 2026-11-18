@@ -21,6 +21,8 @@ namespace fire.Native
         public static bool CanInstall => OperatingSystem.IsWindows() && RuntimeInformation.OSArchitecture == Architecture.X64;
 
         public const string DownloadSizeHint = "about 80 MB";
+        /// <summary>The download in bytes, about (<see cref="DownloadSizeHint"/>; the setup adds the downloads up).</summary>
+        public const long DownloadBytes = 80_000_000;
 
         private static string ExeName(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
 
@@ -128,8 +130,9 @@ namespace fire.Native
         }
 
         /// <summary>Downloads the portable w64devkit (a self-extracting archive of GCC for Windows) and unpacks it to <see cref="W64devkitDirectory"/>. Returns the compiler.
-        /// <paramref name="log"/> gets progress lines. A failure is an <see cref="InvalidOperationException"/> with the reason.</summary>
-        public static string InstallW64devkit(Action<string>? log = null)
+        /// <paramref name="log"/> gets progress lines. A failure is an <see cref="InvalidOperationException"/> with the reason.
+        /// <paramref name="progress"/> gets the bytes of the download (done, total); <paramref name="token"/> stops it (an <see cref="OperationCanceledException"/>, nothing is kept).</summary>
+        public static string InstallW64devkit(Action<string>? log = null, Action<long, long>? progress = null, CancellationToken token = default)
         {
             if (!CanInstall) throw new InvalidOperationException("The portable toolchain (w64devkit) can only be downloaded on Windows (x64). Install a C++ compiler with your system's package manager.");
             Directory.CreateDirectory(Root);
@@ -139,26 +142,8 @@ namespace fire.Native
                 using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(15) };
                 string url = FindDownloadUrl(http);
                 log?.Invoke($"Downloading {url} ...");
-                using (var request = new HttpRequestMessage(HttpMethod.Get, url))
-                {
-                    request.Headers.UserAgent.ParseAdd("fire-toolchain-setup");
-                    using var response = http.Send(request, HttpCompletionOption.ResponseHeadersRead);
-                    response.EnsureSuccessStatusCode();
-                    long total = response.Content.Headers.ContentLength ?? 0;
-                    using var input = response.Content.ReadAsStream();
-                    using var output = File.Create(temp);
-                    var buffer = new byte[81920];
-                    long done = 0; int lastPercent = -1;
-                    int n;
-                    while ((n = input.Read(buffer, 0, buffer.Length)) > 0)
-                    {
-                        output.Write(buffer, 0, n);
-                        done += n;
-                        int percent = total > 0 ? (int)(done * 100 / total) : -1;
-                        if (percent != lastPercent && (percent % 5 == 0 || percent < 0)) { lastPercent = percent; log?.Invoke(total > 0 ? $"Downloading... {percent}% ({done / 1048576} MB)" : $"Downloading... {done / 1048576} MB"); }
-                    }
-                    if (total > 0 && done != total) throw new IOException($"The download is incomplete ({done} of {total} bytes). Check the connection (or a proxy / virus scanner) and try again.");
-                }
+                DownloadTransfer.Fetch(http, url, temp, progress, log, token);
+                token.ThrowIfCancellationRequested();
                 log?.Invoke($"Unpacking to {Root} ...");
                 if (Directory.Exists(W64devkitDirectory)) Directory.Delete(W64devkitDirectory, recursive: true);
                 var psi = new ProcessStartInfo(temp, $"-y -o\"{Root}\"") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -194,14 +179,16 @@ namespace fire.Native
     {
         public const string DownloadUrl = "http://openwatcom.org/ftp/source/ow_portable_v2_stable.zip";
         public const string DownloadSizeHint = "about 150 MB";
+        public const long DownloadBytes = 150_000_000;
         public static string Directory => Path.Combine(ToolchainSetup.Root, "watcom");
 
         /// <summary>Can this machine use the portable archive (Windows or Linux on x64)?</summary>
         public static bool CanInstall => RuntimeInformation.OSArchitecture == Architecture.X64 && (OperatingSystem.IsWindows() || OperatingSystem.IsLinux());
 
         /// <summary>Downloads the portable Open Watcom and unpacks it to <see cref="Directory"/>. Returns its root (the WATCOM folder). A failure is an
-        /// <see cref="InvalidOperationException"/> with the reason.</summary>
-        public static string Install(Action<string>? log = null)
+        /// <see cref="InvalidOperationException"/> with the reason. <paramref name="progress"/> gets the bytes of the download (done, total); <paramref name="token"/> stops it
+        /// (an <see cref="OperationCanceledException"/>, nothing is kept).</summary>
+        public static string Install(Action<string>? log = null, Action<long, long>? progress = null, CancellationToken token = default)
         {
             if (!CanInstall) throw new InvalidOperationException("The portable Open Watcom can only be downloaded on Windows or Linux (x64). Install Open Watcom v2 yourself and set WATCOM.");
             System.IO.Directory.CreateDirectory(ToolchainSetup.Root);
@@ -212,25 +199,9 @@ namespace fire.Native
                 using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(20) })
                 {
                     log?.Invoke($"Downloading {DownloadUrl} ...");
-                    using var request = new HttpRequestMessage(HttpMethod.Get, DownloadUrl);
-                    request.Headers.UserAgent.ParseAdd("fire-toolchain-setup");
-                    using var response = http.Send(request, HttpCompletionOption.ResponseHeadersRead);
-                    response.EnsureSuccessStatusCode();
-                    long total = response.Content.Headers.ContentLength ?? 0;
-                    using var input = response.Content.ReadAsStream();
-                    using var output = File.Create(zip);
-                    var buffer = new byte[81920];
-                    long done = 0; int lastPercent = -1;
-                    int n;
-                    while ((n = input.Read(buffer, 0, buffer.Length)) > 0)
-                    {
-                        output.Write(buffer, 0, n);
-                        done += n;
-                        int percent = total > 0 ? (int)(done * 100 / total) : -1;
-                        if (percent != lastPercent && (percent % 5 == 0 || percent < 0)) { lastPercent = percent; log?.Invoke(total > 0 ? $"Downloading... {percent}% ({done / 1048576} MB)" : $"Downloading... {done / 1048576} MB"); }
-                    }
-                    if (total > 0 && done != total) throw new IOException($"The download is incomplete ({done} of {total} bytes). Check the connection (or a proxy / virus scanner) and try again.");
+                    DownloadTransfer.Fetch(http, DownloadUrl, zip, progress, log, token);
                 }
+                token.ThrowIfCancellationRequested();
                 return Unpack(zip, log);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException or InvalidDataException)

@@ -12,6 +12,7 @@ namespace fire.Ember
               ember install Name[@Version]   install a package (with what it depends on); also: ember install path\to\package.fpk
               ember remove Name              remove an installed package
               ember list                     the installed packages
+              ember sources                  the package sources in use (ember.json next to the compiler, or the defaults)
               ember create File.json         write a package description with example values (and the example files next to it)
               ember blank File.json          write a package description with all fields empty
               ember forge File.json [-o Dir] build the package (.fpk) from the description; the description with absolute paths is kept in Dir\json\
@@ -28,7 +29,7 @@ namespace fire.Ember
             try
             {
                 // the standard packages are packed and installed from Source (by forge next to ember) when they are missing or changed - quick when nothing changed
-                if (args[0].ToLowerInvariant() is not ("create" or "blank" or "forge" or "index" or "cache"))
+                if (args[0].ToLowerInvariant() is not ("create" or "blank" or "forge" or "index" or "cache" or "sources"))
                     StandardPackages.EnsureInstalled(Console.WriteLine);
                 return Run(args[0].ToLowerInvariant(), args.Skip(1).ToArray());
             }
@@ -55,7 +56,7 @@ namespace fire.Ember
                         string installed = service.Store.Find(l.Name) is { } p ? $" [installed: {p.Version}]" : "";
                         Console.WriteLine($"{l.Name} {l.Latest?.Version}{installed}");
                         if (l.Description.Length > 0) Console.WriteLine("    " + l.Description);
-                        Console.WriteLine($"    by {(l.Author.Length > 0 ? l.Author : "?")}; versions: {string.Join(", ", l.Versions.Select(v => v.Version))}");
+                        Console.WriteLine($"    by {(l.Author.Length > 0 ? l.Author : "?")}{(l.License.Length > 0 ? "; license: " + l.License : "")}; versions: {string.Join(", ", l.Versions.Select(v => v.Version + (v.Yanked ? " (yanked)" : "")))}");
                     }
                     return 0;
                 }
@@ -63,6 +64,13 @@ namespace fire.Ember
                     if (a.Length != 1) return Usage1("ember install Name[@Version]");
                     new PackageManagerService().Install(a[0], Console.WriteLine);
                     return 0;
+                case "sources":
+                {
+                    string file = Path.Combine(AppContext.BaseDirectory, EmberSettings.FileName);
+                    Console.WriteLine(File.Exists(file) ? $"The package sources ({file}):" : $"The package sources (default; {file} lists others):");
+                    foreach (var source in EmberSettings.LoadSources()) Console.WriteLine($"  {(source is FolderSource ? "folder" : "index ")}  {source.Name}");
+                    return 0;
+                }
                 case "remove":
                     if (a.Length != 1) return Usage1("ember remove Name");
                     new PackageManagerService().Remove(a[0]);

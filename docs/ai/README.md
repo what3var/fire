@@ -40,18 +40,23 @@ checked against llama.cpp (the same tokens and the five most likely next tokens 
 A `Session` holds the **cache** of what the model has read (`context` tokens: prompt and answer together, 2048 by default). A prompt that starts like
 the one before only computes the new part: the same instructions before every question, or a chat that grows, cost only what is new. Models with
 recurrent layers (Qwen 3.5, LFM 3) keep a state instead of the keys of every position - small, and the same for any length; they come back to the end
-of the last prompt (a checkpoint), so the options of a choice and the next question of a chat are cheap there, too.
+of the last prompt (a checkpoint), so the options of a choice and the next question of a chat are cheap there, too. `Keep(start)` names the start
+every prompt to come begins with (the instructions and tools of an agent): its state is kept as well, so a prompt whose later part changed (a chat
+that left out its oldest turns) does not compute the instructions again.
 
 | Member | |
 | --- | --- |
-| `new AI.Session(model, context = 2048, threads = 0)` | `threads` 0: as many as the machine has (8 at most) |
+| `new AI.Session(model, context = 2048, threads = 0)` | `threads` 0: one fewer than the machine has (8 at most) |
 | `Start(prompt, settings)` | starts writing the text after `prompt`; returns at once |
 | `Take()` | the text written since the last call (whole characters only) |
 | `State`, `Busy` | `Idle`, `Prompt` (reading the prompt), `Generating`, `Done`, `Failed` (`Error`), `Cancelled` |
 | `Cancel()` | stops the job after the token it is working on |
 | `StartChoice(prompt, options, perToken)`, `Choice`, `Score(i)` | weighs the options as continuations of the prompt: `Choice` is the most likely, `Score` its log-probability |
 | `Complete(prompt, settings)`, `Ask(system, question, settings)`, `Choose(prompt, options)` | the same, waiting for the result |
-| `PromptTokens`, `PromptDone`, `Generated`, `PromptMilliseconds`, `GenerateMilliseconds` | for a progress bar and statistics |
+| `PromptTokens`, `PromptDone`, `PromptReused`, `Generated`, `PromptMilliseconds`, `GenerateMilliseconds`, `TokensPerSecond` | for a progress bar and statistics - also while the job runs (`PromptDone` grows while the prompt is read; `PromptReused`: the tokens that came from the cache) |
+| `EndReason` | why the text ended: `AI.End.Model` (the model ended it), `MaxTokens`, `Context` (the context was full), `StopText`, `Cancelled`, `Failed` |
+| `Threads` | the threads that compute |
+| `Keep(start)` | every prompt to come begins with `start`: its state stays computed (see above) |
 | `Forget()` | empties the cache |
 
 A user interface starts a job and takes the text in its timer or frame loop:
@@ -88,7 +93,7 @@ print(session.Complete(chat.Prompt()))      // only the new part is read
 | `Temperature` | 0.7 | 0: always the most likely token - the same answer every time (`AI.Settings.Exact()`) |
 | `TopK`, `TopP`, `MinP` | 40, 0.95, 0.05 | which tokens are possible at all |
 | `RepeatPenalty` | 1.1 | makes tokens of the last 64 less likely |
-| `MaxTokens` | 512 | 0: until the model ends its answer or the context is full |
+| `MaxTokens` | 512 | 0: until the model ends its answer or the context is full (`EndReason` says which) |
 | `Seed` | 0 | 0: random; another number: the same answer for the same prompt |
 | `Stops` | empty | texts that end the answer (they are not part of it) |
 

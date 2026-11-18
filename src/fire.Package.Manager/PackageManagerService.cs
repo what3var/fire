@@ -7,8 +7,8 @@ namespace fire.Package.Manager
     public static class EmberSettings
     {
         public const string FileName = "ember.json";
-        /// <summary>The page with the index of the published packages.</summary>
-        public const string DefaultIndexUrl = "https://what3var.github.io/fire-packages/index.json";
+        /// <summary>The index of the published packages on the website (https://what3var.github.io/packages/, built from the registry of the website repository).</summary>
+        public const string DefaultIndexUrl = "https://what3var.github.io/packages/index.json";
         public static string DefaultSourceFolder => Path.Combine(AppContext.BaseDirectory, "PackageSource");
 
         public static IReadOnlyList<IPackageSource> LoadSources(string? baseDirectory = null)
@@ -67,7 +67,8 @@ namespace fire.Package.Manager
             // the same package from several sources: the versions are put together
             var merged = all.GroupBy(l => l.Name, StringComparer.OrdinalIgnoreCase).Select(g => g.Count() == 1 ? g.First()
                 : new PackageListing(g.First().Name, g.First().Author, g.First().Description,
-                    g.SelectMany(x => x.Versions).GroupBy(v => v.Version).Select(v => v.First()).ToList(), string.Join(", ", g.Select(x => x.Source).Distinct()))).ToList();
+                    g.SelectMany(x => x.Versions).GroupBy(v => v.Version).Select(v => v.First()).ToList(), string.Join(", ", g.Select(x => x.Source).Distinct()),
+                    g.Select(x => x.License).FirstOrDefault(s => s.Length > 0) ?? "", g.Select(x => x.Homepage).FirstOrDefault(s => s.Length > 0) ?? "")).ToList();
             query = (query ?? "").Trim();
             return merged
                 .Where(l => query.Length == 0 || l.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || l.Description.Contains(query, StringComparison.OrdinalIgnoreCase))
@@ -100,7 +101,10 @@ namespace fire.Package.Manager
                     if (listing == null)
                         throw new PackageException($"The package '{name}' was not found" + (warnings.Count > 0 ? ":\n  " + string.Join("\n  ", warnings) : "."));
                     var version = wanted.Length == 0 ? listing.Latest : listing.Versions.FirstOrDefault(v => v.Version == wanted);
+                    if (version == null && wanted.Length == 0)
+                        throw new PackageException($"Every version of '{name}' was withdrawn (yanked); name one to install it anyway: {string.Join(", ", listing.Versions.Select(v => $"{name}@{v.Version}"))}.");
                     if (version == null) throw new PackageException($"The package '{name}' has no version '{wanted}' (available: {string.Join(", ", listing.Versions.Select(v => v.Version))}).");
+                    if (version.Yanked) log?.Invoke($"Note: {listing.Name} {version.Version} was withdrawn (yanked) by its source.");
                     if (!force && Store.Find(listing.Name) is { } already && already.Version == version.Version) { log?.Invoke($"{listing.Name} {version.Version} is already installed."); return; }
                     log?.Invoke($"Fetching {listing.Name} {version.Version}...");
                     fpk = PackageDownloads.Fetch(version, temp);

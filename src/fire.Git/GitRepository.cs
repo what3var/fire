@@ -185,11 +185,27 @@ namespace fire.Git
         }
 
         /// <summary>The state of every changed file by full path (for marking files and folders in a tree).</summary>
-        public Dictionary<string, GitFileState> StateMap()
+        public Dictionary<string, GitFileState> StateMap() => StateMapOf(Status());
+
+        /// <summary>The state of every file of `changes` by full path.</summary>
+        public static Dictionary<string, GitFileState> StateMapOf(IEnumerable<GitChange> changes)
         {
             var map = new Dictionary<string, GitFileState>(OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
-            foreach (var c in Status()) map[c.FullPath] = c.Combined;
+            foreach (var c in changes) map[c.FullPath] = c.Combined;
             return map;
+        }
+
+        /// <summary>The id of the current commit (null: no commit yet).</summary>
+        public string? HeadSha => _repo.Head.Tip?.Sha;
+
+        /// <summary>Everything the Git panel shows: the branch, how far it is from the server's, and the changed files by staged, not staged and untracked.</summary>
+        public GitOverview Overview() => Overview(Status());
+
+        /// <summary>The overview with a status that was read already.</summary>
+        public GitOverview Overview(IReadOnlyList<GitChange> changes)
+        {
+            var current = HasCommits ? Branches().FirstOrDefault(b => b.IsCurrent) : null;
+            return GitOverview.Build(BranchName, current?.Ahead ?? 0, current?.Behind ?? 0, current?.HasUpstream ?? false, _repo.Network.Remotes.Any(), IsMerging, changes);
         }
 
         public bool IsIgnored(string path) => _repo.Ignore.IsPathIgnored(RelativeOf(path));
@@ -212,8 +228,26 @@ namespace fire.Git
 
         public void Unstage(IEnumerable<string> paths)
         {
-            try { Commands.Unstage(_repo, paths.Select(RelativeOf).ToList()); }
+            var relative = paths.Select(RelativeOf).ToList();
+            if (relative.Count == 0) return;
+            try
+            {
+                if (HasCommits) Commands.Unstage(_repo, relative);
+                else
+                {
+                    // no commit yet: unstaging takes the files out of the index again (they are untracked then)
+                    foreach (var r in relative) _repo.Index.Remove(r);
+                    _repo.Index.Write();
+                }
+            }
             catch (LibGit2SharpException ex) { throw new GitException(ex.Message, ex); }
+        }
+
+        /// <summary>Nothing is staged afterwards (the files stay as they are).</summary>
+        public void UnstageAll()
+        {
+            var staged = Status().Where(c => c.Staged != GitFileState.Unmodified && !c.IsConflicted).Select(c => c.FullPath).ToList();
+            Unstage(staged);
         }
 
         /// <summary>The name and the e-mail address for commits from the configuration of git (the repository's, then the user's); null parts if there are none.</summary>

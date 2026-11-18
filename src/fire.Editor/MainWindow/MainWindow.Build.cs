@@ -129,10 +129,11 @@ namespace fire.Editor
             script.SetText(textNew.ToString());
         }
 
-        /// <summary>The native build configuration that applies to the active script (the nearest fire.native.json, else the defaults) and where it is saved.</summary>
-        private fire.Native.NativeConfig LoadNativeConfig(out string savePath)
+        /// <summary>The native build configuration that applies to `project` (null: the project of the active document, else the active script) - the nearest fire.native.json, else the
+        /// defaults - and where it is saved.</summary>
+        private fire.Native.NativeConfig LoadNativeConfig(out string savePath, LoadedProject? project = null)
         {
-            string? file = ContextProject()?.FilePath ?? ActiveScript?.FilePath;
+            string? file = (project ?? ContextProject())?.FilePath ?? ActiveScript?.FilePath;
             if (file == null)
             {
                 savePath = Path.Combine(Directory.GetCurrentDirectory(), fire.Native.NativeConfig.FileName);
@@ -316,11 +317,14 @@ namespace fire.Editor
             McpBuildFinished(what, ok, errors, warnings);
         }
 
-        /// <summary>Translates the active script to C++ for the configured target and builds it with the configured toolchain (or writes the files of a project).</summary>
-        private async void BuildNative_Click(object? sender, RoutedEventArgs e)
+        /// <summary>Build (Run menu, the Build tool strip): always native - the project of the active document (a library is packed), else the active script, translated to C++ for
+        /// the configured target and built with the configured toolchain (or the files of a project written).</summary>
+        private async void BuildNative_Click(object? sender, RoutedEventArgs e) => await BuildProjectNative(ContextProject());
+
+        /// <summary>A native build of `project` (null: the active script); see BuildNative_Click.</summary>
+        private async Task BuildProjectNative(LoadedProject? project)
         {
             if (BuildRunning()) return;
-            var project = ContextProject();
             BuildPlan? plan = null;
             ScriptEditorControl? script = null;
             if (project != null)
@@ -340,7 +344,7 @@ namespace fire.Editor
             fire.Native.ToolchainDef toolchain;
             try
             {
-                config = LoadNativeConfig(out _);
+                config = LoadNativeConfig(out _, project);
                 target = config.ResolveTarget(_nativeTargetChoice ?? plan?.Settings.Target);   // the tool strip goes before the settings of the project, which go before the configuration file
                 toolchain = config.ResolveToolchain(target, plan?.Settings.Toolchain);
             }
@@ -444,6 +448,8 @@ namespace fire.Editor
         /// <summary>The name of the mode of the run (`debug`, `release`, `performance`).</summary>
         private string RunModeName => _session.ExecutionMode.ToString().ToLowerInvariant();
 
+        /// <summary>Build virtual: a program that carries the virtual machine (whatever the engine is) - the project of the active document into bin/vm-&lt;mode&gt;/, a single script where
+        /// the user says. A library is packed.</summary>
         private async void Build_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
@@ -451,22 +457,13 @@ namespace fire.Editor
             // a library is not a program: building it means packing it as a package
             if (project?.Project.Type == OutputType.Library) { await PackLibrary(project); return; }
 
-            // "Build" follows the settings of the project, else the configuration: with the native engine it builds natively
-            try
-            {
-                string? engine = project != null ? ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings).Engine : null;
-                engine ??= LoadNativeConfig(out _).Engine;
-                if (string.Equals(engine, "native", StringComparison.OrdinalIgnoreCase)) { BuildNative_Click(sender, e); return; }
-            }
-            catch (fire.Native.NativeConfigException) { }
-
             bool windows = OperatingSystem.IsWindows();
             string? output = null;
             if (project != null && ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings).Output is { } configured)
                 output = Path.GetFullPath(configured, _workspace.Solution?.Directory ?? project.Directory);
             // a project builds into its folder, without asking: bin/vm-<mode>/ (the program carries the virtual machine); a single file asks where to
             else if (project != null) output = ProjectOutput.ProgramPath(project.Directory, project.Name, ProjectOutput.VmTarget, RunModeName, windows);
-            output ??= await PickSavePath("Build standalone", "program" + (windows ? ".exe" : ""), windows ? "exe" : "");
+            output ??= await PickSavePath("Build virtual", "program" + (windows ? ".exe" : ""), windows ? "exe" : "");
             if (output == null) return;
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
             await CompileAndPrepareAsync(output);
