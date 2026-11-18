@@ -1,0 +1,16 @@
+// `readonly` is the member the receiver really has: a `static readonly Cursor` of one class says nothing about the property `Cursor` of another
+// (before, `w.Cursor = 3` was the compile error "'Cursor' is 'readonly' ..."). The static readonly field stays the constant of its initializer.
+class Kind { static readonly defined int Cursor = 6 }
+class W {
+    defined int c = 0
+    defined int Cursor { get { return this.c }
+        set { this.c = value * 10 } }
+}
+class S { static int Put(any p, int v) { p.Cursor = v
+    return p.Cursor } }
+var w = new W()
+w.Cursor = 3
+any a = new W()
+a.Cursor = 4
+print(w.Cursor + " " + a.Cursor + " " + S.Put(new W(), 5) + " " + Kind.Cursor)
+//# name: Nativ: readonly gilt dem Mitglied des Empfaengers (eine Property neben einem gleichnamigen static readonly Feld)

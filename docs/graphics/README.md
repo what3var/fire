@@ -41,6 +41,10 @@ while (win.Tick()) { }                                       // show it until th
 A colour is an `int`. **0 to 255 is an index into the framebuffer's palette**, any other number a direct colour `r + g*256 + b*65536 + a*16777216`
 (written in hex: `0xAABBGGRR`; alpha 255 = opaque, 0 = invisible). So `0xFF0000FF` is opaque red, and `0` is palette entry 0 (black), not "transparent".
 `UI.Color.Rgb(r, g, b)` (with `ui`) builds an opaque colour.
+So `0`, `new SolidBrush(0)` and `SetPixel(x, y, 0)` are opaque black (palette entry 0 of the default palette), while a direct colour written without
+an alpha byte - `0x336699`, any number above 255 below `0x01000000` - has alpha 0 and is transparent (with blending nothing is drawn, `ClearTo` writes transparent pixels): an opaque colour needs alpha `0xFF` (`0xFF996633` is
+r 0x33, g 0x66, b 0x99; the theme's `0xRRGGBB` values such as `SetColors(dark, accent)` and markup's `#RRGGBB` are converted for you), and fully
+transparent is the smallest number that is no palette index with alpha 0, `0x00000100` - which is why `UI.Color.Transparent()` is `256`.
 
 The default palette is in the style of xterm-256: 0-15 the 16 classic CGA colours, 16-231 a 6x6x6 colour cube, 232-255 a grey ramp. It can be
 changed: `fb.SetPaletteColor(i, color)`, `SetPaletteRgb(i, r, g, b)`, `GetPaletteColor(i)`, `ReadPalette(withAlpha)` / `WritePalette(bytes)`.
