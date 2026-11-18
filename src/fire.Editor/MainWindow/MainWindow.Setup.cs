@@ -31,7 +31,7 @@ namespace fire.Editor
             if (_setupRun is { Running: true }) { ShowSetupProgress(); return false; }
             var catalog = ModelCatalog.Load();
             var env = SetupEnvironment.Current(_settings.Assistant);
-            var model = new SetupWizardModel(env, catalog);
+            var model = new SetupWizardModel(env, catalog, fire.Native.MachineToolchains.Load());
             var wizard = new SetupWizardWindow(model);
             if (Environment.GetEnvironmentVariable("FIRE_SETUP_WIZARD_SHOTS") is { Length: > 0 } shots) { await SaveSetupShots(shots); return false; }
             await wizard.ShowDialog<bool?>(this);
@@ -41,6 +41,9 @@ namespace fire.Editor
                 _settings.Save();
             }
             if (wizard.Plan == null) return false;
+            // the compilers for Build and Publish (toolchain.json; the downloads of the plan bring the missing ones)
+            try { model.Compilers.Save(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { UpdateStatus("The choice of the compilers could not be saved: " + ex.Message); }
             // (Start must never do nothing: a plan without steps is said, a failure to start is shown)
             try
             {
@@ -48,6 +51,7 @@ namespace fire.Editor
                 if (run == null)
                 {
                     UpdateStatus("The setup has nothing to do: everything chosen is there already.");
+                    if (wizard.OpenOptions) await ShowOptions();
                     return false;
                 }
                 StartSetup(run);
@@ -59,7 +63,8 @@ namespace fire.Editor
             }
             // at the first start the welcome window waits until the progress is closed or goes to the background - opened at once, it covered the progress
             // (a modal window over it: Start seemed to do nothing)
-            if (firstStart) await _setupDismissed!.Task;
+            if (firstStart || wizard.OpenOptions) await _setupDismissed!.Task;
+            if (wizard.OpenOptions) await ShowOptions();
             return true;
         }
 
@@ -69,6 +74,7 @@ namespace fire.Editor
         /// <summary>At the start (after the splash): the wizard when it is due; the assistant waits for it (its model may come with it).</summary>
         private async Task RunFirstStartSetup()
         {
+            if (Environment.GetEnvironmentVariable("FIRE_OPTIONS_SHOTS") is { Length: > 0 } optionShots) { await SaveOptionsShots(optionShots); return; }
             if (!SetupWizardDue && Environment.GetEnvironmentVariable("FIRE_SETUP_WIZARD_SHOTS") is not { Length: > 0 }) return;
             bool started = await ShowSetupWizard(firstStart: true);
             if (!started) StartAssistantAfterSetup();
@@ -167,8 +173,8 @@ namespace fire.Editor
             var catalog = ModelCatalog.Load();
             var env = SetupEnvironment.Current(assistantEnabled: true) with { AssistantAvailable = true };
             if (Environment.GetEnvironmentVariable("FIRE_SETUP_WIZARD_AS") == "windows")
-                env = env with { IsWindows = true, IsMacOS = false, IsX64 = true, Detected = Array.Empty<DetectedToolchain>(), W64devkitThere = false, WatcomThere = false };
-            var wizard = new SetupWizardWindow(new SetupWizardModel(env, catalog));
+                env = env with { IsWindows = true, IsMacOS = false, IsX64 = true, Detected = Array.Empty<DetectedToolchain>(), W64devkitThere = false, WatcomThere = false, TinyccThere = false, TinyccPinned = true };
+            var wizard = new SetupWizardWindow(new SetupWizardModel(env, catalog, fire.Native.MachineToolchains.Load()));
             wizard.Show(this);
             await Task.Delay(800);
             try { wizard.SaveShots(folder); }

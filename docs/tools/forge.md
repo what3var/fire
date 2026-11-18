@@ -36,7 +36,7 @@ forge test All.firesln --filter MathTests
 | `-m DEBUG\|RELEASE\|PERFORMANCE` | execution mode (default: what the source says with `#debug`/`#performance`, else release) |
 | `--engine vm\|native` | what `build` makes (default: `fire.native.json`, the project, else `vm`) |
 | `-t <target>` | target of a native build: `windows`, `linux`, `macos`, `esp32`, `freertos`, `wasm` or one of `fire.native.json` ([targets](../targets/README.md)) |
-| `--toolchain <name>` | the C compiler (`gcc`, `clang`, `msvc`, `tcc`, ...) |
+| `--toolchain <name>` | the C compiler (`gcc`, `clang`, `msvc`, `tcc`, ...); also for `publish`. Without it: the project's, else the machine's Build compiler (`build`, `test`) or Publish compiler (`publish`) - spark's *Tools > Options > Compilers*, `Toolchain/toolchain.json` |
 | `--config <file>` | the native configuration (default: the nearest `fire.native.json`) |
 | `-f 32\|64`, `-i 32\|64` | width of `float` / `int` (default: `#floatwidth` / `#intwidth` in the source, else 64) |
 | `--types lax\|strict` | type conflicts are warnings (lax, default) or errors ([types](../language/02-types.md#the-type-checker-lax-and-strict)) |

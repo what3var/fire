@@ -86,22 +86,23 @@ namespace fire.Native
 
         private static ToolchainDef Gcc(string compiler) => new() { Extends = "gcc", Kind = "gcc", Compiler = compiler, Std = "c++17", Optimization = "-O2", Args = new() { "-Wall", "-Wextra" } };
 
-        /// <summary>The toolchain chosen for the whole machine (written by the installer, by "Detect" and by the editor's toolchain dialog), or null.</summary>
-        public static ToolchainDef? LoadMachineToolchain()
-        {
-            try
-            {
-                if (!File.Exists(MachineFile)) return null;
-                var def = JsonSerializer.Deserialize<ToolchainDef>(File.ReadAllText(MachineFile), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                return def?.WithBase(def.Kind is { } k && ToolchainDef.BuiltIn.TryGetValue(k, out var b) ? b : null);
-            }
-            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return null; }
-        }
+        /// <summary>The toolchain chosen for the whole machine (written by the installer, by "Detect" and by the editor's toolchain dialog), or null. The same file keeps the
+        /// compilers chosen for building and publishing (<see cref="MachineToolchains"/>).</summary>
+        public static ToolchainDef? LoadMachineToolchain() => MachineToolchains.Load(MachineFile).Legacy;
 
+        /// <summary>Writes the machine's toolchain; the choice for building and publishing in the file stays.</summary>
         public static void SaveMachineToolchain(ToolchainDef def)
         {
             Directory.CreateDirectory(Root);
-            File.WriteAllText(MachineFile, JsonSerializer.Serialize(def, new JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull }));
+            var json = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(def, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull }))!.AsObject();
+            try
+            {
+                if (File.Exists(MachineFile) && System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(MachineFile), MachineToolchains.CaseInsensitive) is System.Text.Json.Nodes.JsonObject old)
+                    foreach (string key in new[] { "build", "publish" })
+                        if (old[key] is { } value) json[key] = value.DeepClone();
+            }
+            catch (JsonException) { }
+            File.WriteAllText(MachineFile, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
 
         // -------------------------------------------------------------------------------------------------------------

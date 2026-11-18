@@ -205,6 +205,29 @@ EM_JS(int, fire_dwebjs_setBackdrop, (int id, int kind), {
     w.canvas.style.backdropFilter = blur; w.canvas.style.webkitBackdropFilter = blur;
     return kind >= 2 ? 2 : kind;
 });
+/* Window.Fullscreen: the canvas goes to full screen (requestFullscreen - the browser allows it only shortly after a click or a key of the user; a refusal
+ * leaves the state as it is) or leaves it; the browser's own style of a full screen element stretches the canvas over the screen, the size is followed like every
+ * size of the canvas (fire_dwebjs_cssSize). The user leaves full screen with Esc: fire_dwebjs_fullscreen says the state. */
+EM_JS(void, fire_dwebjs_setFullscreen, (int id, int on), {
+    var w = Module.fireWins[id];
+    if (!w) return;
+    var c = w.canvas, now = document.fullscreenElement || document.webkitFullscreenElement || null;
+    try {
+        if (on && now !== c) {
+            var ask = c.requestFullscreen || c.webkitRequestFullscreen;
+            var p = ask ? ask.call(c, { navigationUI: "hide" }) : null;
+            if (p && p.catch) p.catch(function () {});
+        } else if (!on && now === c) {
+            var leave = document.exitFullscreen || document.webkitExitFullscreen;
+            var q = leave ? leave.call(document) : null;
+            if (q && q.catch) q.catch(function () {});
+        }
+    } catch (x) {}
+});
+EM_JS(int, fire_dwebjs_fullscreen, (int id), {
+    var w = Module.fireWins[id];
+    return w && (document.fullscreenElement || document.webkitFullscreenElement || null) === w.canvas ? 1 : 0;
+});
 EM_JS(void, fire_dwebjs_setTouchMouse, (int id, int v), { var w = Module.fireWins[id]; if (w) w.touchMouse = v; });
 EM_JS(double, fire_dwebjs_scale, (void), { return window.devicePixelRatio || 1; });
 EM_JS(void, fire_dwebjs_copy, (const char* text), {
@@ -253,6 +276,8 @@ static void fire_dweb_setInputShape(FireDwebWindow* w, const int* rects, int cou
 static void fire_dweb_setIcon(FireDwebWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
 static int fire_dweb_position(FireDwebWindow* w, int* r) { (void)w; (void)r; return 0; }
 static int fire_dweb_workArea(FireDwebWindow* w, int* r) { (void)w; (void)r; return 0; }
+static int fire_dweb_setFullscreen(FireDwebWindow* w, int on) { if (!w->open) return 0; fire_dwebjs_setFullscreen(w->id, on); return fire_dwebjs_fullscreen(w->id); }
+static int fire_dweb_fullscreen(FireDwebWindow* w) { return w->open ? fire_dwebjs_fullscreen(w->id) : 0; }
 static int fire_dweb_setBackdrop(FireDwebWindow* w, int kind) { return w->open ? fire_dwebjs_setBackdrop(w->id, kind) : FIRE_BACKDROP_NONE; }
 static double fire_dweb_scale(FireDwebWindow* w) { (void)w; return fire_dwebjs_scale(); }
 

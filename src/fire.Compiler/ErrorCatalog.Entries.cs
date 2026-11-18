@@ -289,6 +289,7 @@ namespace fire.Compiler
         ("E4078", ErrorArea.Resolver, "The initialisers of static fields need each other in a cycle: {*} - each one needs the value of the next one first; break the cycle (set one of them later, e.g. in a static method)"),
         ("E4079", ErrorArea.Resolver, "The initialiser of the static field '{*}' reads the top-level variable '{*}' - static fields are initialised before the top-level code runs, so it is still undefined there (make it a static field, or set the static field in the top-level code)"),
         ("E4080", ErrorArea.Resolver, "'replace' assigns a field - '{*}' is a variable (its old value goes with its scope; to destroy it now: 'delete {*}' and then the assignment)"),
+        ("E4081", ErrorArea.Resolver, "'{*}' is 'static readonly' - only its initializer sets it"),
         ("E5001", ErrorArea.Compiler, "Only the first 16 parameters of a method can be 'ref'."),
         ("E5002", ErrorArea.Compiler, "Internal error: 'class extends {*}' was not merged (the program must be produced by Parser.Parse()/ParseMultiple())."),
         ("E5003", ErrorArea.Compiler, "Statement {*} is not supported."),

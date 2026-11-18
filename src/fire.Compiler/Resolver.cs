@@ -2516,11 +2516,9 @@ namespace fire.Compiler
                     // resolver, lacking a static type system, can NOT know which
                     // class is meant - a deliberate limit of this development stage,
                     // see FieldDecl documentation.
-                    // 'obj.field = ...' from anywhere else: an error when every class that declares a field of this name declares it 'readonly'
-                    // (the class of 'obj' is not known here; a name that some class declares writable stays allowed)
-                    if (me.Target is not ThisExpr && IsReadonlyEverywhere(me.Name))
-                        throw new ResolverException(
-                            $"'{me.Name}' is 'readonly' and can only be assigned inside a constructor of its class (as 'this.{me.Name} = ...')", me.Line);
+                    // 'obj.field = ...' from anywhere else: an error when every instance member of this name (in any class) is a 'readonly' field
+                    // (the class of 'obj' is not known here; a name that some class declares writable, as a property or a method stays allowed -
+                    // a static field of the name is not looked at: see IsReadonlyEverywhere; where the class is known the type checker decides, E4052)
                     if (me.Target is ThisExpr && _currentClass != null && IsReadonlyField(_currentClass, me.Name) && !_inConstructor)
                         throw new ResolverException(
                             $"'{_currentClass.Name}.{me.Name}' is 'readonly' and can only be assigned inside a " +
@@ -2535,6 +2533,7 @@ namespace fire.Compiler
                     if (staticAssignClassName != null)
                     {
                         CheckStaticMemberExists(staticAssignClassName, me);
+                        if (StaticReadonlyField(staticAssignClassName, me.Name) != null) throw StaticReadonlyWrite(staticAssignClassName, me);
                         _refs[me] = new ResolvedRef.StaticMember(staticAssignClassName);
                         break;
                     }
@@ -2545,10 +2544,14 @@ namespace fire.Compiler
                         var thisAssignMember = FindMemberInClassChain(_currentClass, me.Name);
                         if (thisAssignMember is { IsStatic: true })
                         {
+                            if (StaticReadonlyField(thisAssignMember.Value.ClassName, me.Name) != null) throw StaticReadonlyWrite(thisAssignMember.Value.ClassName, me);
                             _refs[me] = new ResolvedRef.StaticMember(thisAssignMember.Value.ClassName);
                             break;
                         }
                     }
+                    if (me.Target is not ThisExpr && IsReadonlyEverywhere(me.Name))
+                        throw new ResolverException(
+                            $"'{me.Name}' is 'readonly' and can only be assigned inside a constructor of its class (as 'this.{me.Name} = ...')", me.Line);
                     ResolveExpr(me.Target);
                     break;
                 case IndexExpr ix:
@@ -2566,24 +2569,52 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Is `fieldName` declared as `readonly` in `cd` (ONLY this class
-        /// itself, no base-class chain - deliberate limit)?</summary>
-        /// <summary>Is `fieldName` declared by at least one class, and `readonly` in every class that declares it?</summary>
+        /// <summary>`obj.name = ...` where the class of `obj` is not known here: is every instance member of that name that an object can have a `readonly`
+        /// field (and is there at least one)? A static field is no member of an object (`Kind.Cursor` says nothing about `window.Cursor`), and any other
+        /// instance member of the name - a writable field, a property (with or without `set`: the run time decides), a method, a property of an interface -
+        /// makes the write possible. Where the type checker knows the class of `obj`, it checks the member that is really meant (E4052).</summary>
         private bool IsReadonlyEverywhere(string fieldName)
         {
             bool any = false;
             foreach (var cd in _classes.Values)
                 foreach (var m in cd.Members)
-                    if (m is FieldDecl fd && fd.Name == fieldName)
+                    switch (m)
                     {
-                        if (!fd.IsReadonly) return false;
-                        any = true;
+                        case FieldDecl { IsStatic: false } fd when fd.Name == fieldName:
+                            if (!fd.IsReadonly) return false;
+                            any = true;
+                            break;
+                        case PropertyDecl { IsStatic: false } pd when pd.Name == fieldName: return false;
+                        case MethodDecl { IsStatic: false } md when md.Name == fieldName: return false;
                     }
+            foreach (var iface in _interfaces.Values)
+                if (iface.PropertySigs.Any(p => p.Name == fieldName)) return false;
             return any;
         }
 
+        /// <summary>Is `fieldName` declared as an instance `readonly` field in `cd` (ONLY this class itself, no base-class chain - deliberate limit)?</summary>
         private static bool IsReadonlyField(ClassDecl cd, string fieldName) =>
-            cd.Members.Any(m => m is FieldDecl { IsReadonly: true } fd && fd.Name == fieldName);
+            cd.Members.Any(m => m is FieldDecl { IsReadonly: true, IsStatic: false } fd && fd.Name == fieldName);
+
+        /// <summary>The `static readonly` field `name` that `ClassName.name` (or `this.name`) means in `className`: the nearest class of the chain that
+        /// declares a member of the name decides - null when that member is something else.</summary>
+        private FieldDecl? StaticReadonlyField(string className, string name)
+        {
+            if (!_classes.TryGetValue(className, out var start)) return null;
+            var seen = new HashSet<ClassDecl>();
+            for (var cd = start; cd != null && seen.Add(cd); cd = GetBaseClassDecl(cd))
+                foreach (var m in cd.Members)
+                    switch (m)
+                    {
+                        case FieldDecl fd when fd.Name == name: return fd is { IsStatic: true, IsReadonly: true } ? fd : null;
+                        case PropertyDecl pd when pd.Name == name: return null;
+                        case MethodDecl md when md.Name == name: return null;
+                    }
+            return null;
+        }
+
+        private static ResolverException StaticReadonlyWrite(string className, MemberExpr me) =>
+            new($"'{GenericClassNames.PlainName(className)}.{me.Name}' is 'static readonly' - only its initializer sets it", me.Line);
 
         /// <summary>Lambdas see only their own scope + global (SPEC 4.2): the
         /// new scope is deliberately attached directly to the global scope, not to

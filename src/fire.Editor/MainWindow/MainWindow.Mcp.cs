@@ -167,13 +167,11 @@ namespace fire.Editor
             };
         }
 
-        /// <summary>What the error list shows: the last build, else the live analysis of the active script.</summary>
+        /// <summary>What the error list shows: the live analysis of the open scripts and of the projects, and of the last build what neither covers.</summary>
         private IReadOnlyList<ErrorListItem> CurrentErrors()
         {
-            if (_buildItems != null) return _buildItems;
-            var doc = ActiveDocument;
-            var diagnostics = doc?.Script?.Diagnostics ?? (IReadOnlyList<fire.Compiler.Diagnostic>)Array.Empty<fire.Compiler.Diagnostic>();
-            return diagnostics.Select(d => ToItem(d, doc?.DisplayName, FullPathOf(doc))).ToList();
+            UpdateErrorPanel();
+            return _errorItems;
         }
 
         private void RegisterMcpTools(McpServer s)

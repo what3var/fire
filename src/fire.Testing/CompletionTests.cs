@@ -156,9 +156,9 @@ static class CompletionTests
         string generated = fire.UI.Markup.MarkupFiles.GenerateScript("Greeter.fxml", markup);
         var project = new[] { ("Greeter.fxml", generated), ("Upper.fire", "class UpperConverter : UI.Converter { override any Convert(any value) { return value } }") };
         string codeBehind = "class GreeterWindow : GreeterBase {\n    override undefined Greet(any sender) { this.| }\n}\n";
-        Check("Markup: die Felder und Methoden der erzeugten Klasse", codeBehind, "nameBox,answer,Greet,Run,Show,ui,window", "fxBindAll,fxConv_Upper,fxHandles0,fxBusy0", projectFiles: project);
+        Check("Markup: die Felder und Methoden der erzeugten Klasse", codeBehind, "nameBox,answer,Greet,Run,Show,UIRoot,window", "fxBindAll,fxConv_Upper,fxHandles0,fxBusy0", projectFiles: project);
         Check("Markup: Elemente ohne eigenes #import (das erzeugte Skript importiert ui)", codeBehind.Replace("this.|", "this.nameBox.|"), "Text,OnEnter", "nameBox,Greet", projectFiles: project);
-        Check("Markup: Wurzel des Fensters", codeBehind.Replace("this.|", "this.ui.|"), "Add,Run", "defined", projectFiles: project);
+        Check("Markup: Wurzel des Fensters", codeBehind.Replace("this.|", "this.UIRoot.|"), "Add,Run", "defined", projectFiles: project);
         Check("Markup: von aussen", codeBehind.Replace("this.|", "") + "var w = new GreeterWindow()\nw.|", "Run,Show,nameBox", "fxBindAll", projectFiles: project);
 
         Console.WriteLine(_failures == 0 ? "Alle Pruefungen der Vervollstaendigung bestanden." : $"FEHLER: {_failures} Pruefung(en) der Vervollstaendigung fehlgeschlagen.");

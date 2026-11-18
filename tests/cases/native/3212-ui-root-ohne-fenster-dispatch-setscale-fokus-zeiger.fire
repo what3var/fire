@@ -1,0 +1,41 @@
+#import "ui"
+// a root without a window (a layer over the picture of a game): the events by Dispatch, Update/Tick, the pointer by OnCursor, the scale without resizing,
+// the focus with the pointer, the scancode of a key
+class Probe : UI.Button {
+    construct() : base("p", 0, 0, 100, 30) { }
+    override undefined KeyDown(UI.Root root, defined int key, defined int mod) { print("key " + key + " scancode " + root.KeyScancode + " repeat " + root.KeyRepeated) }
+}
+var fb = new Framebuffer(400, 200)
+var ui = new UI.Root(fb, systemScale: false)
+print("ohne Fenster " + (ui.window == undefined) + " " + ui.width + "x" + ui.height)
+ui.FocusFollowsPointer = true
+var stack = new UI.StackPanel(0, 0, 200, 100)
+var a = new UI.Button("a", 0, 0, 100, 30)
+var b = new Probe()
+stack.Add(a)
+stack.Add(b)
+ui.Add(stack)
+a.Cursor = UI.Cursor.Hand
+var shapes = ""
+ui.OnCursor = func (int c) => { shapes = shapes + c + " " }
+a.OnClick = func () => { print("click a") }
+ui.onResize = func (int w, int h) => { print("resize " + w + "x" + h) }
+ui.SetScale(2.0, resize: false)
+print(fb.Width() + "x" + fb.Height() + " logisch " + ui.width + "x" + ui.height)
+print("Update " + ui.Update() + " " + ui.Update())
+// (pixels of the framebuffer: at scale 2 the button a is 0..200 x 0..60)
+ui.Dispatch([9, 20, 20])
+ui.Dispatch([8, 1, 20, 20])
+ui.Dispatch([11, 1, 20, 20])
+print("Zeiger " + shapes + "| Fokus a " + a.Focused)
+ui.Dispatch([9, 20, 80])
+print("Zeiger " + shapes + "| Fokus b " + b.Focused + " a " + a.Focused)
+ui.Dispatch([24, 97, 4, 0, false])
+ui.Dispatch([24, 97, 4, 0, true])
+ui.KeyDown(119, 0, 26)
+ui.Dispatch([24, UI.Keys.Up(), 82, 0, false])
+print("Pfeil: Fokus a " + a.Focused + " Hover b " + b.Hover + " Ereignisse " + ui.Events)
+print("Tick " + ui.Tick())
+ui.Dispatch([1])
+print("geschlossen " + ui.Tick())
+//# name: UI: Root ohne Fenster - Dispatch, Update, Tick, OnCursor, SetScale(s, resize: false), FocusFollowsPointer, KeyScancode

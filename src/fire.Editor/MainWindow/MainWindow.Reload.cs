@@ -18,6 +18,8 @@ namespace fire.Editor
         private readonly ChangeBatcher _diskChanges = new(TimeSpan.FromMilliseconds(400), TimeSpan.FromSeconds(3));
         private readonly List<FileSystemWatcher> _watchers = new();
         private List<string> _watchedRoots = new();
+        // the excluded and undecided folders of the projects: the watcher passes over them (read on the threads of the watchers)
+        private volatile WatchExclusions _watchExclusions = WatchExclusions.None;
         private DispatcherTimer? _diskTimer;
         private bool _syncing, _syncAgain;
         private DateTime _diskChecked = DateTime.MinValue;
@@ -62,6 +64,7 @@ namespace fire.Editor
             folders.AddRange(_workspace.AllProjects.Select(p => p.Directory));
             folders.AddRange(_documents.Select(FullPathOf).Where(p => p != null).Select(p => Path.GetDirectoryName(p!)!));
             var roots = WatchFilter.Roots(folders.Where(Directory.Exists)).ToList();
+            _watchExclusions = WatchExclusions.Of(_workspace.AllProjects, _documents.Select(FullPathOf).Where(p => p != null).Select(p => p!));
             string? gitDir = _gitRoot != null && Directory.Exists(Path.Combine(_gitRoot, ".git")) ? Path.Combine(_gitRoot, ".git") : null;
             var wanted = roots.Select(r => "r|" + r).ToList();
             if (gitDir != null && !roots.Any(r => WatchFilter.IsInside(gitDir, r))) wanted.Add("g|" + gitDir);
@@ -98,6 +101,9 @@ namespace fire.Editor
         /// <summary>From the thread of a watcher.</summary>
         private void OnDiskEvent(string path, bool existenceChanged)
         {
+            if (_watchExclusions.Skips(path)) return;   // (an excluded folder, a file in an undecided one: docs/tools/projects.md, "Folders")
+            // a .gitignore that changes can change which folders are excluded: the folders are read again as for a new file
+            if (Path.GetFileName(path) == ".gitignore") existenceChanged = true;
             switch (WatchFilter.Classify(path))
             {
                 case WatchFilter.Kind.WorkingTree: _diskChanges.Add(path, existenceChanged, DateTime.UtcNow); break;
@@ -130,6 +136,14 @@ namespace fire.Editor
                     docs.Select(d => new OpenFileInfo(FullPathOf(d)!, d.View.IsModified, d.DeletedOnDisk)), batch);
                 await ApplyReloadPlan(plan, docs);
                 if (refreshGit || !plan.IsEmpty) RefreshGit();
+                // files of the projects changed on the disk (another program, git): what the documents know of the other files is taken again, and the checks follow
+                // (a result whose texts did not change is remembered: only what the change concerns is analysed again)
+                if (batch == null || batch.Overflow || batch.Paths.Any(p => p.EndsWith(".fire", StringComparison.OrdinalIgnoreCase) || FireProject.IsMarkupFile(p)))
+                {
+                    ScriptEditorControl.NoteProjectChanged();
+                    foreach (var doc in _documents) doc.Script?.ScheduleDiagnostics(TimeSpan.FromMilliseconds(800));
+                    ScheduleAllProjectChecks(TimeSpan.FromSeconds(2));
+                }
             }
             finally
             {

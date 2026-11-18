@@ -110,6 +110,14 @@ namespace fire.Projects
         public Dictionary<string, string>? BuildActions { get; set; }
         /// <summary>How the project is published (Publish in spark): on or off, the target folders, the engine and the mode; null: not published.</summary>
         public PublishSettings? Publish { get; set; }
+        /// <summary>Folders (paths or patterns relative to the project file) that are part of the project even without code in them (docs/tools/projects.md, "Folders"); null: none named -
+        /// a folder with code is included anyway, one without is undecided.</summary>
+        public List<string>? IncludedDirectories { get; set; }
+        /// <summary>Folders (paths or patterns) the project leaves out: not compiled, not content, not watched by spark - wins over `includedDirectories` and over code. null: none.</summary>
+        public List<string>? ExcludedDirectories { get; set; }
+        /// <summary>"Sync .gitignore" (null: on): what spark excludes also goes into the `.gitignore` (and out again), and folders a `.gitignore` ignores count as excluded.</summary>
+        public bool? SyncGitignore { get; set; }
+        [JsonIgnore] public bool SyncsGitignore => SyncGitignore != false;
 
         /// <summary>Where the project was read from (null: not saved yet); not part of the file.</summary>
         [JsonIgnore] public string? FilePath { get; set; }
@@ -153,7 +161,7 @@ namespace fire.Projects
             {
                 Format = Format, Name = Name, Type = Type, Import = Import, Entry = Entry,
                 Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard, Drivers = Drivers, Notes = Notes, Serializable = Serializable,
-                BuildActions = BuildActions, Publish = Publish,
+                BuildActions = BuildActions, Publish = Publish, IncludedDirectories = IncludedDirectories, ExcludedDirectories = ExcludedDirectories, SyncGitignore = SyncGitignore,
             };
             return JsonSerializer.Serialize(new SaveShape(copy), Options);
         }
@@ -184,6 +192,9 @@ namespace fire.Projects
                 Serializable = p.Serializable == false ? false : null;
                 BuildActions = p.BuildActions is { Count: > 0 } ? p.BuildActions : null;
                 Publish = p.Publish is { IsEmpty: false } ? p.Publish : null;
+                IncludedDirectories = p.IncludedDirectories is { Count: > 0 } ? p.IncludedDirectories : null;
+                ExcludedDirectories = p.ExcludedDirectories is { Count: > 0 } ? p.ExcludedDirectories : null;
+                SyncGitignore = p.SyncGitignore == false ? false : null;
             }
             public int Format { get; }
             public string Name { get; }
@@ -201,6 +212,9 @@ namespace fire.Projects
             public bool? Serializable { get; }
             public Dictionary<string, string>? BuildActions { get; }
             public PublishSettings? Publish { get; }
+            public List<string>? IncludedDirectories { get; }
+            public List<string>? ExcludedDirectories { get; }
+            public bool? SyncGitignore { get; }
         }
 
         /// <summary>The name a library is imported by: `import`, else the name of the project with every character that a name cannot have replaced by `_`;

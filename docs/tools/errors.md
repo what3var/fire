@@ -300,7 +300,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4049` | 'try' before a call expects a direct call of a registered function (no method call except obj.TakeLocal/TakeUpwards/TakeGlobal/TakeTo, no lambda call) |
 | `E4050` | '…' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there (declare a new local variable with a different name) |
 | `E4051` | '…' is 'readonly' and cannot be assigned after its declaration |
-| `E4052` | '….…' is 'readonly' and can only be assigned inside a constructor of the declaring class |
+| `E4052` | '….…' is 'readonly' and can only be assigned inside a constructor of the declaring class (`this.f = ...` outside a constructor; `obj.f = ...` where the class of `obj` is known - the type checker checks the member of that class, an error in lax mode too) |
 | `E4053` | '*' as an assignment target is only valid inside an 'unsafe' block |
 | `E4054` | Invalid assignment target |
 | `E4055` | '…' was already captured in this 'fire' |
@@ -329,6 +329,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4078` | The initialisers of static fields need each other in a cycle: … - each one needs the value of the next one first; break the cycle (set one of them later, e.g. in a static method) (`static int x = B.y` and `static int y = B.Get()` with `Get() { return A.x }`: `A.x -> B.y -> (through B.Get()) A.x`; [static fields](../language/08-classes.md)) |
 | `E4079` | The initialiser of the static field '…' reads the top-level variable '…' - static fields are initialised before the top-level code runs, so it is still undefined there (make it a static field, or set the static field in the top-level code) |
 | `E4080` | 'replace' assigns a field - '…' is a variable (its old value goes with its scope; to destroy it now: 'delete …' and then the assignment) |
+| `E4081` | '….…' is 'static readonly' - only its initializer sets it (`ClassName.field = ...` or `this.field = ...` of a `static readonly` field) |
 
 ### E5xxx - Bytecode compiler
 
@@ -415,5 +416,6 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC032` | The parameter '…' of '…' is a byte/word buffer, the argument an array: the method gets a new buffer with its elements, and what it writes does not reach the array (an array of a variable or a field given to a `byte`/`word` parameter; pass a buffer; a warning also in strict mode) |
 | `TC033` | An index must be an int, not a value of type '…': the access always fails at run time / The size of an array (a byte buffer) must be an int, not a value of type '…': 'new' always fails at run time / '*' needs a pointer, not a value of type '…': the dereference always fails at run time (an error also in lax mode; through `any` it is the ArgumentException at run time) |
 | `TC034` | A value of type '…' goes into …, which is a 'string': it becomes its text (ToString()) - write '.ToString()' or '"" + ...' where that is meant (a value that is certainly no string - a number, a bool, an enum value, an object - where `string` is declared: a variable, a field, a parameter, a return value; reported in strict mode only, and there as a warning - the conversion is the rule of the language, DECISIONS D14) |
+| `TC035` | '….TakeLocal()' gives '…' to this inner block, and … keeps it: it is destroyed when the block ends, and what keeps it refers to a destroyed object / '….TakeLocal()' gives '…' to the inner block it is called in: it is destroyed when the block ends, and '…' is used after it (line …) - the caller gets a destroyed object (`x.TakeLocal()` as a statement in an inner block - the body of an `if`, a loop, a `{ }`, `try`/`catch` - and x leaves that block: stored in a field (`this.f = x`, `h.f = x`), an element (`arr[i] = x`), a variable or a container from outside the block (`outer = x`, `list.Add(x)`, `Insert`, `Set`, `Push`, `Enqueue`), or used after the block (`if (c) { x.TakeLocal() } return x`). Not reported for TakeLocal at the top level of a function, a lambda or the program, for a `return x` inside the block itself (the return gives x to the caller), nor once x is moved on (`take x`, `x.TakeTo(...)`, `x.TakeUpwards()`, `x.TakeGlobal()`) or gets another value; [Ownership](../language/13-ownership.md#a-reference-does-not-keep-anything-alive); a warning also in strict mode) |
 
 `…` stands for a part of the message that varies (a name, a number).

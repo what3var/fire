@@ -139,10 +139,16 @@ typedef struct FireDw32Window {
     int style;             /* Window.Frameless / TopMost / not ShowInTaskbar (FIRE_STYLE_*; made anew: given again) */
     HICON icon;            /* Window.SetIcon (NULL: the program's own); given again to a window made anew */
     RECT* inputRects; int inputCount;   /* Window.ClickThrough: the window region (client pixels; inputCount -1: the whole window); given again to a window made anew */
+    int fullscreen;        /* Window.Fullscreen: a popup over the monitor of the window */
+    WINDOWPLACEMENT fsPlace;   /* where it was before (length 0: not known) */
+    int fsSizeW, fsSizeH;  /* a size the program asked for in full screen (0: none) - given afterwards */
 } FireDw32Window;
 
 /* The window style for w->style: a popup without frame and title bar, or the usual window. */
-static DWORD fire_dw32_styleBits(const FireDw32Window* w) { return (w->style & FIRE_STYLE_FRAMELESS) ? (WS_POPUP | WS_MINIMIZEBOX) : WS_OVERLAPPEDWINDOW; }
+static DWORD fire_dw32_styleBits(const FireDw32Window* w) {
+    if (w->fullscreen) return WS_POPUP;   /* (full screen: no frame, over the monitor) */
+    return (w->style & FIRE_STYLE_FRAMELESS) ? (WS_POPUP | WS_MINIMIZEBOX) : WS_OVERLAPPEDWINDOW;
+}
 
 static ULONG STDMETHODCALLTYPE fire_dw32_dropAddRef(FireW32DropTarget* t) { return (ULONG)InterlockedIncrement(&t->refs); }
 static ULONG STDMETHODCALLTYPE fire_dw32_dropRelease(FireW32DropTarget* t) { return (ULONG)InterlockedDecrement(&t->refs); }   /* (it lives in the window) */
@@ -632,6 +638,7 @@ static void fire_dw32_setTouchMouse(FireDw32Window* w, int v) { w->touchMouse = 
 static void fire_dw32_setSize(FireDw32Window* w, int width, int height) {
     int ow, oh;
     if (w->hwnd == NULL) return;
+    if (w->fullscreen) { w->fsSizeW = width; w->fsSizeH = height; return; }   /* (in full screen: the size after it) */
     w->winW = width; w->winH = height;   /* (no resize event comes back for the program's own size) */
     fire_dw32_outer(w, width, height, &ow, &oh);
     SetWindowPos(w->hwnd, NULL, 0, 0, ow, oh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -722,6 +729,46 @@ static int fire_dw32_setStyle(FireDw32Window* w, int flags) {
     if (w->askedBackdrop > FIRE_BACKDROP_NONE) fire_dw32_setBackdrop(w, w->askedBackdrop);
     return flags;
 }
+
+/* Window.Fullscreen: a popup without a frame over the whole monitor the window is on (MonitorFromWindow, its rcMonitor - also over the task bar); back: the style
+ * of Window.Frameless again and the placement from before (GetWindowPlacement: also maximized). WM_SIZE reports the sizes: resize events. */
+static int fire_dw32_setFullscreen(FireDw32Window* w, int on) {
+    DWORD visible;
+    on = on != 0;
+    if (w->hwnd == NULL || on == w->fullscreen) return w->fullscreen;
+    visible = (GetWindowLongPtrW(w->hwnd, GWL_STYLE) & WS_VISIBLE) ? WS_VISIBLE : 0;
+    if (on) {
+        MONITORINFO mi;
+        HMONITOR m = MonitorFromWindow(w->hwnd, MONITOR_DEFAULTTONEAREST);
+        mi.cbSize = sizeof mi;
+        if (m == NULL || !GetMonitorInfoW(m, &mi)) return 0;
+        memset(&w->fsPlace, 0, sizeof w->fsPlace);
+        w->fsPlace.length = sizeof w->fsPlace;
+        if (!GetWindowPlacement(w->hwnd, &w->fsPlace)) w->fsPlace.length = 0;
+        w->fullscreen = 1;
+        SetWindowLongPtrW(w->hwnd, GWL_STYLE, (LONG_PTR)(fire_dw32_styleBits(w) | visible));
+        SetWindowPos(w->hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+    } else {
+        w->fullscreen = 0;
+        SetWindowLongPtrW(w->hwnd, GWL_STYLE, (LONG_PTR)(fire_dw32_styleBits(w) | visible));
+        if (w->fsPlace.length == sizeof w->fsPlace) {
+            if (!visible) w->fsPlace.showCmd = SW_HIDE;
+            SetWindowPlacement(w->hwnd, &w->fsPlace);
+        }
+        if (w->fsSizeW > 0 && w->fsSizeH > 0) {
+            int ow, oh;
+            fire_dw32_outer(w, w->fsSizeW, w->fsSizeH, &ow, &oh);
+            SetWindowPos(w->hwnd, NULL, 0, 0, ow, oh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            w->fsSizeW = w->fsSizeH = 0;
+        }
+        SetWindowPos(w->hwnd, (w->style & FIRE_STYLE_TOPMOST) ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+    }
+    /* (DWM forgets what it composed behind a window whose frame changed: asked again) */
+    if (w->askedBackdrop > FIRE_BACKDROP_NONE) fire_dw32_setBackdrop(w, w->askedBackdrop);
+    return w->fullscreen;
+}
+static int fire_dw32_fullscreen(FireDw32Window* w) { return w->fullscreen; }
 
 static void fire_dw32_move(FireDw32Window* w, int x, int y) {
     if (w->hwnd == NULL) return;

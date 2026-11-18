@@ -224,8 +224,10 @@ checked for it, neither by the compiler nor at run time.
 ## `readonly`
 
 A `readonly` field can be set only in its initializer or in a constructor of its own class (as `this.field = ...`). The compiler reports
-`this.field = ...` in other methods and `obj.field = ...` from anywhere else (when every class that declares a field of this name declares it
-`readonly`).
+`this.field = ...` in other methods and `obj.field = ...` from anywhere else (`E4052`). The field that `obj.field` means is the one of the class of
+`obj`: a field or property of the same name in another class does not count. Where the class of `obj` is not known (`any`), the write is reported
+only when every instance member of that name in the program is a `readonly` field. A `static readonly` field is set only by its initializer:
+`ClassName.field = ...` is the error `E4081` (it says nothing about `obj.field` of an object).
 
 ```fire
 class Circle {

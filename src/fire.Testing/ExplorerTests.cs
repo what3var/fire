@@ -3,7 +3,7 @@ using fire.Projects;
 /// <summary>The logic behind the tool bar of spark's solution explorer (docs/tools/spark.md, "The tool bar of the solution explorer") without a window: the filter by name
 /// (ExplorerTree.Filter: matches, their parents opened, what lies below a match), the way to a row (ExplorerTree.PathTo, Sync with Active Document) and what Show All Files adds
 /// (ProjectFiles.HiddenEntries). Alone: FIRE_TESTS_ONLY=explorer (seconds); FIRE_TESTS_FILTER narrows it by the title of a check.</summary>
-static class ExplorerTests
+static partial class ExplorerTests
 {
     private static int _failures;
 
@@ -31,6 +31,7 @@ static class ExplorerTests
         _failures = 0;
         FilterChecks();
         HiddenChecks();
+        FolderChecks();
         Console.WriteLine(_failures == 0 ? "Alle Explorer-Pruefungen bestanden." : $"FEHLER: {_failures} Explorer-Pruefung(en) fehlgeschlagen.");
         return _failures;
     }

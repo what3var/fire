@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using fire.Editor.Assistant;
 using fire.Editor.Setup;
+using fire.Native;
 
 /// <summary>spark's setup wizard without a window (src/fire.Editor/Setup): the catalog of ai.models read from its source, the choice for a machine, the pages and the plan for
 /// Windows and Linux, the progress of a run (states, bytes and speed, cancel, retry, a failure that does not stop the others) and the download of a model against a small HTTP
@@ -162,6 +163,7 @@ static class SetupWizardTests
             Catalog();
             Pages();
             StartAndTinycc();
+            Compilers();
             Progress();
             Download();
             NativeAssistant();
@@ -214,17 +216,18 @@ static class SetupWizardTests
             bool ok = !m.CanBack && m.StepText == "Step 1 of 4" && m.Next() && m.Page == SetupPage.Toolchains && m.Next() && m.Next() && m.IsLast && !m.Next() && m.Back() && m.Page == SetupPage.Model;
             return ok;
         });
-        Check("Toolchains Windows ohne C++: w64devkit empfohlen und angehakt, Watcom nicht", () =>
-            win.Toolchains.Single(t => t.Id == "w64devkit") is { Installable: true, Recommended: true, Selected: true } && win.Toolchains.Single(t => t.Id == "watcom") is { Installable: true, Selected: false });
-        Check("Toolchains Windows mit g++: nichts angehakt, Hinweis 'ist da'", () =>
+        Check("Toolchains Windows ohne C++: GCC (w64devkit) zum Herunterladen, fuer Publish empfohlen und im Plan; Watcom nicht angehakt", () =>
+            win.Compilers.Row("gcc") is { Installable: true, DownloadId: "w64devkit", Name: "GCC (w64devkit)" } && win.Compilers.Recommended(ToolchainPurpose.Publish) == "gcc"
+            && win.Compilers.Downloads().Select(r => r.Kind).SequenceEqual(new[] { "gcc" }) && win.Watcom is { Installable: true, Selected: false });
+        Check("Toolchains Windows mit g++: nichts herunterzuladen, Hinweis 'ist da'", () =>
         {
             var m = new SetupWizardModel(Windows(cpp: true), catalog);
-            return m.Toolchains.All(t => !t.Selected) && m.ToolchainHints[0].Contains("A C++ compiler is there");
+            return m.Compilers.Downloads().Count == 0 && m.Plan().All(p => p.Kind != SetupPlanKind.Toolchain) && m.ToolchainHints[0].Contains("A C++ compiler is there");
         });
         Check("Toolchains Windows: w64devkit schon da -> nicht noch einmal", () =>
         {
             var m = new SetupWizardModel(Windows() with { W64devkitThere = true }, catalog);
-            return m.Toolchains.Single(t => t.Id == "w64devkit") is { Installable: false, There: true, Selected: false } && m.Plan().All(p => p.Kind != SetupPlanKind.Toolchain);
+            return m.Compilers.Row("gcc") is { Installed: true, Installable: false } && m.Plan().All(p => p.Kind != SetupPlanKind.Toolchain);
         });
         Check("Toolchains Linux: nur Hinweise, nichts zum Herunterladen", () =>
         {
@@ -313,25 +316,25 @@ static class SetupWizardTests
             run2.Cancel();
             return !calledEarly && phase == "Waiting for the installation that spark started" && called && run.Succeeded && t2.Wait(5000) && run2.Items[0].State == SetupItemState.Cancelled;
         });
-        Check("TinyCC: Windows mit gepinntem Hash -> angeboten (C only, Groesse), nicht vorgewaehlt", () =>
+        Check("TinyCC: Windows mit gepinntem Hash -> angeboten (C only, Groesse), fuer Build empfohlen", () =>
         {
             var m = new SetupWizardModel(Windows() with { TinyccPinned = true }, catalog);
-            var t = m.Toolchains.Single(o => o.Id == "tcc");
-            return t is { Installable: true, Selected: false, Recommended: false } && t.Name.Contains("C only") && t.Description.Contains("not C++") && t.SizeText == "about 1.0 MB";
+            var t = m.Compilers.Row("tcc")!;
+            return t is { Installable: true, DownloadId: "tcc", CompilesCpp: false } && t.Traits.Contains("C only") && t.SizeText == "about 1.0 MB" && t.StateText == "not installed - download (about 1.0 MB)"
+                && m.Compilers.Recommended(ToolchainPurpose.Build) == "tcc";
         });
-        Check("TinyCC: ohne gepinnten Hash nicht angeboten, Hinweis statt dessen; angehakt -> Schritt im Plan", () =>
+        Check("TinyCC: ohne gepinnten Hash nicht angeboten, Hinweis statt dessen; gepinnt -> Schritt im Plan", () =>
         {
             var m = new SetupWizardModel(Windows(), catalog);
             var p = new SetupWizardModel(Windows() with { TinyccPinned = true }, catalog);
-            p.Toolchains.Single(o => o.Id == "tcc").Selected = true;
-            return !m.Toolchains.Single(o => o.Id == "tcc").Installable && m.ToolchainHints.Any(h => h.Contains("TinyCC"))
+            return !m.Compilers.Row("tcc")!.Installable && m.ToolchainHints.Any(h => h.Contains("TinyCC"))
                 && p.Plan().Any(i => i.Kind == SetupPlanKind.Toolchain && i.Id == "tcc") && SetupSteps.For(p.Plan(), catalog).Count == p.Plan().Count;
         });
         Check("TinyCC: Linux/macOS nur Hinweis (apt / brew), da -> kein Hinweis", () =>
             new SetupWizardModel(Linux(cpp: false), catalog).ToolchainHints.Any(h => h.Contains("sudo apt install tcc"))
             && new SetupWizardModel(Linux(cpp: false) with { IsMacOS = true }, catalog).ToolchainHints.Any(h => h.Contains("brew install tcc"))
             && !new SetupWizardModel(Linux() with { Detected = new[] { new DetectedToolchain("tcc", "TinyCC", "/usr/bin/tcc") } }, catalog).ToolchainHints.Any(h => h.Contains("TinyCC"))
-            && !new SetupWizardModel(Linux(), catalog).Toolchains.Single(o => o.Id == "tcc").Installable);
+            && !new SetupWizardModel(Linux(), catalog).Compilers.Row("tcc")!.Installable);
         Check("TinyCC: Entpacken (Ordner tcc mit tcc.exe) und SHA-256-Pruefung", () =>
         {
             string folder = EmptyFolder();
@@ -349,6 +352,144 @@ static class SetupWizardTests
             string exe = fire.Native.TinyccSetup.Unpack(zip, null, target);
             return wrong && exe == Path.Combine(target, "tcc.exe") && File.Exists(Path.Combine(target, "include", "stdio.h"));
         });
+    }
+
+    /// <summary>The compilers for Build and Publish (Tools > Options > Compilers, the wizard's grid; fire.Native MachineToolchains): toolchain.json read and written, the choice
+    /// resolved (project > IDE > automatic), the C++ fallback of TinyCC, the grid's downloads with the checkbox. FIRE_TESTS_FILTER=Compiler narrows to them.</summary>
+    private static void Compilers()
+    {
+        var catalog = ModelCatalog.Load(CatalogSource());
+        Func<ToolchainDef, string?> Finder(params string[] kinds) => def => kinds.Contains(def.EffectiveKind) ? "/x/" + def.EffectiveKind : null;
+
+        Check("Compiler: toolchain.json - build/publish hin und zurueck, der Toolchain der Maschine bleibt", () =>
+        {
+            string file = Path.Combine(EmptyFolder(), "toolchain.json");
+            bool none = MachineToolchains.Load(file) == MachineToolchains.Default;
+            File.WriteAllText(file, """{ "Extends": "gcc", "Kind": "gcc", "Compiler": "/opt/kit/bin/g++" }""");
+            var old = MachineToolchains.Load(file);   // (an older fire: its toolchain is the choice for both)
+            new MachineToolchains("tcc", "gcc").Save(file);
+            var back = MachineToolchains.Load(file);
+            new MachineToolchains(MachineToolchains.Automatic, "msvc").Save(file);
+            var auto = MachineToolchains.Load(file);
+            File.WriteAllText(file, """{ "build": "turbo-c", "publish": "W64DEVKIT" }""");
+            var odd = MachineToolchains.Load(file);
+            return none && old.Build == "gcc" && old.Publish == "gcc" && old.Legacy?.Compiler == "/opt/kit/bin/g++"
+                && back.Build == "tcc" && back.Publish == "gcc" && back.Legacy?.Compiler == "/opt/kit/bin/g++"
+                && auto.Build == MachineToolchains.Automatic && auto.Publish == "msvc" && odd.Build == MachineToolchains.Automatic && odd.Publish == "gcc";
+        });
+        Check("Compiler: SaveMachineToolchain (w64devkit) laesst build/publish stehen", () =>
+        {
+            string file = MachineToolchains.DefaultFile;
+            string? before = File.Exists(file) ? File.ReadAllText(file) : null;
+            try
+            {
+                new MachineToolchains("tcc", "clang").Save();
+                ToolchainSetup.SaveMachineToolchain(new ToolchainDef { Extends = "gcc", Kind = "gcc", Compiler = "/opt/w64/g++" });
+                var m = MachineToolchains.Load();
+                return m.Build == "tcc" && m.Publish == "clang" && ToolchainSetup.LoadMachineToolchain()?.Compiler == "/opt/w64/g++";
+            }
+            finally { if (before != null) File.WriteAllText(file, before); else File.Delete(file); }
+        });
+        Check("Compiler: automatisch - Build TinyCC, Publish GCC (empfohlen); sonst der beste da; ein gewaehlter, der fehlt -> automatisch", () =>
+        {
+            var auto = MachineToolchains.Default;
+            var b = auto.Resolve(ToolchainPurpose.Build, Finder("tcc", "gcc"), windows: false);
+            var p = auto.Resolve(ToolchainPurpose.Publish, Finder("tcc", "gcc"), windows: false);
+            var onlyGcc = auto.Resolve(ToolchainPurpose.Build, Finder("gcc"), windows: false);
+            var winPublish = auto.Resolve(ToolchainPurpose.Publish, Finder("tcc", "msvc", "clang"), windows: true);
+            var missing = new MachineToolchains("clang", "clang").Resolve(ToolchainPurpose.Build, Finder("tcc", "gcc"), windows: false);
+            var chosen = new MachineToolchains("gcc", "tcc").Resolve(ToolchainPurpose.Build, Finder("tcc", "gcc"), windows: false);
+            var nothing = auto.Resolve(ToolchainPurpose.Build, Finder(), windows: false);
+            return b.Toolchain?.EffectiveKind == "tcc" && b.Source == "automatic, recommended" && b.Toolchain.MachineChoice
+                && p.Toolchain?.EffectiveKind == "gcc" && onlyGcc.Toolchain?.EffectiveKind == "gcc" && onlyGcc.Source == "automatic"
+                && winPublish.Toolchain?.EffectiveKind == "msvc" && missing.Toolchain?.EffectiveKind == "tcc" && missing.Source.Contains("clang is not installed")
+                && chosen.Toolchain?.EffectiveKind == "gcc" && chosen.Source == "chosen in the IDE options" && nothing.Toolchain == null
+                && !ToolchainDef.BuiltIn["tcc"].MachineChoice;   // (a copy is marked, the built-in one stays)
+        });
+        Check("Compiler: der Toolchain der Maschine gibt den Pfad seiner Art (w64devkit-g++)", () =>
+        {
+            var m = new MachineToolchains(MachineToolchains.Automatic, MachineToolchains.Automatic, new ToolchainDef { Kind = "gcc", Compiler = @"C:\fire\Toolchain\w64devkit\bin\g++.exe" });
+            return m.Resolve(ToolchainPurpose.Publish, Finder("gcc"), windows: true).Toolchain?.Compiler == @"C:\fire\Toolchain\w64devkit\bin\g++.exe"
+                && m.DefFor("tcc").Compiler == "tcc";
+        });
+        Check("Compiler: Vorrang - Projekt (Name, fire.native.json) vor der Wahl der IDE vor automatisch", () =>
+        {
+            string file = MachineToolchains.DefaultFile;
+            string? before = File.Exists(file) ? File.ReadAllText(file) : null;
+            try
+            {
+                var host = fire.Runtime.TargetProfile.Host;
+                new MachineToolchains("gcc", "gcc").Save();
+                var config = new NativeConfig();
+                bool gccHere = ToolchainDetector.Find(ToolchainDef.BuiltIn["gcc"]) != null;
+                var ide = config.ResolveToolchain(host, null, ToolchainPurpose.Build);
+                var named = config.ResolveToolchain(host, "clang", ToolchainPurpose.Build);
+                var fromFile = new NativeConfig { Toolchain = "tcc" }.ResolveToolchain(host, null, ToolchainPurpose.Publish);
+                var legacy = config.ResolveToolchain(host, null);   // (no purpose: the machine's toolchain or the first one found, as before)
+                return (!gccHere || ide.EffectiveKind == "gcc" && ide.MachineChoice) && named.EffectiveKind == "clang" && !named.MachineChoice
+                    && fromFile.EffectiveKind == "tcc" && !fromFile.MachineChoice && !legacy.MachineChoice
+                    && config.NamesToolchain(host, "x") && !config.NamesToolchain(host) && new NativeConfig { Toolchain = "tcc" }.NamesToolchain(host);
+            }
+            finally { if (before != null) File.WriteAllText(file, before); else File.Delete(file); }
+        });
+        Check("Compiler: C++-Natives mit TinyCC -> der naechste Compiler (nur fuer die Wahl der Maschine), eine Zeile im Log", () =>
+        {
+            var machine = MachineToolchains.Default;
+            var tcc = machine.Resolve(ToolchainPurpose.Build, Finder("tcc", "gcc", "clang"), windows: false).Toolchain!;
+            var fallback = fire.Compiler.NativeBuilder.CppFallback(tcc, Finder("tcc", "gcc", "clang"), machine);
+            var clangOnly = fire.Compiler.NativeBuilder.CppFallback(tcc, Finder("tcc", "clang"), machine);
+            var projectTcc = fire.Compiler.NativeBuilder.CppFallback(ToolchainDef.BuiltIn["tcc"], Finder("tcc", "gcc"), machine);
+            var gcc = fire.Compiler.NativeBuilder.CppFallback(machine.DefFor("gcc"), Finder("tcc", "gcc"), machine);
+            var none = fire.Compiler.NativeBuilder.CppFallback(tcc, Finder("tcc"), machine);
+            string note = fire.Compiler.NativeBuilder.CppFallbackNote(tcc, fallback!, "// natives\n// ---- package gui (native/gui.cpp)\nint x;\n// ---- package gui (more)\n");
+            // (a copy that keeps the mark: WithDirection makes one for the flags of the direction)
+            var directed = fire.Compiler.NativeBuilder.WithDirection(tcc, fire.Runtime.OptimizeFor.Size);
+            return fallback?.EffectiveKind == "gcc" && fallback.MachineChoice && clangOnly?.EffectiveKind == "clang" && projectTcc == null && gcc == null && none == null
+                && note == "TinyCC compiles only C and the program has natives in C++ (gui): built with gcc instead." && !note.Contains('\n') && directed.MachineChoice;
+        });
+        Check("Compiler: Raster unter Windows - Automatisch, TinyCC und w64devkit zum Herunterladen, der Haken an", () =>
+        {
+            var m = new CompilerChoiceModel(Windows() with { TinyccPinned = true });
+            return m.Build == MachineToolchains.Automatic && m.Publish == MachineToolchains.Automatic && m.DownloadMissing && m.OffersDownloads
+                && m.Rows.Select(r => r.Kind).SequenceEqual(new[] { "tcc", "gcc" })
+                && m.Downloads().Select(r => r.DownloadId).SequenceEqual(new[] { "tcc", "w64devkit" })
+                && m.Summary(ToolchainPurpose.Build) == "Build: TinyCC (automatic, recommended, downloaded first)"
+                && m.Summary(ToolchainPurpose.Publish).StartsWith("Publish: GCC (w64devkit) (automatic, recommended");
+        }, () => string.Join("\n", new CompilerChoiceModel(Windows() with { TinyccPinned = true }).Rows.Select(r => r.Kind)));
+        Check("Compiler: Raster - eine Wahl je Spalte, der Haken aus -> nichts herunterzuladen, gewaehlt wird gespeichert", () =>
+        {
+            var m = new CompilerChoiceModel(Windows() with { TinyccPinned = true });
+            m.Choose(ToolchainPurpose.Build, "gcc");
+            m.Choose(ToolchainPurpose.Publish, "clang");   // (no row: ignored)
+            bool onlyGcc = m.Downloads().Select(r => r.DownloadId).SequenceEqual(new[] { "w64devkit" });
+            m.DownloadMissing = false;
+            bool nothing = m.Downloads().Count == 0 && m.PlanItems().Count == 0 && m.Summary(ToolchainPurpose.Build).StartsWith("Build: no compiler");
+            string file = Path.Combine(EmptyFolder(), "toolchain.json");
+            m.Save(file);
+            var saved = MachineToolchains.Load(file);
+            return onlyGcc && nothing && m.Publish == MachineToolchains.Automatic && saved.Build == "gcc" && saved.Publish == MachineToolchains.Automatic;
+        });
+        Check("Compiler: Raster unter Linux - gefunden mit Pfad und Version, nichts herunterzuladen; MSVC empfohlen ohne GCC unter Windows", () =>
+        {
+            var env = Linux() with { Detected = new[] { new DetectedToolchain("gcc", "GCC (g++)", "/usr/bin/g++", "g++ (Debian 14.2.0) 14.2.0"), new DetectedToolchain("tcc", "TinyCC", "/usr/bin/tcc", "tcc version 0.9.27") } };
+            var m = new CompilerChoiceModel(env, new MachineToolchains("tcc", "gcc"));
+            var win = new CompilerChoiceModel(Windows() with { IsX64 = false, Detected = new[] { new DetectedToolchain("msvc", "Visual C++ (cl)", @"C:\VS\cl.exe") } });
+            return !m.OffersDownloads && m.Build == "tcc" && m.Row("gcc")!.StateText == "g++ (Debian 14.2.0) 14.2.0 - /usr/bin/g++" && m.Effective(ToolchainPurpose.Build) == ("tcc", "chosen in the IDE options")
+                && new CompilerChoiceModel(Linux(cpp: false)).Row("gcc")!.StateText.Contains("sudo apt install g++")
+                && win.Recommended(ToolchainPurpose.Publish) == "msvc" && win.Effective(ToolchainPurpose.Publish).Kind == "msvc";
+        });
+        Check("Compiler: Wizard-Plan mit dem Haken - TinyCC und w64devkit; ohne Haken keine Toolchain, die Zusammenfassung nennt Build und Publish", () =>
+        {
+            var m = new SetupWizardModel(Windows() with { TinyccPinned = true }, catalog) { SelectedModelId = "" };
+            var with = m.Plan().Where(p => p.Kind == SetupPlanKind.Toolchain).Select(p => p.Id).ToList();
+            bool lines = m.SummaryLines.Any(l => l.StartsWith("Build: TinyCC")) && m.SummaryLines.Any(l => l.StartsWith("Publish: GCC (w64devkit)"));
+            m.Compilers.DownloadMissing = false;
+            var without = m.Plan();
+            var watcom = new SetupWizardModel(Windows(), catalog) { SelectedModelId = "" };
+            watcom.Watcom.Selected = true;
+            return with.SequenceEqual(new[] { "tcc", "w64devkit" }) && lines && without.All(p => p.Kind != SetupPlanKind.Toolchain) && without.Count == 1
+                && watcom.Plan().Select(p => p.Id).SequenceEqual(new[] { "w64devkit", "watcom", "standard" });
+        }, () => string.Join("\n", new SetupWizardModel(Windows() with { TinyccPinned = true }, catalog).SummaryLines));
     }
 
     private static void Progress()

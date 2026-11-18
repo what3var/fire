@@ -99,6 +99,22 @@ static class TypeTests
         // Records (step 9): a write outside the construction (TC026) and a field that can change (TC027) are errors in lax mode too; a record derives only from a record
         Check("Records: Schreiben ausserhalb der Konstruktion ist TC026 (auch lax), im Konstruktor erlaubt",
             Run("record P { int x\n construct(int x) { this.x = x }\n undefined M() { this.x = 2 } }\nvar p = new P(1)\np.x = 3\np.x++") is var recW && recW == "|ERROR TC026 TC026 TC026", recW);
+        // readonly is the member the receiver has, not any member of that name: a `static readonly Cursor` of some class says nothing about `window.Cursor`
+        const string roKind = "class Kind { static readonly defined int Cursor = 6 }\nclass W { defined int c = 0\n defined int Cursor { get { return this.c }\n set { this.c = value } } }\n";
+        Check("readonly: eine Property mit set ist schreibbar, auch wenn eine andere Klasse ein static readonly Feld desselben Namens hat",
+            Run(roKind + "var w = new W()\nw.Cursor = 3\nprint(w.Cursor + Kind.Cursor)") is var roProp && roProp == "|9", roProp);
+        Check("readonly: ueber any (Variable und Parameter) ebenso",
+            Run(roKind + "any a = new W()\na.Cursor = 4\nclass S { static int Put(any p) { p.Cursor = 5\n return p.Cursor } }\nprint(a.Cursor + \" \" + S.Put(new W()))") is var roAny && roAny == "|4 5", roAny);
+        Check("readonly: das static readonly Feld ueber seine Klasse (und this) zuzuweisen bleibt ein Fehler (E4081)",
+            Run(roKind + "Kind.Cursor = 7") is var roStatic && roStatic == "|ERROR E4081"
+            && Run("class K { static readonly int N = 1\n static Set() { K.N = 2 } }\nprint(1)") == "|ERROR E4081"
+            && Run("class K { static readonly int N = 1\n construct() { this.N = 2 } }\nprint(1)") == "|ERROR E4081", roStatic + " " + _lastRun);
+        Check("readonly: ein readonly Instanzfeld ausserhalb des Konstruktors bleibt ein Fehler - auch wenn eine andere Klasse den Namen schreibbar hat (E4052, auch lax)",
+            Run("class C { readonly int r\n construct() { this.r = 1 } }\nvar c = new C()\nc.r = 5") is var roInst && roInst.StartsWith("|ERROR E4")
+            && Run("class C { readonly int r\n construct() { this.r = 1 } }\nclass D { int r }\nvar c = new C()\nc.r = 5\nprint(c.r)") == "|ERROR E4052"
+            && Run("class C { readonly int r\n construct() { this.r = 1 } }\nclass D { int r }\nC c = new C()\nc.r++\nprint(c.r)") == "|ERROR E4052"
+            && Run("class C { readonly int r\n construct() { r = 1 }\n undefined M() { r = 2 } }\nclass D { int r }\nnew C().M()") == "|ERROR E4052"
+            && Run("class C { readonly int r\n construct() { this.r = 1 } }\nclass D { int r }\nvar d = new D()\nd.r = 5\nprint(new C().r + d.r)") == "|6", roInst + " " + _lastRun);
         Check("Records: ein Feld, das sich aendern kann (Klasse, Array), ist TC027; Werte, Records, Lambdas, any sind erlaubt",
             Run("class B { int v }\nrecord Q { B b; int a[] }\nrecord R { int i; string s; Q q; lambda f; any x }\nprint(1)") is var recF && recF == "|ERROR TC027 TC027", recF);
         Check("Records: ein Record erbt nur von einem Record, eine Klasse nicht von einem",
@@ -938,6 +954,109 @@ static class TypeTests
                 Run("class P { }\nclass K { static string T(string s) { return s } }\nany x = 1\nstring a = 5\nstring b = new P()\nstring c = \"c\"\nstring d = x\nprint(K.T(2) + a + c + d)", TypeCheckMode.Strict) is var strictText
                 && strictText.Split('|')[0].Split(' ').Count(c => c == "TC034") == 3 && strictText.EndsWith("|25c1")
                 && Run("class P { }\nclass K { static string T(string s) { return s } }\nany x = 1\nstring a = 5\nstring b = new P()\nstring c = \"c\"\nstring d = x\nprint(K.T(2) + a + c + d)", TypeCheckMode.Lax) == "|25c1", strictText);
+            // TC035: `x.TakeLocal()` in an inner block binds x to that block - stored where it outlives the block, or used after it, x is destroyed there
+            {
+                const string node = "class Node { int v = 1 }\nclass Holder { Node kept }\n";
+                Check("TC035: TakeLocal im if-Block und return x danach - eine Warnung (lax), der Aufrufer bekaeme ein zerstoertes Objekt", Run(node + """
+                    class M {
+                        static Node After(Node n, bool c) {
+                            if (c) { n.TakeLocal() }
+                            return n
+                        }
+                    }
+                    print(M.After(new Node(), false).v)
+                    """, null, true) is var after && after.StartsWith("TC035 ") && after.Contains(":5 ") && after.Contains("used after it (line 6)") && after.EndsWith("|1"), after);
+                Check("TC035: TakeLocal im Block, gespeichert in einem Feld, einem Element, einer Variablen von aussen, mit Add in eine Liste von aussen - je eine Warnung, auch strict",
+                    Run(node + """
+                    class K {
+                        Node kept
+                        undefined Keep(bool c) {
+                            if (c) {
+                                var n = new Node()
+                                n.TakeLocal()
+                                this.kept = n
+                            }
+                        }
+                    }
+                    Node all[] = new Node[2]
+                    Node outer = undefined
+                    var list = new List<Node>()
+                    var h = new Holder()
+                    for (int i = 0; i < 2; i++) {
+                        var a = new Node()
+                        a.TakeLocal()
+                        all[i] = a
+                    }
+                    while (outer == undefined) {
+                        var b = new Node()
+                        b.TakeLocal()
+                        outer = b
+                    }
+                    foreach (x in [1]) {
+                        var c = new Node()
+                        c.TakeLocal()
+                        list.Add(c)
+                    }
+                    {
+                        var d = new Node()
+                        d.TakeLocal()
+                        h.kept = d
+                    }
+                    print(list.Count)
+                    """, TypeCheckMode.Strict) is var stored && stored == "TC035 TC035 TC035 TC035 TC035|1", stored);
+                Check("TC035: ein Wert, der nach dem Block benutzt wird, auch auf der obersten Ebene des Programms", Run(node + """
+                    var a = new Node()
+                    bool flag = false
+                    if (flag) { a.TakeLocal() }
+                    print(a.v)
+                    """) is var used && used == "TC035|1", used);
+                Check("TC035: keine Warnung - TakeLocal oben in der Funktion, im Programm, return x im Block selbst, nur im Block benutzt, mit take/TakeTo weitergegeben, neu zugewiesen, eine eigene Liste im Block",
+                    Run(node + """
+                    class M {
+                        Node kept
+                        static Node Top(Node n) {
+                            n.TakeLocal()
+                            return n
+                        }
+                        static Node Inside(bool c) {
+                            if (c) {
+                                var a = new Node()
+                                a.TakeLocal()
+                                return a
+                            }
+                            return new Node()
+                        }
+                        undefined Give(bool c, List<Node> into) {
+                            if (c) {
+                                var a = new Node()
+                                a.TakeLocal()
+                                print(a.v)
+                                into.Add(take a)
+                                var b = new Node()
+                                b.TakeLocal()
+                                b.TakeTo(this)
+                                this.kept = b
+                                var mine = new List<Node>()
+                                var e = new Node()
+                                e.TakeLocal()
+                                mine.Add(e)
+                                print(mine.Count)
+                            }
+                        }
+                    }
+                    var t = new Node()
+                    t.TakeLocal()
+                    print(M.Top(new Node()).v + M.Inside(true).v + t.v)
+                    var r = new Node()
+                    bool flag = true
+                    if (flag) { r.TakeLocal() }
+                    r = new Node()
+                    print(r.v)
+                    var l = new List<Node>()
+                    new M().Give(true, l)
+                    print(l.Count)
+                    """, TypeCheckMode.Strict) is var none && none == "|3\n1\n1\n1\n1", none);
+            }
             // `new Dog[n]` is a Dog array from the start (DECISIONS D10): held in `any` it goes only where an array of Dog or of a base class is declared,
             // and it checks what is stored through every reference
             const string arraysFromAny = """

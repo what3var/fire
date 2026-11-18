@@ -4,8 +4,8 @@ using fire.Package.Manager;
 
 /// <summary>The package sources of ember against a registry on the web (docs/packages/README.md "Sources", "Publishing"): the index the website writes (extra fields, yanked
 /// versions, sizes), https only (http for this machine), no download without a checksum, a whole install from a local HTTP server, the documents of a package.
-/// `FIRE_TESTS_ONLY=registry` - quick, no compiler, no network.</summary>
-static class RegistryTests
+/// `FIRE_TESTS_ONLY=registry` - quick, no network; packages straight from GitHub against a fake GitHub in RegistryTests.GitHub.cs (`FIRE_TESTS_FILTER=github`: only those).</summary>
+static partial class RegistryTests
 {
     private static int _failures;
 
@@ -25,7 +25,12 @@ static class RegistryTests
     {
         string dir = Path.Combine(Path.GetTempPath(), "fire-registry-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        try { RunIn(dir); }
+        try
+        {
+            if (Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") is not { Length: > 0 } filter) { RunIn(dir); RunGitHub(dir); }
+            else if ("github".Contains(filter, StringComparison.OrdinalIgnoreCase)) RunGitHub(dir);
+            else RunIn(dir);
+        }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
         Console.WriteLine(_failures == 0 ? "Alle Registry-Pruefungen bestanden." : $"FEHLER: {_failures} Registry-Pruefung(en) fehlgeschlagen.");
         if (_failures > 0) Environment.ExitCode = 1;

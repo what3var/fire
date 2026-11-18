@@ -24,6 +24,8 @@ namespace fire.Editor
             public string Author { get; init; } = "";
             public string Description { get; init; } = "";
             public string Details { get; init; } = "";
+            /// <summary>What Install installs: the name, or a spec straight from GitHub (`github:owner/repo[@ref]`).</summary>
+            public string Spec { get; init; } = "";
             public bool Installed => InstalledVersion.Length > 0;
         }
 
@@ -61,6 +63,13 @@ namespace fire.Editor
             {
                 rows = await Task.Run(() =>
                 {
+                    // `github:owner/repo[@ref]` in the search field: a row that installs it straight from GitHub (docs/packages/README.md "Straight from GitHub")
+                    if (GitHubSpec.TryParse(query.Trim(), out var gh))
+                    {
+                        var have = _service.Store.FindBySpec(gh.Text);
+                        return new List<Row> { new Row { Name = gh.Text, Spec = query.Trim(), Latest = gh.Ref.Length > 0 ? gh.Ref : "newest release", InstalledVersion = have?.Version ?? "",
+                            Description = "Straight from " + gh.WebUrl, Details = $"Installs {gh.Text} from {gh.WebUrl}: the .fpk of the release (checked against its checksum), or the package built from the source." } };
+                    }
                     var found = _service.Find(query, warnings).Select(l => ToRow(l)).ToList();
                     // installed packages that no source offers (installed from a file) are listed too
                     foreach (var p in _service.Store.Installed())
@@ -90,7 +99,12 @@ namespace fire.Editor
             };
         }
 
-        private static string DetailsOf(InstalledPackage p) => $"{p.Name} {p.Version} (installed from a file); imports: {string.Join(", ", p.Manifest.Imports.Select(i => i.Name))}";
+        private string DetailsOf(InstalledPackage p)
+        {
+            string origin = "installed from a file";
+            try { if (_service.Lock().ForPackage(p.Name) is { } e) origin = $"from {e.Origin}, checked: {e.Verified}"; } catch (PackageException) { }
+            return $"{p.Name} {p.Version} ({origin}); imports: {string.Join(", ", p.Manifest.Imports.Select(i => i.Name))}";
+        }
 
         private Row? Selected => lvPackages.SelectedItem as Row;
 
@@ -103,7 +117,7 @@ namespace fire.Editor
         private void UpdateButtons()
         {
             var row = Selected;
-            btnInstall.IsEnabled = !_busy && row != null && row.Latest.Length > 0 && row.InstalledVersion != row.Latest;
+            btnInstall.IsEnabled = !_busy && row != null && row.Latest.Length > 0 && (row.Spec.Length > 0 || row.InstalledVersion != row.Latest);
             btnInstall.Content = row != null && row.Installed ? "Update" : "Install";
             btnRemove.IsEnabled = !_busy && row != null && row.Installed;
         }
@@ -119,7 +133,7 @@ namespace fire.Editor
         private async void Install_Click(object? sender, RoutedEventArgs e)
         {
             if (Selected is not { } row) return;
-            await RunAsync($"Installing {row.Name}...", () => _service.Install(row.Name));
+            await RunAsync($"Installing {row.Name}...", () => _service.Install(row.Spec.Length > 0 ? row.Spec : row.Name));
         }
 
         private async void InstallFile_Click(object? sender, RoutedEventArgs e)

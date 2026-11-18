@@ -198,10 +198,21 @@ namespace fire.Package.Manager
             return overlay.Length == 0 ? disk : overlay.Concat(disk.Where(d => !overlay.Any(o => string.Equals(o.Name, d.Name, StringComparison.OrdinalIgnoreCase)))).ToList();
         }
 
+        /// <summary>How long the packages read from the disk are taken as they are before the folders are looked at again (another program may install one): every `#import`
+        /// of every file asks the store, the live analysis of the editor after every pause in typing - a look at all the package folders each time (a stat per package, hundreds per
+        /// analysis) was a fifth of its time. Install and Remove of this store forget the list at once. Zero (the default; the editor sets a second): look every time.</summary>
+        public static TimeSpan RecheckInterval { get; set; } = TimeSpan.Zero;
+
+        private long _stampCheckedAt;
+
         private IReadOnlyList<InstalledPackage> InstalledOnDisk()
         {
+            var cached = _cache;
+            long now = Environment.TickCount64;
+            if (cached != null && now - Interlocked.Read(ref _stampCheckedAt) < RecheckInterval.TotalMilliseconds) return cached;
             var stamp = Stamp();
-            if (_cache != null && stamp == _cacheStamp) return _cache;
+            Interlocked.Exchange(ref _stampCheckedAt, now);
+            if (cached != null && stamp == _cacheStamp) return cached;
             var list = new List<InstalledPackage>();
             if (Directory.Exists(Root))
                 foreach (var dir in Directory.GetDirectories(Root).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
@@ -217,6 +228,21 @@ namespace fire.Package.Manager
         }
 
         public InstalledPackage? Find(string name) => Installed().FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>The installed package a dependency or a reference names: a name, `name@1.2.0` (the installed one, whatever its version), or `github:owner/repo[@ref][#name]` -
+        /// the package that the lock file says came from that repository.</summary>
+        public InstalledPackage? FindBySpec(string spec)
+        {
+            if (GitHubSpec.IsGitHub(spec))
+            {
+                if (!GitHubSpec.TryParse(spec, out var gh)) return null;
+                PackageLock lockFile;
+                try { lockFile = PackageLock.Load(this); } catch (PackageException) { return null; }
+                return lockFile.ForRepository(gh.Repository) is { } entry ? Find(entry.Package) : null;
+            }
+            int at = spec.IndexOf('@');
+            return Find(at > 0 ? spec.Substring(0, at) : spec);
+        }
 
         /// <summary>The import `name` (as in `#import "name"`, not case sensitive) of an installed package, or null.</summary>
         public InstalledImport? FindImport(string importName)
@@ -268,6 +294,7 @@ namespace fire.Package.Manager
 
         /// <summary>Installed packages that list <paramref name="name"/> as a dependency.</summary>
         public IReadOnlyList<InstalledPackage> DependentsOf(string name) =>
-            Installed().Where(p => p.Manifest.Dependencies.Any(d => string.Equals(d, name, StringComparison.OrdinalIgnoreCase))).ToList();
+            Installed().Where(p => p.Manifest.Dependencies.Any(d => string.Equals(d, name, StringComparison.OrdinalIgnoreCase)
+                || (GitHubSpec.IsGitHub(d) || d.Contains('@')) && string.Equals(FindBySpec(d)?.Name, name, StringComparison.OrdinalIgnoreCase))).ToList();
     }
 }

@@ -114,6 +114,19 @@ void main() {
         vec4 gc = textureLod(glowMap, filtered(vUv, vec2(textureSize(glowMap, 0)), ob.glow.y, dux, duy), 0.0);
         col += gc.rgb * (gc.a * ob.glow.x);
     }
-    // (an opaque object writes alpha 1, a transparent one is mixed by its alpha and leaves the alpha of the picture as it is)
-    outColor = vec4(col, ob.flags2.w != 0 ? alpha : 1.0);
+    if (ob.flags2.w == 1 || ob.flags2.w == 2) {
+        // a transparent object is drawn in two draws (s3d_gpu_flushLocked): 2 its opaque texels (alpha 255 of 255 - S3D_OPAQUE_ALPHA of s3d_engine.h), which write the depth like an
+        // opaque object, 1 the others, mixed in; each takes only its own pixels
+        if ((ob.flags2.w == 2) != (alpha >= 1.0 - 0.5 / 255.0)) discard;
+        // it is drawn after the fog of the picture: the fog of its own distance (the depth of the pixel, as the fog has it from the depth of the picture - s3d_fog.frag)
+        if (fr.fog.y > fr.fog.x) {
+            float nearP = fr.fog.z, farP = fr.fog.w;
+            float dist = 2.0 * farP * nearP / ((gl_FragCoord.z * 2.0 - 1.0) * (nearP - farP) + farP + nearP);
+            float k = dist <= 0.0 ? 1.0 : dist <= fr.fog.x ? 0.0 : dist >= fr.fog.y ? 1.0 : (dist - fr.fog.x) / (fr.fog.y - fr.fog.x);
+            col = mix(col, fr.fogColor.rgb, k);
+        }
+    }
+    // (an opaque object writes alpha 1, a transparent one is mixed by its alpha and leaves the alpha of the picture as it is; a backdrop (3, no fog: it is drawn first, without
+    // depth) covers the picture by its alpha - the pipeline of the backdrops)
+    outColor = vec4(col, ob.flags2.w == 1 || ob.flags2.w == 3 ? alpha : 1.0);
 }

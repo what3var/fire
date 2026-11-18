@@ -324,6 +324,9 @@
 					<Separator/>
 					<MenuItem Header="_Toolchain Settings..." Click="NativeBuildSettings_Click"/>
 					<Separator/>
+					<MenuItem Header="_Options..." Click="Options_Click"
+                              ToolTip.Tip="The options of spark for this machine: the compilers for Build and Publish, the assistant, the engine of a script (docs/tools/spark.md)"/>
+					<Separator/>
 					<MenuItem Header="_Assistant" x:Name="mnuAssistant" ToggleType="CheckBox" Click="Assistant_Click"
                               ToolTip.Tip="A small helper with a local AI model: tips, answers about fire, errors explained (docs/ai/assistant.md). Off unless you switch it on. Ctrl+^ pokes it."/>
 					<MenuItem Header="_MCP Server (for AI Tools)" x:Name="mnuMcpServer" ToggleType="CheckBox" Click="McpServer_Click"
@@ -479,6 +482,9 @@
 				<ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}" MinHeight="24"/>
 				<DockPanel Margin="10,3">
 					<TextBlock x:Name="CaretText" DockPanel.Dock="Right" Text="Line 1" Margin="16,0,0,0"/>
+					<!-- the errors and warnings of the error list (the live analysis of the solution, the last build); a click shows the list -->
+					<TextBlock x:Name="ErrorsText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Background="Transparent" Cursor="Hand" IsVisible="False"
+					           ToolTip.Tip="Errors and warnings in the solution (the live analysis and the last build) - click to show the error list"/>
 					<!-- work without a build window: packages installed, their natives built (also for the assistant, a child process) -->
 					<StackPanel x:Name="WorkStatus" DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="16,0,0,0" IsVisible="False">
 						<TextBlock x:Name="WorkStatusText" Text="" VerticalAlignment="Center" Foreground="#A094A8"/>

@@ -292,6 +292,7 @@ FIRE_ERROR(E4077, RESOLVER, "'{*}' is declared twice in class '{*}' (the other o
 FIRE_ERROR(E4078, RESOLVER, "The initialisers of static fields need each other in a cycle: {*} - each one needs the value of the next one first; break the cycle (set one of them later, e.g. in a static method)")
 FIRE_ERROR(E4079, RESOLVER, "The initialiser of the static field '{*}' reads the top-level variable '{*}' - static fields are initialised before the top-level code runs, so it is still undefined there (make it a static field, or set the static field in the top-level code)")
 FIRE_ERROR(E4080, RESOLVER, "'replace' assigns a field - '{*}' is a variable (its old value goes with its scope; to destroy it now: 'delete {*}' and then the assignment)")
+FIRE_ERROR(E4081, RESOLVER, "'{*}' is 'static readonly' - only its initializer sets it")
 FIRE_ERROR(E5001, COMPILER, "Only the first 16 parameters of a method can be 'ref'.")
 FIRE_ERROR(E5002, COMPILER, "Internal error: 'class extends {*}' was not merged (the program must be produced by Parser.Parse()/ParseMultiple()).")
 FIRE_ERROR(E5003, COMPILER, "Statement {*} is not supported.")

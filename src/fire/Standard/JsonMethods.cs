@@ -253,8 +253,18 @@ namespace fire.Standard
                             {
                                 var items = obj.Fields["items"];
                                 long count = obj.Fields["count"].Kind == ValueKind.Int ? obj.Fields["count"].AsInt() : 0;
+                                // (the elements belong to the list, not to its array - as Add and the reader give them)
                                 if (items.Kind == ValueKind.Array)
-                                    for (long i = Math.Min(count, items.AsArray().Length) - 1; i >= 0; i--) pending.Push((items.AsArray().Items[i], items.AsArray()));
+                                    for (long i = Math.Min(count, items.AsArray().Length) - 1; i >= 0; i--) pending.Push((items.AsArray().Items[i], obj));
+                                break;
+                            }
+                            if (IsJsonObject(obj))
+                            {
+                                // (the values belong to the JsonObject - Set and the reader give them to it; the keys are strings)
+                                var values = obj.Fields["values"];
+                                long members = obj.Fields["count"].Kind == ValueKind.Int ? obj.Fields["count"].AsInt() : 0;
+                                if (values.Kind == ValueKind.Array)
+                                    for (long i = Math.Min(members, values.AsArray().Length) - 1; i >= 0; i--) pending.Push((values.AsArray().Items[i], obj));
                                 break;
                             }
                             var fields = FieldsOf(obj.RtClass!);
@@ -424,14 +434,14 @@ namespace fire.Standard
                     string elementType = obj.TypeArgs is [var arg] ? arg : ElementType(type);
                     var array = items.Kind == ValueKind.Array ? items.AsArray() : new ScriptArray(0);
                     count = Math.Min(count, array.Length);
-                    if (!shared && !withType) { WriteItems(array.Items, count, elementType, array); return; }
+                    if (!shared && !withType) { WriteItems(array.Items, count, elementType, obj); return; }
                     _sb.Append('{');
                     bool firstL = true;
                     _depth++;
                     if (withType) { Key("$type", ref firstL); WriteString(TypeName(obj)); }
                     if (shared) { Key("$id", ref firstL); _sb.Append(id); }
                     Key("$values", ref firstL);
-                    WriteItems(array.Items, count, elementType, array);
+                    WriteItems(array.Items, count, elementType, obj);
                     _depth--;
                     NewLine();
                     _sb.Append('}');
@@ -451,7 +461,7 @@ namespace fire.Standard
                     for (long i = 0; i < n && keys.Kind == ValueKind.Array && values.Kind == ValueKind.Array; i++)
                     {
                         Key(keys.AsArray().Items[i].ToString(), ref first);
-                        WriteValue(values.AsArray().Items[i], "", values.AsArray());
+                        WriteValue(values.AsArray().Items[i], "", obj);
                     }
                 }
                 else
@@ -820,8 +830,10 @@ namespace fire.Standard
                 if (id is { } lid) _byId[lid] = value;
                 var items = new ScriptArray(Math.Max(8, a.Items.Count));
                 LeafOwnership.Adopt(items, list);
+                // (the elements belong to the list itself, as Add gives them - not to its array: Grow deletes the old array, and RemoveAt, Take and
+                // TakeAt ask `is from this`, DECISIONS D3)
                 for (int i = 0; i < a.Items.Count; i++)
-                    items.Items[i] = Build(a.Items[i], element, items, $"{path}[{i}]", null, (items, i));
+                    items.Items[i] = Build(a.Items[i], element, list, $"{path}[{i}]", null, (items, i));
                 for (int i = a.Items.Count; i < items.Length; i++) items.Items[i] = Value.MakeUndefined();
                 list.Fields["items"] = Value.MakeArray(items);
                 list.Fields["count"] = Value.MakeInt(a.Items.Count);
@@ -949,7 +961,8 @@ namespace fire.Standard
                 for (int i = 0; i < members.Count; i++)
                 {
                     keys.Items[i] = Value.MakeString(members[i].Key);
-                    values.Items[i] = Build(members[i].Value, "", values, path + "." + members[i].Key, null, (values, i));
+                    // (the values belong to the JsonObject, as Set gives them - not to its array, which Set replaces when it grows)
+                    values.Items[i] = Build(members[i].Value, "", obj, path + "." + members[i].Key, null, (values, i));
                 }
                 obj.Fields["keys"] = Value.MakeArray(keys);
                 obj.Fields["values"] = Value.MakeArray(values);

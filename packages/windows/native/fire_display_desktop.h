@@ -59,6 +59,7 @@
 #define FIRE_DISPLAY_TEXT_INPUT_RECT 1
 #define FIRE_DISPLAY_BACKDROP 1
 #define FIRE_DISPLAY_PLACEMENT 1
+#define FIRE_DISPLAY_FULLSCREEN 1
 #define FIRE_DISPLAY_SCALE 1
 #define FIRE_DISPLAY_PRESENT_AREA 1
 #define FIRE_DISPLAY_START_DRAG 1
@@ -238,6 +239,21 @@ static int fire_display_setBackdrop(FireDisplayWindow* w, int kind) {
 /* Window.Frameless / TopMost: FIRE_STYLE_* bits; the answer is what the display gave. */
 static int fire_display_setStyle(FireDisplayWindow* w, int flags) {
 #define FIRE_DD_B(m, p) return fire_##p##_setStyle(&w->u.m, flags);
+    FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
+#undef FIRE_DD_B
+    return 0;
+}
+/* Window.Fullscreen: on (1) - without a frame over the whole screen the window is on - or back to the size, place and frame it had (0). The answer is the state
+ * the display has now (a window manager or a browser may answer later: fire_display_fullscreen). */
+static int fire_display_setFullscreen(FireDisplayWindow* w, int on) {
+#define FIRE_DD_B(m, p) return fire_##p##_setFullscreen(&w->u.m, on);
+    FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
+#undef FIRE_DD_B
+    return 0;
+}
+/* Is the window in full screen now (also when the user or the desktop changed it: Esc in the browser, the window manager)? */
+static int fire_display_fullscreen(FireDisplayWindow* w) {
+#define FIRE_DD_B(m, p) return fire_##p##_fullscreen(&w->u.m);
     FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
 #undef FIRE_DD_B
     return 0;
