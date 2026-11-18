@@ -135,6 +135,9 @@ namespace fire.Windows.Bridge
                 ["Position"] = args => Value.MakeInt(-1),
                 ["SetIcon"] = args => Value.MakeUndefined(),
                 ["SetClickThrough"] = args => Value.MakeUndefined(),
+                // Window.Fullscreen/IsFullscreen: only the C display (fire_display_*.h) takes a window to full screen
+                ["SetFullscreen"] = args => Value.MakeUndefined(),
+                ["GetFullscreen"] = args => Value.MakeBool(false),
                 // Window.PresentPath: the C# windows show pixels
                 ["PresentPath"] = args => Value.MakeString("pixels"),
             };
@@ -201,6 +204,8 @@ namespace fire.Windows.Bridge
                 ["Position"] = args => Value.MakeInt(-1) /*STUB*/,
                 ["SetIcon"] = args => Value.MakeUndefined() /*STUB*/,
                 ["SetClickThrough"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetFullscreen"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetFullscreen"] = args => Value.MakeBool(false) /*STUB*/,
                 ["PresentPath"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }

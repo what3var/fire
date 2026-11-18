@@ -41,6 +41,9 @@
  *   double fire_display_scale(w)                              [FIRE_DISPLAY_SCALE] pixels of the screen per logical pixel of the window's screen now
  *   void fire_display_presentArea(w, rgba, width, height, x, y, aw, ah)   [FIRE_DISPLAY_PRESENT_AREA] like fire_display_present, but only the area (x, y, aw, ah;
  *                                                             framebuffer pixels) changed since the last frame: a display may hand over only that (it may show more)
+ *   int  fire_display_setFullscreen(w, on)                  [FIRE_DISPLAY_FULLSCREEN] Window.Fullscreen: 1 - without a frame over the whole screen (the monitor the window is on),
+ *                                                             0 - back to the size, place and frame from before; the new size comes as FIRE_EV_RESIZE. Returns the state now
+ *   int  fire_display_fullscreen(w)                         [FIRE_DISPLAY_FULLSCREEN] the state now - a window manager, the browser (Esc) or the user may change it
  *   int  fire_display_presentPath(w)                        [FIRE_DISPLAY_PRESENT_PATH] how the window shows its frames: 2 through DirectComposition (Windows),
  *                                                             1 the display's usual way (Window.PresentPath)
  * fire's own displays (fire_display_win32.h, _x11.h, _wayland.h, _cocoa.h, _web.h, _headless.h) share fire_display_common.h: the keys (fire_display_keys.h), the queue of a

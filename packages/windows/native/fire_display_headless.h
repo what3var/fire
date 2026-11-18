@@ -57,6 +57,7 @@ typedef struct FireDhlWindow {
     long frames;                  /* how many frames were shown */
     int backdrop;
     int textX, textY, textW, textH;   /* where the program's text cursor is */
+    int fullscreen, savedW, savedH;   /* Window.Fullscreen: on, and the size to go back to */
 } FireDhlWindow;
 
 static void fire_dhl_threadDone(void) {}
@@ -88,8 +89,12 @@ static void fire_dhl_close(FireDhlWindow* w) {
 
 static void fire_dhl_setVSync(FireDhlWindow* w, int v) { w->vsync = v; }
 static int fire_dhl_vsync(const FireDhlWindow* w) { return w->vsync; }
-/* (the program asks for the size: no resize event comes back, as on the desktop) */
-static void fire_dhl_setSize(FireDhlWindow* w, int width, int height) { if (width > 0 && height > 0) { w->winW = width; w->winH = height; } }
+/* (the program asks for the size: no resize event comes back, as on the desktop; in full screen it is the size to go back to) */
+static void fire_dhl_setSize(FireDhlWindow* w, int width, int height) {
+    if (width <= 0 || height <= 0) return;
+    if (w->fullscreen) { w->savedW = width; w->savedH = height; }
+    else { w->winW = width; w->winH = height; }
+}
 static void fire_dhl_setCursor(FireDhlWindow* w, int c) {
     if (c < 0 || c >= FIRE_CURSOR_COUNT || c == w->cursor) return;
     w->cursor = c;
@@ -101,14 +106,43 @@ static int fire_dhl_touchMouse(const FireDhlWindow* w) { return w->touchMouse; }
 static void fire_dhl_setTextInputRect(FireDhlWindow* w, int x, int y, int width, int height) { w->textX = x; w->textY = y; w->textW = width; w->textH = height; }
 
 /* Without a desktop nothing lies behind the window: it can only be transparent (the frame keeps its alpha). */
-/* (no screen: the style is given as asked, the position is only noted, the desktop counts as 1920 x 1080) */
+/* The screen there is not: FIRE_DISPLAY_SCREEN=<width>x<height> (the tests), else 1920 x 1080. */
+static void fire_dhl_screen(int* width, int* height) {
+    const char* e = getenv("FIRE_DISPLAY_SCREEN");
+    int sw = 0, sh = 0;
+    if (e != NULL) {
+        sw = atoi(e);
+        while (*e >= '0' && *e <= '9') e++;
+        if (*e == 'x' || *e == 'X') sh = atoi(e + 1);
+    }
+    if (sw <= 0 || sh <= 0 || sw > 16384 || sh > 16384) { sw = 1920; sh = 1080; }
+    *width = sw; *height = sh;
+}
+/* (no screen: the style is given as asked, the position is only noted, the desktop is the whole screen of fire_dhl_screen) */
 static int fire_dhl_setStyle(FireDhlWindow* w, int flags) { (void)w; return flags; }
 static void fire_dhl_move(FireDhlWindow* w, int x, int y) { (void)w; (void)x; (void)y; }
 static int fire_dhl_beginMove(FireDhlWindow* w) { (void)w; return 0; }
 static void fire_dhl_setInputShape(FireDhlWindow* w, const int* rects, int count, int fbW, int fbH) { (void)w; (void)rects; (void)count; (void)fbW; (void)fbH; }
 static void fire_dhl_setIcon(FireDhlWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
 static int fire_dhl_position(FireDhlWindow* w, int* r) { (void)w; (void)r; return 0; }
-static int fire_dhl_workArea(FireDhlWindow* w, int* r) { (void)w; r[0] = 0; r[1] = 0; r[2] = 1920; r[3] = 1080; return 1; }
+static int fire_dhl_workArea(FireDhlWindow* w, int* r) { (void)w; r[0] = 0; r[1] = 0; fire_dhl_screen(&r[2], &r[3]); return 1; }
+/* Window.Fullscreen: the window takes the size of the screen (a resize event, as a desktop sends it) and gets its size back afterwards. A host's window keeps the
+ * size the host gives it (the host's view is its screen): only the state is noted. */
+static int fire_dhl_setFullscreen(FireDhlWindow* w, int on) {
+    on = on != 0;
+    if (!w->open || on == w->fullscreen) return w->fullscreen;
+    w->fullscreen = on;
+    if (g_fireDisplayHosted) return on;
+    if (on) {
+        int sw, sh;
+        w->savedW = w->winW; w->savedH = w->winH;
+        fire_dhl_screen(&sw, &sh);
+        w->winW = sw; w->winH = sh;
+    } else { w->winW = w->savedW; w->winH = w->savedH; }
+    fire_display_queueResize(&w->queue, w->winW, w->winH);
+    return on;
+}
+static int fire_dhl_fullscreen(FireDhlWindow* w) { return w->fullscreen; }
 static int fire_dhl_setBackdrop(FireDhlWindow* w, int kind) { w->backdrop = kind <= FIRE_BACKDROP_NONE ? FIRE_BACKDROP_NONE : FIRE_BACKDROP_TRANSPARENT; return w->backdrop; }
 
 static double fire_dhl_scale(FireDhlWindow* w) { (void)w; return 1.0; }

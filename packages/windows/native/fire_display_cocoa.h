@@ -102,6 +102,10 @@ typedef struct FireDnsWindow {
     int mods;
     int textX, textY, textW, textH;
     char* marked;
+    int style;             /* Window.Frameless / TopMost / ShowInTaskbar (FIRE_STYLE_*) - given again after full screen */
+    int fullscreen;        /* Window.Fullscreen: a borderless window over the screen */
+    FireNSRect fsFrame;    /* the frame of the window before */
+    int fsSizeW, fsSizeH;  /* a size the program asked for in full screen (0: none) */
     FireDisplayQueue queue;
 } FireDnsWindow;
 
@@ -490,6 +494,7 @@ static void fire_dns_setTouchMouse(FireDnsWindow* w, int v) { w->touchMouse = v;
 static void fire_dns_setSize(FireDnsWindow* w, int width, int height) {
     FireNSSize s;
     if (w->window == NULL) return;
+    if (w->fullscreen) { w->fsSizeW = width; w->fsSizeH = height; return; }   /* (in full screen: the size after it) */
     w->winW = width; w->winH = height;
     s.width = width; s.height = height;
     FIRE_NS(void, (FireId, FireSel, FireNSSize), w->window, "setContentSize:", s);
@@ -552,7 +557,9 @@ static double fire_dns_primaryHeight(void) {
 static int fire_dns_setStyle(FireDnsWindow* w, int flags) {
     void* pool;
     FireNSSize size;
+    w->style = flags;
     if (w->window == NULL) return 0;
+    if (w->fullscreen) return flags;   /* (given when the window leaves full screen) */
     pool = objc_autoreleasePoolPush();
     FIRE_NS(void, (FireId, FireSel, unsigned long), w->window, "setStyleMask:", (flags & FIRE_STYLE_FRAMELESS) ? 0ul /* borderless */ : 15ul);
     size.width = w->winW; size.height = w->winH;
@@ -565,6 +572,47 @@ static int fire_dns_setStyle(FireDnsWindow* w, int flags) {
     objc_autoreleasePoolPop(pool);
     return flags;
 }
+
+/* Window.Fullscreen: a borderless window over the frame of its screen, the menu bar and the Dock hidden (presentation options) - at once, without the animation and
+ * the Space of its own that toggleFullScreen: gives (a game goes to full screen and back in a moment; Mission Control does not see a Space of it). Back: the style
+ * and the frame from before. windowDidResize reports the sizes: resize events. */
+static int fire_dns_setFullscreen(FireDnsWindow* w, int on) {
+    void* pool;
+    FireId app, screen;
+    on = on != 0;
+    if (w->window == NULL || on == w->fullscreen) return w->fullscreen;
+    pool = objc_autoreleasePoolPush();
+    app = FIRE_NS0(FireId, FIRE_CLS("NSApplication"), "sharedApplication");
+    if (on) {
+        FireNSRect f;
+        screen = FIRE_NS0(FireId, w->window, "screen");
+        if (screen == NULL) screen = FIRE_NS0(FireId, FIRE_CLS("NSScreen"), "mainScreen");
+        if (screen == NULL) { objc_autoreleasePoolPop(pool); return 0; }
+        f = fire_dns_rect(screen, "frame");
+        w->fsFrame = fire_dns_rect(w->window, "frame");
+        w->fullscreen = 1;
+        FIRE_NS(void, (FireId, FireSel, unsigned long), app, "setPresentationOptions:", (1ul << 1) | (1ul << 3) /* HideDock | HideMenuBar */);
+        FIRE_NS(void, (FireId, FireSel, unsigned long), w->window, "setStyleMask:", 0ul /* borderless */);
+        FIRE_NS(void, (FireId, FireSel, FireNSRect, signed char), w->window, "setFrame:display:", f, (signed char)1);
+    } else {
+        w->fullscreen = 0;
+        FIRE_NS(void, (FireId, FireSel, unsigned long), app, "setPresentationOptions:", 0ul);
+        FIRE_NS(void, (FireId, FireSel, unsigned long), w->window, "setStyleMask:", (w->style & FIRE_STYLE_FRAMELESS) ? 0ul : 15ul);
+        FIRE_NS(void, (FireId, FireSel, FireNSRect, signed char), w->window, "setFrame:display:", w->fsFrame, (signed char)1);
+        FIRE_NS(void, (FireId, FireSel, long), w->window, "setLevel:", (w->style & FIRE_STYLE_TOPMOST) ? 3L : 0L);
+        if (w->fsSizeW > 0 && w->fsSizeH > 0) {
+            FireNSSize size;
+            size.width = w->fsSizeW; size.height = w->fsSizeH;
+            FIRE_NS(void, (FireId, FireSel, FireNSSize), w->window, "setContentSize:", size);
+            w->fsSizeW = w->fsSizeH = 0;
+        }
+    }
+    FIRE_NS(signed char, (FireId, FireSel, FireId), w->window, "makeFirstResponder:", w->view);
+    FIRE_NS(void, (FireId, FireSel, FireId), w->window, "makeKeyAndOrderFront:", (FireId)NULL);
+    objc_autoreleasePoolPop(pool);
+    return w->fullscreen;
+}
+static int fire_dns_fullscreen(FireDnsWindow* w) { return w->fullscreen; }
 
 /* (macOS: clicks on the transparent pixels of a window that is not opaque go through to what lies below by themselves) */
 static void fire_dns_setInputShape(FireDnsWindow* w, const int* rects, int count, int fbW, int fbH) { (void)w; (void)rects; (void)count; (void)fbW; (void)fbH; }

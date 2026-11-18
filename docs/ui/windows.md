@@ -135,6 +135,31 @@ The program can size the window itself: `ui.SetSize(width, height)` (logical pix
 interface out anew - for a window that is as big as what it shows (the assistant's bubble grows with its text; with `window.Position()` and `SetPosition` its
 bottom stays where it was).
 
+## Full screen
+
+`window.Fullscreen = true` puts the window over the whole screen it is on, without a frame or title bar (a game); `false` brings back the size, place
+and frame it had before. The new size comes as a resize event (`EventType.Resize`), so with `AutoResize` (a root has it on) the framebuffer follows and
+the interface is laid out anew. A size the program asks for while the window is in full screen (`SetSize`) is the size it gets afterwards.
+
+`window.Fullscreen` says what the program asked for last; `window.IsFullscreen` says the state the desktop reports. They differ for a moment while a window
+manager answers (with a manager's thread: until its next cycle), and the desktop may end full screen by itself - the user presses Esc in the browser, a key
+of the window manager - then both read `false`. No key toggles full screen by itself (no F11): the program decides, e.g. in its `RegisterKeyDown`.
+
+```fire
+win.RegisterKeyDown(func (int key, int scan, int mods, bool repeat) => {
+    if (scan == 68) { win.Fullscreen = !win.IsFullscreen }   // 68: the scan code of F11
+})
+```
+
+| Display | How |
+| --- | --- |
+| Windows | a popup without frame over the monitor of the window (`MonitorFromWindow`, its whole rectangle - also over the task bar); back: the style and the placement from before |
+| X11 | `_NET_WM_STATE_FULLSCREEN` when the window manager has it (EWMH: it chooses the monitor and keeps the old place); without a window manager (Xvfb, a kiosk) an override-redirect window over the whole X screen |
+| Wayland | `xdg_toplevel.set_fullscreen` (the compositor chooses the output, the one the window is on); the size comes with its configure, fire's own title bar is away meanwhile |
+| macOS | a borderless window over the frame of its screen, the menu bar and the Dock hidden - at once, without the animation and the Space of its own of `toggleFullScreen:` |
+| Browser | `requestFullscreen` of the canvas; the browser allows it only shortly after a click or a key of the user (a handler of `MouseDown`/`KeyDown` is such a moment), else nothing happens and `IsFullscreen` stays `false`; Esc leaves it |
+| headless | only the state, and the size of the screen there is not: `FIRE_DISPLAY_SCREEN=<width>x<height>`, else 1920 x 1080 (also `WorkArea`) |
+
 ## The look of the system
 
 Every root looks like the other programs of the computer. At its start it asks `SystemTheme.Current()` and takes
