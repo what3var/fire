@@ -520,6 +520,9 @@ class Camera {
     byte clearBytes[]
     Scene scene
     string Key
+    defined bool pending       // a picture of RenderAsync that WaitRender has not put into the framebuffer yet
+    defined int pendingW       // (its size: the framebuffer's when it began)
+    defined int pendingH
 
     construct(Framebuffer target) {
         this.framebuffer = target
@@ -527,6 +530,9 @@ class Camera {
         this.h = __S3DNew(3)
         if (this.h == 0) { throw new Scene3DException("No memory for a camera.") }
         this.Key = ""
+        this.pending = false
+        this.pendingW = 0
+        this.pendingH = 0
     }
 
     destruct() { __S3DFree(this.h) }
@@ -562,9 +568,10 @@ class Camera {
     // Turns the camera (pitch and yaw, no roll) towards a point.
     undefined LookAt(defined float x : any m, defined float y : any m, defined float z : any m) { __S3DCamLookAt(this.h, S3D.Length(x), S3D.Length(y), S3D.Length(z)) }
 
-    // Draws what the camera sees into its framebuffer.
+    // Draws what the camera sees into its framebuffer. (A picture of RenderAsync that is not taken yet goes into the framebuffer first.)
     undefined Render() {
         if (this.scene == undefined) { throw new Scene3DException("The camera is not in a scene: scene.Add(camera).") }
+        if (this.pending) { this.WaitRender() }
 #if dos16 || bios16
         // (a target with the lean renderer only, straight into the framebuffer: nothing else is built in)
         if (__S3DRenderLean(this.h, this.scene.h, this.framebuffer.id, this.framebuffer.Width(), this.framebuffer.Height(), this.framebuffer.Mode(), undefined, undefined) < 0) {
@@ -603,6 +610,58 @@ class Camera {
         }
 #endif
     }
+
+    // Begins a picture and returns at once: scene3d draws it in a thread of its own (RenderMode.Software and Hardware), while the program goes on - with the next
+    // frame, say. The scene is taken as it is now (the places, turns, visibility and looks of the objects, the camera, the lights, fog, tint and particles):
+    // what the program changes afterwards shows in the next picture. WaitRender puts the picture into the framebuffer; until then the framebuffer keeps what
+    // it had (the window can show it, a HUD can be drawn into it - the thread draws into memory of its own, never into the framebuffer). A RenderAsync while a
+    // picture is still pending puts that one into the framebuffer first (WaitRender). The picture is the same as the one of Render.
+    // RenderMode.Fast, the targets with the lean renderer only and the targets without threads draw at once (the picture is ready when RenderAsync returns,
+    // WaitRender only puts it into the framebuffer).
+    undefined RenderAsync() {
+        if (this.scene == undefined) { throw new Scene3DException("The camera is not in a scene: scene.Add(camera).") }
+        if (this.pending) { this.WaitRender() }
+#if dos16 || bios16
+        this.Render()
+#else
+        if (this.scene.Renderer == RenderMode.Fast || (__S3DLean() & 2) != 0) {
+            this.Render()
+            return
+        }
+        var w = this.framebuffer.Width()
+        var h = this.framebuffer.Height()
+        if (__S3DRenderBegin(this.h, this.scene.h, w, h, this.framebuffer.id) < 0) { throw new Scene3DException("The framebuffer has no usable size (or the memory is gone).") }
+        this.pending = true
+        this.pendingW = w
+        this.pendingH = h
+#endif
+    }
+
+    // Waits for the picture of RenderAsync and puts it into the framebuffer (nothing when there is none). Before the HUD is drawn over it: what the program
+    // draws into the framebuffer before WaitRender is drawn over by the picture.
+    undefined WaitRender() {
+        if (!this.pending) { return }
+        this.pending = false
+#if !(dos16 || bios16)
+        var w = this.pendingW
+        var h = this.pendingH
+        if (this.pixels == undefined || this.pixels.length != w * h * 4) { this.pixels = new byte[w * h * 4] }
+        var drawn = __S3DRenderEnd(this.h, this.pixels)
+        if (drawn == -3) { return }
+        if (drawn < 0) { throw new Scene3DException("The picture could not be taken (the memory).") }
+        // (the framebuffer changed its size meanwhile: the picture does not fit - the next one does)
+        if (this.framebuffer.Width() != w || this.framebuffer.Height() != h) { return }
+        if (drawn == 2) {
+            if (this.clearBytes == undefined || this.clearBytes.length != w * h * 4) { this.clearBytes = new byte[w * h * 4] }
+            this.framebuffer.WriteBytes(this.clearBytes)
+        } else {
+            this.framebuffer.WriteBytes(this.pixels)
+        }
+#endif
+    }
+
+    // A picture of RenderAsync is pending (it may be drawn already): WaitRender takes it.
+    defined bool Rendering { get { return this.pending } }
 
     // The last picture went straight from the GPU into the window (DirectDrawing), not through the framebuffer.
     defined bool DrewDirectly { get { return __S3DCamRenderer(this.h) == 2 } }

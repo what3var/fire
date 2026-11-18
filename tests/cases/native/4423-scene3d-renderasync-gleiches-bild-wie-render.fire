@@ -1,0 +1,121 @@
+#import "graphics"
+#import "scene3d"
+#import "scene3d.effects"
+// Camera.RenderAsync / WaitRender: the picture is drawn in a thread of scene3d's own while the program goes on; it is the picture of the scene as it was when
+// RenderAsync began (what the program changes meanwhile shows in the next one), and the same picture as Render's - software, hardware (FIRE_S3D_GPU=cpu:
+// lavapipe) and Fast (which draws at once). The framebuffer keeps its old picture until WaitRender (a HUD drawn into it before is drawn over by the picture);
+// an object, its model and its texture may go while they are drawn; Render and RenderAsync without WaitRender between them take the pending picture first.
+class H {
+    static bool Same(byte a[], byte b[]) {
+        if (a.length != b.length) { return false }
+        for (var i = 0; i < a.length; i++) { if (a[i] != b[i]) { return false } }
+        return true
+    }
+    static Texture Checker() {
+        var bytes = new byte[8 * 8 * 4]
+        for (var i = 0; i < 64; i++) {
+            var lit = ((i % 8) / 2 + (i / 16)) % 2 == 0
+            bytes[i * 4] = 250
+            bytes[i * 4 + 1] = 200
+            bytes[i * 4 + 2] = 40
+            if (lit) { bytes[i * 4 + 1] = 30 }
+            bytes[i * 4 + 3] = 255
+        }
+        return new Texture(8, 8, bytes)
+    }
+    // an object that lives only for this call: it is in the scene when the picture begins, and gone (its model and texture with it) before it is taken
+    static undefined Passing(Scene scene, Camera cam) {
+        var ball = new Object(Model.FromTemplate(Template.Sphere, 16))
+        ball.SetPosition(1.5m, 1.5m, -5m)
+        ball.Texture = H.Checker()
+        scene.Add(ball)
+        cam.RenderAsync()
+        scene.Remove(ball)
+    }
+}
+
+var frame = new Framebuffer(80, 60)
+var scene = new Scene()
+var ground = new Object(Template.Plane, 0m, 0m, -6m, 14m, 0m, 14m)
+ground.Color = S3D.Rgb(90, 160, 90)
+scene.Add(ground)
+var box = new Object(Template.Box, 0m, 1m, -6m, 2m, 2m, 2m)
+box.Color = S3D.Rgb(200, 60, 40)
+box.Texture = H.Checker()
+scene.Add(box)
+var glass = new Object(Template.Quad, -1.5m, 1m, -4m, 1.5m, 1.5m, 0m)
+glass.Color = S3D.Rgb(40, 120, 220)
+glass.Opacity = 0.5
+scene.Add(glass)
+var sun = Light.Directional(-0.4, -1.0, -0.3)
+sun.CastShadows = true
+scene.Add(sun)
+var lamp = Light.Point(2m, 2m, -4m, S3D.Rgb(255, 220, 160), 1.5)
+lamp.Cutoff = 6m
+scene.Add(lamp)
+scene.Fog(S3D.Rgb(150, 160, 170), 4m, 20m)
+var cam = new Camera(frame)
+cam.SetPosition(0m, 3m, 2m)
+cam.LookAt(0m, 0.5m, -6m)
+scene.Add(cam)
+
+RenderMode modes[] = [RenderMode.Software, RenderMode.Hardware, RenderMode.Fast]
+string names[] = ["software", "hardware", "fast"]
+for (int k = 0; k < 3; k++) {
+    scene.Renderer = modes[k]
+    box.X = 0m
+    cam.Render()
+    var a = frame.ReadBytes()
+    box.X = 1m
+    cam.Render()
+    var b = frame.ReadBytes()
+    // RenderAsync takes the scene as it is: the box at 0, then the program moves it, turns the camera away and switches the light off - none of it in this picture
+    box.X = 0m
+    var hud = new byte[80 * 60 * 4]
+    for (var i = 1; i < hud.length; i += 4) { hud[i] = 255 }
+    frame.WriteBytes(hud)
+    cam.RenderAsync()
+    bool pending = cam.Rendering
+    box.X = 1m
+    cam.RotationY = 40deg
+    sun.Enabled = false
+    // the framebuffer is the program's until WaitRender
+    bool kept = H.Same(frame.ReadBytes(), hud)
+    cam.WaitRender()
+    var async1 = frame.ReadBytes()
+    cam.RotationY = 0deg
+    cam.LookAt(0m, 0.5m, -6m)
+    sun.Enabled = true
+    // the next picture shows the moved box
+    cam.RenderAsync()
+    cam.WaitRender()
+    var async2 = frame.ReadBytes()
+    // (Fast draws at once: nothing is pending, the picture is in the framebuffer when RenderAsync returns)
+    bool fast = modes[k] == RenderMode.Fast
+    print(names[k] + ": pending " + (pending != fast) + ", framebuffer kept " + (kept != fast) + ", as Render " + H.Same(async1, a) + " " + H.Same(async2, b) + ", taken " + !cam.Rendering + ", " + (cam.LastRenderer == modes[k] || S3D.HardwareName() == ""))
+    // an object that goes while it is drawn
+    box.X = 0m
+    H.Passing(scene, cam)
+    cam.WaitRender()
+    var passing = frame.ReadBytes()
+    // twice without WaitRender: the first picture goes into the framebuffer, the second is pending; Render takes it as well
+    cam.RenderAsync()
+    box.X = 1m
+    cam.RenderAsync()
+    var first = frame.ReadBytes()
+    cam.WaitRender()
+    var second = frame.ReadBytes()
+    box.X = 0m
+    cam.RenderAsync()
+    cam.Render()
+    var rendered = frame.ReadBytes()
+    var firstWant = a
+    if (fast) { firstWant = b }
+    print(names[k] + ": a passing object drawn " + !H.Same(passing, a) + ", in a row " + H.Same(first, firstWant) + " " + H.Same(second, b) + " " + H.Same(rendered, a) + " " + !cam.Rendering)
+}
+// the camera goes while its picture is drawn
+scene.Renderer = RenderMode.Software
+cam.RenderAsync()
+scene.Remove(cam)
+print("done")
+//# name: Scene3D: Camera.RenderAsync / WaitRender - das Bild in einem Thread von scene3d, der Stand beim Start, gleiches Bild wie Render (Software, GPU, Fast)

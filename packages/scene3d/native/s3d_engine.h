@@ -68,6 +68,64 @@ static void* s3d_calloc(s3d_size count, s3d_size elem) {
 #endif
 #endif
 
+/* ---- locks and a thread (the bridge is thread safe: its tables and items behind one short lock, a picture drawn outside of it and, with RenderAsync, in a
+ * thread of its own - fire_bridge_scene3d.h "Threads"). Without threads they are nothing: nobody can wait for anyone there. ---- */
+#ifdef S3D_THREADS
+#ifdef _WIN32
+typedef SRWLOCK S3dMutex;
+typedef CONDITION_VARIABLE S3dCond;
+#define S3D_MUTEX_INIT SRWLOCK_INIT
+#define S3D_COND_INIT CONDITION_VARIABLE_INIT
+static void s3d_mutexLock(S3dMutex* m) { AcquireSRWLockExclusive(m); }
+static void s3d_mutexUnlock(S3dMutex* m) { ReleaseSRWLockExclusive(m); }
+static void s3d_condWait(S3dCond* c, S3dMutex* m) { SleepConditionVariableSRW(c, m, INFINITE, 0); }
+static void s3d_condWake(S3dCond* c) { WakeAllConditionVariable(c); }
+typedef struct S3dThreadStart { void (*fn)(void*); void* arg; } S3dThreadStart;
+static DWORD WINAPI s3d_threadTrampoline(LPVOID p) { S3dThreadStart s = *(S3dThreadStart*)p; free(p); s.fn(s.arg); return 0; }
+/* A thread that runs fn(arg) on its own (nobody waits for its end); 0 when none could be started. */
+static int s3d_threadDetached(void (*fn)(void*), void* arg) {
+    S3dThreadStart* s = (S3dThreadStart*)malloc(sizeof(S3dThreadStart));
+    HANDLE t;
+    if (s == NULL) return 0;
+    s->fn = fn; s->arg = arg;
+    t = CreateThread(NULL, 0, s3d_threadTrampoline, s, 0, NULL);
+    if (t == NULL) { free(s); return 0; }
+    CloseHandle(t);
+    return 1;
+}
+#else
+typedef pthread_mutex_t S3dMutex;
+typedef pthread_cond_t S3dCond;
+#define S3D_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
+#define S3D_COND_INIT PTHREAD_COND_INITIALIZER
+static void s3d_mutexLock(S3dMutex* m) { pthread_mutex_lock(m); }
+static void s3d_mutexUnlock(S3dMutex* m) { pthread_mutex_unlock(m); }
+static void s3d_condWait(S3dCond* c, S3dMutex* m) { pthread_cond_wait(c, m); }
+static void s3d_condWake(S3dCond* c) { pthread_cond_broadcast(c); }
+typedef struct S3dThreadStart { void (*fn)(void*); void* arg; } S3dThreadStart;
+static void* s3d_threadTrampoline(void* p) { S3dThreadStart s = *(S3dThreadStart*)p; free(p); s.fn(s.arg); return NULL; }
+static int s3d_threadDetached(void (*fn)(void*), void* arg) {
+    S3dThreadStart* s = (S3dThreadStart*)malloc(sizeof(S3dThreadStart));
+    pthread_t t;
+    if (s == NULL) return 0;
+    s->fn = fn; s->arg = arg;
+    if (pthread_create(&t, NULL, s3d_threadTrampoline, s) != 0) { free(s); return 0; }
+    pthread_detach(t);
+    return 1;
+}
+#endif
+#else
+typedef int S3dMutex;
+typedef int S3dCond;
+#define S3D_MUTEX_INIT 0
+#define S3D_COND_INIT 0
+#define s3d_mutexLock(m) ((void)(m))
+#define s3d_mutexUnlock(m) ((void)(m))
+#define s3d_condWait(c, m) ((void)(c), (void)(m))
+#define s3d_condWake(c) ((void)(c))
+#define s3d_threadDetached(fn, arg) ((void)(fn), (void)(arg), 0)
+#endif
+
 /* ---- vectors and matrices ---------------------------------------------------------------------------------------------------------------- */
 typedef struct S3dVec3 { float x, y, z; } S3dVec3;
 static inline S3dVec3 s3d_v3(float x, float y, float z) { S3dVec3 r; r.x = x; r.y = y; r.z = z; return r; }
@@ -340,6 +398,7 @@ struct S3dTexture {
     uint32_t leanKey;
     float strength;    /* (the bridge: how strongly the bump map tilts the light, Texture.BumpStrength) */
     int filter;        /* how the colours are read between the texels: S3D_FILTER_* (the bump map is always bilinear; the lean renderer always reads the nearest texel) */
+    int busy;          /* (the bridge: pictures that are drawn with it now - its texels and bump map change only when none is) */
     /* where the texels that are not opaque are (made when asked, see s3d_texReadsAlpha): the texture in cells of alphaCell x alphaCell texels (at most 256 across), as sums over the
      * rectangles from the top left corner of the cells that hold such a texel ((alphaGw + 1) x (alphaGh + 1)); alphaVersion: the version they were made for */
     uint32_t* alphaSum;
