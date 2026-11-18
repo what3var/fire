@@ -31,7 +31,11 @@ namespace fire.Git
     }
 
     /// <summary>A page of the log: the entries, and where the next page starts (`Next`, the number of commits walked; null: there are no more).</summary>
-    public sealed record GitLogPage(IReadOnlyList<GitLogEntry> Entries, int? Next);
+    public sealed record GitLogPage(IReadOnlyList<GitLogEntry> Entries, int? Next)
+    {
+        /// <summary>Why the history is not complete (objects missing), null when it is.</summary>
+        public string? Warning { get; init; }
+    }
 
     /// <summary>A file that a commit changed (against its first parent): its path, the path before a rename, the state (Added, Modified, Deleted, Renamed).</summary>
     public sealed record GitCommitFile(string Path, string? OldPath, GitFileState State);
@@ -76,8 +80,10 @@ namespace fire.Git
                     {
                         var tracked = b.TrackedBranch;
                         bool hasUpstream = tracked != null && tracked.Tip != null;
-                        locals.Add(new GitRefInfo(b.FriendlyName, b.CanonicalName, b.Tip.Sha, b.IsCurrentRepositoryHead, null, tracked?.FriendlyName,
-                            hasUpstream ? b.TrackingDetails.AheadBy ?? 0 : 0, hasUpstream ? b.TrackingDetails.BehindBy ?? 0 : 0));
+                        int ahead = 0, behind = 0;
+                        try { if (hasUpstream) { ahead = b.TrackingDetails.AheadBy ?? 0; behind = b.TrackingDetails.BehindBy ?? 0; } }
+                        catch (LibGit2SharpException) { }   // (commits missing between them: no numbers)
+                        locals.Add(new GitRefInfo(b.FriendlyName, b.CanonicalName, b.Tip.Sha, b.IsCurrentRepositoryHead, null, tracked?.FriendlyName, ahead, behind));
                     }
                 }
                 var tags = new List<GitRefInfo>();
@@ -87,7 +93,7 @@ namespace fire.Git
                     if (target == null) continue;
                     tags.Add(new GitRefInfo(t.FriendlyName, t.CanonicalName, target.Sha, false, null, null, 0, 0, t.IsAnnotated ? t.Annotation.Message.TrimEnd() : null));
                 }
-                var stashes = _repo.Stashes.Select((s, i) => new GitStashInfo(i, s.Message, s.WorkTree.Sha, s.WorkTree.Author.When)).ToList();
+                var stashes = _repo.Stashes.Select((s, i) => new GitStashInfo(i, s.Message.Trim(), s.WorkTree.Sha, s.WorkTree.Author.When)).ToList();
                 var cmp = StringComparer.OrdinalIgnoreCase;
                 int step = 0, steps = 0;
                 string? stopped = null;
@@ -137,33 +143,90 @@ namespace fire.Git
                 if (_repo.Head.Tip != null) tips.Add(_repo.Head.Tip);
                 foreach (var b in _repo.Branches) if (b.Tip != null) tips.Add(b.Tip);
                 foreach (var t in _repo.Tags) if (t.PeeledTarget is Commit c) tips.Add(c);
-                var query = _repo.Commits.QueryBy(new CommitFilter { IncludeReachableFrom = tips, SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time });
                 var refs = RefNames();
                 string text = filter?.Text?.Trim() ?? "", author = filter?.Author?.Trim() ?? "", path = filter?.Path?.Trim() ?? "";
                 if (path.Length > 0 && System.IO.Path.IsPathRooted(path)) path = RelativeOf(path);
                 path = path.Replace('\\', '/').Trim('/');
                 var entries = new List<GitLogEntry>();
                 int index = 0;
-                foreach (var c in query)
+                string? warning = null;
+                // a repository with missing objects (a shallow clone, which libgit2 does not see as such in a worktree): the topological sort needs the whole history at once and fails -
+                // then by time, as far as the history goes
+                IEnumerator<Commit> walk;
+                try
                 {
-                    if (index++ < start) continue;
-                    if (entries.Count >= take) return new GitLogPage(entries, index - 1);
-                    if (text.Length > 0 && !c.Message.Contains(text, StringComparison.OrdinalIgnoreCase) && !c.Sha.StartsWith(text, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (author.Length > 0 && !c.Author.Name.Contains(author, StringComparison.OrdinalIgnoreCase) && !c.Author.Email.Contains(author, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (path.Length > 0 && !Touches(c, path)) continue;
-                    entries.Add(new GitLogEntry(Info(c), c.Parents.Select(p => p.Sha).ToList(), c.Author.Email, refs.TryGetValue(c.Sha, out var names) ? names : (IReadOnlyList<string>)Array.Empty<string>()));
+                    walk = _repo.Commits.QueryBy(new CommitFilter { IncludeReachableFrom = tips, SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time }).GetEnumerator();
+                    if (!walk.MoveNext()) return new GitLogPage(entries, null);
                 }
-                return new GitLogPage(entries, null);
+                catch (LibGit2SharpException)
+                {
+                    walk = WalkByTime(tips.OfType<Commit>()).GetEnumerator();
+                    if (!walk.MoveNext()) return new GitLogPage(entries, null);
+                    warning = "Some commits are not in this repository (a shallow clone?): the history ends where they are missing.";
+                }
+                using (walk)
+                    while (true)
+                    {
+                        var c = walk.Current;
+                        if (index++ >= start)
+                        {
+                            if (entries.Count >= take) return new GitLogPage(entries, index - 1) { Warning = warning };
+                            bool match = (text.Length == 0 || c.Message.Contains(text, StringComparison.OrdinalIgnoreCase) || c.Sha.StartsWith(text, StringComparison.OrdinalIgnoreCase))
+                                && (author.Length == 0 || c.Author.Name.Contains(author, StringComparison.OrdinalIgnoreCase) || c.Author.Email.Contains(author, StringComparison.OrdinalIgnoreCase))
+                                && (path.Length == 0 || Touches(c, path));
+                            if (match) entries.Add(new GitLogEntry(Info(c), ParentsOf(c), c.Author.Email, refs.TryGetValue(c.Sha, out var names) ? names : (IReadOnlyList<string>)Array.Empty<string>()));
+                        }
+                        try { if (!walk.MoveNext()) break; }
+                        catch (LibGit2SharpException) { warning = "Some commits are not in this repository (a shallow clone?): the history ends where they are missing."; break; }
+                    }
+                return new GitLogPage(entries, null) { Warning = warning };
             }
             catch (LibGit2SharpException ex) { throw new GitException(ex.Message, ex); }
+        }
+
+        /// <summary>
+        /// The commits from the tips on, newest first (by the committer's time), without libgit2's walk: for a repository that misses objects, where that walk fails at once. A parent that is
+        /// not there ends its line.
+        /// </summary>
+        private static IEnumerable<Commit> WalkByTime(IEnumerable<Commit> tips)
+        {
+            var queue = new PriorityQueue<Commit, long>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var t in tips) if (seen.Add(t.Sha)) queue.Enqueue(t, -t.Committer.When.ToUnixTimeSeconds());
+            while (queue.TryDequeue(out var c, out _))
+            {
+                yield return c;
+                IReadOnlyList<Commit> parents;
+                try { parents = c.Parents.ToList(); }
+                catch (Exception ex) when (ex is LibGit2SharpException or NullReferenceException) { continue; }
+                foreach (var p in parents)
+                {
+                    if (!seen.Add(p.Sha)) continue;
+                    long when;
+                    try { when = p.Committer.When.ToUnixTimeSeconds(); }
+                    catch (Exception ex) when (ex is LibGit2SharpException or NullReferenceException) { continue; }   // (not in the repository: LibGit2Sharp fails with either)
+                    queue.Enqueue(p, -when);
+                }
+            }
+        }
+
+        /// <summary>The ids of the parents that are in the repository (a shallow clone ends at parents it does not have: they would be lines in the graph that lead nowhere).</summary>
+        private IReadOnlyList<string> ParentsOf(Commit c)
+        {
+            try { return c.Parents.Where(p => _repo.ObjectDatabase.Contains(p.Id)).Select(p => p.Sha).ToList(); }
+            catch (Exception ex) when (ex is LibGit2SharpException or NullReferenceException) { return Array.Empty<string>(); }
         }
 
         private static bool Touches(Commit c, string path)
         {
             string? Id(Commit commit) => commit[path]?.Target.Sha;
             string? mine = Id(c);
-            var parent = c.Parents.FirstOrDefault();
-            return parent == null ? mine != null : mine != Id(parent);
+            try
+            {
+                var parent = c.Parents.FirstOrDefault();
+                return parent == null ? mine != null : mine != Id(parent);
+            }
+            catch (Exception ex) when (ex is LibGit2SharpException or NullReferenceException) { return mine != null; }   // (the parent is not in the repository)
         }
 
         /// <summary>The commit with its message, author and committer, parents, the files it changed (against its first parent) and the names that point at it.</summary>
@@ -172,7 +235,9 @@ namespace fire.Git
             try
             {
                 var c = _repo.Lookup<Commit>(sha) ?? throw new GitException($"There is no commit {sha}.");
-                var parent = c.Parents.FirstOrDefault();
+                Commit? parent;
+                try { parent = c.Parents.FirstOrDefault(p => _repo.ObjectDatabase.Contains(p.Id)); }
+                catch (Exception ex) when (ex is LibGit2SharpException or NullReferenceException) { parent = null; }   // (the border of a shallow clone)
                 var files = new List<GitCommitFile>();
                 foreach (var change in _repo.Diff.Compare<TreeChanges>(parent?.Tree, c.Tree))
                 {
@@ -187,7 +252,7 @@ namespace fire.Git
                 }
                 files.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.Path, b.Path));
                 var refs = RefNames();
-                return new GitCommitDetails(Info(c), c.Author.Email, c.Committer.Name, c.Committer.Email, c.Committer.When, c.Parents.Select(p => p.Sha).ToList(), files,
+                return new GitCommitDetails(Info(c), c.Author.Email, c.Committer.Name, c.Committer.Email, c.Committer.When, ParentsOf(c), files,
                     refs.TryGetValue(c.Sha, out var names) ? names : Array.Empty<string>());
             }
             catch (LibGit2SharpException ex) { throw new GitException(ex.Message, ex); }

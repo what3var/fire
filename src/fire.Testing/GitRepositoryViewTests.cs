@@ -150,6 +150,9 @@ static class GitRepositoryViewTests
             && Read(folder, "shared.txt").Contains("<<<<<<<") && repo.Status().Any(c => c.IsConflicted), stopped.ToString());
         var refs = repo.Refs();
         Check("Rebase: der Zustand nennt Schritt und Commit", refs.Operation == GitOperationKind.Rebase && refs.RebaseSteps >= 2 && refs.RebaseStopped != null, $"{refs.RebaseStep}/{refs.RebaseSteps} {refs.RebaseStopped}");
+        var overview = repo.Overview();
+        var rows = GitRows.Build(overview, null, new HashSet<string>(), new Dictionary<string, (IReadOnlyList<GitOverviewEntry> Files, int Total)>());
+        Check("Rebase: das Git-Panel sagt, dass ein Rebase angehalten hat", overview.Operation == GitOperationKind.Rebase && rows[0].Kind == GitRowKind.Banner && rows[0].Text.Contains("rebase") && rows[0].Text.Contains("Continue"), rows[0].Text);
         Check("Rebase: Weiter mit ungeloesten Konflikten ist ein Fehler", Message(() => repo.RebaseContinue()).Contains("conflict"));
         Check("Rebase: ein anderer Rebase, ein Merge waehrenddessen abgelehnt", Message(() => repo.Rebase(main)).Contains("not finished") && Message(() => repo.Merge(main)).Contains("not finished"));
         repo.RebaseAbort();

@@ -24,6 +24,9 @@ namespace fire.Git
             GitFileState.Modified => "M", GitFileState.Added => "A", GitFileState.Untracked => "U", GitFileState.Deleted => "D", GitFileState.Renamed => "R", GitFileState.Conflicted => "!", _ => " ",
         };
 
+        /// <summary>What git is in the middle of (a merge, a rebase, a cherry-pick, a revert that stopped at conflicts); the panel says so.</summary>
+        public GitOperationKind Operation { get; init; } = IsMerging ? GitOperationKind.Merge : GitOperationKind.None;
+
         public int Count => Staged.Count + Changes.Count + Untracked.Count;
         public bool HasConflicts => Changes.Any(e => e.State == GitFileState.Conflicted);
 
@@ -79,8 +82,19 @@ namespace fire.Git
             var rows = new List<GitRow>(overview.Count + 8);
             string f = filter?.Trim() ?? "";
             bool Match(GitOverviewEntry e) => f.Length == 0 || e.Path.Contains(f, StringComparison.OrdinalIgnoreCase);
-            if (overview.IsMerging)
-                rows.Add(new GitRow(GitRowKind.Banner, overview.HasConflicts ? "A merge is not finished: solve the conflicts (!), stage the files and commit." : "A merge is not finished: commit to finish it."));
+            switch (overview.Operation)
+            {
+                case GitOperationKind.Merge:
+                    rows.Add(new GitRow(GitRowKind.Banner, overview.HasConflicts ? "A merge is not finished: solve the conflicts (!), stage the files and commit." : "A merge is not finished: commit to finish it."));
+                    break;
+                case GitOperationKind.Rebase:
+                    rows.Add(new GitRow(GitRowKind.Banner, overview.HasConflicts ? "A rebase stopped at conflicts: solve them (!), stage the files (+), then Continue in the Repository view (Git > Repository)." : "A rebase is not finished: Continue, Skip or Abort it in the Repository view (Git > Repository)."));
+                    break;
+                case GitOperationKind.CherryPick or GitOperationKind.Revert:
+                    string what = overview.Operation == GitOperationKind.CherryPick ? "cherry-pick" : "revert";
+                    rows.Add(new GitRow(GitRowKind.Banner, overview.HasConflicts ? $"A {what} stopped at conflicts: solve them (!), stage the files and commit (or abort it in the Repository view)." : $"A {what} is not finished: commit to finish it."));
+                    break;
+            }
             void Section(string title, IReadOnlyList<GitOverviewEntry> entries, bool staged)
             {
                 if (entries.Count == 0) return;

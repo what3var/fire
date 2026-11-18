@@ -445,7 +445,7 @@ namespace fire.Git
 
         // ---- stash ---------------------------------------------------------------------------------------------------------------------------
 
-        public IReadOnlyList<GitStashInfo> Stashes() => _repo.Stashes.Select((s, i) => new GitStashInfo(i, s.Message, s.WorkTree.Sha, s.WorkTree.Author.When)).ToList();
+        public IReadOnlyList<GitStashInfo> Stashes() => _repo.Stashes.Select((s, i) => new GitStashInfo(i, s.Message.Trim(), s.WorkTree.Sha, s.WorkTree.Author.When)).ToList();
 
         /// <summary>Puts the changes (with `includeUntracked` the new files too) on the stash; the files are as in the last commit afterwards. False: there was nothing to put away.</summary>
         public bool StashSave(string? message = null, bool includeUntracked = true)

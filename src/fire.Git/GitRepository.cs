@@ -267,7 +267,7 @@ namespace fire.Git
         public GitOverview Overview(IReadOnlyList<GitChange> changes)
         {
             var current = HasCommits ? Branches().FirstOrDefault(b => b.IsCurrent) : null;
-            return GitOverview.Build(BranchName, current?.Ahead ?? 0, current?.Behind ?? 0, current?.HasUpstream ?? false, _repo.Network.Remotes.Any(), IsMerging, changes);
+            return GitOverview.Build(BranchName, current?.Ahead ?? 0, current?.Behind ?? 0, current?.HasUpstream ?? false, _repo.Network.Remotes.Any(), IsMerging, changes) with { Operation = Operation };
         }
 
         public bool IsIgnored(string path) => _repo.Ignore.IsPathIgnored(RelativeOf(path));
