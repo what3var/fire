@@ -25,7 +25,48 @@ namespace fire.Editor
             _gitPanel.DiffRequested += entry => _ = GitPanelDiff(entry);
             _gitPanel.OpenRequested += entry => { if (File.Exists(entry.FullPath)) OpenFile(entry.FullPath); };
             _gitPanel.CommitRequested += (message, push) => _ = GitPanelCommit(message, push);
+            _gitPanel.FolderFilesRequested += entry => _ = GitPanelFolderFiles(entry);
+            _gitPanel.IgnoreRequested += entry => _ = GitPanelIgnore(entry);
+            _gitPanel.RepositoryRequested += OpenGitRepositoryView;
         }
+
+        /// <summary>The files of an untracked folder that was opened in the panel (read in the background, at most GitRows.FolderLimit).</summary>
+        private async Task GitPanelFolderFiles(GitOverviewEntry folder)
+        {
+            if (_gitRoot is not { } root) return;
+            try
+            {
+                var (files, total) = await Task.Run(() =>
+                {
+                    using var repo = GitRepository.Open(root);
+                    var (paths, all) = repo.UntrackedFilesIn(folder.FullPath, GitRows.FolderLimit);
+                    return (paths.Select(p => new GitOverviewEntry(Path.GetRelativePath(repo.RootPath, p).Replace('\\', '/'), p, GitFileState.Untracked, false)).ToList(), all);
+                });
+                _gitPanel.SetFolderFiles(folder.FullPath, files, total);
+            }
+            catch (GitException ex) { _gitPanel.ShowNotice(ex.Message, error: true); }
+        }
+
+        /// <summary>"Add to .gitignore": a line for the file or folder in the .gitignore at the top of the repository.</summary>
+        private async Task GitPanelIgnore(GitOverviewEntry entry)
+        {
+            if (_gitRoot is not { } root) return;
+            try
+            {
+                string line = await Task.Run(() => { using var repo = GitRepository.Open(root); return repo.AddToIgnore(entry.FullPath); });
+                _gitPanel.ShowNotice($"'{line}' is in the .gitignore now.");
+                UpdateStatus($"Added '{line}' to {Path.Combine(root, ".gitignore")}.");
+            }
+            catch (GitException ex) { _gitPanel.ShowNotice(ex.Message, error: true); }
+            RefreshGit();
+        }
+
+        /// <summary>A git command in the background (the user interface does not wait: a repository with very many files can take seconds). Its error is the result, null when it went well.</summary>
+        private Task<string?> InGit(Action<GitRepository> action) => _gitRoot is not { } root ? Task.FromResult<string?>("There is no git repository here.") : Task.Run<string?>(() =>
+        {
+            try { using var repo = GitRepository.Open(root); action(repo); return null; }
+            catch (GitException ex) { return ex.Message; }
+        });
 
         /// <summary>Shows the state of the repository in the panel (called with every refresh).</summary>
         private void ShowGitPanel(GitOverview? overview)
@@ -51,17 +92,18 @@ namespace fire.Editor
         private async Task GitPanelStage(IReadOnlyList<GitOverviewEntry> entries, bool stage)
         {
             if (entries.Count == 0) return;
-            using var repo = await OpenGit(stage ? "Stage" : "Unstage");
-            if (repo == null) return;
-            try
+            // a document with unsaved changes: what is staged is the file, so it is saved first
+            if (stage)
             {
-                // a document with unsaved changes: what is staged is the file, so it is saved first
-                if (stage) foreach (var doc in _documents.Where(d => d.View.IsModified && !d.View.IsReadOnly && FullPathOf(d) is { } p && entries.Any(e => SamePath(e.FullPath, p))).ToList()) await Save(doc);
-                if (stage) repo.Stage(entries.Select(e => e.FullPath));
-                else repo.Unstage(entries.Select(e => e.FullPath));
-                _gitPanel.ShowNotice(null);
+                var paths = entries.Select(e => e.FullPath).ToHashSet(fire.Projects.ProjectFiles.PathComparer);
+                foreach (var doc in _documents.Where(d => d.View.IsModified && !d.View.IsReadOnly && FullPathOf(d) is { } p && (paths.Contains(p) || entries.Any(e => e.IsDirectory && fire.Editor.WatchFilter.IsInside(p, e.FullPath)))).ToList()) await Save(doc);
             }
-            catch (GitException ex) { _gitPanel.ShowNotice(ex.Message, error: true); }
+            var list = entries.Select(e => e.FullPath).ToList();
+            _gitPanel.SetBusy(true);
+            string? error;
+            try { error = await InGit(repo => { if (stage) repo.Stage(list); else repo.Unstage(list); }); }
+            finally { _gitPanel.SetBusy(false); }
+            _gitPanel.ShowNotice(error, error: error != null);
             RefreshGit();
         }
 
@@ -80,8 +122,12 @@ namespace fire.Editor
             try
             {
                 // (the open documents of these files: what is in the editor is thrown away too - that is what was asked)
-                var open = _documents.Where(d => FullPathOf(d) is { } p && entries.Any(e => SamePath(e.FullPath, p))).ToList();
-                repo.Discard(entries.Select(e => e.FullPath).Distinct());
+                var paths = entries.Select(e => e.FullPath).ToHashSet(fire.Projects.ProjectFiles.PathComparer);
+                var open = _documents.Where(d => FullPathOf(d) is { } p && (paths.Contains(p) || entries.Any(e => e.IsDirectory && WatchFilter.IsInside(p, e.FullPath)))).ToList();
+                _gitPanel.SetBusy(true);
+                _diskChanges.Hold();
+                try { await Task.Run(() => repo.Discard(paths)); }
+                finally { _gitPanel.SetBusy(false); _diskChanges.Release(); }
                 foreach (var doc in open)
                 {
                     if (File.Exists(doc.View.FilePath)) ReloadFromDisk(doc);
@@ -99,8 +145,8 @@ namespace fire.Editor
             if (repo == null) return;
             try
             {
-                string diff = repo.Diff(entry.FullPath, staged: entry.IsStaged);
-                string where = entry.IsStaged ? "staged" : entry.State == GitFileState.Untracked ? "new file" : "not staged";
+                string diff = await Task.Run(() => repo.Diff(entry.FullPath, staged: entry.IsStaged));
+                string where = entry.IsStaged ? "staged" : entry.IsDirectory ? "new folder" : entry.State == GitFileState.Untracked ? "new file" : "not staged";
                 await new GitDiffDialog($"Changes of {entry.Path} ({where})", diff).ShowDialog(this);
             }
             catch (GitException ex) { _gitPanel.ShowNotice(ex.Message, error: true); }
@@ -114,14 +160,17 @@ namespace fire.Editor
             await SaveAllModified();
             try
             {
-                var overview = repo.Overview();
+                var overview = await Task.Run(() => repo.Overview());
                 if (overview.HasConflicts) { _gitPanel.ShowNotice("Some files still have conflicts (!): solve them and stage them (+) first.", error: true); return; }
+                if (overview.Operation == GitOperationKind.Rebase) { _gitPanel.ShowNotice("A rebase is going on: stage the solved files (+), then press Continue in the Repository view (Git > Repository).", error: true); return; }
                 if (overview.Staged.Count == 0 && !overview.IsMerging)
                 {
                     if (overview.Count == 0) { _gitPanel.ShowNotice("Nothing has changed since the last commit."); return; }
                     if (await Dialogs.Ask(this, $"Nothing is staged. Stage all {overview.Count} changed file{(overview.Count == 1 ? "" : "s")} and commit them?", "Commit",
                         ("Stage All and Commit", Dialogs.Answer.Yes), ("Cancel", Dialogs.Answer.Cancel)) != Dialogs.Answer.Yes) return;
-                    repo.StageAll();
+                    _gitPanel.SetBusy(true);
+                    try { await Task.Run(() => repo.StageAll()); }
+                    finally { _gitPanel.SetBusy(false); }
                 }
                 var (name, email) = repo.Identity();
                 if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(email))
@@ -132,7 +181,7 @@ namespace fire.Editor
                     if (string.IsNullOrWhiteSpace(email)) return;
                     repo.SetIdentity(name.Trim(), email.Trim());
                 }
-                var commit = repo.Commit(message);
+                var commit = await Task.Run(() => repo.Commit(message));
                 _gitPanel.Message = "";
                 _gitPanel.ShowNotice($"Committed {commit.ShortSha}: {commit.Summary}");
                 UpdateStatus($"Committed {commit.ShortSha}: {commit.Summary}");

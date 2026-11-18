@@ -9,7 +9,7 @@ using System.Linq;
 namespace fire.Compiler
 {
     /// <summary>The kind of invocation on the command line.</summary>
-    public enum CommandKind { Run, Build, Native, Test, Help, Bytecode, Dump }
+    public enum CommandKind { Run, Build, Native, Test, Help, Bytecode, Dump, Publish }
 
     /// <summary>Result of evaluating the command line (see <see cref="CommandLineParser.Parse"/>).</summary>
     public sealed class CommandLineOptions
@@ -93,6 +93,7 @@ namespace fire.Compiler
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--global-jobs safepoints|sleep|sync] [-- <arguments of the program>...]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--linkage source|static|shared|plugin] [--host <program>] [--global-jobs safepoints|sleep|sync]
+              fire.Compiler publish <solution.firesln>|<project.fireproj> [-p <project>]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--global-jobs safepoints|sleep|sync]
               fire.Compiler bytecode <file>... | <project.fireproj> [-o <out.fbc>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
               fire.Compiler dump  <file>... | <project.fireproj> | <program.fbc> [-o <file>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
@@ -169,12 +170,13 @@ namespace fire.Compiler
             {
                 case "run": command = CommandKind.Run; break;
                 case "build": command = CommandKind.Build; break;
+                case "publish": command = CommandKind.Publish; break;
                 case "native": command = CommandKind.Native; break;
                 case "test": command = CommandKind.Test; break;
                 case "bytecode": command = CommandKind.Bytecode; break;
                 case "dump": command = CommandKind.Dump; break;
                 default:
-                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run, build, native, test, bytecode, dump or data).");
+                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run, build, publish, native, test, bytecode, dump or data).");
             }
 
             var files = new List<string>();
@@ -465,6 +467,7 @@ namespace fire.Compiler
             using var collecting = collector.Begin();
 
             if (options.Command == CommandKind.Test) return Test(options, stdout, stderr);
+            if (options.Command == CommandKind.Publish) return Publish(options, stdout, stderr);
             if (options.Command is CommandKind.Bytecode or CommandKind.Dump) return Bytecode(options, stdout, stderr);
             if (options.Files.Count == 1 && IsProjectFile(options.Files[0])) return RunProject(options, stdout, stderr);
 
@@ -846,12 +849,14 @@ namespace fire.Compiler
                     var result = NativeBuilder.Build(plan.SourceTexts, config, target, toolchain, out2, options.Mode, options.FloatWidth, options.KeepSources, defines: options.Defines, plan: plan);
                     stdout.Write(result.Log);
                     if (!result.Ok) { stderr.WriteLine($"The native build for {target.Name} failed."); return ExitScriptError; }
+                    CopyContent(plan, toolchain.EffectiveKind == "files" ? out2 : Path.GetDirectoryName(Path.GetFullPath(out2))!, stdout, stderr);
                     stdout.WriteLine($"{result.Output} (native, target {target.Name}, toolchain {toolchain.EffectiveKind})");
                     return ExitOk;
                 }
                 output ??= fire.Projects.ProjectOutput.ProgramPath(plan.Project.Directory, plan.Name, fire.Projects.ProjectOutput.VmTarget, EffectiveModeName(options, plan, null), OperatingSystem.IsWindows());
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
                 new Linker { Defines = options.Defines, Plan = plan, SourcePaths = plan.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(plan.SourceTexts, null, output, options.Mode, options.FloatWidth);
+                CopyContent(plan, Path.GetDirectoryName(Path.GetFullPath(output))!, stdout, stderr);
                 stdout.WriteLine($"{Path.GetFullPath(output)} ({new FileInfo(output).Length} bytes)");
                 return ExitOk;
             }
@@ -860,6 +865,38 @@ namespace fire.Compiler
             catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
             catch (Package.Manager.PackageException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
             catch (Exception ex) when (IsCompileError(ex)) { stderr.WriteLine(DescribeErrors(ex)); return ExitScriptError; }
+        }
+
+        /// <summary>The files with the build action Copy next to the program (docs/tools/projects.md, "Build actions").</summary>
+        private static void CopyContent(fire.Projects.BuildPlan plan, string folder, TextWriter stdout, TextWriter stderr)
+        {
+            var items = fire.Projects.ProjectContent.ItemsOf(plan);
+            if (items.Count == 0) return;
+            var copied = fire.Projects.ProjectContent.CopyTo(items, folder);
+            foreach (var p in copied.Problems) stderr.WriteLine("warning: " + p);
+            if (copied.Copied.Count > 0) stdout.WriteLine($"{copied.Copied.Count} file{(copied.Copied.Count == 1 ? "" : "s")} copied next to the program ({copied.UpToDate} up to date)");
+        }
+
+        /// <summary>`publish`: the projects of a solution that have publishing on (or the project of -p, or the one project of a `.fireproj`), built when something changed and copied into their
+        /// target folders (docs/tools/projects.md, "Publish").</summary>
+        private static int Publish(CommandLineOptions options, TextWriter stdout, TextWriter stderr)
+        {
+            if (options.Files.Count != 1 || !IsProjectFile(options.Files[0])) { stderr.WriteLine("publish takes one solution (.firesln) or project (.fireproj)."); return ExitUsage; }
+            if (!File.Exists(options.Files[0])) { stderr.WriteLine($"File not found: {options.Files[0]}"); return ExitUsage; }
+            fire.Projects.Workspace workspace;
+            IReadOnlyList<fire.Projects.LoadedProject>? projects = null;
+            try
+            {
+                workspace = fire.Projects.Workspace.Open(options.Files[0]);
+                if (options.ProjectName != null) projects = new[] { ProjectBuilder.SelectProject(workspace, options.ProjectName) };
+                else if (workspace.Solution == null) projects = workspace.Projects.ToList();
+            }
+            catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
+            var monitor = new fire.Native.BuildMonitor(log: line => stdout.WriteLine(line));
+            // (a project named on the command line, or the project file itself, is published even when its publishing is off)
+            var result = ProjectPublisher.Publish(workspace, projects, new PublishOptions { Monitor = monitor, IncludeDisabled = projects != null });
+            foreach (var d in result.Diagnostics) stderr.WriteLine(d.ToLogLine());
+            return result.Ok ? ExitOk : ExitScriptError;
         }
 
         private static int Execute(CommandLineOptions options, List<string> sources, TextWriter stderr)

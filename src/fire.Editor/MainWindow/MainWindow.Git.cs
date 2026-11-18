@@ -30,16 +30,22 @@ namespace fire.Editor
             Activated += (_, _) => { if ((DateTime.UtcNow - _gitRefreshed).TotalSeconds > 3) RefreshGit(); };   // git may have been used outside of the editor
         }
 
-        /// <summary>The path that decides which repository is meant: the solution or project, else the file of the active document.</summary>
-        private string? GitProbePath() => _workspace.FilePath ?? FullPathOf(ActiveDocument);
+        /// <summary>The path that decides which repository is meant: the solution or project, else the file of the active document (the Repository view: the repository it shows).</summary>
+        private string? GitProbePath() => _workspace.FilePath ?? FullPathOf(ActiveDocument) ?? (ActiveDocument?.View as GitRepositoryView)?.Root;
 
-        /// <summary>Reads the state of the repository again in the background and shows it (explorer marks, branch in the status bar).</summary>
+        // one refresh at a time: one that is asked for while another runs is done once after it (a burst of requests is one more refresh, not one each)
+        private bool _gitRefreshRunning, _gitRefreshAgain;
+
+        /// <summary>Reads the state of the repository again in the background and shows it (explorer marks, branch in the status bar, the Git panel). Never on the UI thread.</summary>
         private void RefreshGit()
         {
             _gitRefreshed = DateTime.UtcNow;
+            if (_gitRefreshRunning) { _gitRefreshAgain = true; return; }
+            _gitRefreshRunning = true;
             string? probe = GitProbePath();
             _ = Task.Run(() =>
             {
+                long statusMs = 0;
                 string? root = null, branch = null;
                 var states = new Dictionary<string, GitFileState>();
                 int ahead = 0, behind = 0;
@@ -51,28 +57,46 @@ namespace fire.Editor
                         using var repo = GitRepository.Open(found);
                         root = repo.RootPath;
                         branch = repo.BranchName;
-                        var changes = repo.Status();
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        var changes = repo.Status(collapseUntrackedFolders: true);   // (a new folder is one entry, as in `git status`)
+                        long tStatus = statusMs = sw.ElapsedMilliseconds;
                         states = GitRepository.StateMapOf(changes);
                         overview = repo.Overview(changes);
+                        GitTiming($"status {tStatus} ms ({changes.Count} entries), overview {sw.ElapsedMilliseconds - tStatus} ms");
                         ahead = overview.Ahead; behind = overview.Behind;
                     }
                 }
-                catch (GitException ex) { System.Diagnostics.Debug.WriteLine(ex); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }   // (any error: the next refresh must still be possible)
                 Dispatcher.UIThread.Post(() =>
                 {
+                    _gitRefreshRunning = false;
+                    // a repository that is slow to read: the watcher waits longer before it asks again
+                    _diskChanges.Slow = statusMs > 700 || states.Count > 5000;
                     bool rootChanged = root != _gitRoot;
                     _gitRoot = root; _gitBranch = branch; _gitStates = states; _gitAhead = ahead; _gitBehind = behind; _gitOverview = overview;
+                    var ui = System.Diagnostics.Stopwatch.StartNew();
                     ShowGitState();
+                    GitTiming($"UI: ShowGitState {ui.ElapsedMilliseconds} ms");
+                    Dispatcher.UIThread.Post(() => GitTiming($"UI: shown (layout and render) after {ui.ElapsedMilliseconds} ms"), DispatcherPriority.Background);
                     if (rootChanged) UpdateWatchers();   // (the .git folder of the repository is watched too)
+                    if (_gitRefreshAgain) { _gitRefreshAgain = false; RefreshGit(); }   // (asked for while this one ran: once more)
                 });
             });
         }
 
+        /// <summary>FIRE_GIT_TIMING=1: the times of reading and showing the git state go to stderr (to measure big repositories).</summary>
+        private static readonly bool GitTimingOn = Environment.GetEnvironmentVariable("FIRE_GIT_TIMING") == "1";
+        private static void GitTiming(string text) { if (GitTimingOn) Console.Error.WriteLine($"[git {DateTime.Now:HH:mm:ss.fff}] {text}"); }
+
         private void ShowGitState()
         {
             GitText.Text = _gitRoot == null ? "" : $"git: {_gitBranch}" + (_gitAhead > 0 ? $" ↑{_gitAhead}" : "") + (_gitBehind > 0 ? $" ↓{_gitBehind}" : "") + (_gitStates.Count > 0 ? $"  {_gitStates.Count} changed" : "");
-            _solutionPanel.Refresh(_workspace, FullPathOf(ActiveDocument), _gitRoot == null ? null : _gitStates, _gitBranch);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            _solutionPanel.UpdateGit(_workspace, FullPathOf(ActiveDocument), _gitRoot == null ? null : _gitStates, _gitBranch);   // (only the marks: the tree follows the workspace in RefreshProjectUi)
+            long explorer = sw.ElapsedMilliseconds;
             ShowGitPanel(_gitOverview);
+            ShowGitRepositoryView();
+            GitTiming($"UI: solution explorer {explorer} ms, Git panel {sw.ElapsedMilliseconds - explorer} ms");
         }
 
         // ---- the menu ---------------------------------------------------------------------------------------------------------------------
@@ -82,7 +106,7 @@ namespace fire.Editor
             bool repo = _gitRoot != null;
             bool file = repo && FullPathOf(ActiveDocument) is { } p && _gitStates.ContainsKey(Path.GetFullPath(p));
             mnuGitInit.IsEnabled = !repo && GitProbePath() != null;
-            mnuGitCommit.IsEnabled = mnuGitPull.IsEnabled = mnuGitPush.IsEnabled = mnuGitFetch.IsEnabled = mnuGitServer.IsEnabled = mnuGitBranches.IsEnabled = mnuGitHistory.IsEnabled = repo && !_gitBusy;
+            mnuGitCommit.IsEnabled = mnuGitPull.IsEnabled = mnuGitPush.IsEnabled = mnuGitFetch.IsEnabled = mnuGitServer.IsEnabled = mnuGitBranches.IsEnabled = mnuGitHistory.IsEnabled = mnuGitRepository.IsEnabled = repo && !_gitBusy;
             mnuGitFileHistory.IsEnabled = repo && FullPathOf(ActiveDocument) != null;
             mnuGitFileChanges.IsEnabled = mnuGitFileDiscard.IsEnabled = file;
         }
@@ -163,7 +187,7 @@ namespace fire.Editor
             using var repo = await OpenGit("Commit");
             if (repo == null) return;
             await SaveAllModified();
-            if (repo.Status().Count == 0 && !repo.IsMerging) { await Dialogs.Message(this, "Nothing has changed since the last commit.", "Commit"); return; }
+            if ((await Task.Run(() => repo.Status(collapseUntrackedFolders: true))).Count == 0 && !repo.IsMerging) { await Dialogs.Message(this, "Nothing has changed since the last commit.", "Commit"); return; }
             var dialog = new GitCommitDialog(repo, preselected);
             await dialog.ShowDialog(this);
             if (dialog.Committed is { } commit) UpdateStatus($"Committed {commit.ShortSha}: {commit.Summary}");

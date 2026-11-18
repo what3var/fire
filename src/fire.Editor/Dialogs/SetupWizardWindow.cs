@@ -46,7 +46,7 @@ namespace fire.Editor
             _back.Click += (_, _) => { _model.Back(); ShowPage(); };
             _next.Click += (_, _) =>
             {
-                if (_model.IsLast) { Plan = _model.Plan(); Close(true); return; }
+                if (_model.Finish() is { } plan) { Plan = plan; Close(true); return; }
                 _model.Next();
                 ShowPage();
             };

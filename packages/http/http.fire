@@ -308,6 +308,8 @@ namespace Http {
         Headers headers
         byte body[]
         string url
+        // The trailer fields after a chunked body the client got (undefined for other answers).
+        Headers trailers
         // A body that is read from a stream while it is sent (Http.AppServer; instead of `body`): `streamLength` bytes, or chunked when it is -1.
         IO.IStream stream
         defined int streamLength
@@ -322,6 +324,7 @@ namespace Http {
             this.reason = Http.Status.Reason(status)
             this.headers = new Http.Headers()
             this.url = ""
+            this.trailers = undefined
             this.body = Http.Response.Bytes(body)
             // (a body that belongs to this call - `new Http.Response(202, new byte[0])`, a buffer made for it - belongs to the response; one of the
             // caller stays the caller's: the response refers to it)
@@ -546,6 +549,40 @@ namespace Http {
         }
     }
 
+    // The parts of a chunked body (Transfer-Encoding: chunked): "<hex size>[;extensions]" CRLF, the data, CRLF - up to the chunk of size 0, the trailer
+    // fields and an empty line. A line may come in several reads (Http.Reader puts it together).
+    class Chunked {
+        // The size of the next chunk (its extensions are ignored); 0 for the last chunk.
+        static defined int ReadSize(Reader reader) {
+            var line = reader.ReadLine(8192)
+            if (line == undefined) { throw new Http.HttpException("The connection ended inside a chunked body (before the size of a chunk).", 2) }
+            var size = Http.Num.ParseHex(line)
+            if (size < 0) { throw new Http.HttpException("A bad chunk size: '" + line + "'.", 2) }
+            return size
+        }
+
+        // The line break after the data of a chunk.
+        static undefined ReadEnd(Reader reader) {
+            var line = reader.ReadLine(8192)
+            if (line == undefined) { throw new Http.HttpException("The connection ended inside a chunked body (after the data of a chunk).", 2) }
+            if (line.Length != 0) { throw new Http.HttpException("A chunk is longer than its size says.", 2) }
+        }
+
+        // The trailer fields after the last chunk, up to the empty line (a connection that ends right after the last chunk is taken as its end).
+        static undefined ReadTrailers(Reader reader, Headers trailers) {
+            var count = 0
+            while (true) {
+                var line = reader.ReadLine(8192)
+                if (line == undefined || line.Length == 0) { return }
+                count = count + 1
+                if (count > 100) { throw new Http.HttpException("Too many trailer fields.", 4) }
+                any colon = line.IndexOf(":")
+                if (colon <= 0) { throw new Http.HttpException("A trailer field without a name: '" + line + "'.", 2) }
+                trailers.Add(line.Substring(0, colon).Trim(), line.Substring(colon + 1).Trim())
+            }
+        }
+    }
+
     // The message format on the wire.
     class Wire {
         // The header fields up to the empty line.
@@ -563,26 +600,23 @@ namespace Http {
             }
         }
 
-        // The body of a message: chunked, with a Content-Length, or (a response only: `untilClose`) up to the end of the connection.
-        static byte[] ReadBody(Reader reader, Headers headers, bool untilClose, defined int limit) {
+        // The body of a message: chunked, with a Content-Length, or (a response only: `untilClose`) up to the end of the connection. The trailer fields
+        // of a chunked body go into `trailers` (when it is given).
+        static byte[] ReadBody(Reader reader, Headers headers, bool untilClose, defined int limit, Headers trailers = undefined) {
             var te = headers.Get("Transfer-Encoding")
             if (te != undefined && te.ToLower().IndexOf("chunked") >= 0) {
                 var sink = new IO.MemoryStream()
                 while (true) {
-                    var sizeLine = reader.ReadLine(8192)
-                    if (sizeLine == undefined) { throw new Http.HttpException("The connection ended inside a chunked body.", 2) }
-                    var size = Http.Num.ParseHex(sizeLine)
-                    if (size < 0) { throw new Http.HttpException("A bad chunk size: '" + sizeLine + "'.", 2) }
+                    var size = Http.Chunked.ReadSize(reader)
                     if (size == 0) {
-                        // the trailer fields, then the empty line
-                        var trailer = reader.ReadLine(8192)
-                        while (trailer != undefined && trailer.Length > 0) { trailer = reader.ReadLine(8192) }
+                        if (trailers == undefined) { Http.Chunked.ReadTrailers(reader, new Http.Headers()) }
+                        else { Http.Chunked.ReadTrailers(reader, trailers) }
                         break
                     }
                     if (sink.Length + size > limit) { throw new Http.HttpException("The message is larger than " + limit + " bytes.", 4) }
                     var data = reader.ReadExact(size)
                     sink.Write(data, 0, data.length)
-                    reader.ReadLine(8192)
+                    Http.Chunked.ReadEnd(reader)
                 }
                 var all = sink.ToBuffer()
                 sink.Close()
@@ -827,7 +861,9 @@ namespace Http {
                 if (reason.Length > 0) { response.reason = reason }
                 Http.Wire.ReadHeaders(reader, response.headers)
                 if (method != "HEAD" && !Http.Status.NoBody(status)) {
-                    response.body = Http.Wire.ReadBody(reader, response.headers, true, this.maxBodyBytes)
+                    var te = response.headers.Get("Transfer-Encoding")
+                    if (te != undefined && te.ToLower().IndexOf("chunked") >= 0) { response.trailers = new Http.Headers() }
+                    response.body = Http.Wire.ReadBody(reader, response.headers, true, this.maxBodyBytes, response.trailers)
                 }
                 stream.Close()
                 return response
@@ -842,17 +878,20 @@ namespace Http {
     }
 
     // A download into a file, a piece at a time (docs/networking/http.md): Start connects (following redirects) and reads the head of the answer, Step writes
-    // what comes into the file - a user interface calls it in its timer and shows Received / Total. A file that is there already is continued (Range):
-    // an interrupted download goes on where it stopped. The file has the name `path` only when it is complete: until then it is `path + ".part"`.
+    // what comes into the file - a user interface calls it in its timer and shows Received / Total. The body may come with a Content-Length, chunked
+    // (Transfer-Encoding: chunked; Total stays -1 until the last chunk) or up to the end of the connection. A file that is there already is continued
+    // (Range, checked with If-Range against the ETag or Last-Modified of the first answer, kept in `path + ".part.etag"`): an interrupted download goes on
+    // where it stopped; a server that ignores the range sends all again (Restarted). The file has the name `path` only when it is complete: until then it
+    // is `path + ".part"`. PieceSize > 0 asks for the file in pieces of that many bytes (a request each).
     //
     //     var d = new Http.Download("https://example.com/big.bin", "big.bin")
-    //     d.Start()
-    //     while (!d.Done) { d.Step(); print(d.Received + " / " + d.Total) }
+    //     d.OnProgress(func (Http.Download x) => print(x.Received + " / " + x.Total))
+    //     d.Run()                                  // or: d.Start(); while (d.Step()) { ... }
     class Download {
         string url
         string path
         string Part
-        // The bytes in the file so far, and all of them (-1 while the server has not said).
+        // The bytes in the file so far, and all of them (-1 while the server has not said: a chunked answer, one that ends with the connection).
         defined int Received = 0
         defined int Total = -1
         bool Done = false
@@ -860,6 +899,22 @@ namespace Http {
         string Error = ""
         // The URL the file came from at last (after the redirects).
         string FinalUrl = ""
+        // Continue a .part that is there (true); false: start from the beginning.
+        bool Resume = true
+        // > 0: the file comes in pieces of this many bytes, a request (Range: bytes=a-b) for each; 0: in one request.
+        defined int PieceSize = 0
+        // Cancel() was called (or the task's token was cancelled in Run()).
+        bool Cancelled = false
+        // The last answer continued the part (206), or it came all again although a part was there (the server ignored the range, or the file changed).
+        bool Resumed = false
+        bool Restarted = false
+        // The last answer is chunked; its status and header fields; the trailer fields after its last chunk.
+        bool Chunked = false
+        defined int Status = 0
+        Http.Headers ResponseHeaders = undefined
+        Http.Headers Trailers = undefined
+        // What If-Range sends when the part is continued: the (strong) ETag of the file, else its Last-Modified ("" when the server sent neither).
+        string Validator = ""
         defined int timeout = 30000
         defined int maxRedirects = 8
         string userAgent = "fire-http/1"
@@ -868,19 +923,29 @@ namespace Http {
         Http.Reader reader = undefined
         IO.FileStream file = undefined
         byte buffer[]
+        string meta
+        lambda<Http.Download> progress = undefined
         defined int contentLeft = -1
+        defined int chunkLeft = -1
+        defined int pieceStart = 0
         bool started = false
+        bool stepping = false
 
         construct(string url, string path) {
             this.url = url
             this.path = path
             this.Part = path + ".part"
+            this.meta = path + ".part.etag"
             this.buffer = new byte[65536]
         }
 
         destruct() { this.Close() }
 
-        // Connects and reads the head of the answer; afterwards Total says how large the file is. An error is in Error (and Done is true).
+        // Called after every Step that wrote something and once at the end (also after an error or Cancel): the lambda gets the download (Received,
+        // Total, Done, Error) and may Cancel() it.
+        undefined OnProgress(lambda<Http.Download> handler) { this.progress = take handler }
+
+        // Connects and reads the head of the answer; afterwards Total says how large the file is (-1: not known yet). An error is in Error (and Done is true).
         undefined Start() {
             if (this.started) { return }
             this.started = true
@@ -890,124 +955,306 @@ namespace Http {
                 this.Done = true
                 return
             }
-            defined int have = 0
-            if (IO.File.Exists(this.Part)) { have = IO.File.Size(this.Part) }
+            if (!this.Resume) {
+                if (IO.File.Exists(this.Part)) { IO.File.Delete(this.Part) }
+                if (IO.File.Exists(this.meta)) { IO.File.Delete(this.meta) }
+                this.Validator = ""
+            }
             try {
-                var current = this.url
-                var redirects = 0
-                while (true) {
-                    var parsed = Http.Url.Parse(current)
-                    this.stream = Http.Transport.Open(parsed, this.timeout, this.tls)
-                    this.stream.ReadTimeout = this.timeout
-                    this.stream.WriteTimeout = this.timeout
-                    var h = new Http.Headers()
-                    h.Set("Host", parsed.HostHeader())
-                    h.Set("User-Agent", this.userAgent)
-                    h.Set("Accept", "*/*")
-                    h.Set("Connection", "close")
-                    if (have > 0) { h.Set("Range", "bytes=" + have + "-") }
-                    Http.Wire.Write(this.stream, "GET " + parsed.path + " HTTP/1.1", h, undefined)
-                    this.reader = new Http.Reader(this.stream)
-                    var line = this.reader.ReadLine(8192)
-                    while (line != undefined && line.Length == 0) { line = this.reader.ReadLine(8192) }
-                    if (line == undefined) { throw new Http.HttpException("The server closed the connection without an answer.", 2) }
-                    any parts = line.Split(" ")
-                    if (parts.length < 2) { throw new Http.HttpException("Not an HTTP answer: '" + line + "'.", 2) }
-                    var status = Http.Num.Parse(parts[1])
-                    var headers = new Http.Headers()
-                    Http.Wire.ReadHeaders(this.reader, headers)
-                    any location = headers.Get("Location")
-                    if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && location != undefined) {
-                        redirects++
-                        if (redirects > this.maxRedirects) { throw new Http.HttpException("More than " + this.maxRedirects + " redirects.", 3) }
-                        this.stream.Close()
-                        this.stream = undefined
-                        current = parsed.Resolve(location)
-                        continue
-                    }
-                    if (status == 416 && have > 0) {
-                        // (the part is complete already)
-                        this.stream.Close()
-                        this.stream = undefined
-                        this.Received = have
-                        this.Total = have
-                        this.Finish()
-                        return
-                    }
-                    if (status != 200 && status != 206) { throw new Http.HttpException("The server answered " + status + " for " + current + ".", 2) }
-                    any te = headers.Get("Transfer-Encoding")
-                    if (te != undefined && te.ToLower().IndexOf("chunked") >= 0) { throw new Http.HttpException("A chunked download is not supported.", 5) }
-                    any length = headers.Get("Content-Length")
-                    if (length != undefined) { this.contentLeft = Http.Num.Parse(length) }
-                    if (status == 206) {
-                        this.Received = have
-                        this.file = IO.File.Open(this.Part, IO.FileMode.Append, IO.FileAccess.Write)
-                    }
-                    else {
-                        this.Received = 0
-                        this.file = IO.File.Open(this.Part, IO.FileMode.Create, IO.FileAccess.Write)
-                    }
-                    if (this.contentLeft >= 0) { this.Total = this.Received + this.contentLeft }
-                    this.FinalUrl = current
-                    // what the reader has after the head belongs to the file
-                    if (this.reader.pos < this.reader.len) {
-                        var n = this.reader.len - this.reader.pos
-                        this.file.Write(this.reader.chunk, this.reader.pos, n)
-                        this.Received += n
-                        if (this.contentLeft >= 0) { this.contentLeft -= n }
-                        this.reader.pos = this.reader.len
-                    }
-                    if (this.contentLeft == 0) { this.Finish() }
-                    return
-                }
+                this.Connect(this.url)
             } catch (Exception e) {
                 this.Fail(e.message)
             }
+        }
+
+        // One request: from where the part ends (Range when there is a part, or for a piece), following redirects; the file opened for what comes.
+        undefined Connect(string first) {
+            defined int have = 0
+            if (IO.File.Exists(this.Part)) { have = IO.File.Size(this.Part) }
+            string validator = this.Validator
+            if (validator == "" && have > 0 && IO.File.Exists(this.meta)) { validator = IO.File.ReadAllText(this.meta).Trim() }
+            if (have == 0) { validator = "" }
+            this.Resumed = false
+            var current = first
+            var redirects = 0
+            while (true) {
+                var parsed = Http.Url.Parse(current)
+                this.stream = Http.Transport.Open(parsed, this.timeout, this.tls)
+                this.stream.ReadTimeout = this.timeout
+                this.stream.WriteTimeout = this.timeout
+                var h = new Http.Headers()
+                h.Set("Host", parsed.HostHeader())
+                h.Set("User-Agent", this.userAgent)
+                h.Set("Accept", "*/*")
+                // (the bytes of the file as they are: a range of a compressed body would be of no use)
+                h.Set("Accept-Encoding", "identity")
+                h.Set("Connection", "close")
+                if (have > 0 || this.PieceSize > 0) {
+                    string range = "bytes=" + have + "-"
+                    if (this.PieceSize > 0) { range += "" + (have + this.PieceSize - 1) }
+                    h.Set("Range", range)
+                    if (have > 0 && validator != "") { h.Set("If-Range", validator) }
+                }
+                Http.Wire.Write(this.stream, "GET " + parsed.path + " HTTP/1.1", h, undefined)
+                this.reader = new Http.Reader(this.stream)
+                var line = this.reader.ReadLine(8192)
+                while (line != undefined && line.Length == 0) { line = this.reader.ReadLine(8192) }
+                if (line == undefined) { throw new Http.HttpException("The server closed the connection without an answer.", 2) }
+                any parts = line.Split(" ")
+                if (parts.length < 2 || !parts[0].StartsWith("HTTP/")) { throw new Http.HttpException("Not an HTTP answer: '" + line + "'.", 2) }
+                var status = Http.Num.Parse(parts[1])
+                this.ResponseHeaders = new Http.Headers()
+                var headers = this.ResponseHeaders
+                Http.Wire.ReadHeaders(this.reader, headers)
+                any location = headers.Get("Location")
+                if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && location != undefined) {
+                    redirects++
+                    if (redirects > this.maxRedirects) { throw new Http.HttpException("More than " + this.maxRedirects + " redirects.", 3) }
+                    this.Drop()
+                    current = parsed.Resolve(location)
+                    continue
+                }
+                this.Status = status
+                if (status == 416 && have > 0) {
+                    // (nothing more from where the part ends: it is complete - unless the server says the file has another size)
+                    this.Drop()
+                    defined int size = Http.Download.SizeOf(headers.Get("Content-Range"))
+                    if (size >= 0 && size != have) {
+                        this.Restart()
+                        have = 0
+                        validator = ""
+                        continue
+                    }
+                    this.FinalUrl = current
+                    this.Received = have
+                    this.Total = have
+                    this.Finish()
+                    return
+                }
+                if (status != 200 && status != 206) { throw new Http.HttpException("The server answered " + status + " for " + current + ".", 2) }
+                any etag = headers.Get("ETag")
+                any modified = headers.Get("Last-Modified")
+                string fresh = ""
+                if (etag != undefined && !etag.StartsWith("W/")) { fresh = etag }
+                else if (modified != undefined) { fresh = modified }
+                any length = headers.Get("Content-Length")
+                defined int contentLength = -1
+                if (length != undefined) {
+                    contentLength = Http.Num.Parse(length)
+                    if (contentLength < 0) { throw new Http.HttpException("A bad Content-Length: '" + length + "'.", 2) }
+                }
+                if (status == 206) {
+                    // (only the piece that was asked for, of the same file)
+                    any cr = headers.Get("Content-Range")
+                    defined int firstByte = Http.Download.FirstOf(cr)
+                    bool changed = have > 0 && validator.StartsWith("\"") && etag != undefined && etag != validator
+                    if (firstByte != have || changed) {
+                        this.Drop()
+                        if (have == 0) { throw new Http.HttpException("The server sent another range than the one asked for: '" + cr + "'.", 2) }
+                        this.Restart()
+                        have = 0
+                        validator = ""
+                        continue
+                    }
+                    this.Total = Http.Download.SizeOf(cr)
+                    if (contentLength < 0) {
+                        defined int upto = Http.Download.LastOf(cr)
+                        if (upto >= firstByte) { contentLength = upto - firstByte + 1 }
+                    }
+                    this.Resumed = have > 0
+                } else {
+                    if (have > 0) { this.Restarted = true }
+                    have = 0
+                    this.Total = contentLength
+                }
+                if (have == 0) {
+                    this.Validator = fresh
+                    if (fresh != "") { IO.File.WriteAllText(this.meta, fresh) }
+                    else if (IO.File.Exists(this.meta)) { IO.File.Delete(this.meta) }
+                    this.file = IO.File.Open(this.Part, IO.FileMode.Create, IO.FileAccess.Write)
+                } else {
+                    this.Validator = validator
+                    if (validator == "" && fresh != "") {
+                        this.Validator = fresh
+                        IO.File.WriteAllText(this.meta, fresh)
+                    }
+                    this.file = IO.File.Open(this.Part, IO.FileMode.Append, IO.FileAccess.Write)
+                }
+                this.Received = have
+                this.pieceStart = have
+                any te = headers.Get("Transfer-Encoding")
+                this.Chunked = te != undefined && te.ToLower().IndexOf("chunked") >= 0
+                this.chunkLeft = -1
+                this.contentLeft = contentLength
+                if (this.Chunked) { this.contentLeft = -1 }
+                this.FinalUrl = current
+                return
+            }
+        }
+
+        // (the part does not fit the file: it goes, the next request asks for all of it)
+        undefined Restart() {
+            if (IO.File.Exists(this.Part)) { IO.File.Delete(this.Part) }
+            if (IO.File.Exists(this.meta)) { IO.File.Delete(this.meta) }
+            this.Validator = ""
+            this.Restarted = true
+        }
+
+        // (the connection of an answer that is not read further)
+        undefined Drop() {
+            if (this.stream != undefined) { try { this.stream.Close() } catch (Exception e) { } this.stream = undefined }
+            this.reader = undefined
+        }
+
+        // The numbers of a Content-Range "bytes first-last/size" (-1 when it is not there or not a number; the size "*" is -1).
+        static defined int FirstOf(any cr) {
+            if (cr == undefined || !cr.StartsWith("bytes ")) { return -1 }
+            string rest = cr.Substring(6).Trim()
+            int dash = rest.IndexOf("-")
+            if (dash <= 0) { return -1 }
+            return Http.Num.Parse(rest.Substring(0, dash))
+        }
+
+        static defined int LastOf(any cr) {
+            if (cr == undefined || !cr.StartsWith("bytes ")) { return -1 }
+            string rest = cr.Substring(6).Trim()
+            int dash = rest.IndexOf("-")
+            int slash = rest.IndexOf("/")
+            if (dash <= 0 || slash <= dash) { return -1 }
+            return Http.Num.Parse(rest.Substring(dash + 1, slash - dash - 1))
+        }
+
+        static defined int SizeOf(any cr) {
+            if (cr == undefined) { return -1 }
+            int slash = cr.IndexOf("/")
+            if (slash < 0) { return -1 }
+            return Http.Num.Parse(cr.Substring(slash + 1))
         }
 
         // Writes what comes within about `maxBytes` into the file (it waits for the network at most `timeout`). True while the download goes on.
         bool Step(defined int maxBytes = 1048576) {
             if (!this.started) { this.Start() }
             if (this.Done) { return false }
+            this.stepping = true
             try {
                 var got = 0
-                while (got < maxBytes) {
+                while (got < maxBytes && !this.Done && !this.Cancelled) {
+                    if (this.Chunked) {
+                        if (this.chunkLeft == 0) {
+                            Http.Chunked.ReadEnd(this.reader)
+                            this.chunkLeft = -1
+                        }
+                        if (this.chunkLeft < 0) {
+                            var size = Http.Chunked.ReadSize(this.reader)
+                            if (size == 0) {
+                                this.Trailers = new Http.Headers()
+                                Http.Chunked.ReadTrailers(this.reader, this.Trailers)
+                                this.EndOfAnswer()
+                                break
+                            }
+                            this.chunkLeft = size
+                        }
+                    }
                     var want = this.buffer.length
-                    if (this.contentLeft >= 0 && this.contentLeft < want) { want = this.contentLeft }
-                    if (want <= 0) { break }
-                    var n = this.stream.Read(this.buffer, 0, want)
+                    if (this.Chunked) {
+                        if (this.chunkLeft < want) { want = this.chunkLeft }
+                    } else if (this.contentLeft >= 0) {
+                        if (this.contentLeft < want) { want = this.contentLeft }
+                        if (want <= 0) {
+                            this.EndOfAnswer()
+                            break
+                        }
+                    }
+                    var n = this.ReadSome(want)
                     if (n <= 0) {
-                        if (this.contentLeft > 0) { this.Fail("The connection ended " + this.contentLeft + " bytes before the end (Start again to continue)."); return false }
+                        if (this.Chunked) { throw new Http.HttpException("The connection ended inside a chunk (" + this.chunkLeft + " bytes of it missing).", 2) }
+                        if (this.contentLeft > 0) { throw new Http.HttpException("The connection ended " + this.contentLeft + " bytes before the end.", 2) }
+                        // (an answer without a length ends with the connection)
+                        this.EndOfAnswer()
                         break
                     }
-                    this.file.Write(this.buffer, 0, n)
                     this.Received += n
                     got += n
-                    if (this.contentLeft >= 0) { this.contentLeft -= n }
-                    if (this.contentLeft == 0) { break }
+                    if (this.Chunked) { this.chunkLeft -= n }
+                    else if (this.contentLeft > 0) { this.contentLeft -= n }
                 }
-                if (this.contentLeft == 0 || (this.contentLeft < 0 && got == 0)) { this.Finish() }
+                if (got > 0 && !this.Done) { this.Report() }
             } catch (Exception e) {
-                this.Fail(e.message + " (Start again to continue)")
+                this.stepping = false
+                this.Fail(e.message + " (Retry continues the download from the part.)")
                 return false
             }
+            this.stepping = false
+            if (this.Cancelled && !this.Done) { this.Fail("The download was cancelled (Retry continues it from the part).") }
             return !this.Done
         }
 
-        // Downloads it all (waits); false (and Error) when it failed.
+        // (at most `want` bytes into the file: first what the reader has buffered, then from the connection)
+        defined int ReadSome(defined int want) {
+            var r = this.reader
+            if (r.pos < r.len) {
+                var n = r.len - r.pos
+                if (n > want) { n = want }
+                this.file.Write(r.chunk, r.pos, n)
+                r.pos += n
+                return n
+            }
+            if (r.eof) { return 0 }
+            var m = this.stream.Read(this.buffer, 0, want)
+            if (m > 0) { this.file.Write(this.buffer, 0, m) }
+            return m
+        }
+
+        // (the answer is complete: the next piece, or the file is done)
+        undefined EndOfAnswer() {
+            if (this.PieceSize > 0 && this.Status == 206) {
+                bool more = (this.Total >= 0 && this.Received < this.Total) || (this.Total < 0 && this.Received - this.pieceStart >= this.PieceSize)
+                if (more) {
+                    if (this.file != undefined) { this.file.Close(); this.file = undefined }
+                    this.Drop()
+                    this.Connect(this.FinalUrl)
+                    return
+                }
+            }
+            if (this.Total >= 0 && this.Received != this.Total) { throw new Http.HttpException("The file has " + this.Received + " bytes, the server said " + this.Total + ".", 2) }
+            this.Finish()
+        }
+
+        // Downloads it all (waits); false (and Error) when it failed. Stops when the running task's token is cancelled.
         bool Run() {
             this.Start()
-            while (this.Step()) { }
+            var token = CancellationToken.Current()
+            while (this.Step()) {
+                if (token.IsCancelled) { this.Cancel() }
+            }
             return this.Error == ""
+        }
+
+        // Stops the download (from a progress lambda, between Steps, in Run when the task's token is cancelled): Error says it was cancelled, what came
+        // stays in the .part file - Retry() continues it.
+        undefined Cancel() {
+            if (this.Done) { return }
+            this.Cancelled = true
+            if (!this.stepping) { this.Fail("The download was cancelled (Retry continues it from the part).") }
+        }
+
+        undefined Report() {
+            if (this.progress != undefined) {
+                var p = this.progress
+                p(this)
+            }
         }
 
         undefined Finish() {
             if (this.file != undefined) { this.file.Close(); this.file = undefined }
-            if (this.stream != undefined) { this.stream.Close(); this.stream = undefined }
+            this.Drop()
             if (IO.File.Exists(this.path)) { IO.File.Delete(this.path) }
+            if (!IO.File.Exists(this.Part)) { IO.File.WriteAllText(this.Part, "") }
             IO.File.Move(this.Part, this.path)
+            if (IO.File.Exists(this.meta)) { IO.File.Delete(this.meta) }
             if (this.Total < 0) { this.Total = this.Received }
             this.Done = true
+            this.Report()
         }
 
         undefined Fail(string why) {
@@ -1015,20 +1262,24 @@ namespace Http {
             this.Done = true
             this.started = false
             if (this.file != undefined) { this.file.Close(); this.file = undefined }
-            if (this.stream != undefined) { try { this.stream.Close() } catch (Exception e) { } this.stream = undefined }
+            this.Drop()
+            this.Report()
         }
 
         // Stops it (what came stays in the .part file: Start continues it).
         undefined Close() {
             if (this.file != undefined) { this.file.Close(); this.file = undefined }
-            if (this.stream != undefined) { try { this.stream.Close() } catch (Exception e) { } this.stream = undefined }
+            this.Drop()
         }
 
-        // Starts again after an error (continues the .part file).
+        // Starts again after an error or Cancel (continues the .part file).
         undefined Retry() {
             this.Error = ""
             this.Done = false
             this.started = false
+            this.Cancelled = false
+            this.Restarted = false
+            this.Resumed = false
             this.Start()
         }
     }

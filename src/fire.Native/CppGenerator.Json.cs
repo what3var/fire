@@ -178,6 +178,20 @@ namespace fire.Native
 
         /// <summary>The JSON row of a class (a JsonClassInfo) and the table of its fields (written to <paramref name="sb"/> as <paramref name="fieldTable"/>). A plugin
         /// (<paramref name="unitFixups"/>): the table is not const and the units of its fields are set when the plugin is registered (the program's numbers).</summary>
+        /// <summary>The place of the count of a List or JsonObject for the JSON engine (JsonSpecial): its slot and half (-1: a whole slot) - or, when the count is
+        /// a packed int (a program of modules lays out `defined int count` by its declaration, RawTypeAt), its offset in objRaw and -2 (fire_json.h jsFieldGet).</summary>
+        private (int Place, int Half) JsonCountPlace(RuntimeClass rc, int index)
+        {
+            var (off, _) = RawLayoutOf(rc);
+            if (index < off.Length && off[index] >= 0)
+            {
+                if (KindOfType(RawTypeAt(rc, index)) != KindInt) throw new NativeNotSupportedException($"the count of '{rc.Name}' is a packed field that is no int");
+                return (off[index], -2);
+            }
+            var (slot, half) = FieldPlace(rc, index);
+            return (slot, half);
+        }
+
         private string JsonRow(ClassInfo ci, string fieldTable, int flags, StringBuilder sb, List<string>? unitFixups)
         {
             var rc = ci.Rc;
@@ -253,7 +267,8 @@ namespace fire.Native
                 if (rc.Name == "List" && rc.FieldIndex.TryGetValue("items", out int items) && rc.FieldIndex.TryGetValue("count", out int count))
                 {
                     flags |= 4;
-                    (listCls, listItems, listCount, listCountHalf) = (ci.Id, FieldPlace(rc, items).Slot, FieldPlace(rc, count).Slot, FieldPlace(rc, count).Half);
+                    (listCls, listItems) = (ci.Id, FieldPlace(rc, items).Slot);
+                    (listCount, listCountHalf) = JsonCountPlace(rc, count);
                     // `owns` as its field initialiser gives it (Owns.Explicit) - the reader runs no initialisers; a packed field starts at zero (Explicit) anyway
                     if (rc.FieldIndex.TryGetValue("owns", out int owns) && !(PackedOn && RawLayoutOf(rc) is var (offs, _) && owns < offs.Length && offs[owns] >= 0)
                         && ProgramEnum("Owns") is { } ownsType)
@@ -262,7 +277,8 @@ namespace fire.Native
                 if (rc.Name == "JsonObject" && rc.FieldIndex.TryGetValue("keys", out int keys) && rc.FieldIndex.TryGetValue("values", out int values) && rc.FieldIndex.TryGetValue("count", out int n))
                 {
                     flags |= 8;
-                    (objCls, objKeys, objValues, objCount, objCountHalf) = (ci.Id, FieldPlace(rc, keys).Slot, FieldPlace(rc, values).Slot, FieldPlace(rc, n).Slot, FieldPlace(rc, n).Half);
+                    (objCls, objKeys, objValues) = (ci.Id, FieldPlace(rc, keys).Slot, FieldPlace(rc, values).Slot);
+                    (objCount, objCountHalf) = JsonCountPlace(rc, n);
                 }
                 rows.Add(JsonRow(ci, $"kJsonF{ci.Id}", flags, sb, null));
             }

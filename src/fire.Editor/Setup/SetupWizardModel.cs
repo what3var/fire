@@ -17,7 +17,8 @@ namespace fire.Editor.Setup
 
     /// <summary>What the wizard looks at: the system, the machine, the assistant and the toolchains that are there. <see cref="Current"/> for the real machine; the tests make their own.</summary>
     public sealed record SetupEnvironment(bool IsWindows, bool IsMacOS, bool IsX64, MachineInfo Machine, bool AssistantAvailable, bool AssistantEnabled,
-        IReadOnlyList<DetectedToolchain> Detected, bool W64devkitThere = false, bool WatcomThere = false, string? ModelFolder = null)
+        IReadOnlyList<DetectedToolchain> Detected, bool W64devkitThere = false, bool WatcomThere = false, string? ModelFolder = null,
+        bool TinyccPinned = false, bool TinyccThere = false)
     {
         public bool IsLinux => !IsWindows && !IsMacOS;
 
@@ -38,7 +39,8 @@ namespace fire.Editor.Setup
             return new SetupEnvironment(OperatingSystem.IsWindows(), OperatingSystem.IsMacOS(), System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.X64,
                 MachineInfo.Current(), File.Exists(assistant) && File.Exists(forge), assistantEnabled, detected,
                 W64devkitThere: File.Exists(Path.Combine(ToolchainSetup.W64devkitDirectory, "bin", "g++.exe")),
-                WatcomThere: Directory.Exists(WatcomSetup.Directory));
+                WatcomThere: Directory.Exists(WatcomSetup.Directory),
+                TinyccPinned: TinyccSetup.Download.Sha256.Length == 64, TinyccThere: TinyccSetup.Installed);
         }
     }
 
@@ -112,6 +114,14 @@ namespace fire.Editor.Setup
                     DownloadBytes = WatcomSetup.DownloadBytes, Folder = WatcomSetup.Directory,
                     Installable = env.IsWindows && env.IsX64 && !env.WatcomThere && !env.Detected.Any(d => d.Kind == "watcom"), There = env.WatcomThere || env.Detected.Any(d => d.Kind == "watcom"),
                 },
+                new()
+                {
+                    Id = "tcc", Name = $"TinyCC {TinyccSetup.Version} (C only)",
+                    Description = "A tiny, very fast C compiler - it compiles C only, not C++: enough for programs whose packages are all in C. Portable as well; checked by its SHA-256.",
+                    DownloadBytes = TinyccSetup.DownloadBytes, Folder = TinyccSetup.Directory,
+                    Installable = env.IsWindows && env.TinyccPinned && !env.TinyccThere && !env.Detected.Any(d => d.Kind == "tcc"),
+                    There = env.TinyccThere || (env.IsWindows && env.Detected.Any(d => d.Kind == "tcc")),
+                },
             };
             foreach (var t in Toolchains) t.Selected = t.Recommended && t.Installable;
 
@@ -184,9 +194,13 @@ namespace fire.Editor.Setup
                 else if (env.IsWindows) hints.Add("No C++ compiler was found. Install one (w64devkit, MSYS2, LLVM or Visual Studio) to build natively.");
                 else if (env.IsMacOS) hints.Add("No C++ compiler was found. Install Apple's command line tools: xcode-select --install");
                 else hints.Add("No C++ compiler was found. Install g++ or clang++ with the package manager, e.g. sudo apt install g++ (Debian, Ubuntu), sudo dnf install gcc-c++ (Fedora), sudo pacman -S gcc (Arch).");
+                bool tcc = env.TinyccThere || env.Detected.Any(d => d.Kind == "tcc");
+                if (env.IsWindows && !tcc && !Toolchains.Any(t => t.Id == "tcc" && t.Installable))
+                    hints.Add("Optional: TinyCC (tcc, C only) compiles C very quickly - put tcc.exe on the PATH to use it.");
                 if (!env.IsWindows)
                 {
-                    if (!env.Detected.Any(d => d.Kind == "tcc")) hints.Add("Optional: TinyCC (tcc) compiles C very quickly - enough for programs whose packages are all in C.");
+                    if (!tcc) hints.Add("Optional: TinyCC (tcc) compiles C very quickly, C only - enough for programs whose packages are all in C" +
+                        (env.IsMacOS ? " (brew install tcc)." : " (e.g. sudo apt install tcc)."));
                     if (!env.Detected.Any(d => d.Kind == "watcom") && !env.WatcomThere) hints.Add("For the DOS, Windows 3.x and BIOS targets spark downloads Open Watcom when such a target is built" + (env.IsLinux ? "." : " (Windows and Linux)."));
                 }
                 if (!env.Detected.Any(d => d.Kind == "emscripten")) hints.Add("For the web target (WebAssembly): Emscripten (emsdk) on the PATH.");
@@ -210,6 +224,21 @@ namespace fire.Editor.Setup
         }
 
         public long TotalDownloadBytes => Plan().Sum(p => p.DownloadBytes);
+
+        /// <summary>Start on the summary page: the plan to run (null on any other page - Next goes on there).</summary>
+        public IReadOnlyList<SetupPlanItem>? Finish() => IsLast ? Plan() : null;
+
+        /// <summary>Starts the run of a plan: its steps (<paramref name="steps"/>: the real ones, <see cref="SetupSteps.For"/>, or the tests'), started at once. Null when there is
+        /// nothing to do - the caller says so instead of doing nothing.</summary>
+        public static SetupRun? Launch(IReadOnlyList<SetupPlanItem>? plan, Func<IReadOnlyList<SetupPlanItem>, IReadOnlyList<ISetupStep>> steps)
+        {
+            if (plan == null || plan.Count == 0) return null;
+            var list = steps(plan);
+            if (list.Count == 0) return null;
+            var run = new SetupRun(list);
+            _ = run.Start();
+            return run;
+        }
 
         /// <summary>The lines of the summary page.</summary>
         public IReadOnlyList<string> SummaryLines

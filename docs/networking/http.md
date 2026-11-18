@@ -16,7 +16,7 @@ server.Run()                                                       // or ServeOn
 
 | class | |
 |---|---|
-| `Http.Client` | `Get(url)`, `Head`, `Delete`, `Post(url, body, contentType = undefined)`, `Put`, `Request(method, url, body, headers)`; a body is a text (UTF-8) or a byte buffer; `headers` an `Http.Headers` or undefined. Settings: `timeout` (ms, connect and every read; 30000), `followRedirects` (true), `maxRedirects` (5), `maxBodyBytes` (16 MiB), `userAgent`, `headers` (sent with every request). Redirects 301/302/303 become a GET without body, 307/308 keep method and body. Sends `Connection: close`. Understands `Content-Length`, chunked bodies and bodies that end with the connection. |
+| `Http.Client` | `Get(url)`, `Head`, `Delete`, `Post(url, body, contentType = undefined)`, `Put`, `Request(method, url, body, headers)`; a body is a text (UTF-8) or a byte buffer; `headers` an `Http.Headers` or undefined. Settings: `timeout` (ms, connect and every read; 30000), `followRedirects` (true), `maxRedirects` (5), `maxBodyBytes` (16 MiB), `userAgent`, `headers` (sent with every request). Redirects 301/302/303 become a GET without body, 307/308 keep method and body. Sends `Connection: close`. Understands `Content-Length`, chunked bodies (trailer fields in `response.trailers`) and bodies that end with the connection; sends no `Accept-Encoding`, so bodies come uncompressed. |
 | `Http.Response` | `status`, `reason`, `headers`, `body` (bytes), `url` (the final URL), `Ok` (2xx), `Length`, `Text()` (UTF-8), `Header(name)`; for routes: `FromText(text, status = 200, contentType)`, `FromHtml`, `FromJson`, `Error(status, message)`, `Redirect(location, status = 302)` and `new Http.Response(status, body)` |
 | `Http.Request` (server side) | `method`, `target`, `path` (percent decoded), `version`, `headers`, `body`, `remoteHost`, `Query(name, fallback)` (percent decoded, `+` is a space), `Text()`, `Header(name)` |
 | `Http.Server(host, port)` | `Route(method, path, lambda)` (method `"*"` = any; a path ending in `*` matches the prefix; HEAD uses the route of GET and sends no body), `Fallback(lambda)` (default 404), `OnError(lambda)` (a route's lambda threw: the client gets a 500), `ServeOne(timeout = undefined)` (true if a connection was served), `Run()` (until `Stop()`), `Handle(connection)` (answers one request on a `Net.IConnection` you accepted yourself and closes it), `Port`, `Close()`; `readTimeout` (10 s) and `maxBodyBytes` (1 MiB) |
@@ -34,14 +34,50 @@ runs in the thread of its server. A route's lambda must not fail with a *runtime
 
 ```fire
 var d = new Http.Download("https://example.org/big.bin", "/tmp/big.bin")
-while (d.Step()) { print(d.Received + " of " + d.Total) }      // Step(maxBytes = 1 MiB): a piece, true while it goes on
+d.OnProgress(func (Http.Download x) => print(x.Received + " of " + x.Total))   // Total is -1 while the size is not known
+d.Run()                                                         // or: while (d.Step()) { ... } in the timer of a window
 if (d.Error != "") { print(d.Error) }
 ```
 
-It writes into `<path>.part` and renames it when the file is complete; a `.part` that is there already is continued (`Range`; a server that ignores it
-sends all again). `Start()` connects and reads the head (`Total`: the size, -1 while unknown), `Run()` does all of it and waits, `Close()` stops (the
-part stays), `Retry()` starts again after an error. `Received`, `Total`, `Done`, `Error`, `FinalUrl` (after redirects); `timeout`, `maxRedirects`,
-`userAgent`, `tls`. A file that is there already counts as done. (Chunked answers are not supported here.)
+It writes into `<path>.part` and renames it when the file is complete; a file that is there already counts as done.
+
+**The body** may come with a `Content-Length`, **chunked** (`Transfer-Encoding: chunked`) or up to the end of the connection (neither). Chunks are
+decoded as they come, however the network splits them (a size line in two reads, CR and LF apart): chunk extensions (`1a;name=value`) are ignored,
+the trailer fields after the last chunk (size 0) are in `Trailers`, and while the size is not known `Total` is -1 - progress then shows `Received`
+alone, and at the end `Total` is the size. A connection that breaks inside a chunk (or before `Content-Length` bytes) is an error that says so
+(`The connection ended inside a chunk (n bytes of it missing).`), a chunk longer than its size or a bad size line as well. The download asks for
+`Accept-Encoding: identity`: the file is the bytes the server has, never a compressed form of them.
+
+**Resuming.** A `.part` that is there is continued with `Range: bytes=<size of the part>-`. The validator of the file - its ETag (a strong one), else
+its `Last-Modified` - is kept next to the part in `<path>.part.etag`, and a continuation sends it as `If-Range`, so a file that changed on the server
+comes all again instead of a piece of the new one being glued to the old one. The answers:
+
+| answer | what happens |
+|---|---|
+| `206` with `Content-Range: bytes <part size>-...` | the part goes on (`Resumed` is true, `Total` from the Content-Range) |
+| `200` | the server ignored the range (or the file changed): the part is started again from the beginning (`Restarted` is true) |
+| `206` of another range, another ETag than the one kept | the part is thrown away and the file asked for again from the beginning (`Restarted`) |
+| `416` | the part is complete already (unless the `Content-Range: bytes */<size>` says another size: then again from the beginning) |
+
+`Resume = false` throws a part away and starts from the beginning. `PieceSize = n` (bytes, default 0: one request) asks for the file in pieces: a
+request with `Range: bytes=a-b` for each, until `Total` is reached (a server that answers the first with `200` simply sends all of it).
+
+| member | |
+|---|---|
+| `Start()` | connects and reads the head of the answer (`Status`, `ResponseHeaders`, `Chunked`, `Total`) |
+| `Step(maxBytes = 1 MiB)` | writes about that much into the file (waits for the network at most `timeout`); true while it goes on |
+| `Run()` | all of it, waiting; false (and `Error`) when it failed; stops when the running task's token is cancelled |
+| `OnProgress(lambda)` | called with the download after every `Step` that wrote something and once at the end (also after an error or `Cancel`) |
+| `Cancel()` | stops it - from the progress lambda, between steps, or through the task's token in `Run()`: `Cancelled` is true, `Error` says it was cancelled, the part stays |
+| `Retry()` | starts again after an error or `Cancel`, from the part |
+| `Close()` | stops it without an error (the part stays: `Start` continues it) |
+| `Received`, `Total`, `Done`, `Error`, `FinalUrl` | the bytes so far, all of them (-1: not known yet), finished (also after an error), why it failed (`""`), the URL after redirects |
+| `Resumed`, `Restarted`, `Status`, `ResponseHeaders`, `Trailers`, `Chunked`, `Validator` | what the last answer was (see above) |
+| `Resume` (true), `PieceSize` (0), `timeout` (30000 ms), `maxRedirects` (8), `userAgent`, `tls` | settings |
+
+Errors leave the part (and its `.part.etag`) in place, so `Retry()` - or a new `Http.Download` of the same path, in a later run of the program -
+continues it. `Http.Client` decodes chunked bodies the same way; their trailer fields are in `response.trailers` (undefined for answers that were not
+chunked).
 
 ## Proxies
 

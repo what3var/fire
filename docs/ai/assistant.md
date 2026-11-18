@@ -17,7 +17,19 @@ can use spark the same way.
 
 spark starts the assistant (`forge run Assistant/assistant.fire`, the package `assistant`) when it is switched on, and the assistant connects to spark's
 MCP server (HTTP on localhost, with the token of the connection file, [spark as an MCP server](../tools/spark-mcp.md)). It ends with spark. Its first start
-builds the packages it uses for this machine (a minute or two); spark's status bar shows that with a small bar. Its window is
+builds the packages it uses for this machine (a minute or two); spark's status bar shows that with a small bar.
+
+**Native.** Where a C toolchain is found, spark then builds the assistant once as a native program (`forge build Assistant/assistant.fire --engine native`,
+in the background at a low priority - the status bar shows "Building the assistant as a native program"; with gcc some minutes) into `assistant-native/`
+beside its settings, and starts that binary from the next start on instead of `forge run`. It is built again only when what it is made of changes: the
+script, the sources of the packages it imports (directly or through other packages) or the compiler (the key in `assistant.key`). Without a C toolchain,
+while the build runs, or when it failed (remembered in `assistant.failed` for that key, not tried again), the assistant runs in the virtual machine; the
+Output says why. `FIRE_ASSISTANT_ENGINE=vm` keeps it in the VM.
+
+**Idle.** While nothing happens the assistant costs next to nothing: the character is painted again only when its next picture is due (30 a second while
+it thinks or talks, 15 while it waits with the bubble open, 4 while it sleeps), the bubble only when something changed, and between the cycles the view
+rests until that picture is due (at most 0.1 s with the bubble open, 0.25 s while it sleeps; an event of the window makes it cycle at full speed again for a
+second). The animations and the look at the open sparks go by the clock, not by the cycles. Its window is
 small, without a frame, above the other windows and transparent where the desktop allows it: only the character and its bubble are seen, at the
 bottom right of the desktop. Dragging the character moves it; a click pokes it.
 

@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.VisualTree;
 using fire.Git;
 
@@ -14,8 +16,9 @@ namespace fire.Editor
     /// <summary>
     /// The Git panel (docs/tools/git.md), a tab next to the solution explorer: the branch and how far it is from the server's (↑ to push, ↓ to pull), Fetch / Pull / Push, the message and Commit
     /// (and Commit &amp; Push), and the changed files in three lists - staged, changes, untracked - with their letter. A file is staged with +, unstaged with −, its changes are thrown away with ↶
-    /// (the window asks first); a click shows its changes, a double click opens it. The window reads the repository and does the commands (MainWindow.GitPanel.cs) - the control only shows
-    /// a <see cref="GitOverview"/> and asks for them.
+    /// (the window asks first); a click shows its changes, a double click opens it; a folder that is untracked as a whole is one row that opens with a click. The list is virtualized (a ListBox of
+    /// <see cref="GitRow"/>s: only the rows on screen have controls - 20000 changed files cost nothing) and can be filtered. The window reads the repository and does the commands
+    /// (MainWindow.GitPanel.cs) - the control only shows a <see cref="GitOverview"/> and asks for them.
     /// </summary>
     internal sealed class GitPanelControl : UserControl
     {
@@ -26,24 +29,32 @@ namespace fire.Editor
             AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 54, MaxHeight = 140, FontSize = 12,
             Watermark = "Message (Ctrl+Enter commits)",
         };
-        private readonly Button _commit, _commitPush, _fetch, _pull, _push, _refresh;
+        private readonly Button _commit, _commitPush, _fetch, _pull, _push, _refresh, _repository;
         private readonly TextBlock _notice = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, IsVisible = false, Margin = new Thickness(0, 4, 0, 0) };
-        private readonly StackPanel _lists = new() { Spacing = 2, Margin = new Thickness(0, 4, 14, 4) };   // (room on the right for the scroll bar, which lies over the content)
+        private readonly ListBox _list = new() { BorderThickness = new Thickness(0), Background = Brushes.Transparent, SelectionMode = SelectionMode.Single };
+        private readonly TextBox _filter = new() { Watermark = "Filter the files", FontSize = 12, Margin = new Thickness(6, 4, 6, 2), MinHeight = 24, Padding = new Thickness(6, 2) };
+        private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, (IReadOnlyList<GitOverviewEntry> Files, int Total)> _children = new(StringComparer.Ordinal);
+        private bool _selecting;
         private readonly Grid _content;
         private readonly StackPanel _empty;
         private readonly TextBlock _emptyText = new() { TextWrapping = TextWrapping.Wrap, Foreground = EditorTheme.TextDim };
         private readonly Button _init;
         private GitOverview? _overview;
-        private string? _selected;   // the full path of the selected row (with its list: "s|" or "w|")
+        private string? _selected;   // the key of the selected row (GitRow.Key)
         private bool _busy;
 
-        public event Action? FetchRequested, PullRequested, PushRequested, RefreshRequested, InitRequested;
+        public event Action? FetchRequested, PullRequested, PushRequested, RefreshRequested, InitRequested, RepositoryRequested;
         public event Action<string, bool>? CommitRequested;
         public event Action<IReadOnlyList<GitOverviewEntry>>? StageRequested, UnstageRequested, DiscardRequested;
         /// <summary>A row was clicked: show its changes.</summary>
         public event Action<GitOverviewEntry>? DiffRequested;
         /// <summary>A row was double clicked: open the file.</summary>
         public event Action<GitOverviewEntry>? OpenRequested;
+        /// <summary>An untracked folder was opened: the window lists its files (<see cref="SetFolderFiles"/>).</summary>
+        public event Action<GitOverviewEntry>? FolderFilesRequested;
+        /// <summary>"Add to .gitignore" of an untracked file or folder.</summary>
+        public event Action<GitOverviewEntry>? IgnoreRequested;
 
         public GitPanelControl()
         {
@@ -51,6 +62,7 @@ namespace fire.Editor
             _pull = ToolButton("↓ Pull", "Fetch and join the server's changes into this branch", () => PullRequested?.Invoke());
             _push = ToolButton("↑ Push", "Send the commits of this branch to the server", () => PushRequested?.Invoke());
             _refresh = ToolButton("⟳", "Read the state of the repository again", () => RefreshRequested?.Invoke());
+            _repository = ToolButton("⎇ Repository", "The Repository view: branches, tags, stashes, the commit graph - checkout, merge, rebase, cherry-pick, reset", () => RepositoryRequested?.Invoke());
 
             _commit = new Button { Content = "Commit", HorizontalContentAlignment = HorizontalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Stretch };
             _commit.Classes.Add("accent");
@@ -73,7 +85,7 @@ namespace fire.Editor
             branchRow.Children.Add(_branch);
 
             var bar = new WrapPanel { Orientation = Orientation.Horizontal };
-            foreach (var b in new[] { _fetch, _pull, _push, _refresh }) { b.Margin = new Thickness(0, 0, 2, 2); bar.Children.Add(b); }
+            foreach (var b in new[] { _fetch, _pull, _push, _refresh, _repository }) { b.Margin = new Thickness(0, 0, 2, 2); bar.Children.Add(b); }
 
             var commitRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,6,*"), Margin = new Thickness(0, 4, 0, 0) };
             commitRow.Children.Add(_commit);
@@ -88,11 +100,29 @@ namespace fire.Editor
             top.Children.Add(_notice);
             var topBorder = new Border { BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(0, 0, 0, 1), Child = top };
 
-            var scroll = new ScrollViewer { Content = _lists, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
-            _content = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
+            _list.ItemTemplate = new FuncDataTemplate<GitRow>((row, _) => row == null ? new Panel() : Build(row), supportsRecycling: false);   // (null: a container that is cleared)
+            _list.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
+            {
+                Setters = { new Setter(ListBoxItem.PaddingProperty, new Thickness(0, 0, 14, 0)), new Setter(MinHeightProperty, 0.0) },   // (room on the right for the scroll bar, which lies over the rows)
+            });
+            Avalonia.Controls.ScrollViewer.SetHorizontalScrollBarVisibility(_list, Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled);
+            _list.SelectionChanged += (_, _) =>
+            {
+                if (_selecting) return;
+                if (_list.SelectedItem is GitRow { Kind: GitRowKind.Entry } row) _selected = row.Key;
+                else if (_list.SelectedItem != null) { _selecting = true; _list.SelectedItem = null; _selecting = false; }
+            };
+            _list.KeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Enter && _list.SelectedItem is GitRow { Entry: { } entry }) { Activate(entry, open: true); e.Handled = true; }
+            };
+            _filter.TextChanged += (_, _) => Rebuild();
+            _content = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*") };
             _content.Children.Add(topBorder);
-            Grid.SetRow(scroll, 1);
-            _content.Children.Add(scroll);
+            Grid.SetRow(_filter, 1);
+            _content.Children.Add(_filter);
+            Grid.SetRow(_list, 2);
+            _content.Children.Add(_list);
 
             _init = new Button { Content = "Create Repository...", HorizontalAlignment = HorizontalAlignment.Left };
             _init.Click += (_, _) => InitRequested?.Invoke();
@@ -153,23 +183,33 @@ namespace fire.Editor
             _branch.Text = overview.Branch;
             _aheadBehind.Text = overview.AheadBehindText;
             ToolTip.SetTip(_aheadBehind, $"{overview.Ahead} commit(s) to push, {overview.Behind} to pull (as of the last fetch)");
-            _lists.Children.Clear();
-            if (overview.IsMerging)
-                _lists.Children.Add(new Border
-                {
-                    Background = new SolidColorBrush(Color.FromArgb(0x40, 0xE8, 0x6A, 0x6A)), Padding = new Thickness(8, 4), Margin = new Thickness(4, 0, 4, 4), CornerRadius = new CornerRadius(3),
-                    Child = new TextBlock
-                    {
-                        TextWrapping = TextWrapping.Wrap, FontSize = 12,
-                        Text = overview.HasConflicts ? "A merge is not finished: solve the conflicts (!), stage the files and commit." : "A merge is not finished: commit to finish it.",
-                    },
-                });
-            AddSection("Staged Changes", overview.Staged, staged: true);
-            AddSection("Changes", overview.Changes, staged: false);
-            AddSection("Untracked", overview.Untracked, staged: false);
-            if (overview.Count == 0)
-                _lists.Children.Add(new TextBlock { Text = "No changes since the last commit.", Foreground = EditorTheme.TextDim, Margin = new Thickness(10, 6), TextWrapping = TextWrapping.Wrap });
+            // the opened folders that are still there: their files are read again
+            var folders = overview.Untracked.Where(e => e.IsDirectory).Select(e => e.FullPath).ToHashSet(StringComparer.Ordinal);
+            _expanded.IntersectWith(folders);
+            foreach (var gone in _children.Keys.Where(k => !folders.Contains(k)).ToList()) _children.Remove(gone);
+            Rebuild();
+            foreach (var e in overview.Untracked.Where(e => e.IsDirectory && _expanded.Contains(e.FullPath))) FolderFilesRequested?.Invoke(e);
             UpdateButtons();
+        }
+
+        /// <summary>The files of an opened untracked folder (at most <see cref="GitRows.FolderLimit"/>, `total` in all).</summary>
+        public void SetFolderFiles(string folder, IReadOnlyList<GitOverviewEntry> files, int total)
+        {
+            _children[folder] = (files, total);
+            if (_expanded.Contains(folder)) Rebuild();
+        }
+
+        /// <summary>The rows as now shown (for tests and the window).</summary>
+        public IReadOnlyList<GitRow> Rows => (_list.ItemsSource as IReadOnlyList<GitRow>) ?? Array.Empty<GitRow>();
+
+        private void Rebuild()
+        {
+            if (_overview == null) return;
+            var rows = GitRows.Build(_overview, _filter.Text, _expanded, _children);
+            _selecting = true;
+            _list.ItemsSource = rows;
+            _list.SelectedItem = _selected == null ? null : rows.FirstOrDefault(r => r.Kind == GitRowKind.Entry && r.Key == _selected);
+            _selecting = false;
         }
 
         private void UpdateButtons()
@@ -187,47 +227,69 @@ namespace fire.Editor
             CommitRequested?.Invoke(_message.Text ?? "", push);
         }
 
-        private void AddSection(string title, IReadOnlyList<GitOverviewEntry> entries, bool staged)
+        private Control Build(GitRow row) => row.Kind switch
         {
-            if (entries.Count == 0) return;
+            GitRowKind.Header => Header(row),
+            GitRowKind.Entry => Row(row),
+            GitRowKind.Banner => new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(0x40, 0xE8, 0x6A, 0x6A)), Padding = new Thickness(8, 4), Margin = new Thickness(4, 2, 4, 4), CornerRadius = new CornerRadius(3),
+                Child = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Text = row.Text },
+            },
+            _ => new TextBlock { Text = row.Text, Foreground = EditorTheme.TextDim, Margin = new Thickness(row.Kind == GitRowKind.More ? 34 : 10, 4), TextWrapping = TextWrapping.Wrap, FontSize = 12, FontStyle = row.Kind == GitRowKind.More ? FontStyle.Italic : FontStyle.Normal },
+        };
+
+        private Control Header(GitRow row)
+        {
+            var entries = row.Section ?? Array.Empty<GitOverviewEntry>();
             var header = new DockPanel { Margin = new Thickness(6, 6, 4, 2) };
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-            if (staged) buttons.Children.Add(RowButton("−", "Unstage all", () => UnstageRequested?.Invoke(entries)));
+            if (row.StagedSection) buttons.Children.Add(RowButton("−", "Unstage all of these", () => UnstageRequested?.Invoke(entries)));
             else
             {
                 buttons.Children.Add(RowButton("↶", "Discard all of these changes", () => DiscardRequested?.Invoke(entries)));
-                buttons.Children.Add(RowButton("+", "Stage all", () => StageRequested?.Invoke(entries)));
+                buttons.Children.Add(RowButton("+", "Stage all of these", () => StageRequested?.Invoke(entries)));
             }
             DockPanel.SetDock(buttons, Avalonia.Controls.Dock.Right);
             header.Children.Add(buttons);
-            header.Children.Add(new TextBlock
-            {
-                Text = $"{title.ToUpperInvariant()}  {entries.Count}", FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center,
-            });
-            _lists.Children.Add(header);
-            foreach (var entry in entries) _lists.Children.Add(Row(entry));
+            header.Children.Add(new TextBlock { Text = row.Text, FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center });
+            return header;
         }
-
-        private static readonly IBrush Hover = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF));
-        private static readonly IBrush SelectedBrush = new SolidColorBrush(Color.FromArgb(0x60, 0xB7, 0x00, 0x52));
 
         private static IBrush LetterBrush(GitFileState s) => s switch
         {
-            GitFileState.Added or GitFileState.Untracked => new SolidColorBrush(Color.FromRgb(0x7F, 0xD9, 0x7F)),
-            GitFileState.Deleted or GitFileState.Conflicted => new SolidColorBrush(Color.FromRgb(0xE8, 0x6A, 0x6A)),
+            GitFileState.Added or GitFileState.Untracked => NewBrush,
+            GitFileState.Deleted or GitFileState.Conflicted => BadBrush,
             GitFileState.Renamed => EditorTheme.Purple,
-            _ => new SolidColorBrush(Color.FromRgb(0xF0, 0xA0, 0x40)),
+            _ => ChangedBrush,
         };
+        private static readonly IBrush NewBrush = new SolidColorBrush(Color.FromRgb(0x7F, 0xD9, 0x7F));
+        private static readonly IBrush BadBrush = new SolidColorBrush(Color.FromRgb(0xE8, 0x6A, 0x6A));
+        private static readonly IBrush ChangedBrush = new SolidColorBrush(Color.FromRgb(0xF0, 0xA0, 0x40));
 
-        private static string KeyOf(GitOverviewEntry e) => (e.IsStaged ? "s|" : "w|") + e.FullPath;
-
-        private Control Row(GitOverviewEntry entry)
+        /// <summary>A click: a folder opens or closes, a file shows its changes; `open` (a double click, Enter): the file is opened.</summary>
+        private void Activate(GitOverviewEntry entry, bool open)
         {
-            var name = new TextBlock { Text = entry.Name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+            if (entry.IsDirectory && !entry.IsStaged)
+            {
+                if (!_expanded.Remove(entry.FullPath)) { _expanded.Add(entry.FullPath); FolderFilesRequested?.Invoke(entry); }
+                Rebuild();
+                return;
+            }
+            if (open) OpenRequested?.Invoke(entry);
+            else DiffRequested?.Invoke(entry);
+        }
+
+        private Control Row(GitRow gitRow)
+        {
+            var entry = gitRow.Entry!;
+            string label = gitRow.Depth > 0 ? gitRow.Text : entry.Name;   // (a file of an opened folder: its path in the folder)
+            var name = new TextBlock { Text = entry.IsDirectory ? label + "/" : label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             if (entry.State == GitFileState.Deleted) name.TextDecorations = TextDecorations.Strikethrough;
-            var folder = new TextBlock { Text = entry.Folder, FontSize = 11, Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis };
-            var letter = new TextBlock { Text = entry.Letter, FontWeight = FontWeight.Bold, FontSize = 12, Foreground = LetterBrush(entry.State), VerticalAlignment = VerticalAlignment.Center, Width = 16, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
-            ToolTip.SetTip(letter, entry.State switch
+            string folderText = gitRow.Depth > 0 ? "" : entry.Folder;
+            var folder = new TextBlock { Text = folderText, FontSize = 11, Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis };
+            var letter = new TextBlock { Text = entry.IsDirectory ? (gitRow.IsExpanded ? "▾" : "▸") : entry.Letter, FontWeight = FontWeight.Bold, FontSize = 12, Foreground = LetterBrush(entry.State), VerticalAlignment = VerticalAlignment.Center, Width = 16, TextAlignment = TextAlignment.Center, Margin = new Thickness(gitRow.Depth * 18, 0, 4, 0) };
+            ToolTip.SetTip(letter, entry.IsDirectory ? "a new folder (untracked): click to see its files" : entry.State switch
             {
                 GitFileState.Modified => "changed", GitFileState.Added => "added", GitFileState.Deleted => "deleted", GitFileState.Renamed => "renamed", GitFileState.Untracked => "new (untracked)",
                 GitFileState.Conflicted => "conflict: changed on both sides", _ => "",
@@ -238,38 +300,56 @@ namespace fire.Editor
             if (entry.IsStaged) buttons.Children.Add(RowButton("−", "Unstage", () => UnstageRequested?.Invoke(one)));
             else
             {
-                buttons.Children.Add(RowButton("↶", entry.State == GitFileState.Untracked ? "Delete this new file" : "Discard the changes", () => DiscardRequested?.Invoke(one)));
+                buttons.Children.Add(RowButton("↶", entry.IsDirectory ? "Delete the new files of this folder" : entry.State == GitFileState.Untracked ? "Delete this new file" : "Discard the changes", () => DiscardRequested?.Invoke(one)));
                 buttons.Children.Add(RowButton("+", entry.State == GitFileState.Conflicted ? "Mark as solved (stage)" : "Stage", () => StageRequested?.Invoke(one)));
             }
 
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto"), Margin = new Thickness(8, 0, 4, 0), MinHeight = 22 };
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto"), Margin = new Thickness(8, 0, 4, 0), MinHeight = 22, Background = Brushes.Transparent };
             grid.Children.Add(letter);
             Grid.SetColumn(name, 1); grid.Children.Add(name);
             Grid.SetColumn(folder, 2); grid.Children.Add(folder);
             Grid.SetColumn(buttons, 3); grid.Children.Add(buttons);
-
-            string key = KeyOf(entry);
-            var row = new Border { Child = grid, Background = key == _selected ? SelectedBrush : Brushes.Transparent, Tag = key, Cursor = new Cursor(StandardCursorType.Hand) };
-            ToolTip.SetTip(row, entry.Path);
-            row.PointerEntered += (_, _) => { buttons.Opacity = 1; if ((string?)row.Tag != _selected) row.Background = Hover; };
-            row.PointerExited += (_, _) => { buttons.Opacity = 0.35; row.Background = (string?)row.Tag == _selected ? SelectedBrush : Brushes.Transparent; };
-            row.PointerPressed += (_, e) =>
+            ToolTip.SetTip(grid, entry.Path + (entry.IsDirectory ? "/" : ""));
+            grid.PointerEntered += (_, _) => buttons.Opacity = 1;
+            grid.PointerExited += (_, _) => buttons.Opacity = 0.35;
+            grid.PointerPressed += (_, e) =>
             {
-                if (!e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) return;
+                if (!e.GetCurrentPoint(grid).Properties.IsLeftButtonPressed) return;
                 if ((e.Source as Visual)?.FindAncestorOfType<Button>() != null) return;
-                Select(key);
-                if (e.ClickCount >= 2) OpenRequested?.Invoke(entry);
-                else DiffRequested?.Invoke(entry);
+                _selected = gitRow.Key;
+                _selecting = true; _list.SelectedItem = gitRow; _selecting = false;
+                Activate(entry, open: e.ClickCount >= 2);
                 e.Handled = true;
             };
-            return row;
+
+            var menu = new ContextMenu();
+            if (!entry.IsDirectory) menu.Items.Add(MenuItem("Open", () => OpenRequested?.Invoke(entry)));
+            menu.Items.Add(MenuItem(entry.IsDirectory ? "Show Files" : "Show Changes", () => DiffRequested?.Invoke(entry)));
+            if (entry.IsStaged) menu.Items.Add(MenuItem("Unstage", () => UnstageRequested?.Invoke(one)));
+            else
+            {
+                menu.Items.Add(MenuItem("Stage", () => StageRequested?.Invoke(one)));
+                menu.Items.Add(MenuItem(entry.State == GitFileState.Untracked ? "Delete..." : "Discard Changes...", () => DiscardRequested?.Invoke(one)));
+            }
+            if (entry.State == GitFileState.Untracked && !entry.IsStaged)
+            {
+                menu.Items.Add(new Separator());
+                menu.Items.Add(MenuItem(entry.IsDirectory ? "Add Folder to .gitignore" : "Add to .gitignore", () => IgnoreRequested?.Invoke(entry)));
+                if (!entry.IsDirectory && entry.Folder.Length > 0)
+                {
+                    var parent = new GitOverviewEntry(entry.Folder, System.IO.Path.GetDirectoryName(entry.FullPath)!, GitFileState.Untracked, false, IsDirectory: true);
+                    menu.Items.Add(MenuItem($"Add Folder '{entry.Folder}/' to .gitignore", () => IgnoreRequested?.Invoke(parent)));
+                }
+            }
+            grid.ContextMenu = menu;
+            return grid;
         }
 
-        private void Select(string key)
+        private static MenuItem MenuItem(string header, Action click)
         {
-            _selected = key;
-            foreach (var row in _lists.Children.OfType<Border>().Where(b => b.Tag is string))
-                row.Background = (string)row.Tag! == key ? SelectedBrush : Brushes.Transparent;
+            var item = new MenuItem { Header = header };
+            item.Click += (_, _) => click();
+            return item;
         }
 
         private static Button RowButton(string text, string tip, Action click)

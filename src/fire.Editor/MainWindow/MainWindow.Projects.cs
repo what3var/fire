@@ -33,6 +33,15 @@ namespace fire.Editor
             _solutionPanel.FileOpenRequested += path => OpenFile(path);
             _solutionPanel.CommandRequested += (command, node) => _ = OnSolutionCommand(command, node);
             _solutionPanel.SelectionChanged += OnExplorerSelection;
+            // the switches of its tool bar are kept in the settings
+            _solutionPanel.TrackActive = _settings.ExplorerTrackActive;
+            _solutionPanel.ShowAllFiles = _settings.ExplorerShowAllFiles;
+            _solutionPanel.OptionsChanged += () =>
+            {
+                _settings.ExplorerTrackActive = _solutionPanel.TrackActive;
+                _settings.ExplorerShowAllFiles = _solutionPanel.ShowAllFiles;
+                _settings.Save();
+            };
             mnuCloseWorkspace.IsEnabled = false;
         }
 
@@ -61,9 +70,26 @@ namespace fire.Editor
         private void OnExplorerSelection(ExplorerNode? node)
         {
             if (node is not { Kind: ExplorerKind.File or ExplorerKind.Content, Path: { } path }) return;   // (a folder, a project: the window keeps what it shows)
-            FileProperties.Show(new FilePropertiesContext(path, node.Project));
+            var others = SelectedFiles().Where(f => !ProjectFiles.PathComparer.Equals(f.Path, path)).ToList();
+            FileProperties.Show(new FilePropertiesContext(path, node.Project) { Others = others });
             _showFileProperties = true;
             _propertiesPanel.Attach(FileProperties);
+        }
+
+        /// <summary>The files selected in the explorer (several with Ctrl or Shift), as file property contexts: the properties window shows what they have in common.</summary>
+        private List<FilePropertiesContext> SelectedFiles() => _solutionPanel.SelectedNodes
+            .Where(n => n is { Kind: ExplorerKind.File or ExplorerKind.Content, Path: not null, Project: not null, IsHidden: false })
+            .Select(n => new FilePropertiesContext(n.Path!, n.Project)).ToList();
+
+        /// <summary>The Build Action submenu of the explorer: the action for every selected file (docs/tools/projects.md, "Build actions"); the project files are saved.</summary>
+        private void SetBuildAction(string name)
+        {
+            if (FileBuildActions.Parse(name) is not { } action) return;
+            var files = SelectedFiles();
+            if (files.Count == 0) return;
+            string? problem = BuildActionFileProperties.Apply(files, action, p => _workspace.SaveProject(p));
+            UpdateStatus(problem ?? $"Build action of {(files.Count == 1 ? Path.GetFileName(files[0].Path) : files.Count + " files")}: {FileBuildActions.Name(action)}.");
+            RefreshFileProperties();
         }
 
         /// <summary>After the workspace changed: the file's project is found again (a reloaded workspace has new ones) and its rows are read again.</summary>
@@ -71,7 +97,7 @@ namespace fire.Editor
         {
             if (_fileProperties?.Properties == null || _fileProperties.Context is not { } file) return;
             var project = file.Project == null ? null : _workspace.AllProjects.FirstOrDefault(p => ProjectFiles.PathComparer.Equals(p.FilePath, file.Project.FilePath));
-            if (!ReferenceEquals(project, file.Project)) _fileProperties.Show(new FilePropertiesContext(file.Path, project));
+            if (!ReferenceEquals(project, file.Project)) _fileProperties.Show(new FilePropertiesContext(file.Path, project) { Others = SelectedFiles().Where(f => !ProjectFiles.PathComparer.Equals(f.Path, file.Path)).ToList() });
             else _fileProperties.Refresh();
         }
 
@@ -602,11 +628,12 @@ namespace fire.Editor
             catch (Exception ex) when (ex is ProjectException or IOException) { await Dialogs.Message(this, ex.Message, "Add Reference"); }
         }
 
-        private async Task ShowProjectProperties(LoadedProject? project, bool solutionTab = false, int tab = -1)
+        private async Task ShowProjectProperties(LoadedProject? project, bool solutionTab = false, int tab = -1, string? page = null)
         {
             if (project == null) return;
             var dialog = new ProjectPropertiesDialog(_workspace, project) { EditToolchains = owner => ShowNativeBuildSettings(toolchainPage: true, owner) };
             if (solutionTab) dialog.SelectSolutionTab();
+            else if (page != null) dialog.SelectPage(page);
             else if (tab >= 0) dialog.SelectTab(tab);
             if (await dialog.ShowDialog<bool?>(this) != true) return;
             try
@@ -677,6 +704,7 @@ namespace fire.Editor
         private async Task OnSolutionCommand(string command, ExplorerNode? node)
         {
             if (command.StartsWith("git-", StringComparison.Ordinal)) { await OnGitExplorerCommand(command, node); return; }
+            if (command.StartsWith("build-action:", StringComparison.Ordinal)) { SetBuildAction(command.Substring("build-action:".Length)); return; }
             var project = node?.Project ?? CommandProject(node);
             switch (command)
             {
@@ -699,6 +727,10 @@ namespace fire.Editor
                 case "install-library": await InstallLibrary(project); break;
                 case "refresh": project?.Refresh(); _workspace.Refresh(); break;
                 case "properties": await ShowProjectProperties(project); break;
+                case "show-properties":   // the Properties button of the explorer's tool bar on a file (or on nothing): the Properties panel
+                    OnExplorerSelection(node);
+                    RevealTool("properties");
+                    break;
                 case "open-notes": await OpenOverview(project); break;
                 case "open-todo": TodoOpen_Click(this, new RoutedEventArgs()); break;
                 case "solution-properties": await ShowProjectProperties(_workspace.Projects.FirstOrDefault(), solutionTab: true); break;
@@ -707,6 +739,8 @@ namespace fire.Editor
                 case "clean-project": await CleanProjects(project != null ? new[] { project } : Array.Empty<LoadedProject>(), project?.Name ?? ""); break;
                 case "build-solution": await BuildSolutionAsync(); break;
                 case "clean-solution": CleanSolution_Click(this, new RoutedEventArgs()); break;
+                case "publish-project": await PublishProject(project); break;
+                case "publish-solution": await PublishSolutionAsync(); break;
                 case "reveal": Reveal(node); break;
                 case "remove": await RemoveNode(node); break;
                 case "add-resource": await AddResource(project, node); break;

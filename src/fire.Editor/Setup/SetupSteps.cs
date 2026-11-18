@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 using fire.Native;
 
@@ -13,12 +14,15 @@ namespace fire.Editor.Setup
     public static class SetupSteps
     {
         /// <summary>The steps of a plan of the wizard.</summary>
-        public static IReadOnlyList<ISetupStep> For(IEnumerable<SetupPlanItem> plan, IReadOnlyList<SetupModelInfo> catalog, string? modelFolder = null) =>
+        /// <summary>Set when spark's start has installed the standard packages (MainWindow.OnStandardPackagesReady): the package step of spark waits for it.</summary>
+        public static readonly ManualResetEvent StartupInstalled = new(false);
+
+        public static IReadOnlyList<ISetupStep> For(IEnumerable<SetupPlanItem> plan, IReadOnlyList<SetupModelInfo> catalog, string? modelFolder = null, WaitHandle? startup = null) =>
             plan.Select(p => p.Kind switch
             {
                 SetupPlanKind.Toolchain => Toolchain(p),
                 SetupPlanKind.Model => Model(p.Title, ModelCatalog.Find(catalog, p.Id) ?? throw new ArgumentException("No model " + p.Id), modelFolder),
-                _ => Packages(p.Title),
+                _ => Packages(p.Title, startup: startup),
             }).ToList();
 
         private static ISetupStep Toolchain(SetupPlanItem item) => new SetupStep(item.Title, ctx =>
@@ -32,6 +36,10 @@ namespace fire.Editor.Setup
                 ctx.Log(line);
             };
             if (item.Id == "watcom") WatcomSetup.Install(log, ctx.Bytes, ctx.Token);
+            else if (item.Id == "tcc")
+            {
+                TinyccSetup.Install(line => { if (line.StartsWith("Checking", StringComparison.Ordinal)) ctx.Phase("Checking the SHA-256"); log(line); }, ctx.Bytes, ctx.Token);
+            }
             else ToolchainSetup.InstallW64devkit(log, ctx.Bytes, ctx.Token);
         });
 
@@ -70,10 +78,10 @@ namespace fire.Editor.Setup
 
         /// <summary>The first build of the standard packages: <c>StandardSources.EnsureInstalled</c> (spark started it already; this waits for it and then finds nothing to do -
         /// or does what the start could not, e.g. now that there is a toolchain). The progress is the one of the status bar: "Installing the package io (3/40)".</summary>
-        public static ISetupStep Packages(string title, Func<Action<string>, IReadOnlyList<string>>? install = null) => new SetupStep(title, ctx =>
+        public static ISetupStep Packages(string title, Func<Action<string>, IReadOnlyList<string>>? install = null, WaitHandle? startup = null) => new SetupStep(title, ctx =>
         {
             install ??= log => fire.Compiler.StandardSources.EnsureInstalled(log);
-            ctx.Phase("Checking the standard packages");
+            ctx.Phase(startup != null ? "Waiting for the installation that spark started" : "Checking the standard packages");
             var problems = new List<string>();
             void Changed()
             {
@@ -95,6 +103,9 @@ namespace fire.Editor.Setup
             BackgroundWork.Changed += Changed;
             try
             {
+                // spark's start installs them already (StartupInstalled): its progress is shown until it is through, then the check finds what is left
+                if (startup != null && WaitHandle.WaitAny(new[] { startup, ctx.Token.WaitHandle }) == 1) ctx.Token.ThrowIfCancellationRequested();
+                ctx.Phase("Checking the standard packages");
                 var task = Task.Run(() => install(line =>
                 {
                     ctx.Log(line);

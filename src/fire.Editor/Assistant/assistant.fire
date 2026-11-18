@@ -1,4 +1,4 @@
-// The assistant of spark (docs/ai/assistant.md): spark starts it with `forge run` when it is switched on (Tools > Assistant).
+// The assistant of spark (docs/ai/assistant.md): spark starts it when it is switched on (Tools > Assistant) - as a native program once it is built, else with `forge run`.
 // It connects to spark's MCP server and shows its own small window; it ends with spark. An argument is the character: sparky, flint or wick
 // (none: the last one).
 #import "assistant"

@@ -210,6 +210,7 @@ namespace fire.Editor
                     return;
                 }
                 EndBuildJob(job, BuildOutcome.Succeeded);
+                CopyContentNextTo(input.Plan, result.Output);
 
                 var arguments = RunArguments(input);
                 string workingDirectory = input.Project?.Directory ?? input.BaseDirectory ?? Path.GetDirectoryName(result.Output)!;

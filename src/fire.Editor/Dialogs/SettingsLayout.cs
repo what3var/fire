@@ -34,6 +34,7 @@ namespace fire.Editor
             public const string Pencil = "M1.5,12.5 L2.5,9.5 L9.5,2.5 L11.5,4.5 L4.5,11.5 Z M8,4 L10,6";
             public const string Grid = "M1.5,1.5 H6 V6 H1.5 Z M8,1.5 H12.5 V6 H8 Z M1.5,8 H6 V12.5 H1.5 Z M8,8 H12.5 V12.5 H8 Z";
             public const string Target = "M7,1.5 A5.5,5.5 0 1 1 6.99,1.5 Z M7,4.5 A2.5,2.5 0 1 1 6.99,4.5 Z M7,0.5 V3 M7,11 V13.5 M0.5,7 H3 M11,7 H13.5";
+            public const string Upload = "M7,9.5 V1.5 M3.5,5 L7,1.5 L10.5,5 M1.5,12.5 H12.5";
             public const string Wrench = "M9.5,1.5 A3,3 0 0 0 7,5.5 L1.8,10.7 A1.1,1.1 0 0 0 3.3,12.2 L8.5,7 A3,3 0 0 0 12.5,4.5 L10.5,5.5 L8.5,3.5 Z";
         }
 

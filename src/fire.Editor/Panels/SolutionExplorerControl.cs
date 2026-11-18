@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -14,6 +15,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using fire.Git;
 using fire.Projects;
@@ -40,9 +42,36 @@ namespace fire.Editor
         public bool IsNotes { get; init; }
         /// <summary>A row for something that does not exist yet (the notes folder before its first use): shown pale, made when it is used.</summary>
         public bool IsVirtual { get; init; }
-        /// <summary>The git state of a file (null: none), and for a folder, project or solution whether something below it is changed.</summary>
-        public GitFileState? GitState { get; set; }
-        public bool GitChangedBelow { get; set; }
+        /// <summary>Something the project leaves out (bin, obj, a file or folder whose name starts with a dot): only with "Show All Files", pale.</summary>
+        public bool IsHidden { get; init; }
+        /// <summary>A file with the build action Ignore (docs/tools/projects.md, "Build actions"): pale, "ignored" behind it.</summary>
+        public bool IsIgnored { get; init; }
+        /// <summary>The git state of a file (null: none), and for a folder, project or solution whether something below it is changed. A change updates the row (the marks of git are
+        /// put on the tree in place when only they changed: SolutionExplorerControl.UpdateGit).</summary>
+        public GitFileState? GitState
+        {
+            get => _gitState;
+            set { if (_gitState != value) { _gitState = value; NotifyGit(); } }
+        }
+        private GitFileState? _gitState;
+        public bool GitChangedBelow
+        {
+            get => _gitBelow;
+            set { if (_gitBelow != value) { _gitBelow = value; NotifyGit(); } }
+        }
+        private bool _gitBelow;
+
+        /// <summary>What the row shows of git: the letter of the file, a dot for a folder with changes below, nothing.</summary>
+        public string GitMarkText => GitState is { } s ? SolutionExplorerControl.GitMark(s) : GitChangedBelow ? "●" : "";
+        public IBrush GitMarkBrush => SolutionExplorerControl.GitBrush(GitState ?? GitFileState.Modified);
+        public double GitMarkSize => GitState != null ? 11 : 9;
+
+        private void NotifyGit()
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GitMarkText)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GitMarkBrush)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GitMarkSize)));
+        }
         /// <summary>The project of the active document is shown in the accent color.</summary>
         public bool IsActive { get; init; }
         /// <summary>The identity of a row across refreshes (for the expanded state).</summary>
@@ -55,15 +84,25 @@ namespace fire.Editor
             get => _expanded;
             set { if (_expanded != value) { _expanded = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsExpanded))); } }
         }
+
+        private bool _shown = true;
+        /// <summary>false: the filter of the tool bar hides the row.</summary>
+        public bool IsShown
+        {
+            get => _shown;
+            set { if (_shown != value) { _shown = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsShown))); } }
+        }
     }
 
     /// <summary>
     /// The solution explorer (docs/tools/projects.md): the open solution (or the single project) with its projects, their references and files. A double click opens a file; the context menus
     /// ask the window for the commands (new file, add reference, startup project, properties, ...). The window refreshes it when the workspace or the active document changes.
+    /// Above the tree a tool bar (docs/tools/spark.md, "The tool bar of the solution explorer"): Collapse All, Expand All, Sync with Active Document, Track Active Document, Refresh,
+    /// Show All Files, New File, New Folder, Properties - what does not fit into a narrow panel goes into "…" - and below it a box that filters the tree by name (Esc clears it).
     /// </summary>
     internal sealed class SolutionExplorerControl : UserControl
     {
-        private readonly TreeView _tree = new() { BorderThickness = new Thickness(0) };
+        private readonly TreeView _tree = new() { BorderThickness = new Thickness(0), SelectionMode = SelectionMode.Multiple };   // (several files: their build action at once)
         private readonly StackPanel _empty;
         private readonly ObservableCollection<ExplorerNode> _roots = new();
         private readonly HashSet<string> _collapsed = new();
@@ -71,15 +110,33 @@ namespace fire.Editor
         private IReadOnlyDictionary<string, GitFileState>? _git;
         private string? _branch;
         private bool _hasSolution;   // (a start project is chosen only in a solution)
+        // what the last Refresh showed (Show All Files builds the tree again from it) and the active file it was given
+        private Workspace? _workspace;
+        private string? _activeFile;
+
+        // the tool bar: the buttons in their order (what does not fit goes into the menu of "…"), the filter box under it
+        private sealed record BarItem(Control Button, string Title, Action Run, Func<bool>? IsChecked = null, Func<ExplorerNode?, IEnumerable<Control>>? SubItems = null);
+        private readonly List<BarItem> _barItems = new();
+        private readonly StackPanel _barButtons = new() { Orientation = Orientation.Horizontal, Spacing = 2, ClipToBounds = true };
+        private readonly Button _more;
+        private readonly ToggleButton _track, _showAll;
+        private readonly TextBox _filter = new() { Watermark = "Filter by name (Esc clears)", FontSize = 12, MinHeight = 24, Padding = new Thickness(4, 2), VerticalContentAlignment = VerticalAlignment.Center };
+        private readonly TextBlock _noMatches = new() { Text = "Nothing matches the filter.", Foreground = EditorTheme.TextDim, Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap, IsVisible = false };
+        private readonly Border _top;
+        private bool _filtering;   // the filter shows a part of the tree: the folding the user chose (_collapsed) is kept as it was before and comes back when the box is empty
+        private const double BarButtonWidth = 26;
 
         /// <summary>A file was double clicked (or Enter was pressed on it).</summary>
         public event Action<string>? FileOpenRequested;
 
-        /// <summary>A command of a context menu or of the empty page: its id and the row it concerns (null: none).</summary>
+        /// <summary>A command of a context menu, of the tool bar or of the empty page: its id and the row it concerns (null: none).</summary>
         public event Action<string, ExplorerNode?>? CommandRequested;
 
         /// <summary>Another row was selected by the user (null: none): the property window shows the properties of a file.</summary>
         public event Action<ExplorerNode?>? SelectionChanged;
+
+        /// <summary>Track Active Document or Show All Files was switched (the window keeps them in the settings).</summary>
+        public event Action? OptionsChanged;
 
         public SolutionExplorerControl()
         {
@@ -87,7 +144,11 @@ namespace fire.Editor
             _tree.ItemTemplate = new FuncTreeDataTemplate<ExplorerNode>((node, _) => Row(node), node => node.Children);
             _tree.Styles.Add(new Style(x => x.OfType<TreeViewItem>())
             {
-                Setters = { new Setter(TreeViewItem.IsExpandedProperty, new Binding("IsExpanded") { Mode = BindingMode.TwoWay }) },
+                Setters =
+                {
+                    new Setter(TreeViewItem.IsExpandedProperty, new Binding("IsExpanded") { Mode = BindingMode.TwoWay }),
+                    new Setter(Visual.IsVisibleProperty, new Binding("IsShown")),
+                },
             });
             _tree.ContextMenu = _menu;
             _tree.SelectionChanged += (_, _) => { if (!_refreshing) SelectionChanged?.Invoke(_tree.SelectedItem as ExplorerNode); };
@@ -107,6 +168,7 @@ namespace fire.Editor
             {
                 if (e.Key == Key.Enter && _tree.SelectedItem is ExplorerNode selected && Open(selected)) e.Handled = true;
                 else if (e.Key == Key.Delete && _tree.SelectedItem is ExplorerNode { Kind: not ExplorerKind.Designer } node) { CommandRequested?.Invoke("remove", node); e.Handled = true; }
+                else if (e.Key == Key.Escape && _filtering) { _filter.Text = ""; e.Handled = true; }
             };
 
             _empty = new StackPanel { Margin = new Thickness(12), Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
@@ -119,14 +181,250 @@ namespace fire.Editor
             _empty.Children.Add(newProject);
             _empty.Children.Add(open);
 
-            Content = new Grid { Children = { _tree, _empty } };
+            // ---- the tool bar ----
+            Button BarButton(string icon, string title, string tip, Action run)
+            {
+                var b = ToolIcons.Button(icon, tip, run);
+                b.Width = BarButtonWidth;
+                _barItems.Add(new BarItem(b, title, run));
+                return b;
+            }
+            ToggleButton BarToggle(string icon, string title, string tip, Action<bool> switched)
+            {
+                var b = ToolIcons.Toggle(icon, tip);
+                b.Width = BarButtonWidth;
+                b.IsCheckedChanged += (_, _) => { if (!_settingOptions) { switched(b.IsChecked == true); OptionsChanged?.Invoke(); } };
+                _barItems.Add(new BarItem(b, title, () => b.IsChecked = b.IsChecked != true, () => b.IsChecked == true));
+                return b;
+            }
+            BarButton("CollapseAll", "Collapse All", "Collapse All: close every project and folder (the solution stays open)", CollapseAll);
+            BarButton("ExpandAll", "Expand All", "Expand All: open every project and folder", ExpandAll);
+            BarButton("Locate", "Sync with Active Document", "Sync with Active Document: select the file of the active document in the tree", () => RevealFile(_activeFile));
+            _track = BarToggle("Track", "Track Active Document", "Track Active Document: select the file of the active document whenever another one becomes active", on => { if (on) RevealFile(_activeFile); });
+            BarButton("Reload", "Refresh", "Refresh: read the folders of the projects again from the disk", () => CommandRequested?.Invoke("refresh", null));
+            _showAll = BarToggle("ShowAll", "Show All Files", "Show All Files: also show what the projects leave out - bin, obj, hidden files and folders (pale)", _ => RefreshAgain());
+            Button? newFile = null;
+            newFile = BarButton("NewFile", "New File", "New File in the selected folder (or project): script, class, window, markdown, image, ...", () => ShowNewFileMenu(newFile!));
+            _barItems[^1] = _barItems[^1] with { SubItems = NewFileItems };
+            BarButton("NewFolder", "New Folder...", "New Folder in the selected folder (or project; in a solution: a solution folder)", NewFolder);
+            BarButton("Properties", "Properties", "Properties of the selected row (a file in the Properties panel, a project or the solution in its dialog)", ShowProperties);
+            _more = ToolIcons.Button("More", "More commands of the tool bar", ShowMoreMenu);
+            _more.Width = BarButtonWidth;
+            _more.IsVisible = false;
+            foreach (var item in _barItems) _barButtons.Children.Add(item.Button);
+            var bar = new DockPanel { LastChildFill = true };
+            DockPanel.SetDock(_more, Avalonia.Controls.Dock.Right);
+            bar.Children.Add(_more);
+            bar.Children.Add(_barButtons);
+            bar.SizeChanged += (_, e) => LayoutBar(e.NewSize.Width);
+
+            var clear = ToolIcons.Button("Close", "Clear the filter (Esc)", () => { _filter.Text = ""; _filter.Focus(); });
+            clear.Padding = new Thickness(2, 0);
+            clear.Content = ToolIcons.Create("Close", 12);
+            clear.IsVisible = false;
+            _filter.InnerLeftContent = new PathIcon { Data = ToolIcons.Geometry("Find"), Width = 12, Height = 12, Foreground = EditorTheme.TextDim, Margin = new Thickness(2, 0, 0, 0) };
+            _filter.InnerRightContent = clear;
+            ToolTip.SetTip(_filter, "Shows only the rows whose name contains the text (and the folders they are in). Enter or Down: into the tree. Esc: clears it.");
+            _filter.TextChanged += (_, _) => { clear.IsVisible = !string.IsNullOrEmpty(_filter.Text); ApplyFilter(); };
+            _filter.KeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Escape && !string.IsNullOrEmpty(_filter.Text)) { _filter.Text = ""; e.Handled = true; }
+                else if (e.Key is Key.Enter or Key.Down && _roots.Count > 0)
+                {
+                    // into the tree, on the first match (no filter: the selected row, else the first one)
+                    var first = _filtering ? ExplorerTree.PathTo(_roots, n => n.Children, n => n.IsShown && ExplorerTree.Matches(FilterName(n), _filter.Text) && FilterName(n).Length > 0)?.LastOrDefault() : null;
+                    if (first != null) Select(first, raise: true);
+                    else if (Selected == null) Select(_roots[0], raise: true);
+                    _tree.Focus();
+                    e.Handled = true;
+                }
+            };
+
+            var top = new StackPanel { Margin = new Thickness(4, 3, 4, 4), Spacing = 3, Children = { bar, _filter } };
+            _top = new Border { BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(0, 0, 0, 1), Child = top };
+            var body = new Grid { Children = { _tree, _noMatches } };
+            var content = new DockPanel();
+            DockPanel.SetDock(_top, Avalonia.Controls.Dock.Top);
+            content.Children.Add(_top);
+            content.Children.Add(body);
+            Content = new Grid { Children = { content, _empty } };
             Show(false);
         }
 
         private void Show(bool hasContent)
         {
             _tree.IsVisible = hasContent;
+            _top.IsVisible = hasContent;
             _empty.IsVisible = !hasContent;
+            if (!hasContent) _noMatches.IsVisible = false;
+        }
+
+        // ---- the tool bar ----------------------------------------------------------------------------------------------------------------------
+        private bool _settingOptions;
+
+        /// <summary>Track Active Document (kept in the settings by the window).</summary>
+        public bool TrackActive
+        {
+            get => _track.IsChecked == true;
+            set { _settingOptions = true; try { _track.IsChecked = value; } finally { _settingOptions = false; } }
+        }
+
+        /// <summary>Show All Files (kept in the settings by the window).</summary>
+        public bool ShowAllFiles
+        {
+            get => _showAll.IsChecked == true;
+            set { if (ShowAllFiles == value) return; _settingOptions = true; try { _showAll.IsChecked = value; } finally { _settingOptions = false; } RefreshAgain(); }
+        }
+
+        /// <summary>The buttons that fit stay in the bar, the others go into the menu of "…".</summary>
+        private void LayoutBar(double width)
+        {
+            double step = BarButtonWidth + _barButtons.Spacing;
+            int fit = _barItems.Count * step - _barButtons.Spacing <= width ? _barItems.Count : Math.Max(0, (int)((width - BarButtonWidth - 2) / step));
+            for (int i = 0; i < _barItems.Count; i++) _barItems[i].Button.IsVisible = i < fit;
+            _more.IsVisible = fit < _barItems.Count;
+        }
+
+        private void ShowMoreMenu()
+        {
+            var flyout = new MenuFlyout();
+            foreach (var item in _barItems.Where(i => !i.Button.IsVisible))
+            {
+                var entry = new MenuItem { Header = item.Title, IsEnabled = item.Button.IsEnabled };
+                if (item.SubItems != null) foreach (var sub in item.SubItems(NewFileTarget())) entry.Items.Add(sub);
+                else
+                {
+                    if (item.IsChecked != null) { entry.ToggleType = MenuItemToggleType.CheckBox; entry.IsChecked = item.IsChecked(); }
+                    entry.Click += (_, _) => item.Run();
+                }
+                flyout.Items.Add(entry);
+            }
+            flyout.ShowAt(_more);
+        }
+
+        private void ShowNewFileMenu(Control button)
+        {
+            var flyout = new MenuFlyout();
+            foreach (var item in NewFileItems(NewFileTarget())) flyout.Items.Add(item);
+            flyout.ShowAt(button);
+        }
+
+        private static IEnumerable<ExplorerNode> All(IEnumerable<ExplorerNode> nodes) => nodes.SelectMany(n => All(n.Children).Prepend(n));
+
+        private List<ExplorerNode>? PathToNode(ExplorerNode node) => ExplorerTree.PathTo(_roots, n => n.Children, n => ReferenceEquals(n, node));
+
+        /// <summary>Closes everything below the solution (a single project: the project stays open, its folders close).</summary>
+        private void CollapseAll()
+        {
+            foreach (var n in All(_roots)) n.IsExpanded = false;
+            foreach (var root in _roots.Where(r => r.Kind == ExplorerKind.Solution || _roots.Count == 1)) root.IsExpanded = true;
+            // the selection goes up to the row that can still be seen
+            if (Selected is { } selected && PathToNode(selected) is { } chain)
+                Select(chain.FirstOrDefault(n => !n.IsExpanded) ?? chain[^1], raise: false);
+        }
+
+        private void ExpandAll()
+        {
+            foreach (var n in All(_roots)) if (n.Children.Count > 0) n.IsExpanded = true;
+        }
+
+        /// <summary>Selects the file in the tree (its folders are opened, the tree scrolls to it); false: it is in no project shown here. The selection does not change the property window
+        /// (the active document keeps it).</summary>
+        public bool RevealFile(string? path)
+        {
+            if (path == null || _roots.Count == 0) return false;
+            string full = Path.GetFullPath(path);
+            bool IsTarget(ExplorerNode n) => n.Kind is ExplorerKind.File or ExplorerKind.Content && n.Path != null && ProjectFiles.PathComparer.Equals(Path.GetFullPath(n.Path), full);
+            var chain = ExplorerTree.PathTo(_roots, n => n.Children, IsTarget);
+            if (chain == null) return false;
+            if (!chain[^1].IsShown) _filter.Text = "";   // the filter hides it: the whole tree again
+            foreach (var n in chain.Take(chain.Count - 1)) n.IsExpanded = true;
+            Select(chain[^1], raise: false);
+            return true;
+        }
+
+        private void Select(ExplorerNode node, bool raise)
+        {
+            if (raise) _tree.SelectedItem = node;
+            else
+            {
+                bool was = _refreshing;
+                _refreshing = true;
+                try { _tree.SelectedItem = node; } finally { _refreshing = was; }
+            }
+            // (only the row itself and from its left edge: a long name must not scroll the tree sideways)
+            Dispatcher.UIThread.Post(() => { if (_tree.TreeContainerFromItem(node) is Control c) c.BringIntoView(new Rect(0, 0, 1, Math.Min(c.Bounds.Height, 24))); }, DispatcherPriority.Background);
+        }
+
+        /// <summary>The row a new file or folder goes into: the selected folder (of a file: its folder), else its project; a solution or a solution folder for themselves; null: nothing selected.</summary>
+        private ExplorerNode? CreateTarget()
+        {
+            if (Selected is not { } selected || PathToNode(selected) is not { } chain) return null;
+            for (int i = chain.Count - 1; i >= 0; i--)
+            {
+                var n = chain[i];
+                if (n.Kind == ExplorerKind.Folder && !n.IsHidden && !n.IsVirtual) return n;
+                if (n.Kind is ExplorerKind.Project or ExplorerKind.SolutionFolder or ExplorerKind.Solution) return n;
+            }
+            return null;
+        }
+
+        /// <summary>For a new file a solution is no place: the window takes the project of the active document then (null).</summary>
+        private ExplorerNode? NewFileTarget() => CreateTarget() is { Kind: ExplorerKind.Folder or ExplorerKind.Project } n ? n : null;
+
+        private void NewFolder()
+        {
+            var target = CreateTarget();
+            if (target?.Kind is ExplorerKind.Solution or ExplorerKind.SolutionFolder) CommandRequested?.Invoke("new-folder", target);
+            else CommandRequested?.Invoke("new-project-folder", target);
+        }
+
+        /// <summary>The commands that a double click and the context menus use: a file in the Properties panel, a project's dialog, the solution's.</summary>
+        private void ShowProperties()
+        {
+            var node = Selected;
+            switch (node?.Kind)
+            {
+                case ExplorerKind.Solution or ExplorerKind.SolutionFolder: CommandRequested?.Invoke("solution-properties", node); break;
+                case ExplorerKind.Project or ExplorerKind.Folder or ExplorerKind.References or ExplorerKind.Reference when node.Project != null: CommandRequested?.Invoke("properties", node); break;
+                default: CommandRequested?.Invoke("show-properties", node); break;   // a file (or nothing): the Properties panel
+            }
+        }
+
+        // ---- the filter ------------------------------------------------------------------------------------------------------------------------
+        /// <summary>The name the filter looks at: the text of the row; the solution row has none (else every letter of "Solution" would match it).</summary>
+        private static string FilterName(ExplorerNode node) => node.Kind == ExplorerKind.Solution ? "" : node.Text;
+
+        /// <summary>The text of the filter box (empty: no filter).</summary>
+        public string FilterText { get => _filter.Text ?? ""; set => _filter.Text = value; }
+
+        private void ApplyFilter()
+        {
+            var result = ExplorerTree.Filter(_roots, n => n.Children, FilterName, _filter.Text);
+            if (result == null)
+            {
+                foreach (var n in All(_roots)) n.IsShown = true;
+                if (_filtering)
+                {
+                    _filtering = false;
+                    ApplyCollapsed(_roots);
+                    // the selected row stays in sight
+                    if (Selected is { } selected && PathToNode(selected) is { } chain)
+                    {
+                        foreach (var n in chain.Take(chain.Count - 1)) n.IsExpanded = true;
+                        Select(selected, raise: false);
+                    }
+                }
+                _noMatches.IsVisible = false;
+                return;
+            }
+            if (!_filtering) { RememberCollapsed(_roots); _filtering = true; }
+            foreach (var n in All(_roots))
+            {
+                n.IsShown = result.Shown.Contains(n);
+                n.IsExpanded = result.Expanded.Contains(n) || !_collapsed.Contains(n.Key);
+            }
+            _noMatches.IsVisible = result.Matches.Count == 0;
         }
 
         // (the tree is built anew: the selection it loses is no choice of the user)
@@ -135,9 +433,20 @@ namespace fire.Editor
         /// <summary>The row that is selected.</summary>
         public ExplorerNode? Selected => _tree.SelectedItem as ExplorerNode;
 
+        /// <summary>The rows that are selected (Ctrl+click and Shift+click select several; the first is <see cref="Selected"/>).</summary>
+        public IReadOnlyList<ExplorerNode> SelectedNodes
+        {
+            get
+            {
+                var nodes = _tree.SelectedItems?.OfType<ExplorerNode>().ToList() ?? new List<ExplorerNode>();
+                if (Selected is { } first && !nodes.Contains(first)) nodes.Insert(0, first);
+                return nodes;
+            }
+        }
+
         private static Control Row(ExplorerNode node)
         {
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Opacity = node.IsVirtual ? 0.55 : 1 };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Opacity = node.IsVirtual || node.IsHidden || node.IsIgnored ? 0.55 : 1 };
             panel.Children.Add(TreeIcons.Image(TreeIcons.NameFor(node)));
             panel.Children.Add(new TextBlock
             {
@@ -147,16 +456,17 @@ namespace fire.Editor
                 Foreground = node.IsActive ? EditorTheme.Solid(EditorTheme.AccentTextColor) : node.Kind == ExplorerKind.References ? EditorTheme.TextDim : EditorTheme.Text,
                 VerticalAlignment = VerticalAlignment.Center,
             });
-            if (node.GitState is { } gs)
-                panel.Children.Add(new TextBlock { Text = GitMark(gs), Foreground = GitBrush(gs), FontWeight = FontWeight.Bold, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
-            else if (node.GitChangedBelow)
-                panel.Children.Add(new TextBlock { Text = "●", Foreground = GitBrush(GitFileState.Modified), FontSize = 9, VerticalAlignment = VerticalAlignment.Center });
+            var mark = new TextBlock { FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center };
+            mark.Bind(TextBlock.TextProperty, new Binding(nameof(ExplorerNode.GitMarkText)) { Source = node });
+            mark.Bind(TextBlock.ForegroundProperty, new Binding(nameof(ExplorerNode.GitMarkBrush)) { Source = node });
+            mark.Bind(TextBlock.FontSizeProperty, new Binding(nameof(ExplorerNode.GitMarkSize)) { Source = node });
+            panel.Children.Add(mark);
             if (node.Suffix.Length > 0)
                 panel.Children.Add(new TextBlock { Text = node.Suffix, Foreground = EditorTheme.TextDim, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
             return panel;
         }
 
-        private static string GitMark(GitFileState s) => s switch
+        internal static string GitMark(GitFileState s) => s switch
         {
             GitFileState.Modified => "M", GitFileState.Added => "A", GitFileState.Untracked => "U", GitFileState.Deleted => "D", GitFileState.Renamed => "R", GitFileState.Conflicted => "!", _ => "",
         };
@@ -165,7 +475,7 @@ namespace fire.Editor
         private static readonly IBrush GitNew = new SolidColorBrush(Color.FromRgb(0x7F, 0xD9, 0x7F));
         private static readonly IBrush GitBad = new SolidColorBrush(Color.FromRgb(0xE8, 0x6A, 0x6A));
 
-        private static IBrush GitBrush(GitFileState s) => s switch
+        internal static IBrush GitBrush(GitFileState s) => s switch
         {
             GitFileState.Added or GitFileState.Untracked => GitNew, GitFileState.Deleted or GitFileState.Conflicted => GitBad, _ => GitModified,
         };
@@ -174,14 +484,37 @@ namespace fire.Editor
         /// <summary>Shows the workspace; `activeFile` is the file of the active document (its project is marked).</summary>
         public void Refresh(Workspace workspace, string? activeFile, IReadOnlyDictionary<string, GitFileState>? git = null, string? branch = null)
         {
+            bool activeChanged = !string.Equals(activeFile, _activeFile, ProjectFiles.PathComparison);
+            _workspace = workspace;
+            _activeFile = activeFile;
             _git = git;
             _branch = branch;
             _hasSolution = workspace.Solution != null;
-            RememberCollapsed(_roots);
+            if (!_filtering) RememberCollapsed(_roots);   // (while the filter is on, the folding before it is kept)
+            string? selectedKey = Selected?.Key;
             _refreshing = true;
             try { _roots.Clear(); } finally { _refreshing = false; }
             if (!workspace.IsOpen) { Show(false); return; }
             Show(true);
+            Build(workspace, activeFile);
+            if (_filtering || !string.IsNullOrWhiteSpace(_filter.Text)) ApplyFilter();
+            // the selected row is selected again in the new tree; with Track Active Document the file of a document that just became active
+            if (TrackActive && activeChanged && RevealFile(activeFile)) return;
+            if (selectedKey != null && All(_roots).FirstOrDefault(n => n.Key == selectedKey) is { } again)
+            {
+                _refreshing = true;
+                try { _tree.SelectedItem = again; } finally { _refreshing = false; }
+            }
+        }
+
+        /// <summary>The tree again from what the last Refresh got (Show All Files was switched).</summary>
+        private void RefreshAgain()
+        {
+            if (_workspace != null) Refresh(_workspace, _activeFile, _git, _branch);
+        }
+
+        private void Build(Workspace workspace, string? activeFile)
+        {
 
             var activeProject = activeFile != null ? workspace.FindProjectOf(activeFile) : null;
             var startup = workspace.Startup;
@@ -261,7 +594,7 @@ namespace fire.Editor
             }
             // the files as a tree of folders below the project folder (files from elsewhere under ".."); the content files (resources, C++ sources, notes) next to them, empty folders too
             var folders = new Dictionary<string, ExplorerNode>(StringComparer.Ordinal);
-            ExplorerNode FolderOf(string[] parts, int count)
+            ExplorerNode FolderOf(string[] parts, int count, HashSet<string>? hidden = null)
             {
                 var parent = node;
                 string accumulated = "";
@@ -271,7 +604,11 @@ namespace fire.Editor
                     string folderKey = project.FilePath + "|" + accumulated;
                     if (!folders.TryGetValue(folderKey, out var folder))
                     {
-                        folder = new ExplorerNode { Kind = ExplorerKind.Folder, Text = parts[i], Project = project, Key = "dir:" + folderKey, Path = Path.Combine(project.Directory, accumulated.TrimEnd('/')) };
+                        folder = new ExplorerNode
+                        {
+                            Kind = ExplorerKind.Folder, Text = parts[i], Project = project, Key = "dir:" + folderKey, Path = Path.Combine(project.Directory, accumulated.TrimEnd('/')),
+                            IsHidden = hidden?.Contains(accumulated.TrimEnd('/')) == true,
+                        };
                         folders[folderKey] = folder;
                         parent.Children.Add(folder);
                     }
@@ -303,11 +640,29 @@ namespace fire.Editor
                 bool isEntry = project.Project.Type == OutputType.Exe && ProjectFiles.PathComparer.Equals(file, project.Files.LastOrDefault());
                 FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.File, Text = parts[^1], Suffix = isEntry && project.Files.Count > 1 ? "entry" : "", Path = file, Project = project, Key = "file:" + file });
             }
+            var copies = new HashSet<string>(project.CopyFiles.Select(c => c.Source), ProjectFiles.PathComparer);
+            var ignored = new HashSet<string>(project.IgnoredFiles, ProjectFiles.PathComparer);
             foreach (var file in project.ContentFiles)
             {
                 string rel = ProjectFiles.Relative(project.Directory, file);
                 string[] parts = rel.Split('/');
-                FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.Content, Text = parts[^1], Path = file, Project = project, Key = "content:" + file });
+                // (the build action: an ignored file pale, a copied one says so)
+                bool isIgnored = ignored.Contains(file);
+                string suffix = isIgnored ? "ignored" : copies.Contains(file) ? "copy" : "";
+                FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.Content, Text = parts[^1], Path = file, Project = project, Key = "content:" + file, IsIgnored = isIgnored, Suffix = suffix });
+            }
+            // Show All Files: what the project leaves out (bin, obj, hidden files), pale
+            if (ShowAllFiles)
+            {
+                var (hiddenFolders, hiddenFiles) = HiddenOf(project);
+                var hidden = new HashSet<string>(hiddenFolders, StringComparer.Ordinal);
+                foreach (var folder in hiddenFolders) { var parts = folder.Split('/'); FolderOf(parts, parts.Length, hidden); }
+                foreach (var rel in hiddenFiles)
+                {
+                    string[] parts = rel.Split('/');
+                    string file = Path.GetFullPath(rel, project.Directory);
+                    FolderOf(parts, parts.Length - 1, hidden).Children.Add(new ExplorerNode { Kind = ExplorerKind.Content, Text = parts[^1], Path = file, Project = project, Key = "hidden:" + file, IsHidden = true });
+                }
             }
             SortProjectChildren(node);
             NestMarkup(node);
@@ -336,16 +691,45 @@ namespace fire.Editor
 
         private readonly HashSet<string> _seenMarkup = new();
 
-        /// <summary>Puts the git state on the files, and a mark on every folder, project and solution that has a changed file below it.</summary>
+        // what a project leaves out, read once per reading of its folder (LoadedProject.Refresh makes a new list of folders)
+        private readonly ConditionalWeakTable<LoadedProject, Tuple<IReadOnlyList<string>, (List<string> Folders, List<string> Files)>> _hidden = new();
+
+        private (List<string> Folders, List<string> Files) HiddenOf(LoadedProject project)
+        {
+            if (_hidden.TryGetValue(project, out var known) && ReferenceEquals(known.Item1, project.Folders)) return known.Item2;
+            var entries = ProjectFiles.HiddenEntries(project.Directory);
+            _hidden.AddOrUpdate(project, Tuple.Create(project.Folders, entries));
+            return entries;
+        }
+
+        /// <summary>Puts the git state on the files, and a mark on every folder, project and solution that has a changed file below it (and takes away the marks of what is no longer changed).</summary>
         private bool MarkGit(IEnumerable<ExplorerNode> nodes)
         {
             bool any = false;
             foreach (var n in nodes)
             {
-                if (n.Kind is ExplorerKind.File or ExplorerKind.Content && n.Path != null && _git!.TryGetValue(System.IO.Path.GetFullPath(n.Path), out var state)) { n.GitState = state; any = true; }
-                if (MarkGit(n.Children)) { n.GitChangedBelow = true; any = true; }
+                var state = _git != null && n.Kind is ExplorerKind.File or ExplorerKind.Content && n.Path != null ? GitRepository.StateIn(_git, System.IO.Path.GetFullPath(n.Path)) : null;
+                n.GitState = state;
+                bool below = MarkGit(n.Children);
+                n.GitChangedBelow = below;
+                any |= below || state != null;
             }
             return any;
+        }
+
+        /// <summary>
+        /// Only the state of git changed (a refresh of git, not of the workspace): the marks are put on the rows that are there, without building the tree anew - a project with thousands of
+        /// files would take seconds for that. Another branch (the solution's row shows it) or no tree yet: the whole tree.
+        /// </summary>
+        public void UpdateGit(Workspace workspace, string? activeFile, IReadOnlyDictionary<string, GitFileState>? git, string? branch)
+        {
+            if (!ReferenceEquals(workspace, _workspace) || branch != _branch || (git == null) != (_git == null) || !string.Equals(activeFile, _activeFile, ProjectFiles.PathComparison) || _roots.Count == 0)
+            {
+                Refresh(workspace, activeFile, git, branch);
+                return;
+            }
+            _git = git;
+            MarkGit(_roots);
         }
 
         private void RememberCollapsed(IEnumerable<ExplorerNode> nodes)
@@ -390,7 +774,8 @@ namespace fire.Editor
         {
             if (e.ClickCount == 1 && (e.Source as Visual)?.FindAncestorOfType<TreeViewItem>()?.DataContext is ExplorerNode pressed) _expandedAtPress = (pressed, pressed.IsExpanded);
             if (!e.GetCurrentPoint(_tree).Properties.IsRightButtonPressed) return;
-            if ((e.Source as Visual)?.FindAncestorOfType<TreeViewItem>()?.DataContext is ExplorerNode node) _tree.SelectedItem = node;
+            // (a right click on a row of a selection of several keeps it: the Build Action of the context menu is for all of them)
+            if ((e.Source as Visual)?.FindAncestorOfType<TreeViewItem>()?.DataContext is ExplorerNode node && !(_tree.SelectedItems?.Contains(node) == true && _tree.SelectedItems.Count > 1)) _tree.SelectedItem = node;
         }
 
         private MenuItem Item(string header, string command, ExplorerNode? node)
@@ -404,13 +789,13 @@ namespace fire.Editor
         private MenuItem AddNewMenu(ExplorerNode node, string header = "New")
         {
             var menu = new MenuItem { Header = header };
-            foreach (var entry in NewFileKinds)
-            {
-                if (entry == null) menu.Items.Add(new Separator());
-                else menu.Items.Add(Item(entry.Value.Title, "new:" + entry.Value.Kind, node));
-            }
+            foreach (var item in NewFileItems(node)) menu.Items.Add(item);
             return menu;
         }
+
+        /// <summary>The entries of "New" (the context menu and the New File button of the tool bar) for the folder or project `node` (null: the window's project).</summary>
+        private IEnumerable<Control> NewFileItems(ExplorerNode? node) =>
+            NewFileKinds.Select(entry => entry == null ? (Control)new Separator() : Item(entry.Value.Title, "new:" + entry.Value.Kind, node));
 
         /// <summary>What can be added as a new file: the title in the menu and the kind; null is a separator.</summary>
         public static readonly (string Title, string Kind)?[] NewFileKinds =
@@ -439,6 +824,24 @@ namespace fire.Editor
             _menu.Items.Add(new Separator());
         }
 
+        /// <summary>The submenu "Build Action" of a file: Build, Ignore, Copy if newer, Copy always (docs/tools/projects.md, "Build actions") - for every selected file; the current one is checked.</summary>
+        private MenuItem BuildActionMenu(ExplorerNode node)
+        {
+            var selected = SelectedNodes.Where(n => n is { Kind: ExplorerKind.File or ExplorerKind.Content, Project: not null, Path: not null, IsHidden: false }).ToList();
+            if (!selected.Contains(node)) selected = new List<ExplorerNode> { node };
+            var current = selected.Select(n => n.Project!.BuildActionOf(n.Path!)).Distinct().ToList();
+            var menu = new MenuItem { Header = selected.Count > 1 ? $"Build Action ({selected.Count} files)" : "Build Action" };
+            for (int i = 0; i < BuildActionFileProperties.Labels.Count; i++)
+            {
+                var action = (FileBuildAction)i;
+                var item = Item(BuildActionFileProperties.Labels[i], "build-action:" + FileBuildActions.Name(action), node);
+                item.ToggleType = MenuItemToggleType.Radio;
+                item.IsChecked = current.Count == 1 && current[0] == action;
+                menu.Items.Add(item);
+            }
+            return menu;
+        }
+
         private bool FillMenu()
         {
             _menu.Items.Clear();
@@ -456,6 +859,7 @@ namespace fire.Editor
                     _menu.Items.Add(new Separator());
                     Add("Build Solution", "build-solution");
                     Add("Clean Solution", "clean-solution");
+                    Add("Publish Solution", "publish-solution");
                     _menu.Items.Add(new Separator());
                     Add("Open Solution Folder", "reveal");
                     Add("Solution Properties...", "solution-properties");
@@ -485,6 +889,7 @@ namespace fire.Editor
                     }
                     Add("Build", "build-project");
                     Add("Clean", "clean-project");
+                    Add("Publish", "publish-project");
                     if (node.Project.Project.Type == OutputType.Library) { Add("Pack as Package (.fpk)...", "pack"); Add("Install (pack and install)", "install-library"); }
                     _menu.Items.Add(new Separator());
                     Add("Reload (read the folder again)", "refresh");
@@ -497,6 +902,9 @@ namespace fire.Editor
                     break;
                 case ExplorerKind.Reference:
                     Add("Remove Reference", "remove");
+                    break;
+                case ExplorerKind.Folder when node.IsHidden:
+                    Add("Open Folder", "reveal");
                     break;
                 case ExplorerKind.Folder when node.IsNotes:
                     Add("Open Overview", "open-notes");
@@ -519,6 +927,7 @@ namespace fire.Editor
                     Add("Open as Text", "open-text");
                     Add("Open as Hex", "open-hex");
                     Add("Show in Folder", "reveal");
+                    if (!node.IsHidden) _menu.Items.Add(BuildActionMenu(node));
                     Add("Delete File...", "delete-file");
                     break;
                 case ExplorerKind.Designer:
@@ -530,6 +939,7 @@ namespace fire.Editor
                     Add("Open as Hex", "open-hex");
                     Add("Remove from Project", "remove");
                     Add("Show in Folder", "reveal");
+                    _menu.Items.Add(BuildActionMenu(node));
                     break;
             }
             return _menu.Items.Count > 0;

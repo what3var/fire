@@ -51,6 +51,7 @@ static class GitSyncTests
                 OverviewChecks(Path.Combine(root, "overview"));
                 BranchSwitchChecks(Path.Combine(root, "switch"));
                 PullChecks(root);
+                ManyFilesChecks(Path.Combine(root, "many"));
             }
         }
         catch (Exception ex) { _failures++; Console.WriteLine("FEHLER: GitSync: unerwartete Ausnahme: " + ex); }
@@ -160,7 +161,7 @@ static class GitSyncTests
         Check("Overview: ohne Commit - vorgemerkt und unversioniert", first.Staged.Single().Path == "src/a.fire" && first.Staged[0].Letter == "A" && first.Untracked.Count == 3 && first.Changes.Count == 0 && first.AheadBehindText == "no server",
             string.Join(",", first.Untracked.Select(e => e.Path)));
         repo.Unstage(new[] { a });
-        Check("Unstage: ohne Commit wird die Datei wieder unversioniert", repo.Overview().Staged.Count == 0 && repo.Overview().Untracked.Any(e => e.Path == "src/a.fire"));
+        Check("Unstage: ohne Commit wird die Datei wieder unversioniert", repo.Overview().Staged.Count == 0 && repo.Status().Any(c => c.Path == "src/a.fire" && c.Unstaged == GitFileState.Untracked) && repo.Overview().Untracked.Any(e => e.Path == "src" && e.IsDirectory));
         repo.StageAll();
         repo.Commit("first");
         File.WriteAllText(a, "a2\n");
@@ -170,8 +171,10 @@ static class GitSyncTests
         string d = Write(work, "src/new/d.fire", "d\n");
         var o = repo.Overview();
         Check("Overview: vorgemerkt und danach wieder geaendert steht in beiden Listen", o.Staged.Single().Path == "src/a.fire" && o.Staged[0].IsStaged && o.Changes.Any(e => e.Path == "src/a.fire" && !e.IsStaged && e.Letter == "M"));
-        Check("Overview: geloescht (D) und unversioniert (U)", o.Changes.Any(e => e.Path == "src/b.fire" && e.Letter == "D") && o.Untracked.Single().Path == "src/new/d.fire" && o.Untracked[0].Letter == "U" && o.Count == 4);
-        Check("Overview: Name und Ordner einer Zeile", o.Untracked[0].Name == "d.fire" && o.Untracked[0].Folder == "src/new" && o.Changes.First(e => e.Path == "src/b.fire").FullPath == Path.GetFullPath(b));
+        Check("Overview: geloescht (D) und ein neuer Ordner als eine Zeile (U)", o.Changes.Any(e => e.Path == "src/b.fire" && e.Letter == "D") && o.Untracked.Single().Path == "src/new" && o.Untracked[0].IsDirectory && o.Untracked[0].Letter == "U" && o.Count == 4,
+            string.Join(",", o.Untracked.Select(e => e.Path)));
+        Check("Overview: Name und Ordner einer Zeile", o.Untracked[0].Name == "new" && o.Untracked[0].Folder == "src" && o.Untracked[0].FullPath == Path.GetFullPath(Path.GetDirectoryName(d)!) && o.Changes.First(e => e.Path == "src/b.fire").FullPath == Path.GetFullPath(b));
+        Check("Status: ohne Zusammenfassen jede Datei einzeln (wie bisher)", repo.Status().Any(c => c.Path == "src/new/d.fire" && !c.IsDirectory));
         Check("Overview: der Zweig", o.Branch == repo.BranchName && !o.IsMerging && !o.HasConflicts);
         repo.Stage(new[] { b, d });
         repo.UnstageAll();
@@ -281,6 +284,131 @@ static class GitSyncTests
         File.Delete(ws.FilePath!);
         Check("ReloadPlanner: eine geloeschte Loesung wird geschlossen", Plan(baselines, ws, docs) is { CloseWorkspace: true, ReloadWorkspace: false });
     }
+
+    // ---- 20000 files that are not in the .gitignore yet (docs/tools/git.md, "Very many changed files") ----------------------------------------
+    // The time bounds are generous (a loaded machine): on a quiet one the collapsed status takes a few ms, the rows of 20000 entries some ms.
+
+    private static void ManyFilesChecks(string work)
+    {
+        var all = System.Diagnostics.Stopwatch.StartNew();
+        using var repo = GitRepository.Init(work);
+        repo.SetIdentity("Tester", "tester@example.com");
+        File.AppendAllText(Path.Combine(work, ".gitignore"), "*.log\n");
+        for (int i = 0; i < 20; i++) Write(work, $"Lib/c{i}.fire", $"class C{i} {{ }}\n");
+        repo.StageAll(); repo.Commit("start");
+        for (int i = 0; i < 3; i++) File.WriteAllText(Path.Combine(work, "Lib", $"c{i}.fire"), $"class C{i} {{ int x }}\n");
+        repo.Stage(new[] { Path.Combine(work, "Lib", "c0.fire") });
+        File.Delete(Path.Combine(work, "Lib", "c3.fire"));
+        foreach (var (top, n) in new[] { ("out", 15000), ("App/gen", 5000) })
+            for (int i = 0; i < n; i++)
+            {
+                string dir = Path.Combine(work, top.Replace('/', Path.DirectorySeparatorChar), $"d{i / 100:000}");
+                if (i % 100 == 0) Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, $"f{i:00000}.txt"), "x\n");
+            }
+        Write(work, "App/gen/keep.log", "ignored\n");
+        for (int i = 0; i < 300; i++) Write(work, $"Lib/loose_{i:000}.txt", "y\n");
+        long setup = all.ElapsedMilliseconds;
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var collapsed = repo.Status(collapseUntrackedFolders: true);
+        long tCollapsed = sw.ElapsedMilliseconds; sw.Restart();
+        var full = repo.Status();
+        long tFull = sw.ElapsedMilliseconds; sw.Restart();
+        var overview = repo.Overview(collapsed);
+        var rows = GitRows.Build(overview, null, new HashSet<string>(), new Dictionary<string, (IReadOnlyList<GitOverviewEntry>, int)>());
+        long tRows = sw.ElapsedMilliseconds;
+        Check("Viele Dateien: der zusammengefasste Status hat die neuen Ordner als je eine Zeile", collapsed.Count == 4 + 2 + 300 && collapsed.Count(c => c.IsDirectory) == 2
+            && collapsed.Any(c => c.Path == "out" && c.IsDirectory) && collapsed.Any(c => c.Path == "App" && c.IsDirectory), string.Join(",", collapsed.Where(c => c.IsDirectory).Select(c => c.Path)) + $" ({collapsed.Count})");
+        Check("Viele Dateien: ohne Zusammenfassen sind es ueber 20000", full.Count > 20000);
+        Check("Viele Dateien: zusammengefasster Status unter 2 s", tCollapsed < 2000, $"{tCollapsed} ms");
+        Check("Viele Dateien: Uebersicht und Zeilen unter 0,5 s", tRows < 500 && rows.Count(r => r.Kind == GitRowKind.Entry) == overview.Staged.Count + overview.Changes.Count + overview.Untracked.Count, $"{tRows} ms");
+
+        // what the panel would have to show without folders: 20000 rows, as a flat list (only the visible ones get controls)
+        var huge = GitOverview.Build("main", 0, 0, true, true, false, full);
+        sw.Restart();
+        var hugeRows = GitRows.Build(huge, null, new HashSet<string>(), new Dictionary<string, (IReadOnlyList<GitOverviewEntry>, int)>());
+        var filtered = GitRows.Build(huge, "out/d042", new HashSet<string>(), new Dictionary<string, (IReadOnlyList<GitOverviewEntry>, int)>());
+        long tHuge = sw.ElapsedMilliseconds;
+        Check("Viele Dateien: 20000 Zeilen (und gefiltert) unter 1 s", tHuge < 1000 && hugeRows.Count > 20000 && filtered.Count(r => r.Kind == GitRowKind.Entry) == 100 && !filtered.Any(r => r.Kind == GitRowKind.Header && r.Text.StartsWith("CHANGES")),
+            $"{tHuge} ms, {filtered.Count(r => r.Kind == GitRowKind.Entry)} gefiltert");
+
+        // an opened folder: at most FolderLimit files, then "and N more"
+        string gen = Path.Combine(work, "App", "gen");
+        var appEntry = overview.Untracked.Single(e => e.Path == "App");
+        sw.Restart();
+        var (files, total) = repo.UntrackedFilesIn(Path.Combine(work, "App"), GitRows.FolderLimit);
+        long tFolder = sw.ElapsedMilliseconds;
+        Check("Ordner oeffnen: hoechstens FolderLimit Dateien, die Zahl aller, Ignoriertes nicht", files.Count == GitRows.FolderLimit && total == 5000 && !files.Any(f => f.EndsWith(".log")) && tFolder < 2000, $"{files.Count}/{total}, {tFolder} ms");
+        var children = files.Select(f => new GitOverviewEntry(Path.GetRelativePath(work, f).Replace('\\', '/'), f, GitFileState.Untracked, false)).ToList();
+        var opened = GitRows.Build(overview, null, new HashSet<string> { appEntry.FullPath }, new Dictionary<string, (IReadOnlyList<GitOverviewEntry>, int)> { [appEntry.FullPath] = (children, total) });
+        int at = opened.FindIndex(r => r.Entry == appEntry);
+        Check("Ordner oeffnen: die Dateien unter dem Ordner, ihr Pfad im Ordner, dann 'and N more'", at >= 0 && opened[at].IsExpanded && opened[at + 1].Depth == 1 && opened[at + 1].Text == "gen/d000/f00000.txt"
+            && opened[at + GitRows.FolderLimit + 1] is { Kind: GitRowKind.More, Text: "and 3000 more files" }, at >= 0 ? opened[at + 1].Text : "?");
+        Check("Diff eines neuen Ordners: die Liste seiner Dateien", repo.Diff(gen, staged: false) is var listing && listing.StartsWith("new folder App/gen/ with 5000 untracked files") && listing.Contains("(and 4500 more)"));
+
+        // the explorer marks a file in a new folder as untracked; a tracked one that did not change has no mark
+        var map = GitRepository.StateMapOf(collapsed);
+        Check("StateIn: eine Datei in einem neuen Ordner ist U, eine unveraenderte keine", GitRepository.StateIn(map, Path.Combine(work, "out", "d005", "f00500.txt")) == GitFileState.Untracked
+            && GitRepository.StateIn(map, Path.Combine(work, "Lib", "c10.fire")) == null && GitRepository.StateIn(map, Path.Combine(work, "Lib", "c1.fire")) == GitFileState.Modified);
+
+        // Add to .gitignore
+        string line = repo.AddToIgnore(Path.Combine(work, "out"));
+        repo.AddToIgnore(Path.Combine(work, "out"));
+        string ignore = File.ReadAllText(Path.Combine(work, ".gitignore"));
+        string loose = Path.Combine(work, "Lib", "loose_007.txt");
+        string fileLine = repo.AddToIgnore(loose);
+        var afterIgnore = repo.Status(collapseUntrackedFolders: true);
+        Check("Add to .gitignore: ein Ordner mit /, einmal, danach nicht mehr im Status", line == "/out/" && ignore.Split('\n').Count(l => l == "/out/") == 1 && !afterIgnore.Any(c => c.Path == "out"));
+        Check("Add to .gitignore: eine Datei", fileLine == "/Lib/loose_007.txt" && !afterIgnore.Any(c => c.Path == "Lib/loose_007.txt") && afterIgnore.Any(c => c.Path == ".gitignore"));
+        Check("Add to .gitignore: ausserhalb des Repositorys ist ein Fehler", Throws(() => repo.AddToIgnore(Path.GetTempPath())));
+
+        // stage a new folder and many single files at once (into the index directly, written once), then unstage them
+        var someLoose = Enumerable.Range(0, 300).Where(i => i != 7).Select(i => Path.Combine(work, "Lib", $"loose_{i:000}.txt")).ToList();
+        sw.Restart();
+        repo.Stage(someLoose.Append(Path.Combine(work, "App")).Append(Path.Combine(work, "Lib", "c3.fire")));
+        long tStage = sw.ElapsedMilliseconds;
+        var staged = repo.Status(collapseUntrackedFolders: true);
+        Check("Stage: ein neuer Ordner (5000 Dateien, ohne Ignoriertes) und 300 Dateien in einem Aufruf", staged.Count(c => c.Staged == GitFileState.Added) == 5299 && !staged.Any(c => c.Path.EndsWith(".log"))
+            && staged.Any(c => c.Path == "Lib/c3.fire" && c.Staged == GitFileState.Deleted) && tStage < 10000, $"{staged.Count(c => c.Staged == GitFileState.Added)} added, {tStage} ms");
+        sw.Restart();
+        repo.Unstage(staged.Where(c => c.Staged != GitFileState.Unmodified && c.Path != "Lib/c0.fire").Select(c => c.FullPath));
+        long tUnstage = sw.ElapsedMilliseconds;
+        Check("Unstage: 5300 Dateien in einem Aufruf", repo.Status(collapseUntrackedFolders: true).Count(c => c.Staged != GitFileState.Unmodified) == 1 && tUnstage < 10000, $"{tUnstage} ms");
+
+        // discard a new folder (one call for all of it): its untracked files go, ignored ones stay; and many single files at once
+        sw.Restart();
+        repo.Discard(new[] { Path.Combine(work, "App") });
+        long tDiscardFolder = sw.ElapsedMilliseconds; sw.Restart();
+        var looseFiles = Enumerable.Range(0, 300).Where(i => i != 7).Select(i => Path.Combine(work, "Lib", $"loose_{i:000}.txt")).ToList();
+        repo.Discard(looseFiles.Append(Path.Combine(work, "Lib", "c1.fire")).Append(Path.Combine(work, "Lib", "c3.fire")));
+        long tDiscardFiles = sw.ElapsedMilliseconds;
+        Check("Discard: ein neuer Ordner - seine Dateien weg, Ignoriertes bleibt", !File.Exists(Path.Combine(gen, "d000", "f00000.txt")) && !Directory.Exists(Path.Combine(gen, "d000")) && File.Exists(Path.Combine(gen, "keep.log")), $"{tDiscardFolder} ms");
+        Check("Discard: 299 neue und 2 geaenderte Dateien in einem Aufruf", looseFiles.All(f => !File.Exists(f)) && File.ReadAllText(Path.Combine(work, "Lib", "c1.fire")) == "class C1 { }\n" && File.Exists(Path.Combine(work, "Lib", "c3.fire")) && tDiscardFiles < 3000, $"{tDiscardFiles} ms");
+
+        // the watcher: a burst of 20000 paths - only the remembered files are compared (and hashed), quickly; a big burst waits longer
+        var baselines = new DiskBaselines();
+        string doc = Path.Combine(work, "Lib", "c2.fire");
+        baselines.Remember(doc);
+        var batch = new ChangeBatch();
+        foreach (var f in full.Take(20000)) { batch.Paths.Add(f.FullPath); batch.Appeared.Add(f.FullPath); }
+        sw.Restart();
+        var plan = ReloadPlanner.Plan(baselines, null, Array.Empty<string>(), new[] { Path.Combine(work, "Lib") }, new[] { new OpenFileInfo(doc, false) }, batch);
+        long tPlan = sw.ElapsedMilliseconds;
+        Check("Watcher: 20000 Pfade - nur gemerkte Dateien werden verglichen, unter 1 s", plan.Documents.Count == 0 && baselines.Paths.Count == 1 && tPlan < 1000, $"{tPlan} ms");
+        var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var batcher = new ChangeBatcher(TimeSpan.FromMilliseconds(400), TimeSpan.FromSeconds(3));
+        for (int i = 0; i < 600; i++) batcher.Add(Path.Combine(work, $"x{i}"), true, t0);
+        bool early = batcher.TryTake(t0.AddMilliseconds(600), out _);
+        Check("ChangeBatcher: ein grosser Burst wartet laenger (2 s statt 0,4 s)", !early && batcher.TryTake(t0.AddMilliseconds(2100), out var big) && big.Paths.Count == 600);
+        batcher.Slow = true;
+        batcher.Add(Path.Combine(work, "y"), false, t0.AddSeconds(10));
+        Check("ChangeBatcher: Slow (ein grosses Repository) wartet auch bei wenigen Pfaden laenger", !batcher.TryTake(t0.AddSeconds(10.6), out _) && batcher.TryTake(t0.AddSeconds(12.1), out _));
+        Console.WriteLine($"(GitSync many files: setup {setup} ms; status collapsed {tCollapsed} ms ({collapsed.Count} entries), full {tFull} ms ({full.Count}); overview+rows {tRows} ms; 20000 rows+filter {tHuge} ms; " +
+            $"open folder {tFolder} ms; stage 5300 {tStage} ms, unstage {tUnstage} ms; discard folder {tDiscardFolder} ms, 301 files {tDiscardFiles} ms; plan with 20000 paths {tPlan} ms)");
+    }
+
+    private static bool Throws(Action a) { try { a(); return false; } catch (GitException) { return true; } }
 
     // ---- a pull: the other copy changed the solution and a document -----------------------------------------------------------------------------
 

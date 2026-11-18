@@ -13,7 +13,8 @@ namespace fire.Git
     public enum GitFileState { Unmodified, Untracked, Added, Modified, Deleted, Renamed, Conflicted, Ignored }
 
     /// <summary>One changed file: its state in the index (what the next commit has) and in the working folder (what is not staged yet).</summary>
-    public sealed record GitChange(string Path, string FullPath, GitFileState Staged, GitFileState Unstaged)
+    /// <summary>`IsDirectory`: a whole folder that is untracked, as one entry (<see cref="GitRepository.Status(bool)"/> with folders collapsed; `Path` without the `/` at the end).</summary>
+    public sealed record GitChange(string Path, string FullPath, GitFileState Staged, GitFileState Unstaged, bool IsDirectory = false)
     {
         public bool IsConflicted => Staged == GitFileState.Conflicted || Unstaged == GitFileState.Conflicted;
         /// <summary>The state to show for the file: a conflict first, then what is not staged, then what is staged.</summary>
@@ -40,7 +41,7 @@ namespace fire.Git
     /// folder; <see cref="GitChange.Path"/> is relative to it (with `/`). A server that asks for a user name and a password (https) is served by the `credentials` function that the caller gives:
     /// it gets the address and returns the credentials (null: no).
     /// </summary>
-    public sealed class GitRepository : IDisposable
+    public sealed partial class GitRepository : IDisposable
     {
         private readonly Repository _repo;
 
@@ -167,27 +168,88 @@ namespace fire.Git
         }
 
         /// <summary>The files that are not as in the last commit (untracked ones included, ignored ones not).</summary>
-        public IReadOnlyList<GitChange> Status()
+        public IReadOnlyList<GitChange> Status() => Status(collapseUntrackedFolders: false);
+
+        /// <summary>
+        /// The changed files. `collapseUntrackedFolders`: a folder in which everything is untracked is one entry (<see cref="GitChange.IsDirectory"/>), as `git status` shows it - a build output
+        /// that is not in the .gitignore yet is one row instead of thousands (<see cref="UntrackedFilesIn"/> lists what is in it).
+        /// </summary>
+        public IReadOnlyList<GitChange> Status(bool collapseUntrackedFolders)
         {
             try
             {
                 var result = new List<GitChange>();
-                var status = _repo.RetrieveStatus(new StatusOptions { IncludeUntracked = true, RecurseUntrackedDirs = true, IncludeIgnored = false });
+                var status = _repo.RetrieveStatus(new StatusOptions { IncludeUntracked = true, RecurseUntrackedDirs = !collapseUntrackedFolders, IncludeIgnored = false });
                 foreach (var entry in status)
                 {
                     if (entry.State is FileStatus.Unaltered or FileStatus.Ignored) continue;
-                    var change = new GitChange(entry.FilePath.Replace('\\', '/'), Path.GetFullPath(Path.Combine(RootPath, entry.FilePath)), StateOf(entry.State, true), StateOf(entry.State, false));
+                    string path = entry.FilePath.Replace('\\', '/');
+                    bool folder = path.EndsWith('/');
+                    if (folder) path = path.TrimEnd('/');
+                    var change = new GitChange(path, Path.GetFullPath(Path.Combine(RootPath, path)), StateOf(entry.State, true), StateOf(entry.State, false), folder);
                     if (change.Staged != GitFileState.Unmodified || change.Unstaged != GitFileState.Unmodified) result.Add(change);
                 }
-                return result.OrderBy(c => c.Path, StringComparer.OrdinalIgnoreCase).ToList();
+                result.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.Path, b.Path));
+                return result;
             }
             catch (LibGit2SharpException ex) { throw new GitException(ex.Message, ex); }
+        }
+
+        /// <summary>The untracked files in a folder (full paths, at most `max`; ignored ones not), and how many there are in all.</summary>
+        public (IReadOnlyList<string> Files, int Total) UntrackedFilesIn(string folder, int max = int.MaxValue)
+        {
+            try
+            {
+                string relative = RelativeOf(folder).TrimEnd('/') + "/";
+                var status = _repo.RetrieveStatus(new StatusOptions { IncludeUntracked = true, RecurseUntrackedDirs = true, IncludeIgnored = false, PathSpec = new[] { relative } });
+                var files = new List<string>();
+                int total = 0;
+                foreach (var entry in status)
+                {
+                    if (!entry.State.HasFlag(FileStatus.NewInWorkdir)) continue;
+                    total++;
+                    if (files.Count < max) files.Add(Path.GetFullPath(Path.Combine(RootPath, entry.FilePath)));
+                }
+                files.Sort(StringComparer.OrdinalIgnoreCase);
+                return (files, total);
+            }
+            catch (LibGit2SharpException ex) { throw new GitException(ex.Message, ex); }
+        }
+
+        /// <summary>
+        /// Adds a line for the file or folder to the `.gitignore` at the top of the repository (made when there is none): `/path` for a file, `/path/` for a folder - git does not show it any longer.
+        /// A line that is there already is not added again. Returns the line.
+        /// </summary>
+        public string AddToIgnore(string path)
+        {
+            string full = Path.GetFullPath(path);
+            string relative = RelativeOf(full).TrimEnd('/');
+            if (relative.Length == 0 || relative == "." || relative.StartsWith("..")) throw new GitException($"'{path}' is not in the repository.");
+            string line = "/" + relative + (Directory.Exists(full) ? "/" : "");
+            string ignore = Path.Combine(RootPath, ".gitignore");
+            try
+            {
+                string text = File.Exists(ignore) ? File.ReadAllText(ignore) : "";
+                if (text.Replace("\r\n", "\n").Split('\n').Any(l => l.Trim() == line)) return line;
+                File.WriteAllText(ignore, text + (text.Length > 0 && !text.EndsWith('\n') ? "\n" : "") + line + "\n");
+                return line;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new GitException(ex.Message, ex); }
         }
 
         /// <summary>The state of every changed file by full path (for marking files and folders in a tree).</summary>
         public Dictionary<string, GitFileState> StateMap() => StateMapOf(Status());
 
-        /// <summary>The state of every file of `changes` by full path.</summary>
+        /// <summary>The state of a file in a map of <see cref="StateMapOf"/>: its own, else Untracked when it is in a folder that is untracked as a whole; null: unchanged.</summary>
+        public static GitFileState? StateIn(IReadOnlyDictionary<string, GitFileState> map, string fullPath)
+        {
+            if (map.TryGetValue(fullPath, out var state)) return state;
+            for (string? dir = Path.GetDirectoryName(fullPath); dir != null; dir = Path.GetDirectoryName(dir))
+                if (map.TryGetValue(dir, out var folder) && folder == GitFileState.Untracked) return GitFileState.Untracked;
+            return null;
+        }
+
+        /// <summary>The state of every file of `changes` by full path (a folder that is untracked as a whole by its path).</summary>
         public static Dictionary<string, GitFileState> StateMapOf(IEnumerable<GitChange> changes)
         {
             var map = new Dictionary<string, GitFileState>(OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
@@ -199,13 +261,13 @@ namespace fire.Git
         public string? HeadSha => _repo.Head.Tip?.Sha;
 
         /// <summary>Everything the Git panel shows: the branch, how far it is from the server's, and the changed files by staged, not staged and untracked.</summary>
-        public GitOverview Overview() => Overview(Status());
+        public GitOverview Overview() => Overview(Status(collapseUntrackedFolders: true));
 
         /// <summary>The overview with a status that was read already.</summary>
         public GitOverview Overview(IReadOnlyList<GitChange> changes)
         {
             var current = HasCommits ? Branches().FirstOrDefault(b => b.IsCurrent) : null;
-            return GitOverview.Build(BranchName, current?.Ahead ?? 0, current?.Behind ?? 0, current?.HasUpstream ?? false, _repo.Network.Remotes.Any(), IsMerging, changes);
+            return GitOverview.Build(BranchName, current?.Ahead ?? 0, current?.Behind ?? 0, current?.HasUpstream ?? false, _repo.Network.Remotes.Any(), IsMerging, changes) with { Operation = Operation };
         }
 
         public bool IsIgnored(string path) => _repo.Ignore.IsPathIgnored(RelativeOf(path));
@@ -214,10 +276,31 @@ namespace fire.Git
 
         // ---- staging and committing ---------------------------------------------------------------------------------------------------------
 
+        /// <remarks>
+        /// Many paths (a build output of thousands of files) go straight into the index, which is written once: `Commands.Stage` of LibGit2Sharp matches every path against all of them
+        /// (20000 files took 10 s, this way about 1 s). A folder that is untracked as a whole stages its untracked files (ignored ones not, as `git add`).
+        /// </remarks>
         public void Stage(IEnumerable<string> paths)
         {
-            try { Commands.Stage(_repo, paths.Select(RelativeOf).ToList()); }
-            catch (LibGit2SharpException ex) { throw new GitException(ex.Message, ex); }
+            var relatives = paths.Select(p => RelativeOf(p).TrimEnd('/')).Distinct(StringComparer.Ordinal).ToList();
+            if (relatives.Count == 0) return;
+            try
+            {
+                if (relatives.Count <= 20 && !relatives.Any(r => Directory.Exists(Path.Combine(RootPath, r)))) { Commands.Stage(_repo, relatives); return; }
+                foreach (var relative in relatives)
+                {
+                    string full = Path.Combine(RootPath, relative);
+                    if (Directory.Exists(full))
+                    {
+                        foreach (var file in UntrackedFilesIn(full).Files) _repo.Index.Add(RelativeOf(file));
+                        // (changed tracked files in it: a folder entry is only untracked as a whole, so there are none)
+                    }
+                    else if (File.Exists(full)) _repo.Index.Add(relative);
+                    else if (_repo.Index[relative] != null) _repo.Index.Remove(relative);   // deleted: the deletion is staged
+                }
+                _repo.Index.Write();
+            }
+            catch (Exception ex) when (ex is LibGit2SharpException or IOException) { throw new GitException(ex.Message, ex); }
         }
 
         public void StageAll()
@@ -289,26 +372,47 @@ namespace fire.Git
         private static GitCommitInfo Info(Commit c) => new(c.Sha, c.Message.TrimEnd(), c.Author.Name, c.Author.When);
 
         /// <summary>Puts the files back to the last commit (what is staged and what was changed); an untracked file is deleted. This cannot be undone.</summary>
+        /// <remarks>An untracked folder: its untracked files are deleted (ignored ones stay), then its empty folders. The state is read once for all the paths, the files are put back with one checkout.</remarks>
         public void Discard(IEnumerable<string> paths)
         {
             try
             {
-                foreach (var path in paths)
+                var relatives = paths.Select(p => RelativeOf(p).TrimEnd('/')).Distinct(StringComparer.Ordinal).ToList();
+                if (relatives.Count == 0) return;
+                var states = new Dictionary<string, FileStatus>(StringComparer.Ordinal);
+                foreach (var entry in _repo.RetrieveStatus(new StatusOptions { IncludeUntracked = true, RecurseUntrackedDirs = true, IncludeIgnored = false }))
+                    states[entry.FilePath.Replace('\\', '/')] = entry.State;
+                var delete = new List<string>();
+                var folders = new List<string>();
+                var unstageOnly = new List<string>();
+                var restore = new List<string>();
+                foreach (var relative in relatives)
                 {
-                    string relative = RelativeOf(path);
-                    var status = _repo.RetrieveStatus(relative);
-                    if (status.HasFlag(FileStatus.NewInWorkdir)) { File.Delete(Path.Combine(RootPath, relative)); continue; }
-                    if (status.HasFlag(FileStatus.NewInIndex))
+                    if (!states.ContainsKey(relative) && Directory.Exists(Path.Combine(RootPath, relative)))
                     {
-                        Commands.Unstage(_repo, relative);   // a file that was only added: it is untracked again (the file stays)
+                        string prefix = relative + "/";
+                        delete.AddRange(states.Where(kv => kv.Key.StartsWith(prefix, StringComparison.Ordinal) && kv.Value.HasFlag(FileStatus.NewInWorkdir)).Select(kv => kv.Key));
+                        folders.Add(relative);
                         continue;
                     }
-                    if (!HasCommits) continue;
-                    Commands.Unstage(_repo, relative);
-                    _repo.CheckoutPaths("HEAD", new[] { relative }, new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
+                    if (!states.TryGetValue(relative, out var status)) continue;
+                    if (status.HasFlag(FileStatus.NewInWorkdir)) delete.Add(relative);
+                    else if (status.HasFlag(FileStatus.NewInIndex)) unstageOnly.Add(relative);   // a file that was only added: it is untracked again (the file stays)
+                    else if (HasCommits) restore.Add(relative);
                 }
+                foreach (var relative in delete) File.Delete(Path.Combine(RootPath, relative));
+                foreach (var folder in folders) DeleteEmptyFolders(Path.Combine(RootPath, folder));
+                if (unstageOnly.Count + restore.Count > 0) Unstage(unstageOnly.Concat(restore).Select(r => Path.Combine(RootPath, r)));
+                if (restore.Count > 0) _repo.CheckoutPaths("HEAD", restore, new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
             }
             catch (Exception ex) when (ex is LibGit2SharpException or IOException or UnauthorizedAccessException) { throw new GitException(ex.Message, ex); }
+        }
+
+        private static void DeleteEmptyFolders(string folder)
+        {
+            if (!Directory.Exists(folder)) return;
+            foreach (var sub in Directory.GetDirectories(folder)) DeleteEmptyFolders(sub);
+            if (!Directory.EnumerateFileSystemEntries(folder).Any()) Directory.Delete(folder);
         }
 
         // ---- history and differences --------------------------------------------------------------------------------------------------------
@@ -320,7 +424,7 @@ namespace fire.Git
             try
             {
                 IEnumerable<Commit> commits = path == null
-                    ? _repo.Commits.QueryBy(new CommitFilter { SortBy = CommitSortStrategies.Time })
+                    ? _repo.Commits.QueryBy(new CommitFilter { SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time })   // (each commit before its parents: commits of the same second stay in order)
                     : _repo.Commits.QueryBy(RelativeOf(path)).Select(e => e.Commit);
                 return commits.Take(max).Select(Info).ToList();
             }
@@ -335,6 +439,15 @@ namespace fire.Git
             {
                 string relative = RelativeOf(path);
                 string full = Path.Combine(RootPath, relative);
+                if (!staged && Directory.Exists(full))
+                {
+                    // an untracked folder: what is in it
+                    var (files, total) = UntrackedFilesIn(full, 500);
+                    var list = new StringBuilder($"new folder {relative.TrimEnd('/')}/ with {total} untracked file{(total == 1 ? "" : "s")}\n");
+                    foreach (var f in files) list.Append("+ ").Append(RelativeOf(f)).Append('\n');
+                    if (total > files.Count) list.Append($"(and {total - files.Count} more)\n");
+                    return list.ToString();
+                }
                 if (!staged && _repo.RetrieveStatus(relative).HasFlag(FileStatus.NewInWorkdir) && File.Exists(full))
                 {
                     var sb = new StringBuilder($"diff --git a/{relative} b/{relative}\nnew file\n--- /dev/null\n+++ b/{relative}\n");

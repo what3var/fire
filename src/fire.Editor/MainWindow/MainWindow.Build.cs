@@ -413,6 +413,7 @@ namespace fire.Editor
             if (result.Ok)
             {
                 EndBuildJob(job, BuildOutcome.Succeeded);
+                CopyContentNextTo(plan, result.Output);
                 UpdateStatus($"Built {result.Output} (native, {target.Name}).");
                 if (_settings.BuildStats && result.Output is { } built) ShowBuildStats(built + ".stats.json");
                 return;
@@ -466,7 +467,11 @@ namespace fire.Editor
             output ??= await PickSavePath("Build virtual", "program" + (windows ? ".exe" : ""), windows ? "exe" : "");
             if (output == null) return;
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-            await CompileAndPrepareAsync(output);
+            if (await CompileAndPrepareAsync(output) && project != null)
+            {
+                try { CopyContentNextTo(CreatePlan(project), output); }
+                catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { _buildLog.AppendLine($"{project.Name}: warning: {ex.Message}"); }
+            }
         }
     }
 }

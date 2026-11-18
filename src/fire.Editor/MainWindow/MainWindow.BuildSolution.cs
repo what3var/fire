@@ -112,7 +112,7 @@ namespace fire.Editor
                     AppendBuildResultLog(job, result.Log);
                     if (result.Cancelled || job.Cancelling) { cancelled = true; break; }
                     diagnostics.AddRange(result.Diagnostics ?? Array.Empty<Diagnostic>());
-                    if (result.Ok) { succeeded++; _buildLog.AppendLine($"{project.Name}: built {result.Output} ({target.Name})."); }
+                    if (result.Ok) { succeeded++; _buildLog.AppendLine($"{project.Name}: built {result.Output} ({target.Name})."); CopyContentNextTo(plan, result.Output); }
                     else Fail(project, BuildErrorText(result));
                 }
             }

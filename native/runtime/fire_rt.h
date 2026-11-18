@@ -10603,6 +10603,10 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
 #else
         gilRelease();
 #endif
+        /* (the main program's Sleep in the system's wait for its windows: what ends it early - the threads' jobs, a terminate - counts as an event and wakes
+         * that wait, and the windows' events wake it too; it looks again every 20 ms, as the VM does, not every 5 - an idle program with a window would
+         * otherwise wake 200 times a second) */
+        if (pred == fire_sleepWake && !g_isThread && g_idleWait != NULL && fire_atomic_load(&g_idleOn)) slice = 20;
         if (deadlineMs && deadlineMs - now < slice) slice = deadlineMs - now;
 #ifdef FIRE_TASKS
         if (taskRunning()) {

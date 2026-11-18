@@ -21,7 +21,9 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
     { "project": "../Core/Core.fireproj" },    // a library of the solution
     { "package": "fire-http", "version": "1.0" }   // an installed package (ember)
   ],
-  "settings": { "floatWidth": 32, "mode": "release", "defines": ["PRJ"], "engine": "native", "target": "esp32" }
+  "settings": { "floatWidth": 32, "mode": "release", "defines": ["PRJ"], "engine": "native", "target": "esp32" },
+  "buildActions": { "data/**": "copy", "old/**": "ignore" },   // optional: what builds do with files (see "Build actions")
+  "publish": { "enabled": true, "targets": ["dist/App"] }        // optional: see "Publish"
 }
 ```
 
@@ -104,6 +106,73 @@ test or a project or solution file (builds write none of them; it is kept and re
 *Build Solution* builds the projects natively in the order of their references (`Workspace.BuildOrder`: a library before whoever references it, otherwise the order of the solution
 file); a library is compiled for the target (its code goes into the programs that import it), a project whose library failed is skipped.
 
+### Build actions
+
+`buildActions` says what builds and Publish do with a file: a path or a pattern (relative to the project file, like `files`) maps to an action.
+
+```json
+"buildActions": {
+  "data/**": "copy",               // copied next to the program when it is newer than the copy there (and into the publish folders)
+  "data/cache/**": "ignore",       // the last pattern that matches decides; a file's own entry goes before every pattern
+  "settings.ini": "copyAlways",    // copied on every build and publish
+  "legacy/old.fire": "ignore",     // a source that is not compiled
+  "scripts/plugin.fire": "copy"    // a source that is not compiled but shipped next to the program (to be loaded at run time)
+}
+```
+
+| action | a fire source | another file (content) |
+|---|---|---|
+| `build` (the default: no entry) | compiled, as before | content, as before: shown, not copied; `new Resource("...")` embeds it |
+| `ignore` | **not** compiled | not copied, shown pale |
+| `copy` | not compiled, copied | copied when newer (or of another size) than the copy there |
+| `copyAlways` | not compiled, copied | copied on every build |
+
+A copied file keeps its path below the project: `data/levels/one.txt` lands as `<program folder>/data/levels/one.txt` (the copy gets the time of the original).
+*Build*, *Build Solution*, *Build virtual* and the native runs in spark and `forge build` copy them next to the program; the *Copy* files of the libraries a
+program references are copied with it (the program's own win when the paths are the same). A project without `buildActions` behaves exactly as before. The
+action does not change resources: `new Resource("data/logo.png")` embeds the file whatever its action is - the code asks for it (a resource with *Copy* is then
+in the program and next to it). In spark the action is set in the *Properties* of a file or with *Build Action* in its context menu, also for several files at
+once (`FileBuildActions`, `src/fire.Project/ProjectPublish.cs`).
+
+### Publish
+
+`publish` makes a project something to hand out: *Publish* (spark: *Run > Publish*, *Publish Solution*, the *Build* tool strip, the context menus; `forge
+publish All.firesln`) builds every project that has it on and copies the result into folders of your choice.
+
+```json
+"publish": {
+  "enabled": true,                             // Publish Solution takes only the projects that have it on (default: off)
+  "targets": ["dist/App", "/srv/share/App"],   // absolute or relative to the solution file (no solution: the project file); default: publish/<name> next to the solution
+  "engine": "native",                          // vm or native; default: the project's engine, else native
+  "mode": "release",                           // default: release
+  "target": "linux",                           // the target of a native build; default: the project's, else this machine
+  "toolchain": "gcc",                          // default: the project's
+  "clean": false                               // empty each folder first (default: off)
+}
+```
+
+* **Order and failures.** The projects go in the order of Build Solution (`Workspace.BuildOrder`): a library before whoever references it; a project whose
+  library failed to publish is skipped. A **library** is published as its package (`Lib-1.2.0.fpk`, as *Pack* makes it). Without a solution the default folder is
+  `publish/<name>` next to the project's folder.
+* **Only what is outdated is built.** The publish build goes to the usual place (`bin/<target>-<mode>/`, or `output`); `obj/publish/<engine>-<target>-<mode>.json`
+  remembers from which inputs: the text of every source of the project and its libraries (also unsaved text open in spark), the size and time of their other
+  files (resources, natives), the settings, the engine, mode, target and toolchain, `fire.native.json` and the compiler itself. When all of that is the same and
+  the program is untouched, it is not built again ("up to date" in the log). Clean removes the record with `obj/`. A native build that does run still takes
+  the program cache ([NATIVE_BACKEND](../spec/NATIVE_BACKEND.md)) when the C is the same. The *Copy* files are not part of the record - they are copied anyway.
+  Installed packages are not part of it either: after updating a package, publish once with a Clean before.
+* **What is copied** into every folder: the program; the files of the same name next to it (`App.wasm` and `App.js` of a browser build, `App.firehost`), not the
+  statistics or the C sources; with linkage `shared` the shared libraries next to the program; the whole folder of a toolchain that only writes files (ESP-IDF);
+  the *Copy* files of the project and its libraries. A file whose copy in the folder has the same size and is not older is left as it is (`copyAlways` files are
+  always copied). A VM program carries the virtual machine and everything it imports, so it is the only file it needs.
+* **Other files in a folder stay.** Publish never deletes what it did not write - unless `clean` is on: then the folder is emptied first, but never a drive's root,
+  the home folder, a folder that holds the solution or a project of the workspace, a project or solution file or a git repository (the log says why it is kept).
+  Each folder gets a small file `.firepublish`: a folder that has it is never part of a project's files, so a publish folder inside a project folder does not
+  feed the copies back into the project.
+* The log says per project whether it was built or up to date and how many files went where, and ends with the summary (`2 projects published to /x/dist/App,
+  /x/out/packages (1 up to date, not built again).`); errors and warnings go into spark's error list. Cancel stops it after the step that runs.
+
+`ProjectPublisher` (`src/fire.Compiler/ProjectPublisher.cs`) does it for spark and forge; the tests are `FIRE_TESTS_ONLY=publish`.
+
 ## References: libraries without an entry point
 
 A project of `"type": "library"` has no entry point: classes, interfaces, enums, functions, namespaces and extensions only. A statement at the top level is an error with file and
@@ -161,6 +230,8 @@ fire.Compiler run   All.firesln                 # a solution: the startup projec
 fire.Compiler run   All.firesln -p Tool         # a project of the solution by name
 fire.Compiler build All.firesln                 # a program: App/bin/<target>-<mode>/App (vm-rel, linux-dbg, ...; or the "output" setting, or -o), the engine of the settings
 fire.Compiler build Core/Core.fireproj          # a library: bin/Core-1.2.0.fpk (-o names the folder)
+fire.Compiler publish All.firesln               # every project with publish.enabled, built when outdated, copied into its folders
+fire.Compiler publish All.firesln -p App        # one project (also when its publishing is off); a .fireproj alone: that project
 ```
 
 ## New solutions and projects
@@ -206,7 +277,9 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
 * **Properties of a file**: selecting a file in the Solution Explorer shows it in the tool window **Properties** (until another document becomes active): name, folder, project, what the
   project does with it (*Kind*: its place in the compile order, content, test). A C/C++ file of a project also has the category **Native build**: *Part of the native build* (puts it into
   `native.sources` or takes it out - a file that comes from a pattern stays, the window says so), *Build order* (the `order` of its entry; empty: none, 0), *Platforms* (all, or one list
-  of `platformSources`; only for a file the project file names itself), *Position* (its place in the build) and *Listed as* (the file itself or the pattern). A build order that breaks an
+  of `platformSources`; only for a file the project file names itself), *Position* (its place in the build) and *Listed as* (the file itself or the pattern).
+  Every file of a project has the category **Build**: *Build action* (Build, Ignore, Copy if newer, Copy always - see "Build actions"; for several selected
+  files at once) and *Set by*. A build order that breaks an
   `#include` is shown in red with file and line. A change is written to the `.fireproj` at once (as the project dialog writes it); an order for a file that comes from a pattern gives it an
   entry of its own just before the pattern. The rows come from *file property providers* (`IFilePropertiesProvider` in `src/fire.Editor/Panels/FileProperties.cs`), so other kinds of files can
   get properties of their own.
@@ -220,7 +293,7 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   offset, Find looks for bytes (`DE AD BE EF`) or text (`"abc"`); files up to 128 MB; undo.
 * **Start**: a splash screen while the editor starts, then the **welcome window**: the projects and solutions that were opened last (a click opens one; the cross takes it out of the list; one that is gone shows as not found), and what to do - new solution, new project, open a project or solution, open a file, new script, the first steps. *Show this window when the editor starts* turns it off; *? > Welcome...* brings it back. The list is `recent.json` in the application data folder of fire (`fire.Projects.RecentWorkspaces`, at most 20); *File > Open Recent* shows the last ten. Files given on the command line skip the window.
 * **File menu**: New (Solution, Project, Script, Markdown, Raster Image; see [TEMPLATES.md](templates.md)) / Open Project or Solution / Close. **Project menu**: add a new or existing project to the solution, set the startup project, reload the project (read its folder
-  again), **Project properties**: a window with pages chosen at the left - *General* (name, version, author, description, icon, program or library, entry file or import name, Desktop/Console, lax/strict, VM/native, startup project), *Version & Info* (product name, internal name, file version, license, comments), *Build* (configuration, float precision, symbols for `#if`, output folder), *Native & Toolchain* (target, toolchain, a button to the native build settings, the serial port and baud rate of a board with the state of ESP-IDF), *Run & Debug* (the program arguments), *References*, *Notes* (the notes folder) and, when a solution is open, a page for the solution (startup project, notes folder and the settings that every project without its own value gets). A value the project does not set shows the one it inherits (from the solution or the default) greyed out; *reset* removes the project's own value again.
+  again), **Project properties**: a window with pages chosen at the left - *General* (name, version, author, description, icon, program or library, entry file or import name, Desktop/Console, lax/strict, VM/native, startup project), *Version & Info* (product name, internal name, file version, license, comments), *Build* (configuration, float precision, symbols for `#if`, output folder), *Native & Toolchain* (target, toolchain, a button to the native build settings, the serial port and baud rate of a board with the state of ESP-IDF), *Run & Debug* (the program arguments), *Publish* (on/off, the folders, VM/native, configuration, target, empty the folders first), *References*, *Notes* (the notes folder) and, when a solution is open, a page for the solution (startup project, notes folder and the settings that every project without its own value gets). A value the project does not set shows the one it inherits (from the solution or the default) greyed out; *reset* removes the project's own value again.
 * The documents stay documents: files of the project open in tabs like any other file, files outside open next to them, and every command that builds looks at the active tab. The status bar
   and the Build/Run commands say what they act on (`Build: App (project)`, `Build: single.fire (single file)`). Unsaved buffers of the project's files go into the build.
 * **F5 on any file of the solution** runs the *start project* (bold in the Solution Explorer); **Build** on a library packs it (`Core-1.2.0.fpk`).

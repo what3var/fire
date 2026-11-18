@@ -1117,6 +1117,43 @@ Pack hinterlässt kein `.fpk`; ein Programm in der VM mit zwei Bibliotheken mit 
 Befehle im Log, ein dritter keine solche Phase mehr. **Nicht geprüft**: das Fenster selbst und die Statusleiste (spark ist hier nicht zu klicken), das Abbrechen von `idf.py` auf einem
 echten ESP-IDF und Windows.
 
+#### Bauzeiten (`FIRE_BUILD_TIMES`) und der Cache der Programme
+
+**`FIRE_BUILD_TIMES=1`** schreibt die Zeit jeder Phase eines Baus auf die Fehlerausgabe (`[build-times] phase: N ms`, `fire.Native.BuildTimes`): das Frontend
+(Präprozessor mit Imports und Preludes, Parsen, Namen, Typen, Bytecode, das Binden), jede Runde des C-Generators (mit der Zahl der Funktionen), das Zusammensetzen
+der Datei, das Schreiben der Dateien und jeden Befehl des Compilers, dazu die Größe des C (Zeilen, KB, Funktionen); mit linkage `static` das Übersetzen der Module
+(nebeneinander) und das des Programms. Ohne die Variable wird nichts gemessen.
+
+**Der Cache der Programme** (linkage `source`, `NativeBuilder.ProgramCache`): ein Bau, dessen Dateien und Befehle genau die eines früheren sind, nimmt dessen Programm,
+statt das C noch einmal zu übersetzen - ein Bau ohne Änderung, nach einem Clean, ein Programm, das wieder gestartet wird. Der Schlüssel ist der SHA-256 über jede
+Datei im Bauordner (das C des Programms, die Natives, die Runtime, das Plattformpaket), die Befehle (die Ordner des Baus neutral) und die Compiler (Pfad, Größe,
+Zeit); ein Debug-Build auch über seinen Ordner (seine Debug-Informationen nennen die Dateien). Nur gcc, clang und TinyCC (ihr Ergebnis ist allein das Programm),
+nicht mit `--stats`. Das geht, weil der Generator für dasselbe Programm dasselbe C schreibt (Byte für Byte). Die neuesten 8 Programme bleiben, in `programs/` des
+Caches der Libraries (`FIRE_NATIVE_CACHE`, `ember cache clean`); `FIRE_PROGRAM_CACHE=0` schaltet ihn ab. Das Log sagt *taken from the cache*.
+
+Gemessen (der Assistent, `src/fire.Editor/Assistant/assistant.fire` mit ai, ui, windows, http, mcp: 417 655 Zeilen C, 1708 Funktionen; 4 Kerne, mit Last von außen):
+
+| Phase | vorher | nachher |
+|---|---|---|
+| Frontend (Präprozessor, Parsen, Namen, Typen, Bytecode) | 2,3 s | 2,3 s |
+| C-Generator (13 Runden, Zusammensetzen) | 225 s | ~25 s |
+| Dateien schreiben | 0,1 s | 0,1 s |
+| gcc -O2 (übersetzen und binden, ein Kern) | 225 s | 225 s |
+| gcc -O0 -g (Debug) / -O1 / TinyCC | 39 s / 142 s / 1,0 s | |
+| der ganze Bau (`forge build --engine native`) | 8 min 6 s | ~4 min (gcc), 31 s ohne Änderung (Cache) |
+| linkage `static`, alle Module im Cache | baute nicht (isof_ fehlte; dahinter las JSON die Zahl einer List an Slot -1) | 24 s (Programm 22 MB statt 10 MB) |
+
+Das Beispiel Docking (ui, ui.docking; 238 802 Zeilen C, 1013 Funktionen): der Generator 1 min 59 s -> 11 s, gcc -O2 1 min 58 s, TinyCC 0,4 s. In beiden
+Programmen ist das C vorher und nachher dasselbe, Byte für Byte.
+
+Der Generator verbrachte drei Viertel seiner Zeit in `LayoutOf`/`RawType` (`HasProperty` ging für jedes Feld jeder Klasse durch alle Klassen), den Rest in Suchen,
+die nur die Deklarationen entscheiden (`DispatchNeedsDefaults`, `RestrictedMethodName`, `RestrictedField`), und im Kopieren der Zustände je Instruktion: alles
+jetzt einmal je Name bzw. ohne doppelte Arrays. gcc verteilt seine Zeit über alle 29 000 Funktionen (die 40 größten sind 24 %), es ist die Menge des C; eine Aufteilung
+in mehrere Übersetzungseinheiten (die Funktionen und die Tabellen der Datei sind `static`, Konstanten wie die `ta_N` werden über ihre Adresse verglichen) ist
+**nicht umgesetzt**. TinyCC übersetzt dasselbe C in einer Sekunde (`--toolchain tcc`: ein schneller Bau zum Ausprobieren, nur C - Natives in C++
+nimmt es nicht); das Programm läuft aber langsamer: eine Schleife mit Rekursion, List, Strings und Objekten 0,30 s mit gcc -O2, 2,6 s mit TinyCC, 3,3 s als
+Debug-Build mit gcc (-O0 -g), 7,5 s als Debug-Build mit TinyCC; 117 KB mit gcc, 181 KB mit TinyCC; die Ausgabe ist überall die der VM.
+
 #### Ziel `esp32`: Run und Debug auf dem Board (ROADMAP 8.6)
 
 Mit dem Ziel `esp32` (Build-Leiste bzw. `settings.target`) machen F5/F10/F11 aus dem Programm ein **ESP-IDF-Projekt** in `bin/esp32-<modus>` (die Komponente, die

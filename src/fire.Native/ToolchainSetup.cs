@@ -41,6 +41,8 @@ namespace fire.Native
                         foreach (string ow in WatcomToolchain.CompilerFolders.Select(b => Path.Combine(dir, b)).Where(Directory.Exists)) yield return ow;
                         continue;
                     }
+                    // the portable TinyCC (TinyccSetup) has tcc.exe at its top, no bin
+                    if (string.Equals(dir, TinyccSetup.Directory, StringComparison.OrdinalIgnoreCase)) { yield return dir; continue; }
                     string bin = Path.Combine(dir, "bin");
                     if (Directory.Exists(bin)) yield return bin;
                 }

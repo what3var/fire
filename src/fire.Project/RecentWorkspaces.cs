@@ -122,6 +122,12 @@ namespace fire.Projects
         /// <summary>The setup wizard (toolchains, the model of the assistant, the first build of the packages) came at the first start; afterwards only ? > Setup Wizard opens it.</summary>
         public bool SetupWizardSeen { get; set; }
 
+        /// <summary>The solution explorer selects the file of the active document whenever another one becomes active (its tool bar: "Track Active Document").</summary>
+        public bool ExplorerTrackActive { get; set; }
+
+        /// <summary>The solution explorer also shows what a project leaves out - bin, obj, hidden files - pale (its tool bar: "Show All Files").</summary>
+        public bool ExplorerShowAllFiles { get; set; }
+
         public static string DefaultPath => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", "spark-settings.json");
 
         private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };

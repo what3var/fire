@@ -17,7 +17,7 @@ typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type
 /* (fields: the njson fields that go to JSON, then the `defined` fields that do not, then a row with a NULL name) */
 typedef struct JsonClassInfo { const char* name; const char* plain; uint32_t nfields; const JsonFieldInfo* fields; uint32_t njson; uint8_t flags; uint8_t ntparams; uint16_t nraw; } JsonClassInfo;   /* (nraw: the bytes of its packed fields) */
 /* The slots of the classes JSON fills itself (-1: not in the program). */
-typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; int32_t listOwns, ownsEnum; int8_t listCountHalf, objCountHalf; } JsonSpecial;   /* (the halves: a narrow count - nvGet/nvSet; -1: a whole slot) */
+typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; int32_t listOwns, ownsEnum; int8_t listCountHalf, objCountHalf; } JsonSpecial;   /* (the halves: a narrow count - nvGet/nvSet; -1: a whole slot; -2: a packed int, listCount/objCount its offset in objRaw) */
 
 /* Generated (the program): the class with this id (null: none), the id of a class name (-1: none), the text of a type argument (null: not known), the type
  * argument of a text (null: none), the special slots. */
@@ -29,7 +29,8 @@ FIRE_HOST_EXTERN const char* jsonTArgText(const TArg* t);
 FIRE_HOST_EXTERN const TArg* jsonTArgFor(const char* text);
 FIRE_HOST_EXTERN const JsonSpecial* jsonSpecial(void);
 /* A field of an object by its place: a narrow one (two share the slot: `half` 0 or 1) or a whole slot (`half` -1). */
-static Value jsFieldGet(Obj* o, uint32_t slot, int half) { return half >= 0 ? nvGet(&objFields(o)[slot], half) : objFields(o)[slot]; }
+/* (half -2: a packed int - the count of a List in a program of modules - at the offset `slot` of objRaw) */
+static Value jsFieldGet(Obj* o, uint32_t slot, int half) { return half == -2 ? rawGet(o, FIRE_RAW_INT, (uint16_t)slot, 0) : half >= 0 ? nvGet(&objFields(o)[slot], half) : objFields(o)[slot]; }
 
 /* The engine (below, in the program): `__JsonCall(id, ...)` - 1 Serialize(value, flags), 2 Deserialize(text[, typeName]) -> [value, objects with
  * OnDeserialized], 3 Parse(text). `callType` is the type argument of the generic method that calls it (`Json.Deserialize<Person>`), null when there is none. */
@@ -896,7 +897,7 @@ static void jsStore(Value container, uint32_t slot, Value v) {
  * whole slot (`half` -1). */
 /* (a packed field: not inlined into the reader - GCC then takes the bytes behind the object's head for a write past it, -Wstringop-overflow) */
 static FIRE_COLD void jsRawStore(Obj* o, uint8_t raw, uint16_t off, Value v) { rawSet(o, raw, off, v); }
-static void jsFieldStore(Value obj, uint32_t slot, int half, Value v) { if (half >= 0) nvSet(&objFields(objAt(obj))[slot], half, v); else jsStore(obj, slot, v); }
+static void jsFieldStore(Value obj, uint32_t slot, int half, Value v) { if (half == -2) rawSet(objAt(obj), FIRE_RAW_INT, (uint16_t)slot, v); else if (half >= 0) nvSet(&objFields(objAt(obj))[slot], half, v); else jsStore(obj, slot, v); }
 
 static const char* jsDescribe(JsCtx* J, const char* type) {
     if (type[0] == 0) return "a value";

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using fire.Editor.Assistant;
 using fire.Editor.Setup;
 
 /// <summary>spark's setup wizard without a window (src/fire.Editor/Setup): the catalog of ai.models read from its source, the choice for a machine, the pages and the plan for
@@ -46,6 +47,102 @@ static class SetupWizardTests
         new(IsWindows: false, IsMacOS: false, IsX64: true, new MachineInfo(8192, 4, true), AssistantAvailable: true, AssistantEnabled: false,
             cpp ? new[] { new DetectedToolchain("gcc", "GCC (g++)", "/usr/bin/g++") } : Array.Empty<DetectedToolchain>(), ModelFolder: EmptyFolder());
 
+    /// <summary>spark's native build of the assistant (src/fire.Editor/Assistant/AssistantNative.cs): the packages it is made of, its key, the stamps, a build.</summary>
+    private static void NativeAssistant()
+    {
+        string packages = Path.GetDirectoryName(Path.GetDirectoryName(CatalogSource())!)!;
+        string root = EmptyFolder();
+        string script = Path.Combine(root, "assistant.fire");
+        File.WriteAllText(script, "#import \"assistant\"\nAssistant.App.Run(\"\", true)\n");
+        Check("Assistent nativ: die Pakete des Assistenten - mit ai, ui, windows, mcp, ohne scene3d", () =>
+        {
+            var names = AssistantNative.PackageFolders(script, packages).Select(Path.GetFileName).ToList();
+            return names.Contains("assistant") && names.Contains("ai") && names.Contains("ai.agent") && names.Contains("ui") && names.Contains("windows") && names.Contains("mcp")
+                && !names.Contains("scene3d") && !names.Contains("data.mysql");
+        }, () => string.Join(", ", AssistantNative.PackageFolders(script, packages).Select(Path.GetFileName)));
+        // a small tree of packages: app uses lib (whose natives use base); other is not used
+        string tree = Path.Combine(root, "packages");
+        void Package(string name, string source, string uses = "")
+        {
+            Directory.CreateDirectory(Path.Combine(tree, name));
+            File.WriteAllText(Path.Combine(tree, name, name + ".fireproj"),
+                "{ \"name\": \"fire-" + name + "\", \"import\": \"" + name + "\"" + (uses.Length > 0 ? ", \"native\": { \"uses\": [\"" + uses + "\"] }" : "") + " }");
+            File.WriteAllText(Path.Combine(tree, name, name + ".fire"), source);
+        }
+        Package("app", "#import \"lib\"\n");
+        Package("lib", "// lib\n", uses: "base");
+        Package("base", "// base\n");
+        Package("other", "// other\n");
+        string compiler = Path.Combine(root, "forge.dll");
+        File.WriteAllText(compiler, "v1");
+        string main = Path.Combine(root, "main.fire");
+        File.WriteAllText(main, "#import \"app\"\n");
+        string Key() => AssistantNative.Key(main, tree, new[] { compiler });
+        string k1 = Key();
+        Check("Assistent nativ: Pakete ueber #import und uses gefunden", () => string.Join(",", AssistantNative.PackageFolders(main, tree).Select(Path.GetFileName)) == "app,base,lib",
+            () => string.Join(",", AssistantNative.PackageFolders(main, tree).Select(Path.GetFileName)));
+        Check("Assistent nativ: der Schluessel bleibt - ein unbenutztes Paket und bin/ aendern ihn nicht", () =>
+        {
+            File.WriteAllText(Path.Combine(tree, "other", "other.fire"), "// changed\n");
+            Directory.CreateDirectory(Path.Combine(tree, "lib", "bin"));
+            File.WriteAllText(Path.Combine(tree, "lib", "bin", "x.o"), "build output");
+            return Key() == k1;
+        });
+        Check("Assistent nativ: ein benutztes Paket, das Skript und der Compiler aendern ihn", () =>
+        {
+            File.WriteAllText(Path.Combine(tree, "base", "base.fire"), "// changed\n");
+            string k2 = Key();
+            File.WriteAllText(main, "#import \"app\"\nprint(1)\n");
+            string k3 = Key();
+            File.WriteAllText(compiler, "v2");
+            string k4 = Key();
+            return k2 != k1 && k3 != k2 && k4 != k3;
+        });
+        Check("Assistent nativ: Stempel - kein Binary, dann das passende; ein Fehlschlag gilt nur fuer seinen Schluessel", () =>
+        {
+            string folder = Path.Combine(root, "native");
+            Directory.CreateDirectory(folder);
+            bool none = AssistantNative.Current(folder, "K") == null;
+            File.WriteAllText(AssistantNative.BinaryIn(folder), "binary");
+            File.WriteAllText(Path.Combine(folder, "assistant.key"), "K");
+            File.WriteAllText(Path.Combine(folder, "assistant.failed"), "F");
+            return none && AssistantNative.Current(folder, "K") != null && AssistantNative.Current(folder, "L") == null
+                && AssistantNative.FailedBefore(folder, "F") && !AssistantNative.FailedBefore(folder, "K");
+        });
+        if (OperatingSystem.IsWindows()) return;   // (the stand-ins of forge below are shell scripts)
+        Check("Assistent nativ: ein Bau, der scheitert, wird fuer seinen Schluessel gemerkt", () =>
+        {
+            string folder = Path.Combine(root, "failing");
+            string fake = Path.Combine(root, "fake-forge.sh");
+            File.WriteAllText(fake, "#!/bin/sh\necho 'no C compiler' >&2\nexit 1\n");
+            File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var r = AssistantNative.Build(fake, main, folder, "X");
+            return r.Binary == null && !r.Cancelled && r.Output.Contains("no C compiler") && AssistantNative.FailedBefore(folder, "X");
+        });
+        Check("Assistent nativ: ein Bau, der gelingt, steht an seinem Platz mit seinem Schluessel (ohne die Fortschrittszeilen)", () =>
+        {
+            string folder = Path.Combine(root, "working");
+            string fake = Path.Combine(root, "fake-forge-ok.sh");
+            // (forge build <script> --engine native -o <out>: the sixth argument is the output)
+            File.WriteAllText(fake, "#!/bin/sh\necho '##fire-progress 0 0 Building' >&2\necho built > \"$6\"\n");
+            File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var r = AssistantNative.Build(fake, main, folder, "Y");
+            return r.Binary != null && File.ReadAllText(r.Binary).Trim() == "built" && AssistantNative.Current(folder, "Y") == r.Binary
+                && !r.Output.Contains("##fire-progress") && Directory.GetFiles(folder, "build-*").Length == 0;
+        });
+        Check("Assistent nativ: abgebrochen - kein Binary, kein Fehlschlag gemerkt", () =>
+        {
+            string folder = Path.Combine(root, "cancelled");
+            string fake = Path.Combine(root, "fake-forge-slow.sh");
+            File.WriteAllText(fake, "#!/bin/sh\nsleep 30\n");
+            File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var r = AssistantNative.Build(fake, main, folder, "Z", token: cancel.Token);
+            return r.Cancelled && r.Binary == null && !AssistantNative.FailedBefore(folder, "Z") && watch.Elapsed < TimeSpan.FromSeconds(10);
+        });
+    }
+
     private static string EmptyFolder()
     {
         string f = Path.Combine(Path.GetTempPath(), "fire-setup-test-" + Guid.NewGuid().ToString("N"));
@@ -64,8 +161,10 @@ static class SetupWizardTests
         {
             Catalog();
             Pages();
+            StartAndTinycc();
             Progress();
             Download();
+            NativeAssistant();
         }
         finally
         {
@@ -169,6 +268,87 @@ static class SetupWizardTests
         });
         Check("Schritte: aus dem Plan (Titel in Reihenfolge)", () =>
             SetupSteps.For(win.Plan(), catalog).Select(s => s.Title).SequenceEqual(win.Plan().Select(p => p.Title)));
+    }
+
+    private static void StartAndTinycc()
+    {
+        var catalog = ModelCatalog.Load(CatalogSource());
+        Check("Start: von der Zusammenfassung an startet der Lauf (Finish -> Launch), vorher nicht", () =>
+        {
+            var m = new SetupWizardModel(Windows(), catalog);
+            bool early = m.Finish() == null;   // (Welcome: Start is Next there)
+            while (m.Next()) { }
+            var plan = m.Finish();
+            var ran = new List<string>();
+            var run = SetupWizardModel.Launch(plan, p => p.Select(i => (ISetupStep)new SetupStep(i.Title, _ => { lock (ran) ran.Add(i.Id); })).ToList());
+            bool started = run != null && (run.Running || run.Finished);
+            SpinWait.SpinUntil(() => run!.Finished, 5000);
+            return early && m.Page == SetupPage.Summary && plan!.Count == 3 && started && run!.Succeeded
+                && string.Join(",", ran) == "w64devkit,qwen3.5-0.8b,standard" && run.Items.Select(i => i.Title).SequenceEqual(plan.Select(i => i.Title));
+        });
+        Check("Start: die echten Schritte des Plans starten (Linux: die Pakete, ohne zu warten)", () =>
+        {
+            var m = new SetupWizardModel(Linux(), catalog);
+            while (m.Next()) { }
+            var installed = new ManualResetEventSlim();
+            var run = SetupWizardModel.Launch(m.Finish(), p => p.Select(i => SetupSteps.Packages(i.Title, log => { installed.Set(); return Array.Empty<string>(); })).ToList());
+            return run != null && installed.Wait(5000) && SpinWait.SpinUntil(() => run.Succeeded, 5000);
+        });
+        Check("Start: ein leerer Plan startet nichts (null: der Aufrufer sagt es)", () =>
+            SetupWizardModel.Launch(Array.Empty<SetupPlanItem>(), _ => Array.Empty<ISetupStep>()) == null && SetupWizardModel.Launch(null, _ => Array.Empty<ISetupStep>()) == null);
+        Check("Pakete: warten auf die Installation des Starts, Cancel beendet das Warten", () =>
+        {
+            using var startup = new ManualResetEvent(false);
+            bool calledEarly = false, called = false;
+            var run = new SetupRun(new[] { SetupSteps.Packages("p", log => { called = true; return Array.Empty<string>(); }, startup) });
+            var t = run.Start();
+            Thread.Sleep(200);
+            calledEarly = called;
+            string phase = run.Items[0].Phase;
+            startup.Set();
+            t.Wait(5000);
+            var run2 = new SetupRun(new[] { SetupSteps.Packages("p", log => Array.Empty<string>(), new ManualResetEvent(false)) });
+            var t2 = run2.Start();
+            Thread.Sleep(100);
+            run2.Cancel();
+            return !calledEarly && phase == "Waiting for the installation that spark started" && called && run.Succeeded && t2.Wait(5000) && run2.Items[0].State == SetupItemState.Cancelled;
+        });
+        Check("TinyCC: Windows mit gepinntem Hash -> angeboten (C only, Groesse), nicht vorgewaehlt", () =>
+        {
+            var m = new SetupWizardModel(Windows() with { TinyccPinned = true }, catalog);
+            var t = m.Toolchains.Single(o => o.Id == "tcc");
+            return t is { Installable: true, Selected: false, Recommended: false } && t.Name.Contains("C only") && t.Description.Contains("not C++") && t.SizeText == "about 1.0 MB";
+        });
+        Check("TinyCC: ohne gepinnten Hash nicht angeboten, Hinweis statt dessen; angehakt -> Schritt im Plan", () =>
+        {
+            var m = new SetupWizardModel(Windows(), catalog);
+            var p = new SetupWizardModel(Windows() with { TinyccPinned = true }, catalog);
+            p.Toolchains.Single(o => o.Id == "tcc").Selected = true;
+            return !m.Toolchains.Single(o => o.Id == "tcc").Installable && m.ToolchainHints.Any(h => h.Contains("TinyCC"))
+                && p.Plan().Any(i => i.Kind == SetupPlanKind.Toolchain && i.Id == "tcc") && SetupSteps.For(p.Plan(), catalog).Count == p.Plan().Count;
+        });
+        Check("TinyCC: Linux/macOS nur Hinweis (apt / brew), da -> kein Hinweis", () =>
+            new SetupWizardModel(Linux(cpp: false), catalog).ToolchainHints.Any(h => h.Contains("sudo apt install tcc"))
+            && new SetupWizardModel(Linux(cpp: false) with { IsMacOS = true }, catalog).ToolchainHints.Any(h => h.Contains("brew install tcc"))
+            && !new SetupWizardModel(Linux() with { Detected = new[] { new DetectedToolchain("tcc", "TinyCC", "/usr/bin/tcc") } }, catalog).ToolchainHints.Any(h => h.Contains("TinyCC"))
+            && !new SetupWizardModel(Linux(), catalog).Toolchains.Single(o => o.Id == "tcc").Installable);
+        Check("TinyCC: Entpacken (Ordner tcc mit tcc.exe) und SHA-256-Pruefung", () =>
+        {
+            string folder = EmptyFolder();
+            string zip = Path.Combine(folder, "tcc.zip");
+            using (var archive = System.IO.Compression.ZipFile.Open(zip, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                using (var w = new StreamWriter(archive.CreateEntry("tcc/tcc.exe").Open())) w.Write("MZ");
+                using (var w = new StreamWriter(archive.CreateEntry("tcc/include/stdio.h").Open())) w.Write("//");
+            }
+            string sum = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(zip))).ToLowerInvariant();
+            fire.Native.TinyccSetup.Verify(zip, sum);
+            bool wrong = false;
+            try { fire.Native.TinyccSetup.Verify(zip, new string('0', 64)); } catch (InvalidDataException) { wrong = true; }
+            string target = Path.Combine(folder, "Toolchain", "tcc");
+            string exe = fire.Native.TinyccSetup.Unpack(zip, null, target);
+            return wrong && exe == Path.Combine(target, "tcc.exe") && File.Exists(Path.Combine(target, "include", "stdio.h"));
+        });
     }
 
     private static void Progress()

@@ -41,9 +41,30 @@ namespace fire.Editor
                 _settings.Save();
             }
             if (wizard.Plan == null) return false;
-            StartSetup(SetupSteps.For(wizard.Plan, catalog));
+            // (Start must never do nothing: a plan without steps is said, a failure to start is shown)
+            try
+            {
+                var run = SetupWizardModel.Launch(wizard.Plan, plan => SetupSteps.For(plan, catalog, startup: SetupSteps.StartupInstalled));
+                if (run == null)
+                {
+                    UpdateStatus("The setup has nothing to do: everything chosen is there already.");
+                    return false;
+                }
+                StartSetup(run);
+            }
+            catch (Exception ex)
+            {
+                await Dialogs.Message(this, "The setup could not start: " + ex.Message, "spark setup");
+                return false;
+            }
+            // at the first start the welcome window waits until the progress is closed or goes to the background - opened at once, it covered the progress
+            // (a modal window over it: Start seemed to do nothing)
+            if (firstStart) await _setupDismissed!.Task;
             return true;
         }
+
+        /// <summary>Done when the progress window is closed or goes to the background.</summary>
+        private TaskCompletionSource? _setupDismissed;
 
         /// <summary>At the start (after the splash): the wizard when it is due; the assistant waits for it (its model may come with it).</summary>
         private async Task RunFirstStartSetup()
@@ -58,16 +79,16 @@ namespace fire.Editor
             if (_settings.Assistant && _assistant is not { HasExited: false }) StartAssistant();
         }
 
-        private void StartSetup(System.Collections.Generic.IReadOnlyList<ISetupStep> steps)
+        /// <summary>A run that was just started: its window, its line in the status bar.</summary>
+        private void StartSetup(SetupRun run)
         {
             HookSetupStatus();
-            var run = new SetupRun(steps);
             _setupRun = run;
+            _setupDismissed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             run.StatusChanged += () => Dispatcher.UIThread.Post(() => SetupChanged(run));
             _setupWindow?.CloseForGood();
             _setupWindow = null;
             _setupHidden = false;
-            run.Start();
             ShowSetupProgress();
             _setupStatusTimer ??= new DispatcherTimer(TimeSpan.FromMilliseconds(400), DispatcherPriority.Background, (_, _) => UpdateSetupStatus());
             _setupStatusTimer.Start();
@@ -81,7 +102,7 @@ namespace fire.Editor
             {
                 var window = new SetupProgressWindow(_setupRun);
                 window.HideRequested += HideSetupProgress;
-                window.Closed += (_, _) => { if (_setupWindow == window) _setupWindow = null; };
+                window.Closed += (_, _) => { if (_setupWindow == window) _setupWindow = null; _setupDismissed?.TrySetResult(); };
                 _setupWindow = window;
             }
             if (!_setupWindow.IsVisible)
@@ -97,6 +118,7 @@ namespace fire.Editor
         {
             _setupHidden = true;
             _setupWindow?.Hide();
+            _setupDismissed?.TrySetResult();
             UpdateSetupStatus();
             Activate();
         }
