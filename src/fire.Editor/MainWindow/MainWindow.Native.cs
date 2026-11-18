@@ -158,7 +158,7 @@ namespace fire.Editor
             {
                 config = LoadNativeConfig(out _, input.Project);
                 target = config.ResolveTarget(_nativeTargetChoice ?? input.Plan?.Settings.Target);
-                toolchain = config.ResolveToolchain(target, input.Plan?.Settings.Toolchain);
+                toolchain = config.ResolveToolchain(target, input.Plan?.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
             }
             catch (fire.Native.NativeConfigException ex)
             {

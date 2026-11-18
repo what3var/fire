@@ -76,6 +76,12 @@ overridden by a tag in one of its files; the symbols (`defines`) of all levels a
 it, and the mode chosen in the editor's toolbar is a setting of the run (you need Debug to debug) and goes before the project's mode. The build settings dialog of the editor shows the
 effective values and writes into the project (for a file of a project) or - as before - as tags into the file (for a single file).
 
+**The compiler of a native build:** `--toolchain` on the command line, then the project's `toolchain` (the solution's), the toolchain of the target, `"toolchain"` in
+`fire.native.json` - and only when none of them names one, the compiler chosen for this machine in spark's *Tools > Options > Compilers* (`Toolchain/toolchain.json`): the
+**Build** one for Build, Run, Debug, Build Solution, `forge build` and `forge test`, the **Publish** one for Publish and `forge publish` (there `publish.toolchain` goes
+before the project's). *Automatic* is TinyCC for Build and GCC for Publish when they are there, else the best compiler there. The build mode (Debug, Release,
+Performance) does not choose the compiler. *Project Properties > Native & Toolchain* shows what an unset toolchain comes to on this machine ([spark](spark.md)).
+
 ## Build and run: the active document decides
 
 The editor keeps asking *which project does the active document belong to?* (`Workspace.FindProjectOf`):
@@ -146,7 +152,7 @@ publish All.firesln`) builds every project that has it on and copies the result 
   "engine": "native",                          // vm or native; default: the project's engine, else native
   "mode": "release",                           // default: release
   "target": "linux",                           // the target of a native build; default: the project's, else this machine
-  "toolchain": "gcc",                          // default: the project's
+  "toolchain": "gcc",                          // default: the project's, else the Publish compiler of this machine (spark: Tools > Options > Compilers)
   "clean": false                               // empty each folder first (default: off)
 }
 ```

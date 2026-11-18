@@ -346,7 +346,7 @@ namespace fire.Editor
             {
                 config = LoadNativeConfig(out _, project);
                 target = config.ResolveTarget(_nativeTargetChoice ?? plan?.Settings.Target);   // the tool strip goes before the settings of the project, which go before the configuration file
-                toolchain = config.ResolveToolchain(target, plan?.Settings.Toolchain);
+                toolchain = config.ResolveToolchain(target, plan?.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
             }
             catch (fire.Native.NativeConfigException ex)
             {
