@@ -23,9 +23,19 @@ namespace fire.Editor
         {
             int lineStart = line.Offset;
             int lineEnd = line.EndOffset;
+            var spans = Spans;
 
-            foreach (var span in Spans)
+            // the first span that can reach into the line (binary search: the spans are sorted and do not overlap - a walk from the start of the document for every line
+            // drawn cost O(spans) per line in a long file)
+            int lo = 0, hi = spans.Count;
+            while (lo < hi)
             {
+                int mid = (lo + hi) >> 1;
+                if (spans[mid].Start + spans[mid].Length <= lineStart) lo = mid + 1; else hi = mid;
+            }
+            for (int k = lo; k < spans.Count; k++)
+            {
+                var span = spans[k];
                 if (span.Start >= lineEnd) break; // sorted - everything further lies even later
                 int spanEnd = span.Start + span.Length;
                 if (spanEnd <= lineStart) continue;
@@ -67,8 +77,9 @@ namespace fire.Editor
     /// warning (`warn 123: "..."`) gets an amber one.</summary>
     internal sealed class ErrorSquiggleRenderer : IBackgroundRenderer
     {
-        private static readonly IPen Pen = new Pen(EditorTheme.ErrorMark, 1);
-        private static readonly IPen WarningPen = new Pen(new SolidColorBrush(Color.FromRgb(0xE5, 0xB5, 0x4F)), 1);
+        // (1.5 pixels and a wave of 3: a hairline of 1 pixel and 2 was hard to see on the dark background, the more so next to the red of the strings)
+        private static readonly IPen Pen = new Pen(EditorTheme.ErrorMark, 1.5);
+        private static readonly IPen WarningPen = new Pen(EditorTheme.WarningMark, 1.5);
 
         /// <summary>1-based line numbers with at least one reported diagnostics error.</summary>
         public IReadOnlySet<int> ErrorLines { get; set; } = new HashSet<int>();
@@ -95,7 +106,7 @@ namespace fire.Editor
                 if (first >= text.Length) continue;
                 var segment = new TextSegment { StartOffset = documentLine.Offset + first, EndOffset = documentLine.EndOffset };
                 foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment))
-                    DrawWave(drawingContext, rect.Left, rect.Right, rect.Bottom - 1, isError ? Pen : WarningPen);
+                    DrawWave(drawingContext, rect.Left, rect.Right, rect.Bottom - 1.5, isError ? Pen : WarningPen);
             }
         }
 
@@ -108,9 +119,9 @@ namespace fire.Editor
             {
                 g.BeginFigure(new Point(x1, y), false);
                 bool up = true;
-                for (double x = x1 + 2; x < x2 + 2; x += 2)
+                for (double x = x1 + 3; x < x2 + 3; x += 3)
                 {
-                    g.LineTo(new Point(Math.Min(x, x2), up ? y - 2 : y));
+                    g.LineTo(new Point(Math.Min(x, x2), up ? y - 3 : y));
                     up = !up;
                 }
                 g.EndFigure(false);
@@ -159,6 +170,10 @@ namespace fire.Editor
 
         public IReadOnlySet<int> Breakpoints { get; set; } = new HashSet<int>();
 
+        /// <summary>The lines with an error / with a warning (and no error): a bar at the right of the margin marks them, next to the line number.</summary>
+        public IReadOnlySet<int> ErrorLines { get; set; } = new HashSet<int>();
+        public IReadOnlySet<int> WarningLines { get; set; } = new HashSet<int>();
+
         /// <summary>Fires with the 1-based line number that was clicked - the host (ScriptEditorControl) decides what that means (toggle breakpoint).</summary>
         public event Action<int>? LineClicked;
 
@@ -174,6 +189,10 @@ namespace fire.Editor
             foreach (var visualLine in textView.VisualLines)
             {
                 int lineNumber = visualLine.FirstDocumentLine.LineNumber;
+                bool error = ErrorLines.Contains(lineNumber);
+                if (error || WarningLines.Contains(lineNumber))
+                    drawingContext.DrawRectangle(error ? EditorTheme.ErrorMark : EditorTheme.WarningMark, null,
+                        new Rect(MarginWidth - 4, visualLine.VisualTop - textView.VerticalOffset + 1, 3, Math.Max(1, visualLine.Height - 2)));
                 if (!Breakpoints.Contains(lineNumber)) continue;
 
                 double y = visualLine.VisualTop - textView.VerticalOffset + visualLine.Height / 2;
