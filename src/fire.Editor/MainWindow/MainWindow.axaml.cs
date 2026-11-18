@@ -1058,6 +1058,7 @@ namespace fire.Editor
         /// <summary>The standard packages are installed (App, in the background): the device drivers of the packages start.</summary>
         public void OnStandardPackagesReady()
         {
+            Setup.SetupSteps.StartupInstalled.Set();   // (the package step of the setup wizard waits for it)
             _ = _devices.StartPackageDriversAsync().ContinueWith(_ => Dispatcher.UIThread.Post(() =>
             {
                 if (_devices.PackageDriverStatus.Length > 0) UpdateStatus(_devices.PackageDriverStatus);

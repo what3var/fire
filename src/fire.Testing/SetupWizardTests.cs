@@ -64,6 +64,7 @@ static class SetupWizardTests
         {
             Catalog();
             Pages();
+            StartAndTinycc();
             Progress();
             Download();
         }
@@ -169,6 +170,87 @@ static class SetupWizardTests
         });
         Check("Schritte: aus dem Plan (Titel in Reihenfolge)", () =>
             SetupSteps.For(win.Plan(), catalog).Select(s => s.Title).SequenceEqual(win.Plan().Select(p => p.Title)));
+    }
+
+    private static void StartAndTinycc()
+    {
+        var catalog = ModelCatalog.Load(CatalogSource());
+        Check("Start: von der Zusammenfassung an startet der Lauf (Finish -> Launch), vorher nicht", () =>
+        {
+            var m = new SetupWizardModel(Windows(), catalog);
+            bool early = m.Finish() == null;   // (Welcome: Start is Next there)
+            while (m.Next()) { }
+            var plan = m.Finish();
+            var ran = new List<string>();
+            var run = SetupWizardModel.Launch(plan, p => p.Select(i => (ISetupStep)new SetupStep(i.Title, _ => { lock (ran) ran.Add(i.Id); })).ToList());
+            bool started = run != null && (run.Running || run.Finished);
+            SpinWait.SpinUntil(() => run!.Finished, 5000);
+            return early && m.Page == SetupPage.Summary && plan!.Count == 3 && started && run!.Succeeded
+                && string.Join(",", ran) == "w64devkit,qwen3.5-0.8b,standard" && run.Items.Select(i => i.Title).SequenceEqual(plan.Select(i => i.Title));
+        });
+        Check("Start: die echten Schritte des Plans starten (Linux: die Pakete, ohne zu warten)", () =>
+        {
+            var m = new SetupWizardModel(Linux(), catalog);
+            while (m.Next()) { }
+            var installed = new ManualResetEventSlim();
+            var run = SetupWizardModel.Launch(m.Finish(), p => p.Select(i => SetupSteps.Packages(i.Title, log => { installed.Set(); return Array.Empty<string>(); })).ToList());
+            return run != null && installed.Wait(5000) && SpinWait.SpinUntil(() => run.Succeeded, 5000);
+        });
+        Check("Start: ein leerer Plan startet nichts (null: der Aufrufer sagt es)", () =>
+            SetupWizardModel.Launch(Array.Empty<SetupPlanItem>(), _ => Array.Empty<ISetupStep>()) == null && SetupWizardModel.Launch(null, _ => Array.Empty<ISetupStep>()) == null);
+        Check("Pakete: warten auf die Installation des Starts, Cancel beendet das Warten", () =>
+        {
+            using var startup = new ManualResetEvent(false);
+            bool calledEarly = false, called = false;
+            var run = new SetupRun(new[] { SetupSteps.Packages("p", log => { called = true; return Array.Empty<string>(); }, startup) });
+            var t = run.Start();
+            Thread.Sleep(200);
+            calledEarly = called;
+            string phase = run.Items[0].Phase;
+            startup.Set();
+            t.Wait(5000);
+            var run2 = new SetupRun(new[] { SetupSteps.Packages("p", log => Array.Empty<string>(), new ManualResetEvent(false)) });
+            var t2 = run2.Start();
+            Thread.Sleep(100);
+            run2.Cancel();
+            return !calledEarly && phase == "Waiting for the installation that spark started" && called && run.Succeeded && t2.Wait(5000) && run2.Items[0].State == SetupItemState.Cancelled;
+        });
+        Check("TinyCC: Windows mit gepinntem Hash -> angeboten (C only, Groesse), nicht vorgewaehlt", () =>
+        {
+            var m = new SetupWizardModel(Windows() with { TinyccPinned = true }, catalog);
+            var t = m.Toolchains.Single(o => o.Id == "tcc");
+            return t is { Installable: true, Selected: false, Recommended: false } && t.Name.Contains("C only") && t.Description.Contains("not C++") && t.SizeText == "about 1.0 MB";
+        });
+        Check("TinyCC: ohne gepinnten Hash nicht angeboten, Hinweis statt dessen; angehakt -> Schritt im Plan", () =>
+        {
+            var m = new SetupWizardModel(Windows(), catalog);
+            var p = new SetupWizardModel(Windows() with { TinyccPinned = true }, catalog);
+            p.Toolchains.Single(o => o.Id == "tcc").Selected = true;
+            return !m.Toolchains.Single(o => o.Id == "tcc").Installable && m.ToolchainHints.Any(h => h.Contains("TinyCC"))
+                && p.Plan().Any(i => i.Kind == SetupPlanKind.Toolchain && i.Id == "tcc") && SetupSteps.For(p.Plan(), catalog).Count == p.Plan().Count;
+        });
+        Check("TinyCC: Linux/macOS nur Hinweis (apt / brew), da -> kein Hinweis", () =>
+            new SetupWizardModel(Linux(cpp: false), catalog).ToolchainHints.Any(h => h.Contains("sudo apt install tcc"))
+            && new SetupWizardModel(Linux(cpp: false) with { IsMacOS = true }, catalog).ToolchainHints.Any(h => h.Contains("brew install tcc"))
+            && !new SetupWizardModel(Linux() with { Detected = new[] { new DetectedToolchain("tcc", "TinyCC", "/usr/bin/tcc") } }, catalog).ToolchainHints.Any(h => h.Contains("TinyCC"))
+            && !new SetupWizardModel(Linux(), catalog).Toolchains.Single(o => o.Id == "tcc").Installable);
+        Check("TinyCC: Entpacken (Ordner tcc mit tcc.exe) und SHA-256-Pruefung", () =>
+        {
+            string folder = EmptyFolder();
+            string zip = Path.Combine(folder, "tcc.zip");
+            using (var archive = System.IO.Compression.ZipFile.Open(zip, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                using (var w = new StreamWriter(archive.CreateEntry("tcc/tcc.exe").Open())) w.Write("MZ");
+                using (var w = new StreamWriter(archive.CreateEntry("tcc/include/stdio.h").Open())) w.Write("//");
+            }
+            string sum = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(zip))).ToLowerInvariant();
+            fire.Native.TinyccSetup.Verify(zip, sum);
+            bool wrong = false;
+            try { fire.Native.TinyccSetup.Verify(zip, new string('0', 64)); } catch (InvalidDataException) { wrong = true; }
+            string target = Path.Combine(folder, "Toolchain", "tcc");
+            string exe = fire.Native.TinyccSetup.Unpack(zip, null, target);
+            return wrong && exe == Path.Combine(target, "tcc.exe") && File.Exists(Path.Combine(target, "include", "stdio.h"));
+        });
     }
 
     private static void Progress()
