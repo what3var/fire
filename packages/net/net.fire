@@ -420,7 +420,7 @@ namespace Net {
         defined int handle
         bool closed
 
-        // new TcpListener("127.0.0.1", 8080): host "" listens on every interface, port 0 takes a free port (see Port).
+        // new TcpListener("127.0.0.1", 8080): host "" listens on every interface (IPv6 with IPv4 in it; IPv4 alone, 0.0.0.0, without IPv6), port 0 takes a free port (see Port).
         construct(string host, defined int port, defined int backlog = 16) {
             this.handle = -1
             this.closed = false

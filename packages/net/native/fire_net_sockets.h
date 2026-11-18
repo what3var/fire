@@ -390,12 +390,25 @@ static FireNetSock fire_net_takeConnected(FireNetConnect* c) {
 /* "listen on <host or *>:<port>" and the like. */
 static void fire_net_where(char* out, size_t size, const char* verb, const char* host, int port) { snprintf(out, size, "%s %s:%d", verb, host[0] ? host : "*", port); }
 
-/* Every interface, IPv6 with IPv4 mapped (dual stack) if the system has it: the socket, or FIRE_NET_INVALID (then `*fatal` says whether trying IPv4 makes no sense). */
+/* FIRE_NET_NO_IPV6=1 (not 0, not empty): the IPv6 attempt of an empty host fails as on a machine without IPv6 (tests of the fallback to IPv4). */
+static int fire_net_noIPv6(void) {
+#if defined(FIRE_NET_LWIP)
+    return 0;
+#else
+    const char* v = getenv("FIRE_NET_NO_IPV6");
+    return v != NULL && v[0] != 0 && strcmp(v, "0") != 0;
+#endif
+}
+
+/* Every interface, IPv6 with IPv4 mapped (dual stack) if the system has it: the socket, or FIRE_NET_INVALID (then `*fatal` says whether trying IPv4 makes no sense - the port
+ * is taken or not allowed; any other failure - no IPv6 at all (EAFNOSUPPORT), no IPv6 address (EADDRNOTAVAIL), IPv6 switched off - is not fatal: IPv4 is tried). */
 static FireNetSock fire_net_dualStack(int type, int port, int listenBacklog, int* fatal, FireNetStatus* st) {
-    FireNetSock s = fire_net_makeSocket(AF_INET6, type);
+    FireNetSock s;
     struct sockaddr_in6 a6;
     int off = 0, e;
     *fatal = 0;
+    if (fire_net_noIPv6()) return FIRE_NET_INVALID;
+    s = fire_net_makeSocket(AF_INET6, type);
     if (s == FIRE_NET_INVALID) return FIRE_NET_INVALID;
     setsockopt(FIRE_NET_FD(s), IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&off, sizeof off);
 #if !defined(_WIN32)
@@ -417,17 +430,45 @@ static FireNetSock fire_net_dualStack(int type, int port, int listenBacklog, int
     return FIRE_NET_INVALID;
 }
 
+/* Every interface over IPv4 (0.0.0.0): the fallback of an empty host when there is no IPv6. 1 with the socket in `*out`, else 0 (the error of IPv4: the one that counts). */
+static int fire_net_anyIPv4(int type, int port, int listenBacklog, FireNetSock* out, FireNetStatus* st) {
+    FireNetSock s = fire_net_makeSocket(AF_INET, type);
+    struct sockaddr_in a4;
+    char what[64];
+    *out = FIRE_NET_INVALID;
+    snprintf(what, sizeof what, type == SOCK_STREAM ? "listen on *:%d" : "bind to *:%d", port);
+    if (s == FIRE_NET_INVALID) return fire_net_failErr(st, fire_net_lastError(), "socket");
+#if !defined(_WIN32)
+    if (type == SOCK_STREAM) { int on = 1; setsockopt(FIRE_NET_FD(s), SOL_SOCKET, SO_REUSEADDR, (const char*)&on, sizeof on); }
+#endif
+    memset(&a4, 0, sizeof a4);
+    a4.sin_family = AF_INET;
+    a4.sin_addr.s_addr = htonl(INADDR_ANY);
+    a4.sin_port = htons((uint16_t)port);
+    if (bind(FIRE_NET_FD(s), (struct sockaddr*)&a4, sizeof a4) != 0 || (type == SOCK_STREAM && listen(FIRE_NET_FD(s), listenBacklog) != 0)) {
+        int e = fire_net_lastError();
+        fire_net_close(s);
+        return fire_net_failErr(st, e, what);
+    }
+    *out = s;
+    return 1;
+}
+
+/* An empty host: IPv6 with IPv4 in it (dual stack), else IPv4 alone. */
+static int fire_net_anyAddress(int type, int port, int listenBacklog, FireNetSock* out, FireNetStatus* st) {
+    int fatal;
+    FireNetSock s = fire_net_dualStack(type, port, listenBacklog, &fatal, st);
+    if (s != FIRE_NET_INVALID) { *out = s; return 1; }
+    if (fatal) { *out = FIRE_NET_INVALID; return 0; }
+    return fire_net_anyIPv4(type, port, listenBacklog, out, st);
+}
+
 static int fire_net_tcpListen(const char* host, int port, int backlog, FireNetSock* out, FireNetStatus* st) {
     struct addrinfo* head;
     struct addrinfo* ai;
     FireNetStatus last;
     *out = FIRE_NET_INVALID;
-    if (host[0] == 0) {
-        int fatal;
-        FireNetSock s = fire_net_dualStack(SOCK_STREAM, port, backlog, &fatal, st);
-        if (s != FIRE_NET_INVALID) { *out = s; return 1; }
-        if (fatal) return 0;
-    }
+    if (host[0] == 0) return fire_net_anyAddress(SOCK_STREAM, port, backlog, out, st);
     if (!fire_net_lookup(host, port, SOCK_STREAM, 1, &head, st)) return 0;
     fire_net_fail(&last, FIRE_NET_E_OTHER, "No address to listen on.");
     for (ai = head; ai != NULL; ai = ai->ai_next) {
@@ -523,12 +564,7 @@ static int fire_net_udpOpen(const char* host, int port, FireNetSock* out, FireNe
     struct addrinfo* ai;
     FireNetStatus last;
     *out = FIRE_NET_INVALID;
-    if (host[0] == 0) {
-        int fatal;
-        FireNetSock s = fire_net_dualStack(SOCK_DGRAM, port, 0, &fatal, st);
-        if (s != FIRE_NET_INVALID) { *out = s; return 1; }
-        if (fatal) return 0;
-    }
+    if (host[0] == 0) return fire_net_anyAddress(SOCK_DGRAM, port, 0, out, st);
     if (!fire_net_lookup(host, port, SOCK_DGRAM, 1, &head, st)) return 0;
     fire_net_fail(&last, FIRE_NET_E_OTHER, "No address to bind to.");
     for (ai = head; ai != NULL; ai = ai->ai_next) {

@@ -11770,6 +11770,49 @@ else
             }
             """)).ToArray();
 
+    // Net: an empty host without IPv6 (a container): FIRE_NET_NO_IPV6=1 (set by the program through the C library, so the natives of the VM see it too) makes the IPv6
+    // attempt fail - the listener, the UDP socket and Http.Server are on 0.0.0.0 (IPv4) instead of throwing; at the end the switch is off again (the VM runs the cases in this process)
+    if (OperatingSystem.IsLinux())
+    {
+        const string noIpv6Name = "Net: ohne IPv6 (FIRE_NET_NO_IPV6=1) lauscht ein leerer Host auf 0.0.0.0 - TcpListener, UdpSocket, Http.Server";
+        const string noIpv6 = """
+            #extern "libc.so.6"
+            #import "net"
+            #import "http"
+            extern int setenv(string name, string value, int overwrite)
+            setenv("FIRE_NET_NO_IPV6", "1", 1)
+            try {
+                var l = new Net.TcpListener("", 0)
+                print("listener " + l.Host + " " + (l.Port > 0))
+                var c = new Net.TcpClient("127.0.0.1", l.Port)
+                var s = l.Accept(2000)
+                c.WriteString("hi")
+                var buf = new byte[8]
+                print("tcp " + s.Read(buf, 0, 8))
+                s.Close()
+                c.Close()
+                l.Close()
+                var u = new Net.UdpSocket("", 0)
+                var v = new Net.UdpSocket("127.0.0.1", 0)
+                v.SendString("ping", "127.0.0.1", u.Port)
+                print("udp " + u.ReceiveFrom(buf, 0, 8, 2000) + " " + u.FromHost)
+                try { u.SendString("x", "::1", v.Port) } catch (Net.NetException e) { print("udp ipv4 only " + e.code) }
+                u.Close()
+                v.Close()
+                var server = new Http.Server("", 0)
+                print("http " + (server.Port > 0))
+                server.Close()
+            } catch (Net.NetException e) { print("error " + e.message) }
+            setenv("FIRE_NET_NO_IPV6", "0", 1)
+            """;
+        natCases = natCases.Append((noIpv6Name, noIpv6)).ToArray();
+        if (TestSelected(noIpv6Name))
+        {
+            string got = vmOutput(noIpv6);
+            CheckNat("VM: " + noIpv6Name, got == "listener 0.0.0.0 True\ntcp 2\nudp 4 127.0.0.1\nudp ipv4 only 5\nhttp True\n", got);
+        }
+    }
+
     {
         // in the VM a call is an error (a catchable one); the `#if` of a C body is C's (the preprocessor of fire leaves it); the types are checked
         string vmInline = vmOutput("inline c int Add(int a, int b) {\n#if defined(X)\n  return 0;\n#endif\n  return a + b; }\nprint(1)\ntry { print(Add(1, 2)) } catch (e) { print(e.message) }\nvar inline = 3\nprint(inline)");
