@@ -730,6 +730,7 @@ namespace fire.Native
             if (!LibraryRole && _usesTakeEnumerate) sb.Append(EnumerateItemsFunction());
             foreach (var method in _operators) sb.Append(ModOperator(method));
             foreach (var typeName in _isOfTypes) sb.Append(ModIsOf(typeName));
+            _isOfWritten = new HashSet<string>(_isOfTypes, StringComparer.Ordinal);
             sb.Append(tables);
             sb.AppendLine(IndexHelpers());
             return sb.ToString();

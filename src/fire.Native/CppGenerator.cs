@@ -1870,11 +1870,38 @@ namespace fire.Native
             return name;
         }
 
+        /// <summary>The `is of` test of a program of one piece (`isof_Name`; the modules: ModIsOf).</summary>
+        private string IsOfFunction(string typeName)
+        {
+            var sb = new StringBuilder();
+            var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
+            sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}bool isof_{Mangle(typeName)}(Value v) {{");
+            if (EnumIndexNamed(typeName) is var enumIndex and > 0) sb.AppendLine($"    if (v.kind == K_Int) return v.reserved == {enumIndex};   // (the enum {typeName})");
+            if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
+            sb.AppendLine("    if (v.kind != K_Class) return false;");
+            sb.AppendLine("    if (FIRE_UNLIKELY(!leafAlive(v))) return false;   /* (destroyed: its class is not known any more - `is of` and `!` throw before) */");
+            sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        /// <summary>The `is of` tests the helpers of the file wrote (null: none yet). An array of a class that only code made after the helpers registers (the
+        /// reflection or JSON tables of a module's program, linkage "static") gets the tests it needs written with its table.</summary>
+        private HashSet<string>? _isOfWritten;
+
         /// <summary>g_arrClasses: for each array of a class what fits (the conditions of its declaration), its name and what a defined one starts with.</summary>
         private string ArrClassTable()
         {
             if (_arrClasses.Count == 0) return "";
             var sb = new StringBuilder();
+            foreach (var (text, _) in _arrClasses)
+                foreach (var alt in DeclaredType.Parse(ArrayElem.ClassText(text)).Alternatives) foreach (var c in alt) HoldsExpr("v", c);   // (registers the `isof_` they need)
+            if (_isOfWritten != null)
+                foreach (var typeName in _isOfTypes.Where(t => !_isOfWritten.Contains(t)).ToList())
+                {
+                    sb.Append(Modular ? ModIsOf(typeName) : IsOfFunction(typeName));
+                    _isOfWritten.Add(typeName);
+                }
             foreach (var (text, id) in _arrClasses.OrderBy(kv => kv.Value))
             {
                 var spec = DeclaredType.Parse(ArrayElem.ClassText(text));
@@ -2234,17 +2261,8 @@ namespace fire.Native
                     sb.AppendLine($"    return {OperatorFallback[method]};");
                     sb.AppendLine("}");
                 }
-                foreach (var typeName in _isOfTypes)
-                {
-                    var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
-                    sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}bool isof_{Mangle(typeName)}(Value v) {{");
-                    if (EnumIndexNamed(typeName) is var enumIndex and > 0) sb.AppendLine($"    if (v.kind == K_Int) return v.reserved == {enumIndex};   // (the enum {typeName})");
-                    if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
-                    sb.AppendLine("    if (v.kind != K_Class) return false;");
-                    sb.AppendLine("    if (FIRE_UNLIKELY(!leafAlive(v))) return false;   /* (destroyed: its class is not known any more - `is of` and `!` throw before) */");
-                    sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
-                    sb.AppendLine("}");
-                }
+                foreach (var typeName in _isOfTypes) sb.Append(IsOfFunction(typeName));
+                _isOfWritten = new HashSet<string>(_isOfTypes, StringComparer.Ordinal);
             }
             if (_usesReflection)
             {
