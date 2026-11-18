@@ -30,6 +30,8 @@
     <Compile Include="..\fire.Editor\Debugging\BuildLogFeed.cs" Link="Editor\BuildLogFeed.cs" />
     <!-- spark's setup wizard without its windows: the catalog of ai.models, the pages and the plan, the progress of a run, the download of a model (SetupWizardTests) -->
     <Compile Include="..\fire.Editor\Setup\*.cs" LinkBase="Editor\Setup" />
+    <!-- the native build of the assistant that spark starts (SetupWizardTests: "Assistent nativ") -->
+    <Compile Include="..\fire.Editor\Assistant\AssistantNative.cs" Link="Editor\AssistantNative.cs" />
     <!-- files that change under the editor (a git pull, a switch of the branch, other programs): what to load again (GitSyncTests) -->
     <Compile Include="..\fire.Editor\Git\WorkingTreeSync.cs" Link="Editor\WorkingTreeSync.cs" />
   </ItemGroup>

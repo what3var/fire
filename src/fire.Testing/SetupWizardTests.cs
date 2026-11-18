@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using fire.Editor.Assistant;
 using fire.Editor.Setup;
 
 /// <summary>spark's setup wizard without a window (src/fire.Editor/Setup): the catalog of ai.models read from its source, the choice for a machine, the pages and the plan for
@@ -46,6 +47,102 @@ static class SetupWizardTests
         new(IsWindows: false, IsMacOS: false, IsX64: true, new MachineInfo(8192, 4, true), AssistantAvailable: true, AssistantEnabled: false,
             cpp ? new[] { new DetectedToolchain("gcc", "GCC (g++)", "/usr/bin/g++") } : Array.Empty<DetectedToolchain>(), ModelFolder: EmptyFolder());
 
+    /// <summary>spark's native build of the assistant (src/fire.Editor/Assistant/AssistantNative.cs): the packages it is made of, its key, the stamps, a build.</summary>
+    private static void NativeAssistant()
+    {
+        string packages = Path.GetDirectoryName(Path.GetDirectoryName(CatalogSource())!)!;
+        string root = EmptyFolder();
+        string script = Path.Combine(root, "assistant.fire");
+        File.WriteAllText(script, "#import \"assistant\"\nAssistant.App.Run(\"\", true)\n");
+        Check("Assistent nativ: die Pakete des Assistenten - mit ai, ui, windows, mcp, ohne scene3d", () =>
+        {
+            var names = AssistantNative.PackageFolders(script, packages).Select(Path.GetFileName).ToList();
+            return names.Contains("assistant") && names.Contains("ai") && names.Contains("ai.agent") && names.Contains("ui") && names.Contains("windows") && names.Contains("mcp")
+                && !names.Contains("scene3d") && !names.Contains("data.mysql");
+        }, () => string.Join(", ", AssistantNative.PackageFolders(script, packages).Select(Path.GetFileName)));
+        // a small tree of packages: app uses lib (whose natives use base); other is not used
+        string tree = Path.Combine(root, "packages");
+        void Package(string name, string source, string uses = "")
+        {
+            Directory.CreateDirectory(Path.Combine(tree, name));
+            File.WriteAllText(Path.Combine(tree, name, name + ".fireproj"),
+                "{ \"name\": \"fire-" + name + "\", \"import\": \"" + name + "\"" + (uses.Length > 0 ? ", \"native\": { \"uses\": [\"" + uses + "\"] }" : "") + " }");
+            File.WriteAllText(Path.Combine(tree, name, name + ".fire"), source);
+        }
+        Package("app", "#import \"lib\"\n");
+        Package("lib", "// lib\n", uses: "base");
+        Package("base", "// base\n");
+        Package("other", "// other\n");
+        string compiler = Path.Combine(root, "forge.dll");
+        File.WriteAllText(compiler, "v1");
+        string main = Path.Combine(root, "main.fire");
+        File.WriteAllText(main, "#import \"app\"\n");
+        string Key() => AssistantNative.Key(main, tree, new[] { compiler });
+        string k1 = Key();
+        Check("Assistent nativ: Pakete ueber #import und uses gefunden", () => string.Join(",", AssistantNative.PackageFolders(main, tree).Select(Path.GetFileName)) == "app,base,lib",
+            () => string.Join(",", AssistantNative.PackageFolders(main, tree).Select(Path.GetFileName)));
+        Check("Assistent nativ: der Schluessel bleibt - ein unbenutztes Paket und bin/ aendern ihn nicht", () =>
+        {
+            File.WriteAllText(Path.Combine(tree, "other", "other.fire"), "// changed\n");
+            Directory.CreateDirectory(Path.Combine(tree, "lib", "bin"));
+            File.WriteAllText(Path.Combine(tree, "lib", "bin", "x.o"), "build output");
+            return Key() == k1;
+        });
+        Check("Assistent nativ: ein benutztes Paket, das Skript und der Compiler aendern ihn", () =>
+        {
+            File.WriteAllText(Path.Combine(tree, "base", "base.fire"), "// changed\n");
+            string k2 = Key();
+            File.WriteAllText(main, "#import \"app\"\nprint(1)\n");
+            string k3 = Key();
+            File.WriteAllText(compiler, "v2");
+            string k4 = Key();
+            return k2 != k1 && k3 != k2 && k4 != k3;
+        });
+        Check("Assistent nativ: Stempel - kein Binary, dann das passende; ein Fehlschlag gilt nur fuer seinen Schluessel", () =>
+        {
+            string folder = Path.Combine(root, "native");
+            Directory.CreateDirectory(folder);
+            bool none = AssistantNative.Current(folder, "K") == null;
+            File.WriteAllText(AssistantNative.BinaryIn(folder), "binary");
+            File.WriteAllText(Path.Combine(folder, "assistant.key"), "K");
+            File.WriteAllText(Path.Combine(folder, "assistant.failed"), "F");
+            return none && AssistantNative.Current(folder, "K") != null && AssistantNative.Current(folder, "L") == null
+                && AssistantNative.FailedBefore(folder, "F") && !AssistantNative.FailedBefore(folder, "K");
+        });
+        if (OperatingSystem.IsWindows()) return;   // (the stand-ins of forge below are shell scripts)
+        Check("Assistent nativ: ein Bau, der scheitert, wird fuer seinen Schluessel gemerkt", () =>
+        {
+            string folder = Path.Combine(root, "failing");
+            string fake = Path.Combine(root, "fake-forge.sh");
+            File.WriteAllText(fake, "#!/bin/sh\necho 'no C compiler' >&2\nexit 1\n");
+            File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var r = AssistantNative.Build(fake, main, folder, "X");
+            return r.Binary == null && !r.Cancelled && r.Output.Contains("no C compiler") && AssistantNative.FailedBefore(folder, "X");
+        });
+        Check("Assistent nativ: ein Bau, der gelingt, steht an seinem Platz mit seinem Schluessel (ohne die Fortschrittszeilen)", () =>
+        {
+            string folder = Path.Combine(root, "working");
+            string fake = Path.Combine(root, "fake-forge-ok.sh");
+            // (forge build <script> --engine native -o <out>: the sixth argument is the output)
+            File.WriteAllText(fake, "#!/bin/sh\necho '##fire-progress 0 0 Building' >&2\necho built > \"$6\"\n");
+            File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var r = AssistantNative.Build(fake, main, folder, "Y");
+            return r.Binary != null && File.ReadAllText(r.Binary).Trim() == "built" && AssistantNative.Current(folder, "Y") == r.Binary
+                && !r.Output.Contains("##fire-progress") && Directory.GetFiles(folder, "build-*").Length == 0;
+        });
+        Check("Assistent nativ: abgebrochen - kein Binary, kein Fehlschlag gemerkt", () =>
+        {
+            string folder = Path.Combine(root, "cancelled");
+            string fake = Path.Combine(root, "fake-forge-slow.sh");
+            File.WriteAllText(fake, "#!/bin/sh\nsleep 30\n");
+            File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var r = AssistantNative.Build(fake, main, folder, "Z", token: cancel.Token);
+            return r.Cancelled && r.Binary == null && !AssistantNative.FailedBefore(folder, "Z") && watch.Elapsed < TimeSpan.FromSeconds(10);
+        });
+    }
+
     private static string EmptyFolder()
     {
         string f = Path.Combine(Path.GetTempPath(), "fire-setup-test-" + Guid.NewGuid().ToString("N"));
@@ -67,6 +164,7 @@ static class SetupWizardTests
             StartAndTinycc();
             Progress();
             Download();
+            NativeAssistant();
         }
         finally
         {
