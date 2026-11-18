@@ -139,11 +139,11 @@ namespace fire.Editor
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowInTaskbar = false;
 
-            _changes = repo.Status();
+            _changes = repo.Status(collapseUntrackedFolders: true);   // (a new folder is one row: thousands of files of a build output would be thousands of check boxes)
             var chosen = preselected?.Select(p => System.IO.Path.GetFullPath(p)).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var change in _changes)
             {
-                var box = new CheckBox { Content = $"{Mark(change)}   {change.Path}", Tag = change, IsChecked = (chosen == null || chosen.Contains(change.FullPath)) && !change.IsConflicted };
+                var box = new CheckBox { Content = $"{Mark(change)}   {change.Path}{(change.IsDirectory ? "/" : "")}", Tag = change, IsChecked = (chosen == null || chosen.Contains(change.FullPath)) && !change.IsConflicted };
                 _files.Items.Add(box);
             }
             _files.SelectionChanged += (_, _) => ShowDiff();

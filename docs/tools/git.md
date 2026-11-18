@@ -24,9 +24,28 @@ A tab beside the Solution Explorer (View > Git, or Git > Show Git Panel; it come
   *Staged Changes* (what the next commit has; **−** unstages), *Changes* (changed, not staged; **+** stages, **↶** throws the changes away) and *Untracked* (new files; **+** stages, **↶**
   deletes the file). The header of a list does the same for all of its files. Throwing away asks first. A file that is staged and then changed again is in both lists.
 * **A click** on a file shows its changes (staged ones for a row under *Staged Changes*), **a double click** opens it.
+* **A new folder** (everything in it untracked) is one row `name/`, as `git status` shows it; a click opens it and lists its files (the first 2000, then "and N more"). + stages all of its
+  files, ↶ deletes them (ignored files in it stay).
+* **The filter** above the lists shows only the files whose path contains the text; the buttons of a list's header act on what is shown.
+* **The context menu** of a row: Open, Show Changes, Stage / Unstage, Discard, and for a new file or folder **Add to .gitignore** (a line `/path` or `/path/` in the `.gitignore` at the top of
+  the repository; for a file also its folder).
 * While a merge is not finished (conflicts after a pull) a line says so: solve the conflicts, stage the files (+), commit.
 
 The panel is read again after every git command, when a file is saved, when files change on disk (also `git add` or a commit outside of the editor) and when the window gets the focus.
+
+### Very many changed files
+
+A build output that is not in the `.gitignore` yet can be tens of thousands of new files. The editor stays responsive:
+
+* the state is read in the background, never on the user interface's thread, with new folders collapsed (20000 untracked files in two folders: 3 ms instead of 270 ms, 306 entries instead of 20305);
+  one refresh at a time - what is asked for while one runs is done once afterwards;
+* the lists are virtualized: only the rows on screen have controls (20000 rows: 5-20 ms to show, before 7-8 s);
+* the solution explorer only gets the new marks of git, it is not built anew;
+* stage, unstage and discard of many files are one call each (20000 files staged: about 3 s, before 10 s), in the background;
+* the file watcher waits longer for bursts of 500 or more changes, and while the repository is slow to read (5 times the quiet time);
+* a change on disk only compares the files the editor holds (the solution, the projects, the open documents), never the whole tree.
+
+`FIRE_GIT_TIMING=1` writes the times of reading and showing the state to stderr (to measure a repository).
 
 ## Files that change on disk
 
