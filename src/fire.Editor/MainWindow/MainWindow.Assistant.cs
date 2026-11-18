@@ -1,19 +1,30 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using fire.Editor.Assistant;
 
 namespace fire.Editor
 {
     /// <summary>
-    /// The assistant of spark (docs/ai/assistant.md): a fire program (Assistant/assistant.fire, package `assistant`) that spark starts with forge when it is switched
-    /// on (Tools > Assistant, or the unchecked task of the setup) and stops when it is switched off or spark closes. It talks to spark over the MCP server, which
-    /// runs while the assistant is on.
+    /// The assistant of spark (docs/ai/assistant.md): a fire program (Assistant/assistant.fire, package `assistant`) that spark starts when it is switched on
+    /// (Tools > Assistant, or the unchecked task of the setup) - as a native program once it is built (Assistant/AssistantNative.cs), else with `forge run` in
+    /// the virtual machine - and stops when it is switched off or spark closes. It talks to spark over the MCP server, which runs while the assistant is on.
     /// </summary>
     public partial class MainWindow
     {
         private Process? _assistant;
+        /// <summary>The assistant is being started (its native build is looked for): a second start meanwhile does nothing.</summary>
+        private bool _assistantStarting;
+        /// <summary>The native build of the assistant that runs in the background: forge's process, ended when the assistant is switched off or spark closes.</summary>
+        private Process? _assistantBuild;
+        private CancellationTokenSource? _assistantBuildCancel;
+
+        /// <summary>FIRE_ASSISTANT_ENGINE=vm: the assistant always in the virtual machine (no native build).</summary>
+        private static bool AssistantWantsVm => string.Equals(Environment.GetEnvironmentVariable("FIRE_ASSISTANT_ENGINE"), "vm", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>At the start: the choice of the setup (once), then the assistant when it is on.</summary>
         private void StartAssistantIfWanted()
@@ -92,9 +103,14 @@ namespace fire.Editor
             return false;
         }
 
-        private void StartAssistant()
+        private void StartAssistant() => _ = StartAssistantAsync();
+
+        /// <summary>Starts the assistant: the native binary when its build is there and up to date (<see cref="AssistantNative"/>), else `forge run` in the virtual
+        /// machine - and then the native build in the background (the status bar shows it), for the next start. Without a C toolchain, or when that build failed,
+        /// it stays in the VM (the Output says why).</summary>
+        private async Task StartAssistantAsync()
         {
-            if (_assistant is { HasExited: false }) return;
+            if (_assistant is { HasExited: false } || _assistantStarting) return;
             StartMcpServer();
             // another spark's assistant runs: it finds this spark by itself (its connection file)
             if (OtherAssistantRuns())
@@ -109,14 +125,71 @@ namespace fire.Editor
                 UpdateStatus("The assistant is not installed with this spark (Assistant/assistant.fire, forge).");
                 return;
             }
+            _assistantStarting = true;
             try
             {
-                var info = new ProcessStartInfo(forge) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-                info.Environment[fire.Native.BackgroundWork.LinesVariable] = "1";   // (its packages are built at the first start: the status bar shows it)
-                info.ArgumentList.Add("run");
-                info.ArgumentList.Add(script);
+                string folder = AssistantNative.Folder;
+                var native = AssistantWantsVm ? default : await Task.Run(() => AssistantNative.Look(script, AppContext.BaseDirectory, folder));
+                if (!_settings.Assistant || _assistant is { HasExited: false }) return;   // (switched off meanwhile)
+                if (native.Binary != null && LaunchAssistant(native.Binary, Array.Empty<string>(), true)) return;
+                if (!LaunchAssistant(forge, new[] { "run", script }, false) || AssistantWantsVm) return;
+                if (native.Error != null) _output.Append($"The assistant runs in the virtual machine: its native build could not be checked ({native.Error}).{Environment.NewLine}");
+                else if (native.FailedBefore) _output.Append($"The assistant runs in the virtual machine: its native build failed before - it is tried again when spark or its packages change ({folder}).{Environment.NewLine}");
+                else if (!native.Toolchain) _output.Append($"The assistant runs in the virtual machine: there is no C toolchain for its native build (Tools > Toolchain Settings, or Help > Setup Wizard).{Environment.NewLine}");
+                else if (native.Key != null) BuildAssistantNatively(forge, script, folder, native.Key);
+            }
+            finally { _assistantStarting = false; }
+        }
+
+        /// <summary>Builds the assistant natively in the background, once (a C compiler at work for some minutes, at a low priority); it runs natively from its next start.</summary>
+        private void BuildAssistantNatively(string forge, string script, string folder, string key)
+        {
+            if (_assistantBuildCancel != null) return;
+            var cancel = new CancellationTokenSource();
+            _assistantBuildCancel = cancel;
+            Task.Run(() =>
+            {
+                using var work = fire.Native.BackgroundWork.Begin("Building the assistant as a native program (once)");
+                return AssistantNative.Build(forge, script, folder, key, p => _assistantBuild = p, null, cancel.Token);
+            }).ContinueWith(t => Dispatcher.UIThread.Post(() =>
+            {
+                if (_assistantBuildCancel == cancel) _assistantBuildCancel = null;
+                _assistantBuild = null;
+                cancel.Dispose();
+                var result = t.IsCompletedSuccessfully ? t.Result : new AssistantNative.BuildResult(null, t.Exception?.GetBaseException().Message ?? "");
+                if (result.Cancelled) return;
+                if (result.Binary != null)
+                {
+                    _output.Append($"The assistant was built as a native program ({result.Binary}): it runs natively from its next start.{Environment.NewLine}");
+                    UpdateStatus("The assistant is built as a native program - it runs natively from its next start.");
+                }
+                else
+                {
+                    _output.Append($"The assistant could not be built as a native program - it stays in the virtual machine:{Environment.NewLine}{result.Output}{Environment.NewLine}");
+                    UpdateStatus("The assistant could not be built natively - it stays in the virtual machine (see the Output).");
+                }
+            }));
+        }
+
+        private void CancelAssistantBuild()
+        {
+            var cancel = _assistantBuildCancel;
+            _assistantBuildCancel = null;
+            try { cancel?.Cancel(); } catch (ObjectDisposedException) { }
+            // (the token ends forge and its compilers; here too, should the cancel come before forge's process was known)
+            try { if (_assistantBuild is { HasExited: false } b) b.Kill(true); } catch (Exception) { }
+        }
+
+        /// <summary>Starts the assistant's process: the native binary, or forge with its arguments. false when it did not start.</summary>
+        private bool LaunchAssistant(string file, string[] arguments, bool native)
+        {
+            try
+            {
+                var info = new ProcessStartInfo(file) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                info.Environment[fire.Native.BackgroundWork.LinesVariable] = "1";   // (forge builds the packages at the first start: the status bar shows it)
+                foreach (string a in arguments) info.ArgumentList.Add(a);
                 var p = Process.Start(info);
-                if (p == null) return;
+                if (p == null) return false;
                 p.EnableRaisingEvents = true;
                 // what it writes goes into the log of the status bar only when it fails
                 var output = new System.Text.StringBuilder();
@@ -140,9 +213,20 @@ namespace fire.Editor
                 });
                 _assistant = p;
                 try { File.WriteAllText(AssistantPidFile, p.Id.ToString()); } catch (Exception) { }
-                UpdateStatus("The assistant starts...");
+                UpdateStatus(native ? "The assistant starts (native)..." : "The assistant starts...");
+                return true;
             }
-            catch (Exception ex) { UpdateStatus("The assistant could not start: " + ex.Message); }
+            catch (Exception ex)
+            {
+                if (native)
+                {
+                    // (a native build that does not start here: the VM, as without one)
+                    _output.Append($"The native assistant could not start ({ex.Message}) - it runs in the virtual machine.{Environment.NewLine}");
+                    return false;
+                }
+                UpdateStatus("The assistant could not start: " + ex.Message);
+                return false;
+            }
         }
 
         /// <summary>Ctrl+^: the assistant opens its question line (an MCP notification, {"event": "poke"}); when it is off, the status bar says how to switch it on.</summary>
@@ -159,6 +243,8 @@ namespace fire.Editor
 
         private void StopAssistant()
         {
+            // (a native build that runs ends too: its compilers would outlive spark)
+            CancelAssistantBuild();
             // the assistant hears that this spark goes; it ends when no spark is left
             _mcp?.Log("info", new System.Text.Json.Nodes.JsonObject { ["event"] = "closing" }, "spark");
             var p = _assistant;

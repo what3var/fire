@@ -1,5 +1,6 @@
 #import "ui"
 #import "dialogs"
+#import "time"
 
 // The window of the assistant: the character at the bottom, the bubble above it. The bubble has small buttons at its top right (history, new topic,
 // another character, close), the text (as high as there is room), up to four choices, and - after a poke - the question line. The window is transparent
@@ -44,7 +45,18 @@ namespace Assistant {
         // a menu is open: the window has room for it above the character (and is laid out again when it closes)
         bool menuOpen = false
         UI.Button closeButton
+        // the animations go by the clock (milliseconds since the start): `frame` counts 60 a second whatever the cycles are - the character is painted
+        // again only when its next picture is due (30 a second while it thinks or talks, fewer while it waits or sleeps), and while nothing happens the
+        // view rests between the cycles (see Rest)
         defined int frame = 0
+        defined int cycles = 0
+        defined int startMs = 0
+        defined int nowMs = 0
+        defined int nextFigure = 0
+        defined int nextFlame = 0
+        // the events of the window seen last (UIRoot.Events), and until when the view cycles at full speed after one (or after a change of the brain)
+        defined int seenEvents = 0
+        defined int activeUntil = 0
         // a press on the character: a click pokes it, a drag moves the window
         bool pressed = false
         defined int pressX = 0
@@ -79,6 +91,9 @@ namespace Assistant {
             this.UIRoot = new UI.Root(this.fb, this.win)
             this.UIRoot.WindowBackdrop = Backdrop.Transparent
             this.UIRoot.WindowBackground = new SolidBrush(UI.Color.Transparent())   // (nothing behind the bubble and the character)
+            // double clicks, tooltips and the caret count real milliseconds (the cycles are fewer while the view rests)
+            this.startMs = Assistant.Brain.Clock()
+            this.UIRoot.clock = func () => { return Assistant.Brain.Clock() }
             this.Build()
         }
 
@@ -149,15 +164,13 @@ namespace Assistant {
             this.question.Hint = "Ask me..."
             this.question.OnEnter = func () on this => AskTyped()
             this.UIRoot.Add(this.question)
-            // the character (it moves: painted every frame); a click pokes it
+            // the character (it moves: painted again when its next picture is due, see Animate); a click pokes it
             this.flame = new UI.DrawingCanvas(14, 38, 14, 18)
-            this.flame.Continuous = true
             this.flame.blendMode = 2
             this.flame.Visible = false
             this.flame.OnPaint = func (UI.DrawingCanvas c) on this => PaintFlame(c)
             this.UIRoot.Add(this.flame)
             this.figure = new UI.DrawingCanvas(4, this.MaxBH, 100, this.FH)
-            this.figure.Continuous = true
             this.figure.blendMode = 2
             this.figure.OnPaint = func (UI.DrawingCanvas c) on this => PaintFigure(c)
             this.figure.OnMouseDown = func (int x, int y, int b) on this => Press(x, y, b)
@@ -340,9 +353,24 @@ namespace Assistant {
             this.O = this.MaxBH - bh
         }
 
-        // Every frame: the brain works a little, the bubble follows it.
+        // Every cycle: the brain works a little, the bubble follows it, the character moves when its next picture is due - and while nothing happens
+        // the view rests a little.
         undefined Cycle() {
-            this.frame++
+            this.cycles++
+            this.nowMs = Assistant.Brain.Clock() - this.startMs
+            if (this.nowMs < 0) {
+                // (the clock of the system went back)
+                this.startMs = Assistant.Brain.Clock()
+                this.nowMs = 0
+                this.nextFigure = 0
+                this.nextFlame = 0
+                this.activeUntil = 0
+            }
+            this.frame = this.nowMs * 60 / 1000
+            if (this.UIRoot.Events != this.seenEvents) {
+                this.seenEvents = this.UIRoot.Events
+                this.activeUntil = this.nowMs + 1000
+            }
             this.FollowLook()
             if (!this.placed && this.frame < 120) { this.Place() }
             if (this.picked >= 0) { this.TakePicked() }
@@ -358,7 +386,48 @@ namespace Assistant {
                 this.win.Close()
                 return
             }
-            if (changed || this.frame == 1) { this.Show() }
+            if (changed || this.cycles == 1) {
+                this.Show()
+                this.activeUntil = this.nowMs + 1000
+            }
+            this.Animate()
+            this.Rest()
+        }
+
+        // The pictures of the character a second: lively while it thinks or talks, calm while it waits, slow while it sleeps (its breath is slow then).
+        defined int FigureRate() {
+            Assistant.Mood mood = this.Brain.Mood()
+            if (mood == Assistant.Mood.Sleep) { return 4 }
+            if (mood == Assistant.Mood.Idle) { return 15 }
+            return 30
+        }
+
+        // The character (and the small flame while it thinks) painted again when its next picture is due - not in every cycle.
+        undefined Animate() {
+            defined int now = this.nowMs
+            if (now >= this.nextFigure) {
+                this.figure.Invalidate()
+                defined int step = 1000 / this.FigureRate()
+                this.nextFigure = this.nextFigure + step
+                if (this.nextFigure <= now) { this.nextFigure = now + step }
+            }
+            if (this.flame.Visible && now >= this.nextFlame) {
+                this.flame.Invalidate()
+                this.nextFlame = this.nextFlame + 33
+                if (this.nextFlame <= now) { this.nextFlame = now + 33 }
+            }
+        }
+
+        // While nothing happens - no event for a second, the brain idle, no press, no menu - the view waits until the next picture of the character is due
+        // (at most a tenth of a second while the bubble is open, a quarter while it sleeps: a click or a poke is taken within it, and the first event makes
+        // it cycle at full speed again). Without the rest the idle assistant would run its whole cycle 60 times a second.
+        undefined Rest() {
+            if (this.Brain.Busy || this.pressed || this.menuOpen || this.nowMs < this.activeUntil) { return }
+            defined int due = this.nextFigure
+            if (this.flame.Visible && this.nextFlame < due) { due = this.nextFlame }
+            // (the next frame waits for the screen too: about 16 ms)
+            defined int wait = UI.M.Clamp(due - this.nowMs - 16, 0, this.Brain.Visible ? 100 : 250)
+            if (wait > 0) { Sleep(wait) }
         }
 
         // Lays the bubble out for what it shows: the text takes the room the choices and the question line leave.

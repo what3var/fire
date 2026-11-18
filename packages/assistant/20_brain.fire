@@ -4,6 +4,7 @@
 #import "mcp"
 #import "json"
 #import "filesystem"
+#import "time"
 
 // The mind of the assistant, without its window (docs/ai/assistant.md): what the bubble says and which choices it offers, the model (asked for before
 // it is downloaded), the agent that answers, the connection to spark (MCP) and the tips that need no model.
@@ -60,7 +61,8 @@ namespace Assistant {
         List links = new List()
         string SparkId = ""
         bool sparkToolsAdded = false
-        defined int scanTicks = 0
+        // when the open sparks are looked at again (Clock)
+        defined int nextScan = 0
         // the documentation, when spark does not offer it
         Assistant.Docs docs = undefined
         string pendingQuestion = ""
@@ -855,10 +857,10 @@ namespace Assistant {
 
         // What spark reported (a build, a run): a tip when something went wrong.
         undefined SparkEvents() {
-            // (now and then: sparks that opened or closed)
-            this.scanTicks++
-            if (this.scanTicks >= 120 || this.scanTicks == 1) {
-                this.scanTicks = 1
+            // (every two seconds: sparks that opened or closed - by the clock, the view cycles less often while nothing happens)
+            defined int now = Assistant.Brain.Clock()
+            if (this.nextScan == 0 || now >= this.nextScan || now < this.nextScan - 2000) {
+                this.nextScan = now + 2000
                 this.ScanSparks()
             }
             var gone = new List()
@@ -923,6 +925,17 @@ namespace Assistant {
         // ---- the cycle ----
 
         // Does a piece of the work (download, the model's answer, spark's events); true when the bubble changed.
+        // Milliseconds of the clock (the view's animations and the looks at the sparks go by it, not by the cycles: an idle assistant cycles less often).
+        static defined int Clock() { return DateTime.UtcNow.Ticks / 10000 }
+
+        // Whether it works now (the model thinks or writes, a model is loaded or downloaded): the view cycles at full speed then.
+        bool Busy {
+            get {
+                Assistant.Phase p = this.Phase
+                return p == Assistant.Phase.Thinking || p == Assistant.Phase.Answering || p == Assistant.Phase.Loading || p == Assistant.Phase.Downloading
+            }
+        }
+
         bool Tick() {
             string before = this.Text
             int choices = this.Choices.Count

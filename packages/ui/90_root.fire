@@ -80,6 +80,9 @@ namespace UI {
         defined int modifiers = 0
         // Counts the cycles of this root (Tick, Cycle): elements measure short intervals with it (a double click)
         defined int cycles = 0
+        // Counts the events of the window (mouse, keys, focus, size, ...) that this root distributed: a program that rests while nothing happens (cycles less
+        // often, animates slower) sees with it that the user did something
+        defined int Events = 0
         // Clicks in a row, for Element.MouseDown: 1 a single click, 2 a double click, 3 a triple click, ... A press counts on when it is the same button as the one
         // before, within `doubleClickTime` milliseconds and `doubleClickDistance` pixels of it. The time comes from `clock` (a lambda that gives milliseconds, for
         // example `func () => { return DateTime.Now.Ticks / 10000 }` with #import "time"); without it the cycles of the root count (one is about 1/60 s with VSync).
@@ -907,6 +910,7 @@ namespace UI {
             while (true) {
                 any e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
                 if (e == undefined) { break }
+                this.Events = this.Events + 1
                 if (e[0] == 9) {
                     moved = true
                     mx = e[1]
