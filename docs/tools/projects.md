@@ -23,6 +23,8 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
   ],
   "settings": { "floatWidth": 32, "mode": "release", "defines": ["PRJ"], "engine": "native", "target": "esp32" },
   "buildActions": { "data/**": "copy", "old/**": "ignore" },   // optional: what builds do with files (see "Build actions")
+  "includedDirectories": ["assets"],          // optional: folders that belong to the project without code (see "Folders")
+  "excludedDirectories": ["out", "**/generated"],   // optional: folders the project leaves out - wins over everything
   "publish": { "enabled": true, "targets": ["dist/App"] }        // optional: see "Publish"
 }
 ```
@@ -111,6 +113,33 @@ removes exactly these two folders of each project (`ProjectOutput.Clean`) - not 
 test or a project or solution file (builds write none of them; it is kept and reported). A build folder that is a link loses the link, not its target.
 *Build Solution* builds the projects natively in the order of their references (`Workspace.BuildOrder`: a library before whoever references it, otherwise the order of the solution
 file); a library is compiled for the target (its code goes into the programs that import it), a project whose library failed is skipped.
+
+### Folders: included, undecided, excluded
+
+Every folder below the project file is in one of three states (`ProjectFolderMap`, `src/fire.Project/ProjectFolders.cs`), decided in this order - the first that fits wins:
+
+1. **Excluded**: named in `excludedDirectories` (a path relative to the project file or a pattern as in `files`: `out`, `**/generated`), inside such a folder, ignored by a
+   `.gitignore` (only with *Sync .gitignore*, below) or one of the folders a project never reads (`bin`, `obj`, `.git`, `.vs`, `node_modules`, a name that starts with a dot).
+   Nothing in it is compiled - **also not a source the project names in `files`, and also not when it is listed in `includedDirectories`** - it is no content, a *Copy* build action
+   inside it never copies, the folder is not entered at all (a `node_modules` with 100 000 files costs nothing) and spark's file watcher passes over it.
+2. **Included**: the project folder; named in `includedDirectories` (and everything below it); or it **holds code** - a fire source or markup (`.fire`, `.script`, `.fi`,
+   `.fic`, `.fxml`, `.biscuit`, `.fdata`; C/C++ files when the project has natives) in it or anywhere below it, so every folder on the way to code is included too (a folder that
+   holds an included folder is included as well). The notes folder is always included.
+3. **Undecided**: none of that - no code, nothing names it (`assets/`, `docs/`, an empty folder, `src/images` below a code folder). Its files are shown, but they are no part of
+   the build: they do not count for Publish's check whether something changed. A file's **own build action still counts** there (`"assets/logo.png": "copy"` or a pattern
+   such as `"assets/**": "copy"` copies it) - you said so explicitly; inside an excluded folder it never does. `new Resource("...")` embeds what the code names, wherever it is.
+
+A project file without the two lists behaves as before: the folders with code are included, all others are undecided, which changes nothing for a build (only the
+explorer shows them pale). `exclude` stays what it was - patterns of *files* that are not compiled; `excludedDirectories` is about whole folders.
+
+**Sync .gitignore** (`"syncGitignore": false` turns it off; on by default - *Project Properties > Build > Folders* in spark): excluding a folder in spark also writes it into
+the `.gitignore` nearest to the project - the project folder's, else the first one on the way up to the top of the repository; with none there a new one at the top of the
+repository (without a repository: in the project folder). The line is the folder relative to that file with `/` at both ends (`/App/assets/raw/`), with the comment
+`# spark: excluded from App.fireproj` above it. A line that says the same already is not added again. *Remove Exclusion* (and *Include in Project*) takes the line out again
+- only a line with spark's comment above it; a line someone else wrote stays (spark says so, and the folder stays ignored). With sync on, folders that a `.gitignore` ignores
+count as excluded (the `.gitignore` files from the top of the repository down to the project folder and those in its folders; `!` lines, `/` at the start or the end, `*`,
+`**`, `?` and `[...]` as in git; not read: `.git/info/exclude` and git's global excludes). spark shows their reason ("ignored by .gitignore") and does not change them: that
+is the `.gitignore`'s business.
 
 ### Build actions
 
@@ -280,6 +309,13 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   code (C++), a reference, set the start project, *Start Debugging*, *Build* and *Clean* of a project (*Build Solution* and *Clean Solution* of the solution), pack, reveal in the file manager, remove, and open the project's properties; a file can also be opened *as text*, *as hex* or - a
   picture - in the *pixel editor*. The markup of an interface (`Name.fxml`) opens like a folder: its first row **Designer** opens the markup editor (as a double click on the
   file does), below it is the code-behind `Name.fire` of the same folder.
+* **Folders in the Solution Explorer** (see "Folders"): an included folder looks as always, an undecided one (and its files) pale and *italic*; an excluded one is only shown with
+  not shown at all - only with *Show All Files* does it appear, pale with "excluded" or "ignored by .gitignore" behind it, like the folders a project never reads (`bin`, `obj`) and like a file with the build action
+  *Ignore* ("ignored"). The context menu of a folder has *Exclude from Project* (every folder that is not excluded), *Include in Project* (an undecided folder, and an
+  excluded one with its own entry) and *Remove Exclusion* (an excluded folder with its own entry; one excluded by a pattern, by a parent or by a `.gitignore` shows the
+  reason greyed out instead). With several folders selected the command is for all of them ("Exclude from Project (3 folders)"); the project file (and, with *Sync
+  .gitignore*, the `.gitignore`) is written at once. *Project Properties > Build > Folders* lists the excluded and the included folders of the project file, each with
+  *Remove* (an exclusion taken out there loses its `.gitignore` line too, with *Sync .gitignore*), the folders a `.gitignore` excludes, and *Sync .gitignore*.
 * **Properties of a file**: selecting a file in the Solution Explorer shows it in the tool window **Properties** (until another document becomes active): name, folder, project, what the
   project does with it (*Kind*: its place in the compile order, content, test). A C/C++ file of a project also has the category **Native build**: *Part of the native build* (puts it into
   `native.sources` or takes it out - a file that comes from a pattern stays, the window says so), *Build order* (the `order` of its entry; empty: none, 0), *Platforms* (all, or one list

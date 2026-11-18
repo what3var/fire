@@ -377,7 +377,7 @@ namespace fire.Compiler
                 AddFile(p.FilePath);
                 foreach (var s in sources) { Add(s.Path); Add(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s.Text)))); }
                 var copies = new HashSet<string>(p.CopyFiles.Select(c => c.Source), ProjectFiles.PathComparer);
-                foreach (var f in p.ContentFiles) if (!copies.Contains(f)) AddFile(f);
+                foreach (var f in p.BuildContentFiles) if (!copies.Contains(f)) AddFile(f);   // (not the files of undecided folders: docs/tools/projects.md, "Folders")
             }
             AddProject(plan.Project, plan.Sources);
             foreach (var lib in plan.Libraries.Values.OrderBy(l => l.ImportName, StringComparer.Ordinal)) { Add(lib.ImportName); AddProject(lib.Project, lib.Sources); }

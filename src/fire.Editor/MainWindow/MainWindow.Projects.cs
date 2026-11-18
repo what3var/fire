@@ -705,6 +705,7 @@ namespace fire.Editor
         {
             if (command.StartsWith("git-", StringComparison.Ordinal)) { await OnGitExplorerCommand(command, node); return; }
             if (command.StartsWith("build-action:", StringComparison.Ordinal)) { SetBuildAction(command.Substring("build-action:".Length)); return; }
+            if (command.StartsWith("folder-", StringComparison.Ordinal)) { if (node != null) OnFolderCommand(command, node); return; }
             var project = node?.Project ?? CommandProject(node);
             switch (command)
             {

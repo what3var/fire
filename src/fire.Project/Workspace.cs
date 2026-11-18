@@ -19,6 +19,10 @@ namespace fire.Projects
         public IReadOnlyList<string> ContentFiles { get; private set; } = Array.Empty<string>();
         /// <summary>The folders below the project folder (relative paths with `/`), also the empty ones.</summary>
         public IReadOnlyList<string> Folders { get; private set; } = Array.Empty<string>();
+        /// <summary>What the project does with each of its folders (docs/tools/projects.md, "Folders"): included, undecided (no code, not named) or excluded.</summary>
+        public ProjectFolderMap FolderMap { get; private set; } = ProjectFolderMap.Empty("");
+        /// <summary>The content files a build counts (the publish's check whether something changed): not those of undecided folders.</summary>
+        public IEnumerable<string> BuildContentFiles => ContentFiles.Where(f => !FolderMap.IsUndecidedFile(ProjectFiles.Relative(Directory, f)));
         /// <summary>The files with the build action Copy or CopyAlways (`buildActions`): copied next to the program by a build and into the folders of a publish.</summary>
         public IReadOnlyList<CopyItem> CopyFiles { get; private set; } = Array.Empty<CopyItem>();
         /// <summary>The files with the build action Ignore (shown pale by the editor).</summary>
@@ -35,11 +39,14 @@ namespace fire.Projects
         public void Refresh()
         {
             var problems = new List<string>(Project.Validate());
-            Files = ProjectFiles.Resolve(Project, problems);
-            TestFiles = ProjectFiles.Resolve(Project, null, tests: true).Where(f => !Files.Contains(f, ProjectFiles.PathComparer)).ToList();
+            // one walk over the folder: which folders are included, undecided or excluded, and the files of those that are not excluded
+            var map = ProjectFolderMap.Scan(Project);
+            FolderMap = map;
+            Files = ProjectFiles.Resolve(Project, problems, folders: map);
+            TestFiles = ProjectFiles.Resolve(Project, null, tests: true, folders: map).Where(f => !Files.Contains(f, ProjectFiles.PathComparer)).ToList();
             Problems = problems;
-            ContentFiles = ProjectFiles.ContentFiles(Project.Directory!, Files);
-            Folders = ProjectFiles.Folders(Project.Directory!);
+            ContentFiles = ProjectFiles.ContentFiles(map, Files);
+            Folders = ProjectFiles.Folders(map);
             var copies = new List<CopyItem>();
             var ignored = new List<string>();
             if (Project.BuildActions is { Count: > 0 })

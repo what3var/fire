@@ -78,6 +78,10 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
 
 ## The tool bar of the solution explorer
 
+The folders of a project are *included* (normal), *undecided* (no code, not named: pale and italic, not built) or *excluded* (not shown; with *Show All Files* pale, the reason behind it); right-click a folder
+for *Exclude from Project*, *Include in Project* or *Remove Exclusion*, also for several selected folders at once - with *Sync .gitignore* (*Project Properties > Build*, on by
+default) the `.gitignore` follows ([projects](projects.md#folders-included-undecided-excluded)).
+
 Above the tree of the Solution Explorer ([projects](projects.md)) a row of buttons (each one explains itself in its tooltip) and a filter box:
 
 | Button | What it does |
@@ -87,7 +91,7 @@ Above the tree of the Solution Explorer ([projects](projects.md)) a row of butto
 | *Sync with Active Document* | selects the file of the active document in the tree: its folders open and the tree scrolls to it (a filter that hides it is cleared) |
 | *Track Active Document* | a switch: does the same whenever another document becomes active |
 | *Refresh* | reads the folders of all projects again from the disk (a file added or deleted outside spark) - as *Reload* in the context menu of a project |
-| *Show All Files* | a switch: also shows what the projects leave out - `bin`, `obj`, `node_modules`, files and folders whose name starts with a dot - pale (`.git` only as a folder); their context menu opens, shows and deletes them |
+| *Show All Files* | a switch: also shows what the projects leave out - `bin`, `obj`, `node_modules`, files and folders whose name starts with a dot, the folders a project excludes (`excludedDirectories`, a `.gitignore`; "excluded" / "ignored by .gitignore" behind them) with what is in them - pale (`.git` only as a folder); their context menu opens, shows and deletes them, and takes an exclusion back |
 | *New File* | the menu *New* of the context menu (script, class, window, circuit, markdown, image, other file) for the selected folder - for a selected file its folder, else its project; with nothing selected the project of the active document |
 | *New Folder...* | a new folder in the same place; on the solution or a solution folder a solution folder |
 | *Properties* | for a file the *Properties* panel (brought to the front), for a project (or a row in it) its properties dialog, for the solution the solution's |
