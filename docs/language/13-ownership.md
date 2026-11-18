@@ -213,6 +213,28 @@ The target of `TakeTo` is an object. Anything else - through `any`: `b.TakeTo(5)
 `MissingMemberException` `'TakeLocal' (0 argument(s)) is not a known built-in method on a value of type Int.`; with `try` the name is `tryTakeLocal`
 and the count includes a `Takes` mode). Both are the same in the VM and natively.
 
+`TakeLocal` binds to the **innermost** scope: called in the body of an `if`, a loop, a `{ }` or a `try`, the object belongs to that block and is
+destroyed when the block ends - a reference that leaves the block then refers to a destroyed object (a `DestroyedException` where it is used, in
+the VM and natively):
+
+```fire
+class Node { }
+class Maker {
+    static Node Make(Node n, bool local) {
+        if (local) {
+            n.TakeLocal()           // TC035: n belongs to this if-block now ...
+        }
+        return n                    // ... and the caller gets a destroyed object
+    }
+}
+```
+
+The type checker says so (`TC035`, a warning in lax and strict mode) when `x.TakeLocal()` stands in an inner block and x leaves it: stored in
+a field, an element, a variable or a container from outside the block (`list.Add(x)` takes only what belongs to the call), or used after the
+block. A `TakeLocal()` at the top level of a function (or a lambda, or the program) binds x to the function's scope; `return x` hands it to the
+caller, as a `return x` inside the block does - neither is reported. Where the object is to live longer, call `TakeLocal()` there, or give it
+with `take x` / `x.TakeTo(...)` to what keeps it.
+
 What the rules forbid and only the run time can see is a catchable exception - the same class and text in the VM and natively - and nothing has
 moved when it is caught:
 

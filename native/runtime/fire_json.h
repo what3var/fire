@@ -397,9 +397,25 @@ static void jsDiscover(JsWriter* w, Value start) {
                     Arr* a = arrOf(items);
                     int64_t m = count.kind == K_Int ? count.i : 0;
                     if (m > (int64_t)a->length) m = a->length;
+                    /* (the elements belong to the list, not to its array - as Add and the reader give them) */
                     for (k = m - 1; k >= 0; k--) {
                         jsGrow(J, (void**)&stack, n, &cap, sizeof(JsPending));
-                        stack[n].v = arrItems(a)[k]; stack[n].container = a; stack[n].containerKind = K_Array; n++;
+                        stack[n].v = arrItems(a)[k]; stack[n].container = o; stack[n].containerKind = K_Class; n++;
+                    }
+                }
+                continue;
+            }
+            if (c->flags & JSON_FLAG_OBJECT) {
+                /* (the values belong to the JsonObject - Set and the reader give them to it; the keys are strings) */
+                const JsonSpecial* sp = jsonSpecial();
+                Value values = objFields(o)[sp->objValues], count = jsFieldGet(o, (uint32_t)sp->objCount, sp->objCountHalf);
+                if (values.kind == K_Array && leafAlive(values)) {
+                    Arr* a = arrOf(values);
+                    int64_t m = count.kind == K_Int ? count.i : 0;
+                    if (m > (int64_t)a->length) m = a->length;
+                    for (k = m - 1; k >= 0; k--) {
+                        jsGrow(J, (void**)&stack, n, &cap, sizeof(JsPending));
+                        stack[n].v = arrItems(a)[k]; stack[n].container = o; stack[n].containerKind = K_Class; n++;
                     }
                 }
                 continue;
@@ -468,7 +484,7 @@ static void jsWriteNumber(JsWriter* w, Value v, uint32_t fieldUnit) {
 
 static void jsWriteValue(JsWriter* w, Value v, const char* type, const void* container, uint8_t containerKind, bool isRoot, uint32_t unit);
 
-static void jsWriteItems(JsWriter* w, const Value* items, int64_t count, const char* elementType, Arr* container) {
+static void jsWriteItems(JsWriter* w, const Value* items, int64_t count, const char* elementType, const void* container, uint8_t containerKind) {
     int64_t i;
     jsPush16(w->J, &w->out, '[');
     w->depth++;
@@ -477,7 +493,7 @@ static void jsWriteItems(JsWriter* w, const Value* items, int64_t count, const c
         if (i > 0) jsPush16(w->J, &w->out, ',');
         jsNewLine(w);
         if (item.kind == K_Lambda || isPtr(item)) { jsAscii(w->J, &w->out, "null"); continue; }
-        jsWriteValue(w, item, elementType, container, K_Array, false, 0);
+        jsWriteValue(w, item, elementType, container, containerKind, false, 0);
     }
     w->depth--;
     if (count > 0) jsNewLine(w);
@@ -492,11 +508,11 @@ static void jsWriteArray(JsWriter* w, Arr* a, const char* elementType, const voi
         jsAscii(w->J, &w->out, "{\"$id\":");
         jsNumber(w, id);
         jsAscii(w->J, &w->out, w->indent ? ", \"$values\": " : ",\"$values\":");
-        jsWriteItems(w, arrItems(a), a->length, elementType, a);
+        jsWriteItems(w, arrItems(a), a->length, elementType, a, K_Array);
         jsPush16(w->J, &w->out, '}');
         return;
     }
-    jsWriteItems(w, arrItems(a), a->length, elementType, a);
+    jsWriteItems(w, arrItems(a), a->length, elementType, a, K_Array);
 }
 
 static const char* jsTypeName(JsWriter* w, Obj* o, const JsonClassInfo* c) {
@@ -538,13 +554,13 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
         bool firstL = true;
         if (!a) count = 0;
         else if (count > (int64_t)a->length) count = a->length;
-        if (!shared && !withType) { jsWriteItems(w, a ? arrItems(a) : NULL, count, elementType, a); return; }
+        if (!shared && !withType) { jsWriteItems(w, a ? arrItems(a) : NULL, count, elementType, o, K_Class); return; }
         jsPush16(J, &w->out, '{');
         w->depth++;
         if (withType) { jsKey(w, "$type", &firstL); jsStringUtf8(J, &w->out, jsTypeName(w, o, c)); }
         if (shared) { jsKey(w, "$id", &firstL); jsNumber(w, id); }
         jsKey(w, "$values", &firstL);
-        jsWriteItems(w, a ? arrItems(a) : NULL, count, elementType, a);
+        jsWriteItems(w, a ? arrItems(a) : NULL, count, elementType, o, K_Class);
         w->depth--;
         jsNewLine(w);
         jsPush16(J, &w->out, '}');
@@ -565,7 +581,7 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
                 Value k = arrItems(ka)[i];
                 if (k.kind == K_String) { const Str* s = strOf(k); jsKey16(w, s->data, s->length, &first); }
                 else jsKey(w, "", &first);
-                jsWriteValue(w, arrItems(va)[i], "", va, K_Array, false, 0);
+                jsWriteValue(w, arrItems(va)[i], "", o, K_Class, false, 0);
             }
         }
     } else {
@@ -1058,7 +1074,9 @@ static Value jsBuildList(JsReader* r, JsNode* a, const char* type, OwnList* owne
         JsSlot s;
         Value item;
         s.container = itemsV; s.index = (uint32_t)i; s.has = true;
-        item = jsBuild(r, a->items[i], element, jsOwnerIn(itemsV), jsIndexPath(r->J, path, i), 0, s);
+        /* (the elements belong to the list itself, as Add gives them - not to its array: Grow deletes the old array, and RemoveAt, Take and TakeAt ask
+         * `is from this`, DECISIONS D3) */
+        item = jsBuild(r, a->items[i], element, objOwned(objAt(list)), jsIndexPath(r->J, path, i), 0, s);
         jsStore(itemsV, (uint32_t)i, item);
     }
     jsStore(list, (uint32_t)sp->listItems, itemsV);
@@ -1273,7 +1291,8 @@ static Value jsBuildJsonObject(JsReader* r, JsNode* o, OwnList* owner, const cha
         Value v;
         jsStore(keys, (uint32_t)i, jsNewString(r, members[i]->key, members[i]->klen));
         s.container = values; s.index = (uint32_t)i; s.has = true;
-        v = jsBuild(r, members[i]->node, "", jsOwnerIn(values), jsCat3(J, path, ".", jsUtf8(J, members[i]->key, members[i]->klen)), 0, s);
+        /* (the values belong to the JsonObject, as Set gives them - not to its array, which Set replaces when it grows) */
+        v = jsBuild(r, members[i]->node, "", own, jsCat3(J, path, ".", jsUtf8(J, members[i]->key, members[i]->klen)), 0, s);
         jsStore(values, (uint32_t)i, v);
     }
     jsStore(obj, (uint32_t)sp->objKeys, keys);

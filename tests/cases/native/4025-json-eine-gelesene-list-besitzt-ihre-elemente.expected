@@ -1,0 +1,9 @@
+True
+RemoveAt: a c d e (4), the removed one: destroyed
+TakeAt: c d e (3), taken: a False
+past the capacity: c d e n0 n1 n2 n3 n4 n5 n6 n7 n8 n9 (13)
+{"$type":"Data","first":null,"props":[{"kind":"c"},{"kind":"d"},{"kind":"e"},{"kind":"n0"},{"kind":"n1"},{"kind":"n2"},{"kind":"n3"},{"kind":"n4"},{"kind":"n5"},{"kind":"n6"},{"kind":"n7"},{"kind":"n8"},{"kind":"n9"}]}
+{"b":[1,2],"c":{"v":3},"d":{"v":4},"e":5}
+{"$type":"Data","first":{"$ref":1},"props":[{"$id":1,"kind":"shared"}]}
+True True
+destroyed

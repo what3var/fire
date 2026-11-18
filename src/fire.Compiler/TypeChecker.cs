@@ -99,7 +99,7 @@ namespace fire.Compiler
     /// Rules: `int` goes to `float` implicitly, everything goes to `string`, `undefined` goes to everything, an object goes to the class it derives from; the type of a target never changes
     /// (a `var` has the type of its initializer for good).
     /// </summary>
-    public sealed class TypeChecker
+    public sealed partial class TypeChecker
     {
         public const string AssignCode = "TC001";
         public const string ArgumentCode = "TC002";
@@ -297,6 +297,7 @@ namespace fire.Compiler
             }
             checker.ReportPendingVars(checker._scopes[0]);
             checker.ReportStoredTemporaries();
+            checker.CheckBlockTakeLocals(program);
             if (DeriveDefined) checker.Derive(resolved);
             return checker._diagnostics;
         }
@@ -858,7 +859,7 @@ namespace fire.Compiler
         private void Report(string code, string message, int line)
         {
             if (_source < _reportFrom) return;
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode or TextConversionCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode or TextConversionCode or BlockTakeLocalCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
         }
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
