@@ -268,13 +268,14 @@ static Value fire_s3d_TexSetFilter(Value h, Value v) {
  * material. A mesh and a texture are counted the same way (an object that shows them is a user). */
 enum { FIRE_S3D_OBJECT = 1, FIRE_S3D_LIGHT = 2, FIRE_S3D_CAMERA = 3, FIRE_S3D_SCENE = 4, FIRE_S3D_MATERIAL = 5 };
 #define FIRE_S3D_FLOATS 28
-#define FIRE_S3D_INTS 9
+#define FIRE_S3D_INTS 10
 
 /* object: f = x, y, z, rotation x, y, z, scale x, y, z, anchor x, y, z, texture x, y, width, height, rotation, opacity, alpha cutoff, spin x, y, z (rad/s),
  *             texture scroll x, y (m/s: Advance moves them on), the strength of the emission map, reflectivity;
- *         n = colour, visible, two sided, lit, casts shadows, receives shadows, layers, billboard, keep the mesh coordinates (the pivot is the origin of the mesh) */
+ *         n = colour, visible, two sided, lit, casts shadows, receives shadows, layers, billboard, keep the mesh coordinates (the pivot is the origin of the mesh),
+ *             background (a backdrop: drawn first, without depth and fog - S3dSurface.background) */
 enum { OF_PX = 0, OF_RX = 3, OF_SX = 6, OF_AX = 9, OF_TX = 12, OF_TY, OF_TW, OF_TH, OF_TROT, OF_OPACITY, OF_CUTOFF, OF_SPIN, OF_SCROLL = OF_SPIN + 3, OF_GLOW = OF_SCROLL + 2, OF_REFLECT };
-enum { ON_COLOR = 0, ON_VISIBLE, ON_TWOSIDED, ON_LIT, ON_CAST, ON_RECEIVE, ON_LAYERS, ON_BILLBOARD, ON_KEEPCOORDS };
+enum { ON_COLOR = 0, ON_VISIBLE, ON_TWOSIDED, ON_LIT, ON_CAST, ON_RECEIVE, ON_LAYERS, ON_BILLBOARD, ON_KEEPCOORDS, ON_BACKGROUND };
 /* light: f = intensity, x, y, z, direction x, y, z, range, cutoff (a point light lights nothing beyond it; 0: no end); n = kind, colour, enabled, casts shadows, layers */
 enum { LF_INTENSITY = 0, LF_X, LF_Y, LF_Z, LF_DX, LF_DY, LF_DZ, LF_RANGE, LF_CUTOFF };
 enum { LN_KIND = 0, LN_COLOR, LN_ENABLED, LN_CAST, LN_LAYERS };
@@ -1044,6 +1045,7 @@ static int fire_s3d_objectOf(FireS3dItem* o, S3dMesh** mesh, S3dTexture** textur
     s.emissiveTex = o->glow > 0 ? (S3dTexture*)g_s3dTextures.items[o->glow] : NULL;
     s.emissiveStrength = (float)F[OF_GLOW];
     s.reflect = F[OF_REFLECT] <= 0 ? 0.0f : F[OF_REFLECT] >= 1 ? 1.0f : (float)F[OF_REFLECT];
+    if (N[ON_BACKGROUND]) { s.background = 1; s.castShadows = 0; s.receiveShadows = 0; s.reflect = 0; }   /* (a backdrop: no shadows, no reflection) */
     *mesh = m; *texture = tex; *opOut = op; *sOut = s;
     return 1;
 }
@@ -1684,6 +1686,7 @@ static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value widt
             S3dFxTarget t;
             s3d_fxTargetFull(&t, b->data, (int)width.i, (int)height.i, f->lastBackend == S3D_BACKEND_SOFTWARE ? f->depth : NULL, cam.nearPlane, cam.farPlane);
             t.noFog = f->fogDone;
+            fx.backdrop = f->backdrop;
             g_s3dFxApply(&t, &fx);
         }
         if (fx.splats) S3D_FREE((void*)fx.splats);
@@ -1775,7 +1778,7 @@ static Value fire_s3d_RenderLean(Value camera, Value scene, Value fb, Value widt
     {
         S3dFx fx;
         memset(&fx, 0, sizeof fx);
-        if (g_s3dFxOf && g_s3dFxOf(s, &cam, w, h, &fx)) { c->lean->post = g_s3dLeanFx; c->lean->postCtx = &fx; }
+        if (g_s3dFxOf && g_s3dFxOf(s, &cam, w, h, &fx)) { fx.backdrop = c->lean->backdrop; c->lean->post = g_s3dLeanFx; c->lean->postCtx = &fx; }
         s3d_leanEnd(c->lean, sink, ctx);
         c->lean->post = NULL; c->lean->postCtx = NULL;
         if (fx.splats) S3D_FREE((void*)fx.splats);

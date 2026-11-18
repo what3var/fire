@@ -139,7 +139,7 @@ typedef struct S3dGpuFrameU {
     float eye[4], ambient[4];
     int32_t counts[4];                         /* the lights; 1: culled per tile (the tile buffer); the tiles across */
     float fog[4];                              /* start, end (not above start: none), the camera's near and far plane */
-    float fogColor[4], sky[4];                 /* rgb 0..1; sky: what a reflection shows where it finds nothing */
+    float fogColor[4], sky[4];                 /* rgb 0..1 (fogColor.a: 1 when a backdrop was drawn - no fog where nothing else is); sky: what a reflection shows where it finds nothing */
     float screen[4];                           /* width, height, 1/tan(fov/2) across, upwards */
     float view[16];                            /* world -> camera */
 } S3dGpuFrameU;
@@ -256,6 +256,7 @@ static struct {
     VkShaderModule mainVert, mainFrag, shadowVert, shadowFrag, postVert, reflectFrag, fogFrag;
     VkPipeline pipes[S3D_GPU_PIPELINES];
     VkPipeline shadowPipe, reflectPipes[2], fogPipe;
+    VkPipeline backPipes[3];   /* the backdrops (Object.Background), by cull: no depth test, no depth written, blended */
     VkSampler sampler, nearest;
     S3dGpuTex dummy;           /* a white texture with a flat bump map: for the objects without one */
     S3dVkImage flatBump;       /* the bump map of the textures without one (flat) */
@@ -958,9 +959,10 @@ static void s3d_gpu_writeFrameSet(void) {
     g_s3dVk.vkUpdateDescriptorSets(g_s3dVk.device, 6, w, 0, NULL);
 }
 
-/* A pipeline: the main one (cull: 0 none, 1 back faces, 2 front faces; blend; depth write), or the one of the shadow maps (shadow != 0). */
-static VkPipeline s3d_gpu_pipeline(int shadow, int cull, int blend, int depthWrite) {
-    VkPipeline* slot = shadow ? &g_s3dVk.shadowPipe : &g_s3dVk.pipes[cull * 4 + blend * 2 + depthWrite];
+/* A pipeline: the main one (cull: 0 none, 1 back faces, 2 front faces; blend; depth write), the one of the backdrops (back != 0: by cull, without the depth test, blended - its
+ * alpha, too: a + (1 - a) * what is there), or the one of the shadow maps (shadow != 0). */
+static VkPipeline s3d_gpu_pipeline(int shadow, int cull, int blend, int depthWrite, int back) {
+    VkPipeline* slot = shadow ? &g_s3dVk.shadowPipe : back ? &g_s3dVk.backPipes[cull] : &g_s3dVk.pipes[cull * 4 + blend * 2 + depthWrite];
     VkPipelineShaderStageCreateInfo stages[2];
     VkVertexInputBindingDescription vb;
     VkVertexInputAttributeDescription va[3];
@@ -1008,16 +1010,17 @@ static VkPipeline s3d_gpu_pipeline(int shadow, int cull, int blend, int depthWri
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     memset(&ds, 0, sizeof ds);
     ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    ds.depthTestEnable = VK_TRUE;
-    ds.depthWriteEnable = shadow || depthWrite ? VK_TRUE : VK_FALSE;
+    ds.depthTestEnable = back && !shadow ? VK_FALSE : VK_TRUE;
+    ds.depthWriteEnable = shadow || (depthWrite && !back) ? VK_TRUE : VK_FALSE;
     ds.depthCompareOp = VK_COMPARE_OP_LESS;
     memset(&cba, 0, sizeof cba);
     cba.colorWriteMask = shadow ? VK_COLOR_COMPONENT_R_BIT : (VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
-    if (!shadow && blend) {
-        /* the colour is mixed with what is behind; the alpha of the picture stays */
+    if (!shadow && (blend || back)) {
+        /* the colour is mixed with what is behind; the alpha of the picture stays (a backdrop: it covers the picture by its alpha) */
         cba.blendEnable = VK_TRUE;
         cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA; cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; cba.colorBlendOp = VK_BLEND_OP_ADD;
-        cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE; cba.alphaBlendOp = VK_BLEND_OP_ADD;
+        cba.srcAlphaBlendFactor = back ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ZERO;
+        cba.dstAlphaBlendFactor = back ? VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : VK_BLEND_FACTOR_ONE; cba.alphaBlendOp = VK_BLEND_OP_ADD;
     }
     memset(&cb, 0, sizeof cb);
     cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -1457,7 +1460,7 @@ static void s3d_gpu_bounds(const S3dBatch* b, S3dVec3* lo, S3dVec3* hi) {
 }
 
 static void s3d_gpu_draw(const S3dBatch* b, size_t objectIndex, int cull, int blend, int depthWrite) {
-    VkPipeline pipe = s3d_gpu_pipeline(0, cull, blend, depthWrite);
+    VkPipeline pipe = s3d_gpu_pipeline(0, cull, blend, depthWrite, b->s.background);
     const S3dGpuMesh* m = (const S3dGpuMesh*)b->mesh->gpu;
     const S3dGpuTex* t = b->tex ? (const S3dGpuTex*)b->tex->gpu : &g_s3dVk.dummy;
     const S3dGpuTex* g = b->s.emissiveTex ? (const S3dGpuTex*)b->s.emissiveTex->gpu : &g_s3dVk.dummy;
@@ -1534,6 +1537,7 @@ static int s3d_gpu_frameUniforms(S3dFrame* f, const S3dCamera* cam, const S3dFlu
             u->fogColor[k] = (float)((st->fogColor >> (8 * k)) & 255) / 255.0f;
             u->sky[k] = (float)((st->sky >> (8 * k)) & 255) / 255.0f;
         }
+        u->fogColor[3] = f->backdrop ? 1.0f : 0.0f;   /* (a backdrop was drawn: what has no depth is not fog) */
         u->screen[0] = (float)f->w; u->screen[1] = (float)f->h; u->screen[2] = tf / ((float)f->w / (float)f->h); u->screen[3] = tf;
         s3d_gpu_copyMat(u->view, &view);
     }
@@ -1639,7 +1643,8 @@ static void s3d_gpu_objectUniforms(const S3dBatch* b, S3dGpuObjectU* o) {
     o->tm0[0] = s->tm[0]; o->tm0[1] = s->tm[1]; o->tm0[2] = s->tm[2]; o->tm0[3] = s->specular;
     o->tm1[0] = s->tm[3]; o->tm1[1] = s->tm[4]; o->tm1[2] = s->tm[5]; o->tm1[3] = s->shininess;
     o->flags[0] = s->smooth; o->flags[1] = s->twoSided; o->flags[2] = s->lit; o->flags[3] = s->receiveShadows;
-    o->flags2[0] = s->layers; o->flags2[1] = b->tex != NULL; o->flags2[2] = b->bumpWanted; o->flags2[3] = b->blended;   /* (2: the opaque texels of a transparent object, see below) */
+    /* (flags2.w: 1 a transparent object - 2 the draw of its opaque texels, see below -, 3 a backdrop that is not a cut-out: its alpha goes out, without fog) */
+    o->flags2[0] = s->layers; o->flags2[1] = b->tex != NULL; o->flags2[2] = b->bumpWanted; o->flags2[3] = b->blended ? 1 : (s->background && s->cutoff <= 0) ? 3 : 0;
     o->bump[0] = s->bump;
     if (b->tex) { o->bump[1] = 1.0f / (float)b->tex->w; o->bump[2] = 1.0f / (float)b->tex->h; o->bump[3] = (float)b->tex->filter; }
     if (s->emissiveTex) { o->glow[0] = s->emissiveStrength; o->glow[1] = (float)s->emissiveTex->filter; }
@@ -1704,7 +1709,7 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     }
     if (!s3d_gpu_begin()) return 0;
     /* the shadow maps: a render pass per layer of the atlas, every map in its place */
-    if (maps > 0 && s3d_gpu_pipeline(1, 0, 0, 1)) {
+    if (maps > 0 && s3d_gpu_pipeline(1, 0, 0, 1, 0)) {
         for (layer = 0; layer < layers; layer++) {
             uint32_t dynamicZero = 0;
             memset(&rp, 0, sizeof rp);
@@ -1740,7 +1745,7 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
             g_s3dVk.vkCmdEndRenderPass(g_s3dVk.cmd);
         }
     }
-    /* the picture: cleared with the background, the opaque objects in their order, then the transparent ones */
+    /* the picture: cleared with the background, the backdrops in their order (without depth), the opaque objects in their order, then the transparent ones */
     memset(&rp, 0, sizeof rp);
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp.renderPass = post ? g_s3dVk.passOpaque : g_s3dVk.passMain;
@@ -1755,9 +1760,15 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     rp.clearValueCount = 2; rp.pClearValues = clear;
     g_s3dVk.vkCmdBeginRenderPass(g_s3dVk.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
     s3d_gpu_viewport((uint32_t)f->w, (uint32_t)f->h);
+    if (f->backdrop) for (i = 0; i < nb; i++) {
+        const S3dBatch* b = &f->batches[i];
+        if (!b->s.background) continue;
+        if (b->s.twoSided) { s3d_gpu_draw(b, i, 2, 1, 0); s3d_gpu_draw(b, i, 1, 1, 0); }   /* the far side first */
+        else s3d_gpu_draw(b, i, 1, 1, 0);
+    }
     for (i = 0; i < nb; i++) {
         const S3dBatch* b = &f->batches[i];
-        if (b->blended) continue;
+        if (b->blended || b->s.background) continue;
         s3d_gpu_draw(b, i, b->s.twoSided ? 0 : 1, 0, 1);
     }
     if (post) {

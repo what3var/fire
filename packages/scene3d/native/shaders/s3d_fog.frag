@@ -1,8 +1,9 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 // fire scene3d, hardware backend: the fog (Scene.Fog) over the finished picture - s3d_fxApply of the software renderer: from `start` on the picture goes into the fog colour,
-// from `end` on it is all fog, and so is what no object covers. The distance is the one of the depth of the picture: the opaque objects - it is drawn before the transparent
-// ones, which s3d_main.frag fogs by their own distance (as the software renderer does). Drawn over the picture with blending (alpha = how much fog).
+// from `end` on it is all fog, and so is what no object covers - unless the picture has a backdrop (Object.Background, drawn without depth: the sky stays). The distance is the
+// one of the depth of the picture: the opaque objects - it is drawn before the transparent ones, which s3d_main.frag fogs by their own distance (as the software renderer does).
+// Drawn over the picture with blending (alpha = how much fog).
 #include "s3d_common.glsl"
 
 layout(set = 3, binding = 0) uniform sampler2D depthMap;   // the depth of the picture (read texel by texel)
@@ -12,7 +13,7 @@ layout(location = 0) out vec4 outColor;
 void main() {
     float d = texelFetch(depthMap, ivec2(gl_FragCoord.xy), 0).r;
     float nearP = fr.fog.z, farP = fr.fog.w, start = fr.fog.x, end = fr.fog.y;
-    float k = 1.0;
+    float k = fr.fogColor.a != 0.0 ? 0.0 : 1.0;
     if (d < 1.0) {
         // the distance as the software renderer has it from its depth (NDC z)
         float dist = 2.0 * farP * nearP / ((d * 2.0 - 1.0) * (nearP - farP) + farP + nearP);

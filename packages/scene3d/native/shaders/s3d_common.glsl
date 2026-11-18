@@ -21,7 +21,7 @@ layout(std140, row_major, set = 0, binding = 0) uniform FrameU {
     vec4 ambient;
     ivec4 counts;    // the lights; 1: the lights are culled per tile (Scene.LightCulling: TileBuf); the tiles across
     vec4 fog;        // start, end (not above start: no fog), the near and the far plane of the camera
-    vec4 fogColor;   // rgb 0..1
+    vec4 fogColor;   // rgb 0..1; a: 1 when the picture has a backdrop (Object.Background) - what no object covers is not fog then
     vec4 sky;        // rgb 0..1: what a reflection shows where it finds nothing (the background, or the fog)
     vec4 screen;     // width, height (pixels), 1/tan(fov/2) across, upwards
     mat4 view;       // world -> camera

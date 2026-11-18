@@ -434,6 +434,12 @@ class Object {
     defined int Layers { get { return __S3DGetI(this.h, 6) } set { __S3DSetI(this.h, 6, value) } }
     // BillboardMode.Facing: the object always faces the camera (Template.Quad: sprites, labels); Vertical: it turns around the vertical axis only (trees).
     BillboardMode Billboard { get { return __S3DGetI(this.h, 7)!BillboardMode } set { __S3DSetI(this.h, 7, value!int) } }
+    // true: the object is part of the backdrop (a sky: dome, stars, sun, moon, clouds). The backdrops are drawn first, before all other objects, in the order they
+    // were added to the scene - without the depth test and without writing the depth, each over the ones before it by its alpha (texture, Opacity; clouds over
+    // the dome). Everything else is drawn over them as usual: solid objects, transparent ones and particles (rain in front of the sky). A backdrop casts and
+    // receives no shadows, is not mirrored by Reflectivity, and the fog (Scene.Fog) leaves it alone: once a picture has a backdrop, what no other object covers
+    // is not fog. Keep it inside Camera.Far (and move it with the camera); Camera.Background shows only where no backdrop covers. Default false.
+    defined bool Background { get { return __S3DGetB(this.h, 9) } set { __S3DSetI(this.h, 9, value) } }
 
     Texture Texture {
         get { return this.texture }

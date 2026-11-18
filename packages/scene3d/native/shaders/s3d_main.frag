@@ -114,7 +114,7 @@ void main() {
         vec4 gc = textureLod(glowMap, filtered(vUv, vec2(textureSize(glowMap, 0)), ob.glow.y, dux, duy), 0.0);
         col += gc.rgb * (gc.a * ob.glow.x);
     }
-    if (ob.flags2.w != 0) {
+    if (ob.flags2.w == 1 || ob.flags2.w == 2) {
         // a transparent object is drawn in two draws (s3d_gpu_flushLocked): 2 its opaque texels (alpha 255 of 255 - S3D_OPAQUE_ALPHA of s3d_engine.h), which write the depth like an
         // opaque object, 1 the others, mixed in; each takes only its own pixels
         if ((ob.flags2.w == 2) != (alpha >= 1.0 - 0.5 / 255.0)) discard;
@@ -126,6 +126,7 @@ void main() {
             col = mix(col, fr.fogColor.rgb, k);
         }
     }
-    // (an opaque object writes alpha 1, a transparent one is mixed by its alpha and leaves the alpha of the picture as it is)
-    outColor = vec4(col, ob.flags2.w == 1 ? alpha : 1.0);
+    // (an opaque object writes alpha 1, a transparent one is mixed by its alpha and leaves the alpha of the picture as it is; a backdrop (3, no fog: it is drawn first, without
+    // depth) covers the picture by its alpha - the pipeline of the backdrops)
+    outColor = vec4(col, ob.flags2.w == 1 || ob.flags2.w == 3 ? alpha : 1.0);
 }

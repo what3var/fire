@@ -17,7 +17,7 @@ namespace fire.Editor
     internal static class AppInfo
     {
         /// <summary>The version as it is shown (the one of the installer, setup.iss).</summary>
-        public const string Version = "alpha-2610";
+        public const string Version = "alpha-2611";
 
         /// <summary>The copyright of fire (LICENSE).</summary>
         public const string Copyright = "Copyright (c) 2026 David Müller - MIT License";

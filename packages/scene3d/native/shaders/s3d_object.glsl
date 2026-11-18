@@ -7,7 +7,7 @@ layout(std140, row_major, set = 0, binding = 2) uniform ObjectU {
     vec4 tm0;        // a, b, tx, specular
     vec4 tm1;        // c, d, ty, shininess
     ivec4 flags;     // smooth, two sided, lit, receive shadows
-    ivec4 flags2;    // layers, texture, bump map, blended (1; 2: the draw of the opaque texels of a transparent object)
+    ivec4 flags2;    // layers, texture, bump map, blended (1; 2: the draw of the opaque texels of a transparent object; 3: a backdrop that is not a cut-out)
     vec4 bump;       // strength, 1/width, 1/height, filter (Texture.Filter)
     vec4 glow;       // the emission map: strength (0: none), filter; the reflectivity (Object.Reflectivity)
 } ob;

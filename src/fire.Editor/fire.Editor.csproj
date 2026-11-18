@@ -58,9 +58,11 @@
     <None Include="..\..\docs\**\*.md" Exclude="..\..\docs\ROADMAP*.md" Link="Help\Docs\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets\icons\*.png" />
     <AvaloniaResource Include="Assets\treeicons\*.png" />
+    <None Remove="Assets\ico fire 2.ico" />
     <None Remove="Assets\logo2_64.png" />
     <None Remove="Assets\splash.png" />
     <None Remove="fileicons.res" />
+    <AvaloniaResource Include="Assets\ico fire 2.ico" />
     <AvaloniaResource Include="Assets\Logo-64.png" />
     <!-- the license texts the About window shows (the ones of the repository linked in) -->
     <AvaloniaResource Include="Assets\Licenses\*.txt" />
@@ -85,8 +87,7 @@
     <PropertyGroup>
       <_ToolsPublishDir>$([System.IO.Path]::GetFullPath('$(PublishDir)'))</_ToolsPublishDir>
     </PropertyGroup>
-    <MSBuild Projects="..\fire.Compiler\fire.Compiler.csproj;..\fire.Ember\fire.Ember.csproj" Targets="Restore;Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishSingleFile=$(PublishSingleFile);PublishDir=$(_ToolsPublishDir);StandardSourcesPublish=false;PrebuildStandard=false" />
+    <MSBuild Projects="..\fire.Compiler\fire.Compiler.csproj;..\fire.Ember\fire.Ember.csproj" Targets="Restore;Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishSingleFile=$(PublishSingleFile);PublishDir=$(_ToolsPublishDir);StandardSourcesPublish=false;PrebuildStandard=false" />
   </Target>
 
 </Project>
