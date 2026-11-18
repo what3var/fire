@@ -16,8 +16,8 @@ namespace fire.Native
         public const long DownloadBytes = 1_000_000;
 
         /// <summary>The pinned SHA-256 of the official zips (lower case hex). Empty: not pinned yet - then <see cref="CanInstall"/> is false and nothing is downloaded unchecked.</summary>
-        public const string Sha256Win64 = "";
-        public const string Sha256Win32 = "";
+        public const string Sha256Win64 = "34a721949a2583fdff725312da092fa0f5f1f284b702e6f811c6954714faabb2";
+        public const string Sha256Win32 = "02e2bfe8c272a549b15e4bfa4507bd7e05304692af1761db6c1e8e88af675651";
 
         public static string Directory => Path.Combine(ToolchainSetup.Root, "tcc");
         public static string Compiler => Path.Combine(Directory, "tcc.exe");
