@@ -137,6 +137,7 @@ typedef struct S3dFxTarget {
     const uint32_t* pal; const uint8_t* inverse;
     const float* zdepth; float zA, zB, zC;      /* distance = zC / (z * zA + zB) */
     const uint16_t* qdepth; float qScale;      /* distance = qScale / q */
+    int noFog;                                 /* the renderer drew the fog itself (the full renderer, a picture with transparent objects: s3d_flushSoftware) */
 } S3dFxTarget;
 
 static void s3d_fxTargetFull(S3dFxTarget* t, uint8_t* rgba, int w, int h, const float* depth, float nearP, float farP) {
@@ -316,7 +317,7 @@ static void s3d_splatDraw(const S3dFxTarget* t, const S3dSplat* s, const S3dFx* 
 
 /* All effects on the rows of the target: fog on what was drawn (what no object covers is all fog), the particles, the tint. */
 static void s3d_fxApply(const S3dFxTarget* t, S3dFx* fx) {
-    int x, y, fog = fx->fogEnd > fx->fogStart && (t->zdepth || t->qdepth);
+    int x, y, fog = fx->fogEnd > fx->fogStart && (t->zdepth || t->qdepth) && !t->noFog;
     s3d_size i;
     float c[3], fc[3], tc[3];
     fc[0] = (float)(fx->fogColor & 255); fc[1] = (float)((fx->fogColor >> 8) & 255); fc[2] = (float)((fx->fogColor >> 16) & 255);

@@ -1,0 +1,4 @@
+fog True True True True
+fog two sided True True True
+atlas True
+atlas gpu True True

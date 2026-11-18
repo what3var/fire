@@ -1683,6 +1683,7 @@ static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value widt
         if (g_s3dFxOf && g_s3dFxOf(s, &cam, (int)width.i, (int)height.i, &fx)) {
             S3dFxTarget t;
             s3d_fxTargetFull(&t, b->data, (int)width.i, (int)height.i, f->lastBackend == S3D_BACKEND_SOFTWARE ? f->depth : NULL, cam.nearPlane, cam.farPlane);
+            t.noFog = f->fogDone;
             g_s3dFxApply(&t, &fx);
         }
         if (fx.splats) S3D_FREE((void*)fx.splats);
