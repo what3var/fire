@@ -47,6 +47,58 @@ window, and in every cycle it distributes the events, paints what changed and ca
 | `while (ui.Tick()) { }` | | one cycle of this root and the attached ones, in a loop of your own |
 | `ui.onTick` | override `OnTick()` | runs once per cycle |
 
+## A root without a window: the interface as a layer
+
+A game draws its own picture (a `scene3d` image, a framebuffer of its own) in its own loop, and puts a menu or a HUD over it. For that the root gets
+only a framebuffer - `new UI.Root(framebuffer)` - and touches no window: it does not take its events (`EnableEvents`), hooks into no cycle
+(`onCycle`), resizes nothing (`AutoResize`), leaves `TouchMouse` and the cursor of the window alone and hands no area to the window
+(`PresentArea`). The program does that part:
+
+```fire
+#import "ui"
+
+var screen = new Framebuffer(1280, 720)
+var win = new Window(screen, "Game")
+win.EnableEvents()
+var layer = new Framebuffer(1280, 720)                 // the menu draws here, see-through
+var menu = new UI.Root(layer, systemScale: false)
+menu.WindowBackground = new SolidBrush(UI.Color.Transparent())
+menu.FocusFollowsPointer = true                         // hover and focus are one row
+menu.OnCursor = func (int cursor) => { win.Cursor = cursor }
+var volume = new UI.Slider(0.0, 100.0, 80.0, 40, 40, 300, -1)
+volume.Step = 5.0
+menu.Add(volume)
+var screenRenderer = new Renderer(screen)
+screenRenderer.AlphaBlending = true
+while (win.Tick()) {
+    any e = win.NextEvent()
+    while (e != undefined) {
+        menu.Dispatch(e)                                // (or keep it for the game when the menu is closed)
+        e = win.NextEvent()
+    }
+    menu.Tick()                                         // draws what changed into `layer`
+    // ... draw the scene into `screen` ...
+    screenRenderer.Blit(layer, 0, 0, BlitMode.Blend!int)
+}
+```
+
+| Member | Without a window |
+| --- | --- |
+| `Dispatch(e)` | hands over one event - an array as `Window.NextEvent` gives it (mouse, wheel, keys, text, touch, joystick, drops, `Close`), positions in pixels of the framebuffer; counts in `Events` |
+| `Update()` | arranges and draws what changed into the framebuffer; true when it drew |
+| `Tick()` | the whole cycle of the interface: the repeats of joystick keys, tooltips, `Update`, `onTick`; false once a `Close` event was handed over |
+| `OnCursor` | `func (int cursor)`: the shape of the pointer the interface wants (a `UI.Cursor`), when it changes - with a window too it replaces setting `window.Cursor` |
+| `window` | undefined |
+
+`Run` and `Show` do nothing without a window; `Attach` only lets `Tick` take the other root along. A root with a window - `new UI.Root(fb, window)` -
+works as before.
+
+**Scale without resizing.** `menu.SetScale(2.0, resize: false)` draws at twice the size and keeps the framebuffer as it is: the logical size becomes
+the framebuffer's divided by the scale (1920 x 1080 at 2.0 is an interface of 960 x 540, `onResize` hears it), the positions of `Dispatch` are divided
+too. `SetScale(s)` (`resize` true) is what `Scaling = s` does with a window: the framebuffer and the window grow to the logical size times the scale.
+Without a window `Scaling = s` keeps the framebuffer as well. `new UI.Root(fb, systemScale: false)` (also `new UI.Root(fb, window, false)`) starts at
+1.0 instead of the scaling of the system - dark mode, accent and font still come from it.
+
 ## Several windows
 
 Each window is a root with a framebuffer and a `Window` of its own. `ui.Attach(other)` hangs another root onto this one: `Run`, `Show` and `Tick` serve
@@ -108,6 +160,9 @@ ui.Accent = 0x8854D0    // the accent colour as 0xRRGGBB
 ui.Add(new UI.Button("OK", 16, 16))
 ui.Run()
 ```
+
+`new UI.Root(fb, win, systemScale: false)` does not take the scaling of the system in the first place (a game that scales its interface itself,
+see [SetScale](#a-root-without-a-window-the-interface-as-a-layer)).
 
 With every accent - the system's or `Accent` - the root also chooses the colour of **text on the accent** (selected rows of lists, trees and combo boxes,
 the highlighted menu item, selected text, the caption of the active pane): white, or black on a light accent, whichever has the higher contrast ratio

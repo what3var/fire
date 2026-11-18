@@ -1,0 +1,48 @@
+#import "ui"
+// UI.Slider (keys, the mouse, the grid of Step, the number it shows) and UI.Stepper (Left/Right through the choices, the arrows, Wrap) in a menu
+var fb = new Framebuffer(300, 120)
+var ui = new UI.Root(fb, systemScale: false)
+var stack = new UI.StackPanel(0, 0, 300, 120)
+var s = new UI.Slider(0.0, 100.0, 50.0)
+s.Width = 216
+s.Step = 5.0
+var changes = 0
+s.OnChange = func () => { changes = changes + 1 }
+var q = new UI.Stepper(0, 0, 160, 28)
+q.Add("Low")
+q.Add("Medium")
+q.Add("High")
+q.OnChange = func () => { print("-> " + q.Text) }
+stack.Add(s)
+stack.Add(q)
+ui.Add(stack)
+ui.Update()
+ui.SetFocus(s)
+ui.Dispatch([24, UI.Keys.Right(), 79, 0, false])
+ui.Dispatch([24, UI.Keys.Left(), 80, 0, false])
+ui.Dispatch([24, UI.Keys.Left(), 80, 0, false])
+print("Pfeile " + s.Value)
+ui.Dispatch([24, UI.Keys.PageUp(), 0, 0, false])
+ui.Dispatch([24, UI.Keys.End(), 0, 0, false])
+ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+print("Ende " + s.Value + " Aenderungen " + changes)
+s.SetValue(42.0)
+print("Raster " + s.Value)
+// the track runs from x 8 to 208 (the radius of the thumb is 7)
+ui.Dispatch([8, 1, 108, 8])
+ui.Dispatch([9, 158, 40])
+print("gezogen " + s.Value)
+ui.Dispatch([11, 1, 158, 40])
+var f = new UI.Slider(0.0, 1.0, 0.25)
+f.Step = 0.05
+print("Text " + f.ValueText(f.Value) + " " + f.ValueText(1.0) + " " + s.ValueText(35.0))
+ui.Dispatch([24, UI.Keys.Down(), 0, 0, false])
+print("Fokus Stepper " + q.Focused + " " + q.Text)
+ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+ui.Dispatch([24, UI.Keys.Left(), 0, 0, false])
+q.Wrap = false
+ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+print("ohne Wrap " + q.Text + " " + q.CanStep(1) + " " + q.CanStep(-1))
+//# name: UI: Slider und Stepper - Pfeiltasten, Bild auf/ab, Ende, Raster, Maus ziehen, Text des Werts, Links/Rechts durch die Wahl, Wrap
