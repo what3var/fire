@@ -132,24 +132,31 @@ namespace fire.Editor
                 var native = AssistantWantsVm ? default : await Task.Run(() => AssistantNative.Look(script, AppContext.BaseDirectory, folder));
                 if (!_settings.Assistant || _assistant is { HasExited: false }) return;   // (switched off meanwhile)
                 if (native.Binary != null && LaunchAssistant(native.Binary, Array.Empty<string>(), true)) return;
+                // the native build is due: build it now and start the assistant natively when it is done (the VM is far too slow for it) - with TinyCC
+                // as the Build toolchain that takes seconds; only when no native build is possible does it run in the VM
+                if (!AssistantWantsVm && native.Error == null && !native.FailedBefore && native.Toolchain && native.Key != null)
+                {
+                    BuildAssistantNatively(forge, script, folder, native.Key, startAfter: true);
+                    return;
+                }
                 if (!LaunchAssistant(forge, new[] { "run", script }, false) || AssistantWantsVm) return;
                 if (native.Error != null) _output.Append($"The assistant runs in the virtual machine: its native build could not be checked ({native.Error}).{Environment.NewLine}");
                 else if (native.FailedBefore) _output.Append($"The assistant runs in the virtual machine: its native build failed before - it is tried again when spark or its packages change ({folder}).{Environment.NewLine}");
                 else if (!native.Toolchain) _output.Append($"The assistant runs in the virtual machine: there is no C toolchain for its native build (Tools > Toolchain Settings, or Help > Setup Wizard).{Environment.NewLine}");
-                else if (native.Key != null) BuildAssistantNatively(forge, script, folder, native.Key);
             }
             finally { _assistantStarting = false; }
         }
 
-        /// <summary>Builds the assistant natively in the background, once (a C compiler at work for some minutes, at a low priority); it runs natively from its next start.</summary>
-        private void BuildAssistantNatively(string forge, string script, string folder, string key)
+        /// <summary>Builds the assistant natively in the background (once per version of spark and its packages); with <paramref name="startAfter"/> it is
+        /// started natively as soon as the build is done - and in the VM only when the build failed.</summary>
+        private void BuildAssistantNatively(string forge, string script, string folder, string key, bool startAfter = false)
         {
             if (_assistantBuildCancel != null) return;
             var cancel = new CancellationTokenSource();
             _assistantBuildCancel = cancel;
             Task.Run(() =>
             {
-                using var work = fire.Native.BackgroundWork.Begin("Building the assistant as a native program (once)");
+                using var work = fire.Native.BackgroundWork.Begin("Building the assistant as a native program - it starts when the build is done");
                 return AssistantNative.Build(forge, script, folder, key, p => _assistantBuild = p, null, cancel.Token);
             }).ContinueWith(t => Dispatcher.UIThread.Post(() =>
             {
@@ -158,15 +165,19 @@ namespace fire.Editor
                 cancel.Dispose();
                 var result = t.IsCompletedSuccessfully ? t.Result : new AssistantNative.BuildResult(null, t.Exception?.GetBaseException().Message ?? "");
                 if (result.Cancelled) return;
+                bool wanted = startAfter && _settings.Assistant && _assistant is not { HasExited: false };
                 if (result.Binary != null)
                 {
-                    _output.Append($"The assistant was built as a native program ({result.Binary}): it runs natively from its next start.{Environment.NewLine}");
-                    UpdateStatus("The assistant is built as a native program - it runs natively from its next start.");
+                    _output.Append($"The assistant was built as a native program ({result.Binary}).{Environment.NewLine}");
+                    if (wanted && LaunchAssistant(result.Binary, Array.Empty<string>(), true)) UpdateStatus("The assistant is built as a native program and started.");
+                    else if (wanted) LaunchAssistant(forge, new[] { "run", script }, false);
+                    else UpdateStatus("The assistant is built as a native program - it runs natively from its next start.");
                 }
                 else
                 {
-                    _output.Append($"The assistant could not be built as a native program - it stays in the virtual machine:{Environment.NewLine}{result.Output}{Environment.NewLine}");
-                    UpdateStatus("The assistant could not be built natively - it stays in the virtual machine (see the Output).");
+                    _output.Append($"The assistant could not be built as a native program - it runs in the virtual machine:{Environment.NewLine}{result.Output}{Environment.NewLine}");
+                    UpdateStatus("The assistant could not be built natively - it runs in the virtual machine (see the Output).");
+                    if (wanted) LaunchAssistant(forge, new[] { "run", script }, false);
                 }
             }));
         }
