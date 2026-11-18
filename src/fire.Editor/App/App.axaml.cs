@@ -52,8 +52,9 @@ namespace fire.Editor
             // then the device drivers of the installed packages start (their devices join the device manager)
             Task.Run(() =>
             {
-                try { fire.Compiler.StandardSources.EnsureInstalled(); } catch (Exception) { }
-                main.OnStandardPackagesReady();
+                bool changed = false;
+                try { changed = fire.Compiler.StandardSources.EnsureInstalled().Count > 0; } catch (Exception) { }
+                main.OnStandardPackagesReady(changed);
             });
 
             if (splash == null) { SplashDone.TrySetResult(); return; }

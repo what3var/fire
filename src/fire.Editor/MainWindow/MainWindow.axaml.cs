@@ -1110,9 +1110,19 @@ namespace fire.Editor
         }
 
         /// <summary>The standard packages are installed (App, in the background): the device drivers of the packages start.</summary>
-        public void OnStandardPackagesReady()
+        /// <param name="changed">Packages were installed (the standard packages changed): the checks that ran meanwhile saw a store that was being filled - wrong errors (an
+        /// import that is not there yet) in every file of the solution, which stayed in the error list until something else checked the files again. They are checked again now.</param>
+        public void OnStandardPackagesReady(bool changed = false)
         {
             Setup.SetupSteps.StartupInstalled.Set();   // (the package step of the setup wizard waits for it)
+            if (changed)
+                Dispatcher.UIThread.Post(() =>
+                {
+                    LiveDiagnostics.Invalidate();
+                    ScriptSymbolIndex.ForgetImports();
+                    foreach (var doc in _documents) doc.Script?.Revalidate();
+                    ScheduleAllProjectChecks(TimeSpan.FromSeconds(1));
+                });
             _ = _devices.StartPackageDriversAsync().ContinueWith(_ => Dispatcher.UIThread.Post(() =>
             {
                 if (_devices.PackageDriverStatus.Length > 0) UpdateStatus(_devices.PackageDriverStatus);
