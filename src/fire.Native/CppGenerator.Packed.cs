@@ -21,8 +21,8 @@ namespace fire.Native
         /// that has the field declares it alike (DeclaredRawType). Only the declarations count - not what the code does with the field (its address: a K_PtrField).</summary>
         private int RawType(string name)
         {
-            if (!PackedOn || HasProperty(name)) return 0;
             if (_rawType.TryGetValue(name, out int known)) return known;
+            if (!PackedOn || HasProperty(name)) { _rawType[name] = 0; return 0; }
             int? result = null;
             foreach (var rc in _program.Program.Classes.Values)
             {

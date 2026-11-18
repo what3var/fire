@@ -363,6 +363,14 @@ namespace fire.Native
             }
             var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _strip = EffectiveStripping(program, stripping), _collectStats = stats };
             string c = generator.Run();
+            if (BuildTimes.Enabled)
+            {
+                BuildTimes.Lap("C generator: the rest");
+                int lines = 0;
+                foreach (char ch in c) if (ch == '\n') lines++;
+                BuildTimes.Note($"C: {lines} lines, {c.Length / 1024} KB, {generator._funcs.Count} functions{(generator._nativesCode != null ? $", natives in C++ {generator._nativesCode.Length / 1024} KB" : "")}");
+                BuildTimes.Lap("(counting)");
+            }
             return new NativeSources(c, generator._nativesCode) { Funcs = stats ? generator.FuncStats() : null };
         }
 
@@ -898,6 +906,17 @@ namespace fire.Native
         /// <summary>The place of each field of `rc` (by its index): the slot, and the half of a narrow one (-1: a whole Value); and the number of slots. The fields
         /// of a base class come first and are laid out the same (a half a base leaves free is taken by the next narrow field of a derived class).</summary>
         private (int[] Slot, int[] Half, int Count) LayoutOf(RuntimeClass rc)
+        {
+            // (what a layout depends on that generating the code can still change - a field whose address is taken, threads - is part of the key of the cache)
+            var stamp = (_fieldAddressTaken.Count, _usesThreads);
+            if (_layouts.TryGetValue(rc, out var cached) && cached.Stamp == stamp && cached.Names == rc.FlattenedFieldNames.Count) return cached.Layout;
+            var layout = LayoutOfCore(rc);
+            _layouts[rc] = (stamp, rc.FlattenedFieldNames.Count, layout);
+            return layout;
+        }
+        private readonly Dictionary<RuntimeClass, ((int, bool) Stamp, int Names, (int[] Slot, int[] Half, int Count) Layout)> _layouts = new();
+
+        private (int[] Slot, int[] Half, int Count) LayoutOfCore(RuntimeClass rc)
         {
             var names = rc.FlattenedFieldNames;
             var slot = new int[names.Count];
@@ -1896,6 +1915,7 @@ namespace fire.Native
 
         private string Run()
         {
+            BuildTimes.Lap("fire: linking the program (after the bytecode)");
             CollectPackages();
             var main = _main = new Func { Proto = null, Chunk = _program.Program.TopLevel, Kind = FuncKind.Main };
             if (DebugBuild) UseExceptions();   // (a debug build: every run-time error is an exception the debugger can stop at)
@@ -1932,6 +1952,7 @@ namespace fire.Native
                     foreach (var (symbol, _) in Unit.BuiltInSymbols) UnitId(Unit.Parse(symbol));
                     foreach (var own in _program.Program.CustomUnits) UnitId(Unit.OfCustom(own));
                 }
+                BuildTimes.Lap($"C generator: round {round + 1} ({_funcs.Count} functions)");
                 if (_version == before) break;
                 if (round > 40) throw new NativeNotSupportedException("code generation does not settle");
             }
@@ -2314,7 +2335,8 @@ namespace fire.Native
                 sb.AppendLine("}");
             }
             string programText = sb.ToString();
-            if (PointerCallsOn) programText = PointerCallsPass(programText);
+            BuildTimes.Lap("C generator: putting the file together");
+            if (PointerCallsOn) { programText = PointerCallsPass(programText); BuildTimes.Lap("C generator: pointer calls pass"); }
             // (a program that loads plugins: the classes from its first own id up to this are its own - a plugin's come after them)
             if (_openWorld) programText = InsertAfterRuntime(programText, $"#define FIRE_PROG_END {_nextClassId}u   // the end of the program's class ids (the classes of plugins come after)\n");
             return ResolveLineResets(programText);
@@ -3089,8 +3111,20 @@ namespace fire.Native
 
         /// <summary>Does some class of the program declare a property of this name (`get_name`/`set_name`)? Then reading and writing it takes the scope list
         /// of the caller (the getter's result belongs to it).</summary>
-        private bool HasProperty(string name) =>
-            _program.Program.Classes.Values.Any(rc => rc.Methods.ContainsKey("get_" + name) || rc.Methods.ContainsKey("set_" + name));
+        private bool HasProperty(string name)
+        {
+            // (the classes of the program do not change while it is generated: the names of all properties once)
+            if (_propertyNames == null)
+            {
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var rc in _program.Program.Classes.Values)
+                    foreach (var method in rc.Methods.Keys)
+                        if (method.StartsWith("get_", StringComparison.Ordinal) || method.StartsWith("set_", StringComparison.Ordinal)) names.Add(method.Substring(4));
+                _propertyNames = names;
+            }
+            return _propertyNames.Contains(name);
+        }
+        private HashSet<string>? _propertyNames;
 
         /// <summary>Access to `name` where some class has a property of that name (SPEC 8.8): a real field of the class wins, otherwise the getter/setter
         /// is called - decided per class, like the VM does by name at run time.</summary>

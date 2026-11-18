@@ -360,6 +360,7 @@ namespace fire.Compiler
         /// <param name="intWidthOverride">32 or 64: the width of `int` for this build (command line); overrides `#intwidth`, the project and the target.</param>
         public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null, int? floatWidthOverride = null, TargetProfile? target = null, int? intWidthOverride = null)
         {
+            fire.Native.BuildTimes.Begin();
             int? directiveFloatWidth = null;
             int? directiveIntWidth = null;
             var assemblyInfo = new AssemblyInfo();
@@ -560,6 +561,7 @@ namespace fire.Compiler
             // directly on itself (see Ast.TypeRef.Namespaces), set by the
             // parser when parsing each individual ProcessedSource.
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, $"Compiling fire: parsing {processedSources.Count} sources", 0, 4);
+            fire.Native.BuildTimes.Lap($"fire: preprocessing, imports, preludes ({processedSources.Count} sources, {processedSources.Sum(p => (long)p.Source.Length) / 1024} KB)");
             var program = Parser.ParseMultiple(processedSources);
             int driverSources = 0;
             if (TestDriver != null)
@@ -573,7 +575,9 @@ namespace fire.Compiler
             }
             if (Plan != null && Plan.Type == fire.Projects.OutputType.Library) CheckLibraryHasNoEntryPoint(program, firstUserSource);
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: resolving names", 1, 4);
+            fire.Native.BuildTimes.Lap("fire: parsing");
             var resolveResult = Resolver.Resolve(program, natives.Names);
+            fire.Native.BuildTimes.Lap("fire: resolving names");
             string? memberLogFile = Environment.GetEnvironmentVariable("FIRE_MEMBER_LOG");
             if (memberLogFile != null)
             {
@@ -627,7 +631,9 @@ namespace fire.Compiler
             try { TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource, TypeCheckLibraries ? 0 : firstUserSource); }
             finally { TypeChecker.DeriveDefinedOverride = deriveBefore; }
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
+            fire.Native.BuildTimes.Lap("fire: checking types");
             var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);
+            fire.Native.BuildTimes.Lap("fire: bytecode");
             // the classes of a package with `"serializable": false` (docs/stdlib/json.md)
             var notSerializable = new HashSet<int>(Enumerable.Range(0, processedSources.Count).Where(i => processedSources[i].NotSerializable));
             if (notSerializable.Count > 0)
