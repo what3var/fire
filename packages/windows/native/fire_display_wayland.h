@@ -10,6 +10,8 @@
  * (FIRE_WAYLAND_CSD=0 leaves it out: tests). A window with that title bar is not given to a presenter (fire_display_native: a GPU drawing into the surface would
  * leave it out) - it shows the pixels
  * (move, resize at the edges, minimize, maximize, close; the title with the built-in font of the graphics bridge when the program has it).
+ * Full screen (Window.Fullscreen): xdg_toplevel.set_fullscreen on the output the compositor chooses; the size comes with its configure, fire's own title bar is
+ * away meanwhile.
  * Input: keys (the scan code from the evdev code, the key code and the text from the keymap of the compositor through libxkbcommon, dead keys with its compose
  * tables, repeat at the rate the compositor names), text through the input method of the compositor (text-input-v3: compositions as FIRE_EV_TEXT_EDITING), the
  * mouse and the wheel, fingers, what other programs drop (wl_data_device: files as text/uri-list, text as UTF-8), the cursors of the compositor (cursor-shape)
@@ -262,6 +264,8 @@ typedef struct FireDwlWindow {
     int pendingW, pendingH;  /* the size of the last configure (0: the window decides) */
     int serverDecorations, csd;   /* the compositor draws the frame / the window draws its title bar */
     int frameless;                /* Window.Frameless: neither (the compositor is asked for client side decorations, and the window draws none) */
+    int fullscreen, pendingFull;  /* Window.Fullscreen: the state of the last configure acknowledged, and of the one coming (fire's own title bar is away meanwhile) */
+    int fsW, fsH;                 /* the size before full screen (a compositor may leave the size of the window to it afterwards: configure 0 x 0) */
     int winW, winH;          /* the framebuffer's part of the window (logical pixels) */
     int vsync, touchMouse, cursor, direct, backdrop;
     char* title;
@@ -315,7 +319,9 @@ static void fire_dwl_init(FireDwlWindow* w) {
 }
 
 static double fire_dwl_scaleOf(const FireDwlWindow* w) { return w->fracScale120 > 0 ? w->fracScale120 / 120.0 : (double)w->intScale; }
-static int fire_dwl_titleH(const FireDwlWindow* w) { return w->csd ? FIRE_DWL_TITLE : 0; }
+/* (fire's own title bar: drawn when the compositor draws no frame - not in full screen) */
+static int fire_dwl_bar(const FireDwlWindow* w) { return w->csd && !w->fullscreen; }
+static int fire_dwl_titleH(const FireDwlWindow* w) { return fire_dwl_bar(w) ? FIRE_DWL_TITLE : 0; }
 
 /* ---- the registry ---- */
 static void fire_dwl_outputGeometry(void* data, void* o, int32_t x, int32_t y, int32_t pw, int32_t ph, int32_t sub, const char* make, const char* model, int32_t tr) {
@@ -405,6 +411,16 @@ static const struct { void (*preferred)(void*, void*, uint32_t); } fire_dwlFracL
 static void fire_dwl_xdgConfigure(void* data, void* xs, uint32_t serial) {
     FireDwlWindow* w = (FireDwlWindow*)data;
     FIRE_WL_REQ(w->l, xs, 4, serial);   /* ack_configure */
+    if (w->pendingFull != w->fullscreen) {
+        if (w->pendingFull) { w->fsW = w->winW; w->fsH = w->winH; }
+        w->fullscreen = w->pendingFull;
+        w->damageAll = 1;
+        /* (out of full screen with a size of the window's choice: the one from before) */
+        if (!w->fullscreen && (w->pendingW <= 0 || w->pendingH <= 0) && w->fsW > 0 && w->fsH > 0 && (w->fsW != w->winW || w->fsH != w->winH)) {
+            w->winW = w->fsW; w->winH = w->fsH;
+            if (w->configured) fire_display_queueResize(&w->queue, w->winW, w->winH);
+        }
+    }
     if (w->pendingW > 0 && w->pendingH > 0) {
         int h = w->pendingH - fire_dwl_titleH(w);
         if (h < 1) h = 1;
@@ -421,11 +437,12 @@ static void fire_dwl_toplevelConfigure(void* data, void* t, int32_t width, int32
     size_t i;
     (void)t;
     w->pendingW = width; w->pendingH = height;
-    w->maximized = 0; w->activated = 0;
+    w->maximized = 0; w->activated = 0; w->pendingFull = 0;
     for (i = 0; states != NULL && i + 4 <= states->size; i += 4) {
         uint32_t s;
         memcpy(&s, (char*)states->data + i, 4);
         if (s == 1) w->maximized = 1;
+        if (s == 2) w->pendingFull = 1;
         if (s == 4) w->activated = 1;
     }
 }
@@ -479,7 +496,7 @@ enum { FIRE_DWL_HIT_NONE = 0, FIRE_DWL_HIT_TITLE = 1, FIRE_DWL_HIT_CLOSE = 2, FI
 static int fire_dwl_hit(const FireDwlWindow* w, float x, float y, uint32_t* edges) {
     int T = fire_dwl_titleH(w), W = w->winW, H = w->winH + T, e = 0;
     *edges = 0;
-    if (!w->csd) return FIRE_DWL_HIT_NONE;
+    if (!fire_dwl_bar(w)) return FIRE_DWL_HIT_NONE;
     if (!w->maximized) {
         if (x < 4) e |= 4; else if (x >= W - 4) e |= 8;
         if (y < 4) e |= 1; else if (y >= H - 4) e |= 2;
@@ -1342,7 +1359,10 @@ static void fire_dwl_close(FireDwlWindow* w) {
 static void fire_dwl_setVSync(FireDwlWindow* w, int v) { w->vsync = v; }
 static void fire_dwl_setTouchMouse(FireDwlWindow* w, int v) { w->touchMouse = v; }
 /* (Wayland: a client cannot size its window from outside - the next frame has the new size, as the compositor sees it) */
-static void fire_dwl_setSize(FireDwlWindow* w, int width, int height) { w->winW = width; w->winH = height; }
+static void fire_dwl_setSize(FireDwlWindow* w, int width, int height) {
+    if (w->fullscreen) { w->fsW = width; w->fsH = height; return; }   /* (in full screen: the size after it) */
+    w->winW = width; w->winH = height;
+}
 static void fire_dwl_setCursor(FireDwlWindow* w, int c) {
     if (c == w->cursor) return;
     w->cursor = c;
@@ -1404,6 +1424,18 @@ static int fire_dwl_setStyle(FireDwlWindow* w, int flags) {
     pthread_mutex_unlock(&w->lock);
     return frameless ? FIRE_STYLE_FRAMELESS : 0;
 }
+/* Window.Fullscreen: xdg_toplevel.set_fullscreen (on the output the compositor chooses - the one the window is on) / unset_fullscreen. The compositor answers with a
+ * configure: its size (the output's), the state, and afterwards the size from before (or 0 x 0: the window keeps the one it had before). */
+static int fire_dwl_setFullscreen(FireDwlWindow* w, int on) {
+    if (w->d == NULL || w->toplevel == NULL) return 0;
+    pthread_mutex_lock(&w->lock);
+    if (on) FIRE_WL_REQ(w->l, w->toplevel, 11, (void*)NULL);   /* set_fullscreen(output: none) */
+    else FIRE_WL_REQ0(w->l, w->toplevel, 12);                   /* unset_fullscreen */
+    w->l->flush(w->d);
+    pthread_mutex_unlock(&w->lock);
+    return w->fullscreen;
+}
+static int fire_dwl_fullscreen(FireDwlWindow* w) { return w->fullscreen; }
 static void fire_dwl_move(FireDwlWindow* w, int x, int y) { (void)w; (void)x; (void)y; }
 /* xdg_toplevel.move with the serial of the press: the compositor moves the window with the held button. */
 static int fire_dwl_beginMove(FireDwlWindow* w) {
@@ -1449,10 +1481,10 @@ static int fire_dwl_workArea(FireDwlWindow* w, int* r) { (void)w; (void)r; retur
 static void fire_dwl_draw(FireDwlWindow* w);
 
 static int fire_dwl_pump(FireDwlWindow* w, FireDisplayEvents* out, int fbWidth, int fbHeight) {
-    int wasMax, wasAct;
+    int wasMax, wasAct, wasFull;
     if (w->d == NULL) return 0;
     pthread_mutex_lock(&w->lock);
-    wasMax = w->maximized; wasAct = w->activated;
+    wasMax = w->maximized; wasAct = w->activated; wasFull = w->fullscreen;
     fire_dwl_dispatch(w, 0);
     /* the repeat of a held key */
     if (w->repeating && w->hasFocus && w->repeatRate > 0) {
@@ -1462,7 +1494,7 @@ static int fire_dwl_pump(FireDwlWindow* w, FireDisplayEvents* out, int fbWidth, 
         if (now >= w->repeatNext) w->repeatNext = now + 1.0 / w->repeatRate;
     }
     fire_dragout_wlPump(w->d);
-    if (w->csd && (wasMax != w->maximized || wasAct != w->activated) && w->lastFrame != NULL && !w->direct) fire_dwl_draw(w);
+    if (w->csd && (wasMax != w->maximized || wasAct != w->activated || wasFull != w->fullscreen) && w->lastFrame != NULL && !w->direct) fire_dwl_draw(w);
     if (w->closed) fire_display_queueSimple(&w->queue, FIRE_EV_CLOSE);
     fire_display_queueTake(&w->queue, out, w->winW, w->winH, fbWidth, fbHeight);
     pthread_mutex_unlock(&w->lock);

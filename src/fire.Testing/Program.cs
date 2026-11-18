@@ -15265,6 +15265,42 @@ else
                     ("Fenster: die Zwischenablage von X11 (Xvfb): was ein anderes Programm vor dem Start kopiert hat, ist gleich bei der ersten Frage da", lateReaderScript,
                         lateExpected, "", "x11-late", lateWriterScript),
                 };
+                // ---- Window.Fullscreen: the window goes over the whole screen and back - the sizes come as resize events (AutoResize: the framebuffer follows);
+                //      headless: the screen of FIRE_DISPLAY_SCREEN (1920 x 1080), X11 without a window manager (Xvfb, 1280 x 1024 of xvfb-run): an override-redirect
+                //      window, Wayland: xdg_toplevel.set_fullscreen on weston's headless output (1024 x 640; fire's own title bar is away meanwhile)
+                const string fullscreenScript = """
+                #import "windows"
+                #import "time"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "fullscreen")
+                win.VSync = false
+                win.AutoResize = true
+                print(win.Fullscreen + " " + win.IsFullscreen)
+                print(win.Tick())
+                print("before " + fb.Width() + "x" + fb.Height() + " " + win.Fullscreen + " " + win.IsFullscreen)
+                win.Fullscreen = true
+                print("asked " + win.Fullscreen)
+                var n = 0
+                while ((!win.IsFullscreen || fb.Width() == 64) && n < 500) { win.Tick(); Sleep(10ms); n = n + 1 }
+                print("during " + fb.Width() + "x" + fb.Height() + " " + win.Fullscreen + " " + win.IsFullscreen)
+                win.Fullscreen = false
+                n = 0
+                while ((win.IsFullscreen || fb.Width() != 64 || fb.Height() != 48) && n < 500) { win.Tick(); Sleep(10ms); n = n + 1 }
+                print("after " + fb.Width() + "x" + fb.Height() + " " + win.Fullscreen + " " + win.IsFullscreen)
+                print(win.Tick())
+                """;
+                string[] FullscreenExpected(string screen) => new[] { "False False", "True", "before 64x48 False False", "asked True", $"during {screen} True True", "after 64x48 False False", "True" };
+                var fullscreenCases = new (string Title, string Script, string[] Expected, string Define, string Display, string? Second)[]
+                {
+                    ("Fenster: Fullscreen ohne Bildschirm (headless) - die Groesse des Bildschirms als Resize, danach die alte Groesse", fullscreenScript, FullscreenExpected("1920x1080"), "", "dummy", null),
+                    ("Fenster: Fullscreen auf X11 ohne Fenstermanager (Xvfb) - ein override-redirect-Fenster ueber den Bildschirm und zurueck", fullscreenScript, FullscreenExpected("1280x1024"), "", "x11", null),
+                    ("Fenster: Fullscreen auf Wayland (weston) - xdg_toplevel.set_fullscreen, die Groesse aus configure, ohne eigene Titelleiste, danach die alte Groesse", fullscreenScript, FullscreenExpected("1024x640"), "", "wayland", null),
+                };
+                foreach (var fc in fullscreenCases)
+                {
+                    if (!TestSelected(fc.Title)) continue;
+                    windowSteps.Add(() => PrepareWindowCase(fc.Title, fc.Script, fc.Expected, fc.Define, fc.Display, fc.Second));
+                }
                 foreach (var cc in clipboardCases)
                 {
                     if (!TestSelected(cc.Title)) continue;
