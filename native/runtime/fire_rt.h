@@ -10179,6 +10179,9 @@ FIRE_FN bool homeHelp(void) {
     if (!fire_atomic_load(&g_schedOn)) return false;
     homeInit();
     fire_mutex_lock(&g_sched.m);
+    /* (the sleepers whose time has come first: a member of the group that sleeps is woken only here or at the UI loop's switch point - fire_groupRun -
+     * not by a worker of the pool, of which there may be none; the end of the program waits for it here) */
+    schedWakeDueLocked(fire_plat_nowMs());
     t = groupPopLocked();   /* (the group first: its members run nowhere else) */
     /* (another task only when it waits for a worker: none is idle and the pool cannot grow - else a worker of the pool takes it, and the main program
      * keeps its thread: a task that computes there would hold it until its next safe point) */
