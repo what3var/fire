@@ -167,7 +167,7 @@ namespace fire.Editor
             };
         }
 
-        /// <summary>What the error list shows: the last build, else the live analysis of the active script.</summary>
+        /// <summary>What the error list shows: the live analysis of the open scripts and of the projects, and of the last build what neither covers.</summary>
         private IReadOnlyList<ErrorListItem> CurrentErrors()
         {
             UpdateErrorPanel();

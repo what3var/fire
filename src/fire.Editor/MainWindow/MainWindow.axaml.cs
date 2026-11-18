@@ -188,6 +188,7 @@ namespace fire.Editor
         {
             InitializeComponent();
             EditorTiming.StartWatchdog();
+            fire.Package.Manager.PackageStore.RecheckInterval = TimeSpan.FromSeconds(1);   // (the analyses ask the store for every #import: the package folders are looked at once a second)
             Opened += (_, _) =>
             {
                 UpdateRunButtons();   // (Stop is grey while nothing runs)
@@ -720,16 +721,20 @@ namespace fire.Editor
         {
             using var timing = EditorTiming.Measure("error list");
             var items = new List<ErrorListItem>();
-            var covered = new HashSet<string>(ProjectFiles.PathComparer);
             var active = ActiveDocument;
-            int live = 0;
-            foreach (var doc in _documents.Where(d => d.Script != null).OrderBy(d => ReferenceEquals(d, active) ? 0 : 1))
+            var scripts = _documents.Where(d => d.Script != null).OrderBy(d => ReferenceEquals(d, active) ? 0 : 1).ToList();
+            var covered = new HashSet<string>(scripts.Select(FullPathOf).OfType<string>(), ProjectFiles.PathComparer);
+            // (the same error of a library file can come from the checks of several documents that import it: once in the list; an open file reports its own errors)
+            var listed = new HashSet<(string?, int, string, string)>();
+            foreach (var doc in scripts)
             {
                 string? path = FullPathOf(doc);
-                if (path != null) covered.Add(path);
-                var diagnostics = doc.Script!.Diagnostics;
-                if (diagnostics.Count > 0) live++;
-                foreach (var d in diagnostics) items.Add(ToItem(d, doc.DisplayName, path));
+                foreach (var d in doc.Script!.Diagnostics)
+                {
+                    if (d.File != null && Path.IsPathRooted(d.File) && covered.Contains(d.File) && !(path != null && ProjectFiles.PathComparer.Equals(d.File, path))) continue;
+                    var item = ToItem(d, doc.DisplayName, path);
+                    if (listed.Add((item.Path ?? item.File, item.Line, item.Code, item.Description))) items.Add(item);
+                }
             }
             var checkedFiles = new HashSet<string>(ProjectFiles.PathComparer);
             foreach (var (files, found) in _projectErrors.Values)
@@ -761,7 +766,8 @@ namespace fire.Editor
         }
 
         private static ErrorListItem ToItem(Diagnostic d, string? defaultFile, string? defaultPath) =>
-            new(d.IsError ? "Error" : "Warning", d.Code, d.Message, d.File ?? defaultFile ?? "", d.Line, d.File != null && Path.IsPathRooted(d.File) ? d.File : defaultPath);
+            new(d.IsError ? "Error" : "Warning", d.Code, d.Message, d.File == null ? defaultFile ?? "" : Path.IsPathRooted(d.File) ? Path.GetFileName(d.File) : d.File, d.Line,
+                d.File == null ? defaultPath : Path.IsPathRooted(d.File) ? d.File : null);   // (a file of its own that is not a path: no path, not the document's)
 
         /// <summary>Opens the file (when it is not open yet) and puts the caret on the line: a double click in the error list or in the build log. Without a file it is the active script.</summary>
         private void ShowLocation(string? path, string? file, int line)
@@ -885,7 +891,9 @@ namespace fire.Editor
                 };
                 // (every open script: the error list shows them all)
                 script.DiagnosticsChanged += ScheduleErrorPanel;
-                script.TextEdited += () => OnScriptEdited(doc);
+                // (what the other files see of it changed: they are checked again - not on every keystroke, not for a change inside a body)
+                script.DeclarationsChanged += () => OnDeclarationsChanged(doc);
+                script.CheckPriority = () => ReferenceEquals(ActiveDocument, doc) ? LiveDiagnostics.ActivePriority : LiveDiagnostics.OpenPriority;
                 script.BreakpointsChanged += () =>
                 {
                     if (TakesPartInRun(doc)) _session.UpdateBreakpoints(BreakpointLocations());
@@ -922,6 +930,8 @@ namespace fire.Editor
 
         private void OnDocumentClosed(OpenDocument doc)
         {
+            doc.Script?.CancelChecks();
+            OnScriptClosed(doc);
             if (ReferenceEquals(_highlightedDoc, doc)) _highlightedDoc = null;
             doc.Trace?.Detach();
             _documents.Remove(doc);

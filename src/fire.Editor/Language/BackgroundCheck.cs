@@ -9,8 +9,8 @@ namespace fire.Editor
     /// A piece of work that is asked for again and again while the user types (the analysis of a document, its highlighting): the newest request wins.
     /// <list type="bullet">
     /// <item>Debounce: a request waits `delay` before its work starts; a newer request during the wait (or while it waits for the gate) replaces it - the older one never runs.</item>
-    /// <item>The work runs on the thread pool, never on the thread that asked; with a shared <see cref="SemaphoreSlim"/> gate the checks of several documents run one after the
-    /// other (at most one analysis at a time, whatever the number of open documents).</item>
+    /// <item>The work runs on the thread pool, never on the thread that asked; with a shared <see cref="CheckGate"/> the checks of several documents run one after the
+    /// other (at most one analysis at a time, whatever the number of open documents; the document the user types in first, <see cref="Priority"/>).</item>
     /// <item>Work that is running when a newer request comes gets its token cancelled (it may stop early) - if it finishes anyway, its result is still delivered when
     /// <see cref="DeliverSuperseded"/> is on (errors of the text of a moment ago are better than none while the newer check is still waiting), unless a newer result was delivered
     /// already: results arrive in the order of their requests, a stale result never overwrites a newer one.</item>
@@ -24,7 +24,7 @@ namespace fire.Editor
     {
         private readonly object _lock = new();
         private readonly Action<Action> _post;
-        private readonly SemaphoreSlim? _gate;
+        private readonly CheckGate? _gate;
         private readonly Func<TimeSpan, CancellationToken, Task> _delay;
         private CancellationTokenSource? _newest;
         private long _requested, _delivered, _cancelledUpTo, _running;
@@ -32,12 +32,16 @@ namespace fire.Editor
         /// <param name="post">Runs the delivery (Completed/Failed) where the caller wants it - the UI thread.</param>
         /// <param name="gate">Shared by the checks that must not run at the same time (null: no limit).</param>
         /// <param name="delay">The wait before the work (tests: a fake clock); default Task.Delay.</param>
-        public BackgroundCheck(Action<Action> post, SemaphoreSlim? gate = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
+        public BackgroundCheck(Action<Action> post, CheckGate? gate = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
         {
             _post = post;
             _gate = gate;
             _delay = delay ?? ((span, token) => Task.Delay(span, token));
         }
+
+        /// <summary>The place of this check at the gate when several wait (smaller first): the document the user types in before the other open ones, those before the
+        /// checks of whole projects. Read when a request gets to the gate, so it can change (the active document changed).</summary>
+        public Func<int> Priority { get; set; } = () => 0;
 
         /// <summary>The result of a request: (result, generation of the request). Called through `post`.</summary>
         public event Action<T, long>? Completed;
@@ -119,28 +123,34 @@ namespace fire.Editor
                 if (Superseded(generation)) return;   // (a newer request came during the wait: it does the work)
                 if (_gate != null)
                 {
-                    await _gate.WaitAsync(token).ConfigureAwait(false);
+                    await _gate.EnterAsync(Priority(), token).ConfigureAwait(false);
                     gated = true;
                     if (Superseded(generation)) return;
                 }
                 var work = prepareOnPost ? await OnPost(prepare).ConfigureAwait(false) : prepare();
-                if (work == null || Superseded(generation)) return;   // (nothing to do; or a newer request came while the snapshot was taken: it starts after this)
+                if (work == null)
+                {
+                    // nothing to do (the workspace was closed): the request is done - older results are not shown after it either
+                    lock (_lock) if (generation == _requested) _cancelledUpTo = Math.Max(_cancelledUpTo, generation);
+                    return;
+                }
+                if (Superseded(generation)) return;   // (a newer request came while the snapshot was taken: it starts after this)
                 lock (_lock) _running++;
                 T result;
                 try { result = await Task.Run(() => work(token), CancellationToken.None).ConfigureAwait(false); }
                 finally { lock (_lock) _running--; }
-                if (gated) { _gate!.Release(); gated = false; }
+                if (gated) { _gate!.Leave(); gated = false; }
                 Deliver(generation, () => Completed?.Invoke(result, generation));
             }
             catch (OperationCanceledException) { /* superseded or cancelled: the newer request delivers */ }
             catch (Exception ex)
             {
-                if (gated) { _gate!.Release(); gated = false; }
+                if (gated) { _gate!.Leave(); gated = false; }
                 Deliver(generation, () => Failed?.Invoke(ex, generation));
             }
             finally
             {
-                if (gated) _gate!.Release();
+                if (gated) _gate!.Leave();
                 // (the source is not disposed: a newer request may still cancel it, and without a timer it holds nothing)
             }
         }
@@ -167,6 +177,60 @@ namespace fire.Editor
                 if (generation <= _cancelledUpTo || generation <= _delivered) return false;   // cancelled, or a newer result is shown already
                 return DeliverSuperseded || generation == _requested;
             }
+        }
+    }
+
+    /// <summary>
+    /// Lets one piece of work run at a time (the analyses of the editor: each compiles a whole program); of the ones that wait the one with the smallest priority goes next, of equal
+    /// ones the first that came. A waiter whose token is cancelled leaves the queue (it never gets in).
+    /// </summary>
+    public sealed class CheckGate
+    {
+        private readonly object _lock = new();
+        private readonly List<(int Priority, long Order, TaskCompletionSource<bool> Entry)> _waiting = new();
+        private bool _busy;
+        private long _order;
+
+        /// <summary>The number of works waiting (the tests, the timing log).</summary>
+        public int Waiting { get { lock (_lock) return _waiting.Count; } }
+
+        /// <summary>Some work is in (between EnterAsync and Leave).</summary>
+        public bool IsBusy { get { lock (_lock) return _busy; } }
+
+        public Task EnterAsync(int priority, CancellationToken token)
+        {
+            TaskCompletionSource<bool> entry;
+            lock (_lock)
+            {
+                token.ThrowIfCancellationRequested();
+                if (!_busy) { _busy = true; return Task.CompletedTask; }
+                entry = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiting.Add((priority, _order++, entry));
+            }
+            if (token.CanBeCanceled)
+                token.Register(() =>
+                {
+                    bool removed;
+                    lock (_lock) removed = _waiting.RemoveAll(w => w.Entry == entry) > 0;
+                    if (removed) entry.TrySetCanceled(token);
+                });
+            return entry.Task;
+        }
+
+        /// <summary>The work that was let in is done: the next one goes in.</summary>
+        public void Leave()
+        {
+            TaskCompletionSource<bool>? next = null;
+            lock (_lock)
+            {
+                if (_waiting.Count == 0) { _busy = false; return; }
+                int best = 0;
+                for (int i = 1; i < _waiting.Count; i++)
+                    if (_waiting[i].Priority < _waiting[best].Priority || (_waiting[i].Priority == _waiting[best].Priority && _waiting[i].Order < _waiting[best].Order)) best = i;
+                next = _waiting[best].Entry;
+                _waiting.RemoveAt(best);
+            }
+            next.TrySetResult(true);   // (still busy: the gate passes to it)
         }
     }
 
@@ -224,6 +288,38 @@ namespace fire.Editor
             var result = spans as List<HighlightSpan> ?? new List<HighlightSpan>(spans);
             for (long v = Math.Max(fromVersion, _first); v < Version; v++) result = Shift(result, _edits[(int)(v - _first)]);
             return result;
+        }
+
+        /// <summary>Like <see cref="Shift"/>, but in the list itself: what the editor does on every keystroke - a new list of all the spans of a long file each time (tens of
+        /// thousands, a large object) kept the garbage collector busy while typing.</summary>
+        public static void ShiftInPlace(List<HighlightSpan> spans, TextEdit edit)
+        {
+            int delta = edit.Inserted - edit.Removed;
+            int changeEnd = edit.Offset + edit.Removed;
+            // the first span that ends after the start of the change (the spans are sorted and do not overlap)
+            int lo = 0, hi = spans.Count;
+            while (lo < hi)
+            {
+                int mid = (lo + hi) >> 1;
+                if (spans[mid].Start + spans[mid].Length <= edit.Offset) lo = mid + 1; else hi = mid;
+            }
+            int write = lo;
+            for (int k = lo; k < spans.Count; k++)
+            {
+                var s = spans[k];
+                int start = s.Start, end = s.Start + s.Length;
+                HighlightSpan moved;
+                if (start >= changeEnd) moved = delta == 0 ? s : new HighlightSpan(start + delta, s.Length, s.Category, s.Rgb);
+                else
+                {
+                    int newStart = start < edit.Offset ? start : edit.Offset + edit.Inserted;
+                    int newEnd = end >= changeEnd ? end + delta : edit.Offset + edit.Inserted;
+                    if (newEnd <= newStart) continue;   // (removed as a whole)
+                    moved = new HighlightSpan(newStart, newEnd - newStart, s.Category, s.Rgb);
+                }
+                spans[write++] = moved;
+            }
+            if (write < spans.Count) spans.RemoveRange(write, spans.Count - write);
         }
 
         /// <summary>The spans after one change (sorted spans stay sorted).</summary>

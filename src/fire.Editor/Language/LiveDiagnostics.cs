@@ -48,8 +48,11 @@ namespace fire.Editor
     {
         public static List<Diagnostic> Analyze(string source, string? basePath = null) => Analyze(source, Array.Empty<string>(), basePath, null, null);
 
-        /// <summary>The analyses of the editor run one at a time (whatever the number of open documents): the checks of the documents share this gate (BackgroundCheck).</summary>
-        public static readonly SemaphoreSlim Gate = new(1, 1);
+        /// <summary>The analyses of the editor run one at a time (whatever the number of open documents): the checks of the documents share this gate (BackgroundCheck) - the
+        /// document the user types in first (<see cref="ActivePriority"/>), then the other open ones, then the checks of whole projects.</summary>
+        public static readonly CheckGate Gate = new();
+
+        public const int ActivePriority = 0, OpenPriority = 1, ProjectPriority = 2;
 
         private static long _epoch;
 
@@ -119,6 +122,8 @@ namespace fire.Editor
             var projectFiles = allFiles ? new HashSet<string>(otherFiles!.Select(o => o.Path), StringComparer.Ordinal) : null;
             var processed = new List<ProcessedSource>();
             int documentSource = -1;   // the index of `source` among the sources of the program
+            // the files of the libraries are named "Library/file.fire" in the program: their diagnostics get the path of the file (the error list opens it, and knows it when it is open)
+            var libraryPaths = new Dictionary<string, string>(StringComparer.Ordinal);
 
             // the warnings of the code (`warn 123: "text"`, collected while the parser reads it) are diagnostics, too
             var warnings = new DiagnosticCollector();
@@ -183,6 +188,8 @@ namespace fire.Editor
                     nativeImports, natives, processed,
                     (preludeSource, folder) => Preprocessor.Process(preludeSource, folder, alreadyIncluded, registry), ownBuiltIn);
                 processed.InsertRange(1, libraryFiles.Select(l => l.Source));
+                foreach (var (librarySource, libraryPath) in libraryFiles)
+                    if (librarySource.Name != null) libraryPaths[librarySource.Name] = libraryPath;
                 documentSource = allFiles ? -1 : processed.Count - 1;
 
                 List<fire.Ast.Stmt> program;
@@ -190,7 +197,7 @@ namespace fire.Editor
                 catch (ParseException pe) when (allFiles)
                 {
                     if (pe.FileName != null && projectFiles!.Contains(pe.FileName)) diagnostics.AddRange(CompileDiagnostics.Of(pe));
-                    return Sorted(diagnostics, warnings, projectFiles);
+                    return Sorted(diagnostics, warnings, projectFiles, libraryPaths);
                 }
                 catch (LexException) when (allFiles)
                 {
@@ -200,7 +207,7 @@ namespace fire.Editor
                         try { new Lexer(p.Source).Tokenize(); }
                         catch (LexException le) { diagnostics.AddRange(CompileDiagnostics.Of(le, p.Name)); break; }
                     }
-                    return Sorted(diagnostics, warnings, projectFiles);
+                    return Sorted(diagnostics, warnings, projectFiles, libraryPaths);
                 }
                 catch (ParseException pe) when (otherFiles is { Count: > 0 } && pe.FileName != null) { throw new OtherFileBroken(); }
                 catch (LexException) when (otherFiles is { Count: > 0 }) { throw new OtherFileBroken(); }
@@ -242,10 +249,11 @@ namespace fire.Editor
                 }
                 else diagnostics.AddRange(CompileDiagnostics.Of(ex));
             }
-            return Sorted(diagnostics, warnings, projectFiles, otherFiles);
+            return Sorted(diagnostics, warnings, projectFiles, libraryPaths, otherFiles);
         }
 
-        private static List<Diagnostic> Sorted(List<Diagnostic> diagnostics, DiagnosticCollector warnings, HashSet<string>? projectFiles, IReadOnlyList<(string Path, string Text)>? otherFiles = null)
+        private static List<Diagnostic> Sorted(List<Diagnostic> diagnostics, DiagnosticCollector warnings, HashSet<string>? projectFiles, Dictionary<string, string> libraryPaths,
+            IReadOnlyList<(string Path, string Text)>? otherFiles = null)
         {
             // (warnings of the other files carry their file name; all the files of a project: the warnings in them)
             if (projectFiles != null) diagnostics.AddRange(warnings.Items.Where(w => w.File != null && projectFiles.Contains(w.File)));
@@ -255,7 +263,8 @@ namespace fire.Editor
             // (e.g. first all classes, then the top-level code), not in
             // line order - sort by line for the error view
             // (stable, the same line keeps the order).
-            return diagnostics.OrderBy(d => d.File ?? "", StringComparer.Ordinal).ThenBy(d => d.Line).ToList();
+            return diagnostics.Select(d => d.File != null && libraryPaths.TryGetValue(d.File, out var path) ? d with { File = path } : d)
+                .OrderBy(d => d.File ?? "", StringComparer.Ordinal).ThenBy(d => d.Line).ToList();
         }
 
         /// <summary>The errors of all the files of a project at once (each with its file): one compile of the project, as in a build - the files that are not open in the editor

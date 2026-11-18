@@ -76,6 +76,25 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
 - **Panels:** Output, Build log, Error list, Solution Explorer, Test Explorer ([testing](testing.md)), Todo ([notes](notes.md)), Devices
   ([devices](../devices/README.md)), Properties, Runtime. All of them dock, float or auto-hide; *View > Reset Layout* brings the start layout back.
 
+## Live errors
+
+While you type, spark checks the document in the background - nothing of it runs on the keystroke itself:
+
+- **After a pause in typing** (0.4 s) the document is compiled with the other files of its project and the libraries it imports, on a thread of its
+  own; a newer pause replaces a check that is still waiting, and cancels one that runs. Results arrive in order: an older result never replaces a
+  newer one, and the errors of the final text always come. Until then the squiggles move with the text.
+- **One analysis at a time:** the active document first, then the other open documents, then the checks of whole projects.
+- **The other files:** when the check finds that what the other files can see of the document changed (a declaration, a signature, a field, an
+  `#import` - not the body of a function), the open documents that use it are checked again, and so are the projects that contain it, for the files
+  that are not open. Closing a document checks its project again. Texts that did not change are not analysed twice, and the files on the disk are
+  read once while they do not change.
+- **Where errors show:** a squiggle under the line (red for an error, amber for a warning; the mouse over it shows the message), a bar in the
+  margin next to the line number, the *Error List* (every open document, the files of the solution that are not open, and what the last build
+  reported beyond that) and the count in the status bar (a click shows the list). An error in a library file is listed with that file.
+
+`FIRE_EDITOR_TIMING=1` in the environment writes to stderr what the editor does on the UI thread and in the background (each step over a
+millisecond), the time from a key to the frame that shows it, and every stall of the UI thread - to measure a big solution.
+
 ## The tool bar of the solution explorer
 
 Above the tree of the Solution Explorer ([projects](projects.md)) a row of buttons (each one explains itself in its tooltip) and a filter box:

@@ -159,7 +159,7 @@ namespace fire.Editor
         // overwrites a newer one); what they computed for the text of a moment ago is carried into the current text through the changes since (_edits). Until the
         // new highlighting comes, the old one moves with the text (HighlightingColorizer.Spans are shifted on every change), so a keystroke itself costs no lexing.
         private readonly BackgroundCheck<(List<HighlightSpan> Spans, long Version)> _highlight;
-        private readonly BackgroundCheck<(List<Diagnostic> Found, long Version, string Text)> _check;
+        private readonly BackgroundCheck<(List<Diagnostic> Found, long Version, string Text, string? Shape)> _check;
         private readonly EditLog _edits = new();
         private List<Diagnostic> _diagnostics = new();
         /// <summary>Where the diagnostics of this document are now (an offset in the line, carried through every change): the squiggles, the margin and the lines of Diagnostics.</summary>
@@ -180,8 +180,8 @@ namespace fire.Editor
             void Post(Action action) => Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
             _highlight = new BackgroundCheck<(List<HighlightSpan>, long)>(Post) { DeliverSuperseded = true };
             _highlight.Completed += (r, _) => OnHighlighted(r.Spans, r.Version);
-            _check = new BackgroundCheck<(List<Diagnostic>, long, string)>(Post, LiveDiagnostics.Gate) { DeliverSuperseded = true };
-            _check.Completed += (r, _) => OnChecked(r.Found, r.Version, r.Text);
+            _check = new BackgroundCheck<(List<Diagnostic>, long, string, string?)>(Post, LiveDiagnostics.Gate) { DeliverSuperseded = true, Priority = () => CheckPriority?.Invoke() ?? 0 };
+            _check.Completed += (r, _) => OnChecked(r.Found, r.Version, r.Text, r.Shape);
             _check.Failed += (ex, _) => EditorTiming.Log("diagnostics failed: " + ex.Message);
 
             Editor.TextArea.TextView.LineTransformers.Add(_colorizer);
@@ -235,7 +235,6 @@ namespace fire.Editor
                 _caretTipTimer.Stop();
                 CloseDocTip();
             };
-            Unloaded += (_, _) => { if (Parent == null) { _check.Cancel(); _highlight.Cancel(); } };   // (closed: no result of it comes any more)
 
             SetText(string.Empty);
             IsModified = false;
@@ -615,8 +614,22 @@ namespace fire.Editor
             DiagnosticsChanged?.Invoke();
         }
 
-        /// <summary>The user changed the text (not SetText): the host checks the documents that depend on this one again (MainWindow).</summary>
-        public event Action? TextEdited;
+        /// <summary>A check found that what the other files can see of this one changed (DeclarationShape: a declaration, a signature, an `#import`, not only the body of a
+        /// function): the host checks the files that depend on it again (MainWindow). Not raised for the first check of the text (nothing changed for the others).</summary>
+        public event Action? DeclarationsChanged;
+
+        /// <summary>The place of this document's checks at the gate of the analyses (LiveDiagnostics.ActivePriority, ...); asked when a check gets to it.</summary>
+        public Func<int>? CheckPriority { get; set; }
+
+        /// <summary>The document was closed: no check of it runs or delivers any more.</summary>
+        public void CancelChecks()
+        {
+            _check.Cancel();
+            _highlight.Cancel();
+        }
+
+        // what the other files see of the text as the last check found it (DeclarationShape; null: not known yet)
+        private string? _shape;
 
         private void Editor_TextChanged(object? sender, EventArgs e)
         {
@@ -632,7 +645,6 @@ namespace fire.Editor
             {
                 RequestDiagnostics(DiagnosticsDelay);
                 RequestHighlighting(TimeSpan.FromMilliseconds(120));
-                TextEdited?.Invoke();
             }
 
             // Runs on EVERY text change, also deletion (Backspace/Del) -
@@ -870,12 +882,11 @@ namespace fire.Editor
         private void OnDocumentChanged(TextEdit edit)
         {
             _edits.Add(edit);
-            if (_colorizer.Spans is List<HighlightSpan> spans && spans.Count > 0) _colorizer.Spans = EditLog.Shift(spans, edit);
+            // (in place: the list of a long file is not copied for every keystroke; the colorizer reads it on this thread only)
+            if (_colorizer.Spans is List<HighlightSpan> spans && spans.Count > 0) EditLog.ShiftInPlace(spans, edit);
             if (_marks.Count > 0)
             {
-                var moved = new Dictionary<Diagnostic, int>(_marks.Count, ReferenceEqualityComparer.Instance);
-                foreach (var (d, offset) in _marks) moved[d] = EditLog.Map(offset, edit);
-                _marks = moved;
+                foreach (var d in _marks.Keys.ToList()) _marks[d] = EditLog.Map(_marks[d], edit);
                 UpdateMarkLines();
             }
         }
@@ -894,15 +905,19 @@ namespace fire.Editor
                 return token =>
                 {
                     using var timing = EditorTiming.Measure($"diagnostics {name} (background)");
-                    return (job(token), version, text);
+                    var found = job(token);
+                    return (found, version, text, DeclarationShape.Of(text));
                 };
             }, delay);
         }
 
         /// <summary>A check is done: its diagnostics are shown where their text is now. A diagnostic of another file (an `#include`d one) is listed with its file, not squiggled here.</summary>
-        private void OnChecked(List<Diagnostic> found, long version, string text)
+        private void OnChecked(List<Diagnostic> found, long version, string text, string? shape)
         {
             if (!_edits.CanMap(version)) return;   // (the text was replaced since: the check of the new text follows)
+            // what the other files see of this one changed: they are checked again (not for the first check: the host checked them with this text already)
+            bool declarationsChanged = shape != null && _shape != null && !string.Equals(shape, _shape, StringComparison.Ordinal);
+            if (shape != null) _shape = shape;
             using var timing = EditorTiming.Measure("diagnostics shown");
             var lineStarts = new List<int> { 0 };
             for (int i = 0; i < text.Length; i++) if (text[i] == '\n') lineStarts.Add(i + 1);
@@ -925,8 +940,9 @@ namespace fire.Editor
             }
             _diagnostics = shown;
             _marks = marks;
-            UpdateMarkLines();
+            UpdateMarkLines(force: true);
             DiagnosticsChanged?.Invoke();
+            if (declarationsChanged) DeclarationsChanged?.Invoke();
         }
 
         private static bool IsOwnFile(string? file, string? own)
@@ -938,7 +954,7 @@ namespace fire.Editor
         }
 
         /// <summary>The lines with an error / a warning for the squiggles and the margin, from where the diagnostics are now.</summary>
-        private void UpdateMarkLines()
+        private void UpdateMarkLines(bool force = false)
         {
             var document = Editor.Document;
             var errors = new HashSet<int>();
@@ -949,12 +965,14 @@ namespace fire.Editor
                 if (d.IsError) errors.Add(line); else warnings.Add(line);
             }
             warnings.ExceptWith(errors);
+            // (a keystroke that moves no squiggle to another line draws nothing again: a Redraw throws away every visual line of the view, all of them laid out anew)
+            if (!force && errors.SetEquals(_errorSquiggles.ErrorLines) && warnings.SetEquals(_errorSquiggles.WarningLines)) return;
             _errorSquiggles.ErrorLines = errors;
             _errorSquiggles.WarningLines = warnings;
             _breakpointMargin.ErrorLines = errors;
             _breakpointMargin.WarningLines = warnings;
             _breakpointMargin.RedrawMargin();
-            Editor.TextArea.TextView.Redraw();
+            Editor.TextArea.TextView.InvalidateLayer(_errorSquiggles.Layer);
         }
 
         /// <summary>The messages of the diagnostics on a line (1-based) - the tooltip of a squiggled line.</summary>

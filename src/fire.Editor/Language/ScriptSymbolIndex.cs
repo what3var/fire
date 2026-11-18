@@ -341,8 +341,6 @@ namespace fire.Editor
         /// <summary>The index of a file of the project as the other files see it (kept while its text does not change) - what the live analysis asks for the names it declares.</summary>
         public static ScriptSymbolIndex OfProjectFile(string path, string text) => IndexOfProjectFile(path, text).Index;
 
-        /// <summary>Like Build(source, extraImports); `projectFiles` are the other files of the project (and the imported libraries): what they declare is known without an `#include`, for
-        /// completion, tooltips and "go to definition" - as it is for the build.</summary>
         private static readonly Dictionary<string, List<string>?> ImportKeyCache = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>The preludes an `#import` switches on (with their dependencies), null for a name that is no extension (a library of the project, a typo) - remembered: asking
@@ -365,10 +363,10 @@ namespace fire.Editor
             lock (ImportedPreludeIndexes) ImportedPreludeIndexes.Clear();
         }
 
-        private static readonly bool TimingOn = Environment.GetEnvironmentVariable("FIRE_EDITOR_TIMING") == "1";
+        /// <summary>Like Build(source, extraImports); `projectFiles` are the other files of the project (and the imported libraries): what they declare is known without an `#include`, for
+        /// completion, tooltips and "go to definition" - as it is for the build.</summary>
         public static ScriptSymbolIndex Build(string source, IEnumerable<string> extraImports, IEnumerable<(string Path, string Text)> projectFiles)
         {
-            long t00 = Stopwatch.GetTimestamp();
             List<Token> tokens;
             try
             {
@@ -379,11 +377,9 @@ namespace fire.Editor
                 tokens = new List<Token>();
             }
 
-            long t0 = Stopwatch.GetTimestamp();
             var index = new ScriptSymbolIndex(source, tokens);
             index.UsingNamespaces.AddRange(FindUsings(source));
             index.Harvest();
-            long t1 = Stopwatch.GetTimestamp();
             if (source.StartsWith(GeneratedHeader, StringComparison.Ordinal))
                 foreach (var cls in index.Classes.Values) cls.IsGenerated = true;
             index.HarvestIncludes(source);
@@ -399,12 +395,10 @@ namespace fire.Editor
                 }
                 catch (Exception) { /* a file that cannot be scanned adds nothing */ }
             }
-            long t2 = Stopwatch.GetTimestamp();
             index.MergeInPrelude(PreludeIndex.Value);
             // Preludes of the extensions switched on via '#import' (see
             // ImportedPreludes) - `Framebuffer`/`Device`/... should be completed
             // just like the standard library.
-            long t3 = Stopwatch.GetTimestamp();
             var merged = new HashSet<string>();
             foreach (var name in importNames.Distinct(StringComparer.OrdinalIgnoreCase))   // (every file of the project and of its libraries names the same imports again)
             {
@@ -418,7 +412,6 @@ namespace fire.Editor
                     if (importIndex != null) index.MergeInPrelude(importIndex);
                 }
             }
-            if (TimingOn) Console.Error.WriteLine($"[index] lex {Stopwatch.GetElapsedTime(t00, t0).TotalMilliseconds:F1} harvest {Stopwatch.GetElapsedTime(t0, t1).TotalMilliseconds:F1} files({projectFiles.Count()}) {Stopwatch.GetElapsedTime(t1, t2).TotalMilliseconds:F1} prelude {Stopwatch.GetElapsedTime(t2, t3).TotalMilliseconds:F1} imports({importNames.Count}) {Stopwatch.GetElapsedTime(t3).TotalMilliseconds:F1}");
             return index;
         }
 

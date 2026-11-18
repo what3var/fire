@@ -16,6 +16,10 @@
     <!--<ApplicationIcon>Assets\Logo.ico</ApplicationIcon>-->
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <!-- The live analyses compile whole programs in the background; with the workstation GC their objects (alive until the analysis ends) were copied in pauses of 100-350 ms
+         that froze the UI thread, too. The server GC with its dynamic adaptation (DATAS, the default of .NET 9 and later) works with a small gen0 and in parallel: pauses of a few
+         tens of ms, about the same memory (measured with RuhrpottRaser, docs/tools/spark.md "Live errors"). -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
 
 	<PublishSingleFile>true</PublishSingleFile>
 	<SelfContained>true</SelfContained>
