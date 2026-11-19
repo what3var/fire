@@ -393,7 +393,7 @@ static void vmTypeArrayOfParam(Vm* vm, Value arr, const char* text, Value self, 
 /* The lists of the scopes of the running call (innermost first: temporaries, then the scope's own) - what `try take`, `is from local` look at. */
 static int vmCallLists(Vm* vm, VmFrame* fr, OwnList** lists, int cap) {
     VmScope* s;
-    VmScope* stop = vmStopOf(vm, fr);
+    VmScope* stop = fr->kind == FR_TOP && vm->isStrand ? NULL : vmStopOf(vm, fr);   /* (a fire thread: its global scope is the scope of its body) */
     int n = 0;
     for (s = fr->scope; s && s != stop && n + 2 <= cap; s = s->parent) {
         lists[n++] = &s->temp; lists[n++] = &s->own;
@@ -729,6 +729,7 @@ static void vmRun(Vm* vm, int32_t base) {
             ip += 3;
             if (ownedOf(v)) {
                 SYNC();
+                if ((flags & 1) && depth == 0xFFFF) noteGlobalClaim(v, &fr->scope->temp);   /* (rule 10: a fire thread's store into a global moves it there) */
                 if (flags & 1) claimToList(v, &fr->scope->temp, to);
                 if ((flags & 2) && target) {
                     VmScope* s;
@@ -769,6 +770,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 if (took) takeToList(v, list);
                 vm->ret = Bool(took);
             } else if (takeAlive(v)) takeToList(v, list);
+            if (depth == 0xFFFF) noteGlobalTake(v);   /* (rule 10, see ClaimToScope) */
             CHECK();
             break;
         }
@@ -813,7 +815,19 @@ static void vmRun(Vm* vm, int32_t base) {
             else { sp[-3] = sp[-2]; sp[-2] = sp[-1]; sp--; }
             break;
         }
-        case OP_CopyValue: { bool deep = (*ip++ & 1) != 0; SYNC(); sp[-1] = copyValue(sp[-1], deep, &fr->scope->temp); CHECK(); break; }
+        case OP_CopyValue: {
+            bool deep = (*ip++ & 1) != 0;
+            SYNC();
+            if (FIRE_UNLIKELY(sp[-1].kind == K_Class) && leafAlive(sp[-1]) && (asObj(sp[-1])->h.flags & 8)) {   /* (ObjectCloner.RequireCopyableRoot) */
+                char text[300];
+                snprintf(text, sizeof text, "An actor ('%s') cannot be copied - actor references are shared.", className(asObj(sp[-1])->cls));
+                fireError("ArgumentException", text);
+                goto unwind;
+            }
+            sp[-1] = copyValue(sp[-1], deep, &fr->scope->temp);
+            CHECK();
+            break;
+        }
         case OP_CopyValueOwned: {
             bool deep = (*ip++ & 1) != 0;
             Value v = POP();
@@ -885,7 +899,7 @@ static void vmRun(Vm* vm, int32_t base) {
             }
             l = lamOf(callee);
             if (FIRE_UNLIKELY(l->o.flags & 1)) { destroyedError(callee); goto unwind; }
-            if (l->fn == vmLamThunk) {
+            if (l->fn == vmLamThunk && FIRE_LIKELY(l->home == 0 || (l->home == 1 && !g_isThread))) {   /* (a home elsewhere - its target in another thread, an actor: callLamU runs it there) */
                 VmProto* lp = vmLamProto(l);
                 if (FIRE_UNLIKELY((int)argc != lp->nparams) && ((int)argc > lp->nparams || !vmAllTrailingDefaults(lp, (int)argc))) {
                     char text[160];
@@ -1090,7 +1104,7 @@ static void vmRun(Vm* vm, int32_t base) {
                         OwnList* lists[128];
                         int n = vmCallLists(vm, fr, lists, 128);
                         r = Bool(ownMethodTry(ownId, recv, targetArg, (int)argc > baseArgs ? a[baseArgs] : Undef(), &fr->scope->own, lists, n, fr->self, NULL));
-                    } else if ((int)argc == baseArgs || (ownId == OM_TakeGlobal && argc == 1 && a[0].kind == K_Bool)) ownMethod(ownId, recv, targetArg, &fr->scope->own);
+                    } else if ((int)argc == baseArgs || (ownId == OM_TakeGlobal && argc == 1 && a[0].kind == K_Bool)) ownMethod(ownId, recv, argc == 1 && ownId == OM_TakeGlobal ? a[0] : targetArg, &fr->scope->own);   /* (`x.TakeGlobal(true)`: the flag) */
                     else { OwnList* lists[128]; int n = vmCallLists(vm, fr, lists, 128); ownMethodT(ownId, recv, targetArg, a[baseArgs], &fr->scope->own, lists, n); }
                     sp -= argc + 1;
                     CHECK();
@@ -1349,6 +1363,7 @@ static void vmRun(Vm* vm, int32_t base) {
             if (FIRE_UNLIKELY(g_isThread) && g_domainOn) {   /* (a change of an object of the shared domain is one section, rule 10) */
                 char what[240];
                 bool ss = sectionScopeEnterV(v);
+                if (op == OP_SetFieldClaim && !(flags & 2)) noteHolderClaim(v, x, &fr->scope->temp);
                 snprintf(what, sizeof what, "The field '%s' of an object of the globals", name);
                 if (sharedValue(v) && !toMainHolder(v, &x, what)) { sectionScopeExit(ss); goto unwind; }
                 old = objFields(asObj(v))[idx];
@@ -1430,7 +1445,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 }
                 if (FIRE_UNLIKELY(g_isThread)) {   /* (a static field of the main program from a fire thread: a section, rule 10) */
                     bool ss = sectionScopeEnter(true);
-                    if (isRef(x) && x.kind != K_String && !toMainGlobals(&x, NULL, "A static field")) { sectionScopeExit(ss); goto unwind; }
+                    if (!toMainGlobals(&x, NULL, "A static field")) { sectionScopeExit(ss); goto unwind; }
                     old = c->svals[i];
                     retain(x);
                     c->svals[i] = x;
@@ -1820,7 +1835,7 @@ static void vmRun(Vm* vm, int32_t base) {
             VmProto* h = fr->chunk->fn[U16(ip)];
             bool threads = op == OP_RegisterThreadsCatch;
             const char* type = threads && ip[2] ? KNAME(U16(ip + 3)) : NULL;
-            ip += threads ? 5 : 2;
+            ip += threads ? (ip[2] ? 5 : 3) : 2;   /* (the type only with the flag: OpInfo) */
             vmRegisterCatch(vm, h, threads, type);
             break;
         }

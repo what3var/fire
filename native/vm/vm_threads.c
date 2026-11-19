@@ -165,7 +165,7 @@ static VmScope* vmGlobalsOf(Vm* vm, uint32_t slot) { return slot < vm->sharedCou
 static bool vmStoreShared(Vm* vm, VmScope* s, uint32_t slot, Value v, const char* what) {
     bool ss = sectionScopeEnter(true), ok = true;
     Value n = v;
-    if (isRef(n) && n.kind != K_String) ok = toMainGlobals(&n, NULL, what);
+    ok = toMainGlobals(&n, NULL, what);
     if (ok) {
         Value* x = scSlot(s, slot);   /* (after the section began: the main program may have grown its scope meanwhile) */
         Value old = *x;
@@ -185,14 +185,64 @@ static Value vmMsgFn(Value self, const Value* args, OwnList* list) {
     int argc = (int)args[1].i;
     Value r;
     (void)list;
+    OwnList* al = g_argIn;
+    int i;
+    int32_t base;
     if (!vm) return Undef();
-    r = vmCallNested(vm, m, argc, args + 2, self, FR_NESTED);
+    g_argIn = NULL;
+    if (vm->sp + (uint32_t)argc + 64 > VM_STACK) fatal("Stack overflow: the operand stack is full.");
+    for (i = 0; i < argc; i++) vm->stack[vm->sp++] = args[2 + i];
+    vmPushCall(vm, m, argc, 0, self, FR_NESTED);
+    {   /* what came with the message (its unclaimed arguments - m.own of the runtime, the argument list of a job) is the call's: the method keeps what it
+         * takes, the rest dies with its scope (SPEC 2.4; the generated code: the callee takes the argument list on entry) */
+        VmScope* sc = vm->frames[vm->nframes - 1].base;
+        for (i = 0; i < argc; i++) {
+            Owned* o = ownedOf(args[2 + i]);
+            if (o && o->owner && (o->owner == al || (o->owner->mark == 0xFFFFFFFFu && !o->owner->home && !o->owner->holder))) { ownUnlink(o); ownLink(&sc->own, o); }
+        }
+    }
+    base = vm->nframes - 1;
+    vm->ret = Undef();
+    vmRun(vm, base);
+    if (g_unwind.active) return Undef();
+    r = vm->ret;
     return r;
 }
 /* A call of method `m` on `recv` (the stack: recv, then the arguments) where threads matter: an actor (a message - `await`: with a way back), an object of
  * the main program's globals from a fire thread (a job of the main program, the thread waits). 1: done, the result replaces receiver and arguments; 0: an
  * ordinary call; -1: an exception. */
+/* The arguments of a call that goes to another strand (a message, a job): what is unclaimed - a `new`, a call's result, a copy, in the statement's
+ * temporaries - travels in the argument list of the call (AL_MARK: actorPost and globalsCall take it from there, SPEC 2.4); what is left in it after the
+ * call goes back to the temporaries. */
+static void vmArgList(OwnList* al, const Value* a, uint32_t argc) {
+    uint32_t i;
+    *al = scopeList(AL_MARK);
+    for (i = 0; i < argc; i++) {
+        Owned* o = ownedOf(a[i]);
+        if (o && o->owner && o->owner->mark == 0xFFFFFFFFu && o->owner != al) { ownUnlink(o); ownLink(al, o); }
+    }
+}
+static void vmArgListEnd(OwnList* al, Vm* vm) {
+    OwnList* temp = &vm->frames[vm->nframes - 1].scope->temp;
+    while (al->head) { Owned* o = al->head; ownUnlink(o); ownLink(temp, o); }
+}
+/* CopyArgs of a call that goes to another strand (vmPushCall does it for an ordinary one): `copy x`, `take x` as an argument - the copy or what is
+ * taken is an unclaimed temporary of the caller, it travels with the call (vmArgList). False: an exception. */
+static bool vmThreadArgs(Vm* vm, VmProto* m, Value* a, uint32_t argc) {
+    uint64_t mask = vm->copyMask;
+    OwnList* temp = &vm->frames[vm->nframes - 1].scope->temp;
+    uint32_t i;
+    vm->copyMask = 0;
+    for (i = 0; i < argc && i < 16 && mask; i++) {
+        uint32_t bits = (uint32_t)(mask >> (4 * i)) & 15u;
+        if (bits == 3) { if (!((m->refMask >> i) & 1)) a[i] = ptrRead(a[i]); }
+        else if (bits == 1 || bits == 2) { a[i] = copyValue(a[i], bits == 2, temp); if (g_unwind.active) return false; }
+        else if (bits == 5 && ownedOf(a[i]) && takeAlive(a[i])) takeToList(a[i], temp);
+    }
+    return !g_unwind.active;
+}
 static int vmThreadCall(Vm* vm, VmProto* m, Value recv, uint32_t argc, const char* name) {
+    OwnList al;
     bool aw = vm->awaitNext != 0;
     Value av[2 + 64];
     Value* a = vm->stack + vm->sp - argc;
@@ -202,7 +252,6 @@ static int vmThreadCall(Vm* vm, VmProto* m, Value recv, uint32_t argc, const cha
     if (argc > 64) return 0;
     av[0] = Int((int64_t)(uintptr_t)m);
     av[1] = Int((int64_t)argc);
-    for (i = 0; i < argc; i++) av[2 + i] = a[i];
     if ((asObj(recv)->h.flags & 8) && leafAlive(recv)) {
         if (aw && actorAtHome(recv)) return 0;
         if (vm->pendingArgNames) {   /* (VM.RejectArgNames) */
@@ -210,14 +259,26 @@ static int vmThreadCall(Vm* vm, VmProto* m, Value recv, uint32_t argc, const cha
             fireError("ArgumentException", "Named arguments are not possible for a method of an actor.");
             return -1;
         }
+        if (!vmThreadArgs(vm, m, a, argc)) return -1;
+        for (i = 0; i < argc; i++) av[2 + i] = a[i];
+        vmArgList(&al, a, argc);
         if (aw) r = actorAwait(recv, vmMsgFn, av, argc + 2);
         else { actorSend(recv, vmMsgFn, av, argc + 2); r = Undef(); }
+        vmArgListEnd(&al, vm);
     } else if (g_isThread && g_secDepth == 0 && g_domainOn && leafAlive(recv) && sharedValue(recv) && !m->readsOnly && !m->isStatic) {
         if (fire_mainAway()) {
             bool ss = sectionScopeEnter(true);
             r = vmCallNested(vm, m, (int)argc, a, recv, FR_NESTED);
             sectionScopeExit(ss);
-        } else r = globalsCall(recv, vmMsgFn, av, argc + 2, name);
+        } else {
+            if (!vmThreadArgs(vm, m, a, argc)) return -1;
+            for (i = 0; i < argc; i++) av[2 + i] = a[i];
+            vmArgList(&al, a, argc);
+            g_argIn = &al;   /* (what is fresh goes with the call: rule 10) */
+            r = globalsCall(recv, vmMsgFn, av, argc + 2, name);
+            g_argIn = NULL;
+            vmArgListEnd(&al, vm);
+        }
     } else return 0;
     vm->sp -= argc + 1;
     if (g_unwind.active) return -1;
