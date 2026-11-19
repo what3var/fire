@@ -62,7 +62,7 @@ For contributors: how the compiler, the VM and the native backend work. These pa
 the code is right.
 
 * [Language specification](spec/SPEC.md), [bytecode](spec/BYTECODE.md), [gradual typing](spec/TYPES.md), [threading design](spec/THREADING_DESIGN.md)
-* [Native backend (fire -> C)](spec/NATIVE_BACKEND.md), [debug protocol of native programs](spec/NATIVE_DEBUG_PROTOCOL.md)
+* [Native backend (fire -> C)](spec/NATIVE_BACKEND.md), [debug protocol of native programs](spec/NATIVE_DEBUG_PROTOCOL.md), [splitting the C into several files (concept)](spec/NATIVE_SPLIT.md)
 * [Graphics layer](spec/GRAPHICS_LAYER.md), [own display layer and effects](spec/UI_PLATFORM.md)
 * [Roadmap](ROADMAP.md) - what is planned and in which order
 * [Decisions](DECISIONS.md) - open and settled questions about the language and the runtime
