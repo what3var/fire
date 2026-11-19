@@ -9,7 +9,7 @@ forge=$(realpath "$1")
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-if [ $# -ge 2 ]; then fire=$(realpath "$2"); else fire=$tmp/fire; ${CC:-cc} -O2 -DFIRE_VM_STATS "$here/../fire.c" -o "$fire" -lm || exit 1; fi
+if [ $# -ge 2 ]; then fire=$(realpath "$2"); else fire=$tmp/fire; ${CC:-cc} -O2 -DFIRE_VM_STATS "$here/../fire.c" -o "$fire" -lm -lpthread || exit 1; fi
 bad=0
 for f in "$here"/*.fire; do
     n=$(basename "$f" .fire)

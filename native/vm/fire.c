@@ -1,6 +1,6 @@
 /* fire - the VM in C (docs/ROADMAP_C_PORT.md phase B; its structure: docs/spec/VM_C.md).
  *
- *   cc -O2 native/vm/fire.c -o fire -lm         (gcc, clang; one file that includes everything - no build system)
+ *   cc -O2 native/vm/fire.c -o fire -lm -lpthread   (gcc, clang; one file that includes everything - no build system)
  *   fire [--stats] a.fbc [b.fbc ...] [-- args]   runs the programs (written by `forge bytecode`) one after the other in this process
  *
  * Every program is loaded, its classes are registered with the runtime, it runs, and then everything it had is gone again - its objects, strings, scopes,
@@ -8,6 +8,8 @@
  * prints after each one what is still alive in the runtime (handles of objects/arrays, the temporary pool, strings). Exit code: that of the last program
  * that failed (1 for an exception nothing caught, the code of `terminate(code)`), else 0. */
 #define FIRE_VM 1
+#define FIRE_THREADS 1             /* fire threads, tasks, actors (phase B step 3): the thread model of the runtime with the GIL - one system thread per */
+#define FIRE_GIL 1                 /* fire thread, the safe points of the interpreter are those of the generated code (vm_threads.c) */
 #define FIRE_EXCEPTIONS 1
 #define FIRE_REFLECTION 1         /* (the runtime's probes and the selector of a lambda: the reflection of the VM, vm_reflect.c) */
 #define FIRE_PTRBOUNDS 1          /* (a pointer into an array or a buffer is checked when it is used, like a native build that is not #performance) */
@@ -35,13 +37,21 @@ void fbOutOfMemory(void) { outOfMemory(); }
 #include "vm_pkg.c"
 #include "vm_lib.c"
 #include "vm_natives.c"
+#include "vm_threads.c"
 #include "vm_run.c"
 #include "vm_reflect.c"
 #include "vm_json.c"
 
 void fire_vmExit(int code) {
     Vm* vm = g_vmCur;
-    if (vm && vm->exitJump) { vm->exitCode = code; longjmp(*vm->exitJump, 1); }
+    if (vm && vm->exitJump) {
+        /* (the handlers go now, while they are still there: some live on the stack of the runtime's functions the jump leaves - a job's, a reply's) */
+        Handler* h = g_handlers;
+        while (h) { Handler* p = h->prev; if (h->fn == vmCatchFn) free(h); h = p; }
+        g_handlers = NULL;
+        vm->exitCode = code;
+        longjmp(*vm->exitJump, 1);
+    }
     fire_plat_exit(code);
 }
 
@@ -83,6 +93,7 @@ static int vmRunFile(const char* path, bool stats) {
     vm->global = scNew(vm, NULL);
     scReserve(vm->global, 256);
     g_globalOwn = &vm->global->own;
+    vmThreadsBegin(vm);   /* (the GIL; the global scope is the shared domain of the threads) */
     /* the handler at the bottom: catches everything (type -1) */
     vm->bottomTypes[0] = -1;
     vm->bottomInfo.ncatch = 1; vm->bottomInfo.types = vm->bottomTypes; vm->bottomInfo.hasFinally = 0; vm->bottomInfo.typeMap = NULL;
@@ -97,14 +108,23 @@ static int vmRunFile(const char* path, bool stats) {
     vm->exitJump = &jb;
     if (setjmp(jb) == 0) {
         vmRun(vm, 0);
-        if (g_unwind.active && g_unwind.target == &vm->bottom) clearUnwind();
+        if (g_unwind.active && (g_unwind.target == &vm->bottom || g_unwind.kind == UW_LEAVE)) clearUnwind();   /* (leave, terminate: the end) */
         vmPkgHoldEnd();   /* (open windows of a library hold the program: it serves them until they close) */
     } else {
         /* the runtime wanted to end the process (fatal, terminate): only the script ends - what was half done in the runtime is given up */
         if (!vm->terminated) vm->failed = 2;
+        g_jobDepth = 0; g_noSyncDepth = 0; g_secDepth = 0;   /* (the jump may have left a job, a section of the runtime) */
         if (!vm->quiet) { vm->quiet = 1; g_zombies.quiet++; }
         g_zombies.depth = 0;
     }
+    /* the end of the main program waits for its threads (`catch terminate` runs there) */
+    if (setjmp(jb) == 0) vmThreadsFinish(vm);
+    else {
+        if (!vm->terminated) vm->failed = 2;
+        if (!vm->quiet) { vm->quiet = 1; g_zombies.quiet++; }
+        g_zombies.depth = 0;
+    }
+    if (terminateRequested() && !vm->failed) { vm->terminated = 1; vm->exitCode = mainExitCode(); }
 
     /* ---- the end of the script: everything it had goes ---- */
     while (g_handlers) { Handler* h = g_handlers; popHandler(); if (h->fn == vmCatchFn) free(h); }
@@ -125,6 +145,7 @@ static int vmRunFile(const char* path, bool stats) {
         for (k = 0; k < p->classes[i]->nstatic; k++) { release(p->classes[i]->svals[k]); p->classes[i]->svals[k] = Undef(); }
     }
     if (g_pool.top) poolRelease(0);
+    vmThreadsEnd();
     if (vm->quiet) g_zombies.quiet--;
     g_globalOwn = NULL;
     vmUnregisterClasses(vm);

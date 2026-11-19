@@ -22,7 +22,8 @@ static const char* const g_vmNativeNames[] = {
 
 /* The VM whose program runs (the runtime's callbacks - destructors, catch blocks, the exceptions it makes - have no context of their own; with fire threads,
  * phase B step 3, one per thread). */
-static Vm* g_vmCur = NULL;
+static FIRE_TLS Vm* g_vmCur = NULL;   /* (the strand's: a fire thread has a Vm of its own - vm_threads.c) */
+static const uint8_t g_vmUnwindStub[1] = { 255 };   /* the code of a frame whose entry (a safe point) started an unwinding: it goes at once (vm_run.c) */
 
 static void vmRun(Vm* vm, int32_t base);
 static int vmUnwind(Vm* vm, int32_t base);
@@ -86,7 +87,7 @@ static VmScope* scAncestor(VmScope* s, uint32_t depth) { while (depth-- && s->pa
 /* ---- classes as the runtime sees them ---- */
 static VmClass* vmClassNamed(VmProgram* p, const char* name) { return name ? (VmClass*)fbMapGet(&p->classByName, name) : NULL; }
 static VmClass* vmClassOf(Vm* vm, uint32_t cls) { return cls >= vm->firstId && cls - vm->firstId < vm->nids ? vm->byId[cls - vm->firstId] : NULL; }
-static VmClass* vmClassOfValue(Vm* vm, Value v) { return v.kind == K_Class ? vmClassOf(vm, asObj(v)->cls) : NULL; }
+static VmClass* vmClassOfValue(Vm* vm, Value v) { return v.kind == K_Class && leafAlive(v) ? vmClassOf(vm, asObj(v)->cls) : NULL; }   /* (a destroyed one: its memory may be gone - a thread sees what the main program destroyed) */
 static const char* vmPlainName(const char* name, char* buf, size_t cap) {
     const char* tick = strchr(name, '`');
     size_t n = tick ? (size_t)(tick - name) : strlen(name);
@@ -382,7 +383,7 @@ static Value vmCallNested(Vm* vm, VmProto* p, int argc, const Value* args, Value
 
 /* The way each argument goes in (CopyArgs, 4 bits each: VM.ApplyCopyMask): 1 flat copy, 2 deep copy, 3 an address (a `ref` parameter keeps it), 4/7 the
  * result of a call - it belongs to the call when it lies freshly with the caller, 5 `take x`, 6 a claim of a setter, 8 `try take x`. */
-static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int argc, VmScope* from) {
+static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int argc, VmScope* from, Value* held, uint8_t* nheld) {
     int i;
     for (i = 0; i < argc && i < 16; i++) {
         uint32_t bits = (uint32_t)(mask >> (4 * i)) & 15u;
@@ -397,11 +398,23 @@ static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int a
                 retain(c); release(*a); *a = c;
                 break;
             }
-            case 4: case 7: case 6:
+            case 6:
+                /* (a claim site of a setter, `Store(value)`: the value goes to the call if it still belongs to the setter call - its function scope) */
+                if (from) {
+                    VmScope* fb = from;
+                    Owned* o = ownedOf(*a);
+                    while (fb->parent && fb->parent != vm->global && fb->parent != vm->top->global) fb = fb->parent;
+                    if (o && o->owner && (o->owner == &fb->own || o->owner->home == &fb->own) && takeAlive(*a)) takeToList(*a, &s->own);
+                }
+                if ((a->kind == K_Class || a->kind == K_Array || a->kind == K_Buffer) && ownedOf(*a) && ownedOf(*a)->owner == &s->own && *nheld < 6) held[(*nheld)++] = *a;
+                break;
+            case 4: case 7:
                 if (from) { hoistFrom(*a, &from->temp, &s->own); }
+                if ((a->kind == K_Class || a->kind == K_Array || a->kind == K_Buffer) && ownedOf(*a) && ownedOf(*a)->owner == &s->own && *nheld < 6) held[(*nheld)++] = *a;
                 break;
             case 5:
                 if (takeAlive(*a)) takeToList(*a, &s->own);
+                if ((a->kind == K_Class || a->kind == K_Array || a->kind == K_Buffer) && ownedOf(*a) && ownedOf(*a)->owner == &s->own && *nheld < 6) held[(*nheld)++] = *a;
                 break;
             case 8:
                 if (from && ownedOf(*a)) {
@@ -417,10 +430,65 @@ static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int a
 
 /* Pushes the frame of a call of `p`: its arguments are the top `argc` values of the stack (they become slots 0.. of its scope; the callee holds its own -
  * retain, like the generated code), `drop` values below them go as well (the callee or the receiver). */
+/* A call with named arguments (`f(1, size: 2)`, VM.FillNamedArgs): the positional arguments first, each named one at the parameter of its name; the
+ * parameters that got none are `missing` (their default values follow). False: the ArgumentException is set. */
+static bool vmNamedArgs(VmProto* p, VmScope* s, int argc, const char* names, uint64_t* missing) {
+    Value tmp[64];
+    bool given[64];
+    const char* at[64];
+    size_t len[64];
+    int k = 0, positional, i, j;
+    char text[300];
+    const char* c = names;
+    for (;;) {
+        const char* e = strchr(c, '|');
+        if (k < 64) { at[k] = c; len[k] = e ? (size_t)(e - c) : strlen(c); k++; }
+        if (!e) break;
+        c = e + 1;
+    }
+    positional = argc - k;
+    if (!p->paramNames || p->nparams > 64) { fireError("ArgumentException", "Named arguments need a method whose parameters have names."); return false; }
+    if (positional > p->nparams || positional < 0) {
+        snprintf(text, sizeof text, "Wrong number of arguments: expected %d, got %d.", p->nparams, argc);
+        fireError("ArgumentException", text);
+        return false;
+    }
+    for (i = 0; i < p->nparams; i++) { given[i] = false; tmp[i] = Undef(); }
+    for (i = 0; i < positional; i++) { tmp[i] = s->slots[i]; given[i] = true; }
+    for (j = 0; j < k; j++) {
+        int found = -1;
+        for (i = 0; i < p->nparams && (uint32_t)i < p->nparamNames; i++)
+            if (p->paramNames[i] && strlen(p->paramNames[i]) == len[j] && !strncmp(p->paramNames[i], at[j], len[j])) { found = i; break; }
+        if (found < 0 || given[found]) {
+            snprintf(text, sizeof text, found < 0 ? "There is no parameter '%.*s'." : "The parameter '%.*s' is given twice.", (int)len[j], at[j]);
+            fireError("ArgumentException", text);
+            return false;
+        }
+        tmp[found] = s->slots[positional + j];
+        given[found] = true;
+    }
+    for (i = 0; i < p->nparams; i++) {
+        if (given[i]) continue;
+        if (!((uint32_t)i < p->ndefaults && p->defaults[i])) {
+            snprintf(text, sizeof text, "The parameter '%s' has no value (and no default value).", (uint32_t)i < p->nparamNames && p->paramNames[i] ? p->paramNames[i] : "?");
+            fireError("ArgumentException", text);
+            return false;
+        }
+        *missing |= (uint64_t)1 << i;
+    }
+    for (i = 0; i < p->nparams; i++) s->slots[i] = tmp[i];
+    s->n = s->hi = (uint32_t)p->nparams;
+    return true;
+}
+
 static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8_t kind) {
     VmFrame* f;
     VmScope* s;
     int i, n;
+    uint64_t missing = 0;
+    bool named = false, bad = false;
+    Value held[6];
+    uint8_t nheld = 0;
     if (FIRE_UNLIKELY(p->nspecs != 0) && self.kind == K_Class) p = vmSpecializationFor(vm, p, self, vm->stack + vm->sp - argc, argc);
     n = argc > p->nparams ? argc : p->nparams;
     VmScope* from = vm->nframes > 0 ? vm->frames[vm->nframes - 1].scope : NULL;
@@ -432,7 +500,13 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     if (FIRE_UNLIKELY(vm->copyMask != 0)) {
         uint64_t mask = vm->copyMask;
         vm->copyMask = 0;
-        vmApplyCopyMask(vm, s, mask, p, argc, from);
+        vmApplyCopyMask(vm, s, mask, p, argc, from, held, &nheld);
+    }
+    if (FIRE_UNLIKELY(vm->pendingArgNames != NULL)) {
+        const char* names = vm->pendingArgNames;
+        vm->pendingArgNames = NULL;
+        named = true;
+        bad = !vmNamedArgs(p, s, argc, names, &missing);
     }
     vm->sp -= (uint32_t)(argc + drop);
     f = &vm->frames[vm->nframes++];
@@ -452,6 +526,24 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     f->rec = NULL;
     f->recInit = NULL;
     f->nfin = vm->nfin;
+    f->nheld = nheld;
+    f->accBase = g_acc.top;
+    for (i = 0; i < nheld; i++) f->held[i] = held[i];
+    if (FIRE_UNLIKELY(named)) {
+        if (bad) { f->ip = g_vmUnwindStub; return; }
+        /* (the parameters a named call left out: their default values) */
+        for (i = 0; i < p->nparams; i++) {
+            Value v;
+            Owned* o;
+            if (!((missing >> i) & 1)) continue;
+            v = vmCallNested(vm, p->defaults[i], 0, NULL, self, FR_NESTED);
+            if (g_unwind.active) { f->ip = g_vmUnwindStub; return; }
+            s->slots[i] = v;
+            o = ownedOf(v);
+            if (o && !o->owner) ownLink(&s->own, o);
+        }
+        argc = p->nparams;
+    }
     /* missing arguments: their default values (a function of their own, run nested), else undefined */
     for (i = argc; i < p->nparams; i++) {
         VmProto* d = (uint32_t)i < p->ndefaults ? p->defaults[i] : NULL;
@@ -465,6 +557,9 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
         s->hi = s->n;
         if (d) { Owned* o = ownedOf(v); if (o && !o->owner) ownLink(&s->own, o); }
     }
+    /* the safe point at a function's entry (CppGenerator: pollSignals - the GIL now and then, leave/terminate): an unwinding it starts takes the new
+     * frame with it at once */
+    if (FIRE_UNLIKELY(pollSignals())) f->ip = g_vmUnwindStub;
 }
 
 /* The handlers of the frame that are still registered (a `return` in a `try`) go. */
@@ -492,6 +587,15 @@ static void vmLeaveTo(Vm* vm, VmFrame* f, VmScope* stop) {
     while (f->scope != stop && f->scope) {
         VmScope* s = f->scope;
         f->scope = s->parent;
+        if (FIRE_UNLIKELY(f->nheld) && s == f->base) {
+            /* (what the call took over from its caller dies after the call's locals - the generated code: the argument list goes after the callee) */
+            uint32_t i;
+            for (i = 0; i < f->nheld; i++) {
+                Owned* o = leafAlive(f->held[i]) ? ownedOf(f->held[i]) : NULL;
+                if (o && o->owner == &s->own) { ownUnlink(o); ownLink(&s->own, o); }
+            }
+            f->nheld = 0;
+        }
         scLeave(vm, s);
     }
 }
@@ -517,6 +621,7 @@ static bool vmReturn(Vm* vm, Value r, int32_t base) {
     retain(r);   /* (the count for the trip; the caller adopts it) */
     vm->sp = f->spBase;
     vm->nfin = f->nfin;
+    if (FIRE_UNLIKELY(g_acc.top > f->accBase) && f->kind != FR_CATCH) g_acc.top = f->accBase;   /* (what the call remembered of its accessors' `this`) */
     vmRecInitEnd(f);
     vmLeaveTo(vm, f, stop);
     vm->nframes--;
@@ -639,6 +744,8 @@ static void vmCatchFn(void* ctx, uint32_t ci, Value e) {
     f->rec = rec;
     f->recInit = NULL;
     f->nfin = vm->nfin;
+    f->nheld = 0;
+    f->accBase = owner->accBase;   /* (a `return` in the catch is the owner's) */
     base = vm->nframes - 1;
     vmRun(vm, base);
 }
@@ -936,7 +1043,7 @@ static Value vmAdaptUnit(Vm* vm, Value v, const char* text) {
  * checks with its own functions - VM_SPIKE point 1: no context-less callbacks) ---- */
 static const TArg* vmTArgNamed(Vm* vm, const char* text) {
     VmTArg* t;
-    for (t = vm->targs; t; t = t->next) if (t->text == text) return &t->ta;
+    for (t = vm->top->targs; t; t = t->next) if (t->text == text) return &t->ta;
     t = (VmTArg*)vmAlloc(&vm->prog->arena, sizeof(VmTArg));
     t->text = text;
     t->ta.display = text;
@@ -944,8 +1051,8 @@ static const TArg* vmTArgNamed(Vm* vm, const char* text) {
     t->ta.kind = !strcmp(text, "int") ? K_Int : !strcmp(text, "float") ? K_Float : !strcmp(text, "bool") ? K_Bool : !strcmp(text, "string") ? K_String
         : !strcmp(text, "char") ? K_Char : K_Undefined;
     t->cls = vmClassNamed(vm->prog, text);
-    t->next = vm->targs;
-    vm->targs = t;
+    t->next = vm->top->targs;
+    vm->top->targs = t;
     return &t->ta;
 }
 static TArgs vmTArgsOf(Vm* vm, VmFrame* fr, const char* text) {
@@ -971,15 +1078,15 @@ static TArgs vmTArgsOf(Vm* vm, VmFrame* fr, const char* text) {
     {
         TArgs r = internTArgsN(items, n);
         struct VmTArgsLen* l;
-        for (l = vm->targsLen; l; l = l->next) if (l->ta == r) return r;
+        for (l = vm->top->targsLen; l; l = l->next) if (l->ta == r) return r;
         l = (struct VmTArgsLen*)vmAlloc(&vm->prog->arena, sizeof *l);
-        l->ta = r; l->n = n; l->next = vm->targsLen; vm->targsLen = l;
+        l->ta = r; l->n = n; l->next = vm->top->targsLen; vm->top->targsLen = l;
         return r;
     }
 }
 static uint32_t vmTArgsLen(Vm* vm, TArgs ta) {
     struct VmTArgsLen* l;
-    for (l = vm->targsLen; l; l = l->next) if (l->ta == ta) return l->n;
+    for (l = vm->top->targsLen; l; l = l->next) if (l->ta == ta) return l->n;
     return 0;
 }
 /* Is the type `name` (a type argument's text) `target` or one that derives from it or implements it (VM.TypeNameIsOf)? */

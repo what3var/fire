@@ -233,6 +233,9 @@ typedef struct VmFrame {
     RecInit* recInit;       /* a constructor of a record: the record counts as being constructed while it runs (fire_rt.h recInit) */        /* an operator of an object stood for a JumpIfNot (catchEnded bit 1): where its false result jumps to */
     VmHandlerRec* rec;      /* a catch block: the handler it belongs to */
     uint32_t nfin;          /* the finally blocks this frame is in (their records on the VM's stack of finally records) */
+    uint32_t accBase;       /* property accessors (SPEC 2.2): g_acc.top when the call began - what its `this` took over in it lies above */
+    uint8_t nheld;          /* the arguments the call took over from its caller (a call's result, `take x`): they die after its locals (vmLeaveTo) */
+    Value held[6];
 } VmFrame;
 
 /* A `try` that is registered: the runtime's Handler (first: the runtime hands it back as the target of an unwinding) and where the try lives. */
@@ -298,6 +301,14 @@ typedef struct Vm {
     struct VmTArg* targs;
     struct VmTArgsLen { TArgs ta; uint32_t n; struct VmTArgsLen* next; } * targsLen;
     int argc; char** argv;
+    /* threads (phase B step 3, vm_threads.c): every strand that runs code of the program - the main program, a fire thread, a lambda that the runtime
+     * runs on a thread of its own (a task of `await [...]`) - has a Vm of its own (its stack, frames, scopes, finally records); what belongs to the
+     * program (the classes, the interned type arguments) is the main program's (`top`). A fire thread's global scope holds its own slots: the slots
+     * below `sharedCount` are the main program's globals (VM.cs _sharedCount). */
+    struct Vm* top;
+    uint32_t sharedCount;
+    uint8_t isStrand;       /* not the main program */
+    uint8_t awaitNext;      /* AwaitReply: the next method call on an actor gets a way back (`await a.M()`) */
 } Vm;
 
 /* A type argument of the VM: the runtime's TArg (its `display` is the text, `holds`/`adapt` stay NULL - the VM checks with its own fitsTArg, VM_SPIKE
