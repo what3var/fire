@@ -144,7 +144,7 @@ static Value vmPkgFromNative(const fire_val* in, OwnList* list) {
     switch (in->kind) {
         case FIRE_UNDEFINED: return Undef();
         case FIRE_BOOL: return Bool(in->v.i != 0);
-        case FIRE_INT: return Int(in->v.i);
+        case FIRE_INT: return IntNative(in->v.i);   /* (`#intwidth 32`: one that does not fit keeps its 64 bits - like the VM and FIRE_INT_U of a native build) */
         case FIRE_FLOAT: return Float((Real)in->v.f);
         case FIRE_CHAR: return Char((uint32_t)in->v.i);
         case FIRE_WORD: return WordV((uint64_t)in->v.i);

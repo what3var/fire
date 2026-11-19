@@ -4,7 +4,8 @@
 #
 #   tests/run-cases-vm.sh <forge> [<group>...] [-j <jobs>] [--fire <fire>] [--cache <dir>] [--list]
 #
-# <fire>: the C VM (default: built here with cc -O2 into the cache). The libraries of the natives of packages are looked up in the folder of <forge>
+# <fire>: the C VM (default: built here with cc -O2 into the cache, with its variants for `#intwidth 32|16` and `#floatwidth 32` beside it:
+# fire-i32, fire-i16, fire-f32, fire-i32-f32, fire-i16-f32 - a program of other widths runs in the variant, VM_C.md). The libraries of the natives of packages are looked up in the folder of <forge>
 # (FIRE_PKG_PATH before it). The program files are kept in the cache (default: a temporary folder, removed at
 # the end) and written again only when the case or the forge is newer - a second run with the same --cache only runs the VM.
 # --list: every case with OK/FAIL (default: only those that are not right). At the end: the counts per group, then all.
@@ -28,7 +29,14 @@ keep=1; [ -n "$cache" ] || { cache=$(mktemp -d); keep=0; }
 [ $keep = 1 ] || trap 'rm -rf "$cache"' EXIT
 if [ -z "$fire" ]; then
     fire=$cache/fire
-    ${CC:-cc} -O2 -w "$here/../native/vm/fire.c" -o "$fire" -lm -lpthread -ldl || exit 1
+    src="$here/../native/vm/fire.c"
+    ${CC:-cc} -O2 -w "$src" -o "$fire" -lm -lpthread -ldl &
+    for v in "i32 -DFIRE_INT32" "i16 -DFIRE_INT16" "f32 -DFIRE_FLOAT32" "i32-f32 -DFIRE_INT32 -DFIRE_FLOAT32" "i16-f32 -DFIRE_INT16 -DFIRE_FLOAT32"; do
+        # shellcheck disable=SC2086
+        ${CC:-cc} -O2 -w ${v#* } "$src" -o "$fire-${v%% *}" -lm -lpthread -ldl &
+    done
+    wait || true
+    for f in "$fire" "$fire"-i32 "$fire"-i16 "$fire"-f32 "$fire"-i32-f32 "$fire"-i16-f32; do [ -x "$f" ] || { echo "the VM was not built: $f" >&2; exit 1; }; done
 fi
 # the libraries of the packages' natives: those forge built (its package store, Packages/) or brought (Prebuilt/), next to it
 FIRE_PKG_PATH="${FIRE_PKG_PATH:+$FIRE_PKG_PATH:}$(dirname "$forge")"

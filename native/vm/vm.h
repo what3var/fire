@@ -262,6 +262,9 @@ struct VmHandlerRec {
 enum { FIN_NORMAL, FIN_JUMP, FIN_RETURN, FIN_RETHROW };
 typedef struct VmFinally { uint8_t kind; uint32_t label; Value value; int32_t frame; VmScope* scope; uint32_t sp; } VmFinally;
 
+/* A pointer of the VM in a Value (the hidden proto of a lambda, the arguments of a thread's start): an int of 64 bits - `#intwidth 32` would cut a plain Int. */
+#define VM_PTRV(p) IntW((int64_t)(uintptr_t)(p), 0, 64)
+
 #define VM_STACK 65536u
 #define VM_FRAMES 8192
 #define VM_FINALLY 256

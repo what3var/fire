@@ -155,10 +155,10 @@ static bool vmFire(Vm* vm, VmFrame* fr, VmProto* body, uint32_t globalSlots, uin
         av[3 + taking + i] = w;
     }
     (void)fr;
-    av[0] = Int((int64_t)(uintptr_t)body);
+    av[0] = VM_PTRV(body);
     av[1] = Int((int64_t)globalSlots | ((int64_t)argc << 32));
     ensureDomain();
-    av[2] = Int((int64_t)(uintptr_t)&started);
+    av[2] = VM_PTRV(&started);
     fire_atomic_store(&started, 0);
     if (flags & 2) fireThreadDedicated(vmThreadBody, av, argc + 3, travel);
     else fireThread(vmThreadBody, av, argc + 3, travel);
@@ -262,7 +262,7 @@ static int vmThreadCall(Vm* vm, VmProto* m, Value recv, uint32_t argc, const cha
     uint32_t i;
     vm->awaitNext = 0;
     if (argc > 64) return 0;
-    av[0] = Int((int64_t)(uintptr_t)m);
+    av[0] = VM_PTRV(m);
     av[1] = Int((int64_t)argc);
     if ((asObj(recv)->h.flags & 8) && leafAlive(recv)) {
         if (aw && actorAtHome(recv)) return 0;

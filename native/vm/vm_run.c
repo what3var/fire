@@ -112,9 +112,13 @@ static bool vmGuard(Value* v, uint32_t required, const char* what, bool slot) {
             return false;
         }
     }
-    if (v->kind == kind && (!(required & 0x80) || v->unit == 0) && (kind != K_Int || v->reserved == 0)) return false;
-    if (v->kind == K_Undefined && !(required & 0x20)) return false;
-    return guardSlot(v, kind, (uint8_t)(((required & 0x80) ? 1 : 0) | ((required & 0x20) ? 2 : 0)), what ? what : "A value", &g_vmUnitless);
+    {   /* (a plain `int` with `#intwidth 32`/`16` holds the program's int: one that keeps a wider width is cut - DeclaredKind.CutsWide; 0x40 KeepsWidth) */
+        bool cut = kind == K_Int && !(required & 0x40) && v->kind == K_Int && v->wide != 0;
+        if (v->kind == kind && (!(required & 0x80) || v->unit == 0) && (kind != K_Int || v->reserved == 0) && !cut) return false;
+        if (v->kind == K_Undefined && !(required & 0x20)) return false;
+        return guardSlot(v, kind, (uint8_t)(((required & 0x80) ? 1 : 0) | ((required & 0x20) ? 2 : 0) | (kind == K_Int && !(required & 0x40) ? 4 : 0)),
+            what ? what : "A value", &g_vmUnitless);
+    }
 }
 
 /* `x is of T` for a name of a class, an interface, an enum (VM.IsOfType) */
@@ -827,6 +831,7 @@ static void vmRun(Vm* vm, int32_t base) {
             SYNC();
             sp[-1] = coerceType(sp[-1], tag < 6 ? kinds[tag] : K_Undefined);
             CHECK();
+            if (tag == 1) sp[-1] = intProgram(sp[-1]);   /* (`x!int`: the program's int - one that keeps a wider width is cut, TC021) */
             break;
         }
         case OP_CoerceTypeDynamic: { Value c = POP(); SYNC(); { Value r_ = coerceTypeTo(c, sp[-1].kind); PUSH(r_); } CHECK(); break; }
@@ -1063,7 +1068,7 @@ static void vmRun(Vm* vm, int32_t base) {
             l = allocLam((uint32_t)p->nparams, ncaps + 1, vmLamThunk, &fr->scope->temp);
             sp -= ncaps;
             for (i = 0; i < ncaps; i++) { lamCaps(l)[i] = sp[i]; retain(sp[i]); }
-            lamCaps(l)[ncaps] = Int((int64_t)(intptr_t)p);
+            lamCaps(l)[ncaps] = VM_PTRV(p);
             l->on = on;
             if (vm->pendingTArgsFor == 2) { l->targs = vm->pendingTArgs; vm->pendingTArgs = NULL; vm->pendingTArgsFor = 0; }
             if (ncaps) lamOwnStore(l, &fr->scope->temp);

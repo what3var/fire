@@ -108,7 +108,7 @@ static Value vmHostUnitTicks(Vm* vm, VmFrame* fr, const Value* a, OwnList* list)
         return fireError("TimeException", text);
     }
     number = v.kind == K_Float ? (double)v.f : (double)v.i;
-    return Int((int64_t)nearbyint(number * perSecond * 1e7));
+    return IntNative((int64_t)nearbyint(number * perSecond * 1e7));   /* (ticks: 64 bits also with `#intwidth 32`) */
 }
 
 /* The waiting functions of the devices package (`WaitFor`, `WaitForString`; run by the host - DeviceHostNatives): the VM waits - with the program's

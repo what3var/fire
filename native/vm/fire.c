@@ -6,7 +6,15 @@
  * Every program is loaded, its classes are registered with the runtime, it runs, and then everything it had is gone again - its objects, strings, scopes,
  * classes - before the next one starts; one that ends with an exception nothing catches (or with an error of the runtime) ends only itself (L6). --stats
  * prints after each one what is still alive in the runtime (handles of objects/arrays, the temporary pool, strings). Exit code: that of the last program
- * that failed (1 for an exception nothing caught, the code of `terminate(code)`), else 0. */
+ * that failed (1 for an exception nothing caught, the code of `terminate(code)`), else 0.
+ *
+ * The widths of a program (`#intwidth 32|16`, `#floatwidth 32`, the word of the target) are a configuration of the runtime that is fixed when it is
+ * compiled (FIRE_INT32, FIRE_INT16, FIRE_FLOAT32, FIRE_WORD_BITS), as in a native build. One `fire` is built per configuration from the same sources:
+ *
+ *   cc -O2 [-DFIRE_INT32 | -DFIRE_INT16] [-DFIRE_FLOAT32] [-DFIRE_WORD_BITS=32] native/vm/fire.c -o fire-i32-f32 ...
+ *
+ * named after the one without defines with `-i32`/`-i16`, `-f32`, `-w32` in that order (fire-i32, fire-f32, fire-i32-f32, fire-i16, ...). A program
+ * whose widths are not those of the running `fire` is run by the variant next to it, as a child process with the same console and arguments (VM_C.md). */
 #define FIRE_VM 1
 #define FIRE_THREADS 1             /* fire threads, tasks, actors (phase B step 3): the thread model of the runtime with the GIL - one system thread per */
 #define FIRE_GIL 1                 /* fire thread, the safe points of the interpreter are those of the generated code (vm_threads.c) */
@@ -26,6 +34,12 @@
 #endif
 #include "../runtime/fire_rt.h"
 #include <setjmp.h>
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#include <sys/wait.h>
+#endif
 #define FIRE_BASE_IMPLEMENTATION 1
 #include "../base/fire_base.h"
 
@@ -57,6 +71,88 @@ void fire_vmExit(int code) {
 
 static uint32_t vmLiveHandles(void) { return g_slots.count - g_slots.nfree; }
 
+/* ---- the widths of this build and the variants for other widths ---- */
+#ifdef FIRE_INT16
+#define VM_INT_WIDTH 16
+#elif defined(FIRE_INT32)
+#define VM_INT_WIDTH 32
+#else
+#define VM_INT_WIDTH 64
+#endif
+#ifdef FIRE_FLOAT32
+#define VM_FLOAT_WIDTH 32
+#else
+#define VM_FLOAT_WIDTH 64
+#endif
+static const char* g_vmSelf;          /* argv[0]: the variants are named after it */
+static int g_vmArgc; static char** g_vmArgv;   /* what follows `--` (the program's arguments) */
+static bool vmWidthsFit(const VmProgram* p) {
+    return (p->intWidth == 0 || p->intWidth == VM_INT_WIDTH) && (p->floatWidth == 0 || p->floatWidth == VM_FLOAT_WIDTH)
+        && (p->wordWidth == 0 || p->wordWidth == FIRE_WORD_BITS);
+}
+/* The program at `path` needs other widths: the variant of this `fire` for them runs it (a child process; its exit code is the program's). 2: there is
+ * no such variant. */
+static int vmRunVariant(const char* path, const VmProgram* p, bool stats) {
+    char exe[4096], suffix[32] = "";
+    const char* self = g_vmSelf ? g_vmSelf : "fire";
+    size_t n = strlen(self);
+    char** argv;
+    int i, k = 0, code;
+    if (p->intWidth && p->intWidth != 64) snprintf(suffix + strlen(suffix), sizeof suffix - strlen(suffix), "-i%u", (unsigned)p->intWidth);
+    if (p->floatWidth && p->floatWidth != 64) snprintf(suffix + strlen(suffix), sizeof suffix - strlen(suffix), "-f%u", (unsigned)p->floatWidth);
+    if (p->wordWidth && p->wordWidth != 64) snprintf(suffix + strlen(suffix), sizeof suffix - strlen(suffix), "-w%u", (unsigned)p->wordWidth);
+    /* (the name of this build without its own suffix: fire-i32 runs a 64-bit program with `fire`) */
+#if defined(_WIN32)
+    if (n > 4 && _stricmp(self + n - 4, ".exe") == 0) n -= 4;
+#endif
+    {
+        const char* own[] = { "-w32", "-f32", "-i32", "-i16" };
+        int j;
+        for (j = 0; j < 4; j++) { size_t m = strlen(own[j]); if (n > m && strncmp(self + n - m, own[j], m) == 0) n -= m; }
+    }
+    if (n + strlen(suffix) + 5 >= sizeof exe) n = sizeof exe - strlen(suffix) - 5;
+    memcpy(exe, self, n);
+    snprintf(exe + n, sizeof exe - n, "%s%s", suffix,
+#if defined(_WIN32)
+        ".exe"
+#else
+        ""
+#endif
+    );
+    argv = (char**)calloc((size_t)g_vmArgc + 6, sizeof(char*));
+    if (!argv) outOfMemory();
+    argv[k++] = exe;
+    if (stats) argv[k++] = (char*)"--stats";
+    argv[k++] = (char*)path;
+    if (g_vmArgc > 1) { argv[k++] = (char*)"--"; for (i = 1; i < g_vmArgc; i++) argv[k++] = g_vmArgv[i]; }
+    argv[k] = NULL;
+    fflush(stdout);
+    fflush(stderr);
+#if defined(_WIN32)
+    {
+        intptr_t r = _spawnv(_P_WAIT, exe, (const char* const*)argv);
+        code = r < 0 ? -1 : (int)r;
+    }
+#else
+    {
+        pid_t pid = fork();
+        int status = 0;
+        if (pid == 0) { execv(exe, argv); _exit(127); }
+        if (pid < 0 || waitpid(pid, &status, 0) < 0) code = -1;
+        else if (WIFEXITED(status)) code = WEXITSTATUS(status) == 127 ? -1 : WEXITSTATUS(status);
+        else code = 1;   /* (a signal ended it) */
+    }
+#endif
+    free(argv);
+    if (code < 0) {
+        fprintf(stderr, "fire: %s: the program is made for int %u, float %u, word %u bits - this VM runs %d, %d, %d; its variant '%s' is not there (VM_C.md: one fire per width)\n",
+            path, (unsigned)(p->intWidth ? p->intWidth : 64), (unsigned)(p->floatWidth ? p->floatWidth : 64), (unsigned)(p->wordWidth ? p->wordWidth : 64),
+            VM_INT_WIDTH, VM_FLOAT_WIDTH, FIRE_WORD_BITS, exe);
+        return 2;
+    }
+    return code;
+}
+
 /* Runs one program; 0 when it ended normally, 1 with an exception nothing caught or an error of the runtime (or the code of `terminate`), 2 when it could
  * not be loaded. */
 static int vmRunFile(const char* path, bool stats) {
@@ -72,6 +168,12 @@ static int vmRunFile(const char* path, bool stats) {
     if (!bytes) { fprintf(stderr, "fire: cannot read '%s'\n", path); return 2; }
     p = vmLoad(bytes, len, error, sizeof error);
     if (!p) { free(bytes); fprintf(stderr, "fire: %s: %s\n", path, error); return 2; }
+    if (!vmWidthsFit(p)) {   /* (other widths: the variant of this VM for them runs it) */
+        int r = vmRunVariant(path, p, stats);
+        vmUnload(p);
+        free(bytes);
+        return r;
+    }
 
     vm = (Vm*)calloc(1, sizeof(Vm));
     vm->prog = p;
@@ -186,6 +288,8 @@ int main(int argc, char** argv) {
     int i, code = 0, files = 0, last = argc;
     for (i = 1; i < argc; i++) if (strcmp(argv[i], "--") == 0) { last = i; break; }
     fire_setArgs(argc - (last < argc ? last : argc - 1), argv + (last < argc ? last : argc - 1));   /* (Environment.Args: what follows `--`) */
+    g_vmSelf = argv[0];
+    g_vmArgc = argc - (last < argc ? last : argc - 1); g_vmArgv = argv + (last < argc ? last : argc - 1);
     for (i = 1; i < last; i++) {
         int r;
         if (strcmp(argv[i], "--stats") == 0) { stats = true; continue; }

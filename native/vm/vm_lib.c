@@ -83,7 +83,7 @@ static Value vmLibInvoke(void* f, const char* text, const Value* items, int coun
             result = Float((Real)d);
         } else {
             int64_t r = ((VmLibI)f)(iv[0], iv[1], iv[2], iv[3], iv[4], iv[5], iv[6], iv[7], fv[0], fv[1], fv[2], fv[3], fv[4], fv[5], fv[6], fv[7]);
-            if (ret.depth > 0) result = Int((int64_t)(intptr_t)r);
+            if (ret.depth > 0) result = VM_PTRV(r);
             else switch (ret.base) {
                 case 'v': result = Undef(); break;
                 case 'b': result = Bool((r & 0xFF) != 0); break;
