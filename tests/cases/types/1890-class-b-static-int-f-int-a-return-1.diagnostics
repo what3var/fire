@@ -1,1 +1,1 @@
-error E4076: 'F' of class 'C' is both a static method and an instance method (the other one: line 1 in 'B') - a call through the class name and one through an object would mean different methods; give one of them another name (line 2)
+error E4076: 'F' of class 'C' is both a static method and an instance method (the other one: line 1 in 'B') - a use through the class name and one through an object would mean different members; give one of them another name (line 2)

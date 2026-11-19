@@ -31,7 +31,7 @@ static Vm* vmStrandNew(Vm* top, uint32_t sharedCount) {
     vm->failed = 0; vm->quiet = 0; vm->terminated = 0; vm->exitCode = 0;
     vm->ret = Undef();
     vm->copyMask = 0;
-    vm->pendingTArgs = NULL; vm->pendingTArgsFor = 0; vm->pendingTArgsN = 0; vm->pendingArgNames = NULL;
+    vm->pendingTArgs = NULL; vm->pendingTArgsFor = 0; vm->pendingExplicit = 0; vm->pendingTArgsN = 0; vm->pendingArgNames = NULL;
     vm->initNext = false;
     vm->dead = NULL;
     vm->exitJump = NULL;

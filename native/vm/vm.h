@@ -284,6 +284,7 @@ typedef struct Vm {
     uint64_t copyMask;      /* CopyArgs: how the arguments of the next call go in */
     TArgs pendingTArgs;     /* SetTypeArgs: the type arguments of the next `new` / call / lambda */
     uint8_t pendingTArgsFor;
+    uint8_t pendingExplicit;    /* SetTypeArgs 3: the call names its type arguments (`M<string>(x)`) - a generic overload is meant */
     uint32_t pendingTArgsN;
     const char* pendingArgNames;
     bool initNext;          /* InitNext (`with`): the store that follows writes a record that is being made */ /* ArgNames: the names of the next call's arguments */

@@ -1,1 +1,1 @@
-error E4076: 'Inside' of class 'R' is both a static method and an instance method (the other one: line 2) - a call through the class name and one through an object would mean different methods; give one of them another name (line 3)
+error E4076: 'Inside' of class 'R' is both a static method and an instance method (the other one: line 2) - a use through the class name and one through an object would mean different members; give one of them another name (line 3)

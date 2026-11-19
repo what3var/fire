@@ -284,7 +284,7 @@ static int vmScore(Vm* vm, Value v, const char* d, Value owner, TArgs ctargs) {
     }
     return SC_ANY;
 }
-static int vmSelect(Vm* vm, VmProto* const* cands, uint32_t n, const Value* args, int argc, Value owner, TArgs ctargs) {
+static int vmSelect(Vm* vm, VmProto* const* cands, uint32_t n, const Value* args, int argc, Value owner, TArgs ctargs, int typeArgCount) {
     int best = -1;
     int64_t bestScore = INT64_MIN;
     uint32_t c;
@@ -293,6 +293,7 @@ static int vmSelect(Vm* vm, VmProto* const* cands, uint32_t n, const Value* args
         int64_t total = 0;
         bool fits = true;
         int i;
+        if (typeArgCount > 0 && p->typeParamCount != typeArgCount) continue;   /* (`M<string>(x)`: a generic one is meant) */
         for (i = 0; i < argc && i < p->nparams; i++) {
             int s = vmScore(vm, args[i], vmTypeAt(p, i), owner, p->typeParamCount > 0 ? ctargs : NULL);
             if (s == SC_NOMATCH) { fits = false; break; }
@@ -305,11 +306,17 @@ static int vmSelect(Vm* vm, VmProto* const* cands, uint32_t n, const Value* args
 /* The method a call of `name` with these arguments reaches on an object of `cls` (NULL: none); `declaring`: the class that declares it. */
 static VmProto* vmFindMethod(Vm* vm, VmClass* cls, const char* name, int argc, const Value* args, Value self, VmClass** declaring) {
     VmCands* c = vmCandidates(vm->prog, cls, name, argc);
-    int i = 0;
+    int i = 0, explicitCount = vm->pendingExplicit ? (int)vm->pendingTArgsN : 0;
+    vm->pendingExplicit = 0;
     if (c->n == 0) return NULL;
-    if (c->runtimeChoice && args) {
-        i = vmSelect(vm, c->protos, c->n, args, argc, self, vm->pendingTArgs);
-        if (i < 0) i = 0;
+    if ((c->runtimeChoice || explicitCount > 0) && args) {
+        i = vmSelect(vm, c->protos, c->n, args, argc, self, vm->pendingTArgs, explicitCount);
+        if (i < 0) {
+            /* (nothing fits: the first candidate - of the named generic ones - whose checks report what does not fit; RuntimeClass.FindMethodWithAccess) */
+            uint32_t k;
+            i = 0;
+            if (explicitCount > 0) for (k = 0; k < c->n; k++) if (c->protos[k]->typeParamCount == explicitCount) { i = (int)k; break; }
+        }
     }
     if (declaring) *declaring = c->declaring[i];
     return c->protos[i];
@@ -349,7 +356,7 @@ static VmProto* vmFindCtor(Vm* vm, VmClass* c, int argc, const Value* args) {
         }
     }
     {
-        int k = vmSelect(vm, cands, n, args, argc, Undef(), NULL);
+        int k = vmSelect(vm, cands, n, args, argc, Undef(), NULL, 0);
         return cands[k < 0 ? 0 : k];
     }
 }
@@ -549,6 +556,7 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     f->proto = p;
     f->ctargs = p->typeParamCount > 0 ? vm->pendingTArgs : NULL;
     if (p->typeParamCount > 0 || vm->pendingTArgsFor == 1) { vm->pendingTArgs = NULL; vm->pendingTArgsFor = 0; }
+    vm->pendingExplicit = 0;
     f->spBase = vm->sp;
     f->kind = kind;
     f->catchEnded = 0;

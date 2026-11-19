@@ -444,6 +444,34 @@ static uint32_t vmArrClassOf(Vm* vm, const char* text) {
     return k + 1;
 }
 
+/* OpCode.TypeArray on a value (also a field declared as a typed array - FieldInfo.RequiredArray, VM.GuardFieldArray): `code` the ArrayElem (the type in the low
+ * 6 bits - 11 a byte buffer, 12 Word, 13 Class -, 0x40 defined, 0x80 open: `new int[n]`), `t` the unit's text (13: the class's). The unwinding state is set
+ * when it does not fit. */
+static void vmTypeArrayCode(Vm* vm, Value* pv, uint32_t code, uint32_t rank, const char* t, OwnList* temp) {
+    VmProgram* prog = vm->prog;
+    uint32_t elem = code & 0x3F;
+    Value v = *pv;
+    if (code & 0x80) { if (v.kind != K_Buffer) arrMarkOpen(v, (uint8_t)elem, (int)rank, 1); return; }
+    if (elem == 11) { *pv = typeBuffer(v, (int)rank, temp); return; }
+    if (elem == 12) { *pv = typeWordBuffer(v, (int)rank, temp); return; }
+    if (elem == 13) {   /* an array of a class, a string or an enum: its entry of g_arrClasses */
+        uint32_t ac = t ? vmArrClassOf(vm, t) : 0;
+        if (ac) typeArray(v, 13, (int)rank, ac, (uint8_t)(16 | ((code & 0x40) ? 8 : 0)), vmConstStrUtf8(prog, g_vmArrClasses[ac - 1].display), 1);
+        return;
+    }
+    {
+        uint32_t unit = 0;
+        Value unitText = vmConstStrUtf8(prog, "(no unit)");
+        uint8_t fl = (code & 0x40) ? 8 : 0;
+        if (t) {
+            VmDemand* d = vmDemand(vm, t);
+            if (d->any) { fl |= 4; unitText = vmConstStrUtf8(prog, "any"); }
+            else { unit = d->unit; unitText = d->display; fl |= d->dimensionOnly ? 3 : 1; }
+        }
+        typeArray(v, (uint8_t)elem, (int)rank, unit, fl, unitText, 1);
+    }
+}
+
 /* `T items[]`, `new T[n]` (OpCode.TypeArrayOfParam, FieldInfo.ArrayOfParam): the array is typed by the type argument when that is int, float, bool or char
  * (DeclaredType.TypedElementOf; an array of a class: not yet). `text`: `$k@Class` or `$k@`. */
 static void vmTypeArrayOfParam(Vm* vm, Value arr, const char* text, Value self, TArgs ctargs) {
@@ -1349,6 +1377,7 @@ static void vmRun(Vm* vm, int32_t base) {
             vm->pendingTArgs = vmTArgsOf(vm, fr, text);
             { const char* q; vm->pendingTArgsN = 1; for (q = text; q && *q; q++) if (*q == '|') vm->pendingTArgsN++; }
             vm->pendingTArgsFor = (uint8_t)(forCall == 3 ? 1 : forCall);
+            vm->pendingExplicit = forCall == 3;
             break;
         }
         case OP_TakeCallTypeArgs: break;   /* (the frame took them when the call began) */
@@ -1484,7 +1513,8 @@ static void vmRun(Vm* vm, int32_t base) {
                         snprintf(what, sizeof what, "Field '%s'", name);
                         if (vmGuardType(vm, &x, fi->requiredType, v, NULL, what, false)) goto unwind;
                     }
-                    if (fi && fi->arrayOfParam && x.kind == K_Array) { vmTypeArrayOfParam(vm, x, fi->arrayOfParam, v, NULL); CHECK(); }
+                    if (fi && fi->requiredArray) { vmTypeArrayCode(vm, &x, fi->requiredArray & 0xFF, fi->requiredArray >> 8, fi->requiredArrayType ? fi->requiredArrayType : fi->requiredUnit, &fr->scope->temp); CHECK(); }   /* (VM.GuardFieldArray) */
+                    else if (fi && fi->arrayOfParam && x.kind == K_Array) { vmTypeArrayOfParam(vm, x, fi->arrayOfParam, v, NULL); CHECK(); }
                     if ((c->flags & VC_RECORD) && !recInit(asObj(v)) && !vm->initNext) { recordWriteError(asObj(v), name); goto unwind; }
                     vm->initNext = false;
                     if (!checks) vmIcSet(fr->chunk, at, asObj(v)->cls, (void*)(intptr_t)idx);
@@ -1578,9 +1608,15 @@ static void vmRun(Vm* vm, int32_t base) {
             else {
                 Value x = op == OP_SetStaticField ? sp[-1] : POP();
                 Value old = c->svals[i];
-                if (op == OP_SetStaticField) {
+                {   /* (the checks of the declaration: VM SetStaticField / SetStaticFieldOnInit - the unit, the kind, the type, a typed array) */
                     const VmFieldInfo* fi = vmFieldInfo(c, name, NULL);
-                    if (fi && fi->requiredUnit) { x = vmAdaptUnit(vm, x, fi->requiredUnit); CHECK(); sp[-1] = x; }
+                    char what[200];
+                    snprintf(what, sizeof what, "Field '%s'", name);
+                    if (fi && fi->requiredUnit) { x = vmAdaptUnit(vm, x, fi->requiredUnit); CHECK(); }
+                    if (fi && fi->requiredKind && vmGuard(&x, fi->requiredKind, what, false)) goto unwind;
+                    if (fi && fi->requiredType && vmGuardType(vm, &x, fi->requiredType, Undef(), NULL, what, false)) goto unwind;
+                    if (fi && fi->requiredArray) { vmTypeArrayCode(vm, &x, fi->requiredArray & 0xFF, fi->requiredArray >> 8, fi->requiredArrayType ? fi->requiredArrayType : fi->requiredUnit, &fr->scope->temp); CHECK(); }
+                    if (op == OP_SetStaticField) sp[-1] = x;
                 }
                 if (FIRE_UNLIKELY(g_isThread)) {   /* (a static field of the main program from a fire thread: a section, rule 10) */
                     bool ss = sectionScopeEnter(true);
@@ -1751,32 +1787,11 @@ static void vmRun(Vm* vm, int32_t base) {
         }
         case OP_TypeArray: {
             /* ArrayElem: the type in the low 6 bits (11 U8: a byte buffer, 12 Word, 13 Class), 0x40 defined, 0x80 open (`new int[n]`) */
-            uint32_t code = ip[0], rank = ip[1], unitIdx = U16(ip + 2), elem = code & 0x3F;
-            Value v = sp[-1];
+            uint32_t code = ip[0], rank = ip[1], unitIdx = U16(ip + 2);
             ip += 4;
             SYNC();
-            if (code & 0x80) { if (v.kind != K_Buffer) arrMarkOpen(v, (uint8_t)elem, (int)rank, 1); break; }
-            if (elem == 11) { sp[-1] = typeBuffer(v, (int)rank, &fr->scope->temp); CHECK(); break; }
-            if (elem == 12) { sp[-1] = typeWordBuffer(v, (int)rank, &fr->scope->temp); CHECK(); break; }
-            if (elem == 13) {   /* an array of a class, a string or an enum: its entry of g_arrClasses */
-                const char* t = unitIdx != 0xFFFF && unitIdx < fr->chunk->nk ? fr->chunk->kname[unitIdx] : NULL;
-                uint32_t ac = t ? vmArrClassOf(vm, t) : 0;
-                if (ac) { typeArray(v, 13, (int)rank, ac, (uint8_t)(16 | ((code & 0x40) ? 8 : 0)), vmConstStrUtf8(prog, g_vmArrClasses[ac - 1].display), 1); CHECK(); }
-                break;
-            }
-            {
-                uint32_t unit = 0;
-                Value unitText = vmConstStrUtf8(prog, "(no unit)");
-                uint8_t fl = (code & 0x40) ? 8 : 0;
-                if (unitIdx != 0xFFFF && unitIdx < fr->chunk->nk && fr->chunk->kname[unitIdx]) {
-                    const char* t = fr->chunk->kname[unitIdx];
-                    VmDemand* d = vmDemand(vm, t);
-                    if (d->any) { fl |= 4; unitText = vmConstStrUtf8(prog, "any"); }
-                    else { unit = d->unit; unitText = d->display; fl |= d->dimensionOnly ? 3 : 1; }
-                }
-                typeArray(v, (uint8_t)elem, (int)rank, unit, fl, unitText, 1);
-                CHECK();
-            }
+            vmTypeArrayCode(vm, &sp[-1], code, rank, unitIdx != 0xFFFF && unitIdx < fr->chunk->nk ? fr->chunk->kname[unitIdx] : NULL, &fr->scope->temp);
+            CHECK();
             break;
         }
         case OP_TypeArrayOfParam: { const char* t = KNAME(U16(ip)); ip += 2; SYNC(); vmTypeArrayOfParam(vm, sp[-1], t, fr->self, fr->ctargs); CHECK(); break; }
