@@ -15,6 +15,7 @@
 | `forge dump <file>... \| <program.fbc> [-o file]` | a program as text - everything a program file holds, one thing per line, made to be compared (two builds, two compilers) |
 | `forge build-vm <folder> [--variant v]... [--all]` | builds the VM in C (the program `fire`, [VM_C.md](../spec/VM_C.md#das-programm-fire-schritt-7)) for this machine into the folder - the build of forge does it next to forge; `--variant i32`, `f32`, `i32-f32`, `i16`, `i16-f32` (or `--all`): the VMs of `#intwidth`/`#floatwidth` |
 | `forge tables <folder>` | writes the tables of the compiler - opcodes, error messages, the natives every program has, the prelude - as files (`native/tables` of the repository: what the compiler and the VM in C read) |
+| `forge tokens <file>` / `forge ast <file>` | the tokens / the syntax tree of a source as text, with the diagnostics (`--list <files> --out <folder>` for many) - the measure of the frontend in C, [FORGE_C.md](../spec/FORGE_C.md) |
 | `forge test [file \| project \| solution] [--filter A.B]` | runs the `[Test]` methods ([testing](testing.md)); exit code 0 when all passed |
 | `forge ui <file.fxml> [-o file]` | the script generated from a [markup](../ui/markup.md) file (to look at it; `#include` does it on the fly) |
 | `forge biscuit <file.biscuit> [-o file]` | the script generated from a [schematic](../circuits/README.md) |
