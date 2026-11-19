@@ -86,7 +86,7 @@ static void pfU8(FcPfWriter* w, int b) { fcBufChar(w->out, (char)(uint8_t)b); }
 static void pfBool(FcPfWriter* w, bool b) { pfU8(w, b ? 1 : 0); }
 static void pfUInt(FcPfWriter* w, uint64_t v) { while (v >= 0x80) { pfU8(w, (int)(v | 0x80)); v >>= 7; } pfU8(w, (int)v); }
 static void pfCount(FcPfWriter* w, int n) { pfUInt(w, (uint64_t)n); }
-static void pfInt(FcPfWriter* w, int64_t v) { pfUInt(w, (uint64_t)(v << 1) ^ (uint64_t)(v >> 63)); }
+static void pfInt(FcPfWriter* w, int64_t v) { pfUInt(w, ((uint64_t)v << 1) ^ (v < 0 ? UINT64_MAX : 0)); }
 static void pfF64(FcPfWriter* w, double d) { uint64_t bits; int i; memcpy(&bits, &d, 8); for (i = 0; i < 8; i++) pfU8(w, (int)(bits >> (8 * i))); }
 static void pfStr(FcPfWriter* w, const char* s) {
     void* at;
