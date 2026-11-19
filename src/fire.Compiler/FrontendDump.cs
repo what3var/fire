@@ -22,6 +22,12 @@ namespace fire.Compiler
         public static int Run(IReadOnlyList<string> args)
         {
             string command = args[0];
+            if (command == "fbc" && args.Count >= 3)
+            {
+                // `fbc <debug|release|performance|default> <file>`: the program file `forge bytecode` writes (Phase C 4); the mode is a parameter of the command
+                command = "fbc:" + args[1];
+                args = args.Skip(1).ToList();
+            }
             if (args.Count == 2) { Console.Out.Flush(); return Dump(command, args[1], Console.OpenStandardOutput()); }
             if (args.Count == 5 && args[1] == "--list" && args[3] == "--out")
             {
@@ -49,6 +55,7 @@ namespace fire.Compiler
         private static int Dump(string command, string path, Stream output)
         {
             if (command == "diagnostics") return DumpDiagnostics(path, output);
+            if (command.StartsWith("fbc:", StringComparison.Ordinal)) return DumpProgramFile(command.Substring(4), path, output);
             var o = new StringBuilder();
             int result = 0;
             try
@@ -125,6 +132,44 @@ namespace fire.Compiler
                 Linker.ProcessDefaultTypeChecking = before;
             }
             var bytes = new UTF8Encoding(false).GetBytes(o.ToString());
+            output.Write(bytes, 0, bytes.Length);
+            output.Flush();
+            return result;
+        }
+
+        /// <summary>`forge fbc <mode> <file>` (Phase C 4, docs/spec/FORGE_C.md): the bytes `forge bytecode <file> -m <mode>` writes (with the line tables; in Debug the
+        /// sources), compiled as there; `default` leaves out `-m`. A `//# types: strict` among the last 12 lines compiles with `--types strict` (as tests/run-cases-vm.sh).
+        /// A failed compile gives the text `error` and the errors as forge prints them, an exception that is no compile error `internal: <type>: <message>`.</summary>
+        private static int DumpProgramFile(string mode, string path, Stream output)
+        {
+            var lines = File.Exists(path) ? File.ReadAllLines(path) : Array.Empty<string>();
+            bool strict = lines.Skip(Math.Max(0, lines.Length - 12)).Any(l => l.Trim() == "//# types: strict");
+            fire.Runtime.VmExecutionMode? executionMode = mode switch
+            {
+                "debug" => fire.Runtime.VmExecutionMode.Debug, "release" => fire.Runtime.VmExecutionMode.Release, "performance" => fire.Runtime.VmExecutionMode.Performance, _ => null,
+            };
+            var before = Linker.ProcessDefaultTypeChecking;
+            Linker.ProcessDefaultTypeChecking = strict ? TypeCheckMode.Strict : null;
+            byte[] bytes;
+            int result = 0;
+            try
+            {
+                string full = Path.GetFullPath(path);
+                var program = new Linker { BasePath = Path.GetDirectoryName(full), SourcePaths = new string?[] { full } }
+                    .CompileAndLink(new[] { File.ReadAllText(path) }, null, null, executionMode);
+                bytes = fire.Bytecode.ProgramFile.Write(program);
+            }
+            catch (Exception ex) when (CommandLineRunner.IsCompileError(ex))
+            {
+                bytes = new UTF8Encoding(false).GetBytes("error\n" + CommandLineRunner.DescribeErrors(ex).Replace("\r\n", "\n") + "\n");
+                result = 1;
+            }
+            catch (Exception ex)
+            {
+                bytes = new UTF8Encoding(false).GetBytes("internal: " + ex.GetType().Name + ": " + ex.Message.Replace("\r\n", "\n") + "\n");
+                result = 1;
+            }
+            finally { Linker.ProcessDefaultTypeChecking = before; }
             output.Write(bytes, 0, bytes.Length);
             output.Flush();
             return result;
