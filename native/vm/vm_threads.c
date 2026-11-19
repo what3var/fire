@@ -327,6 +327,22 @@ static bool vmThreadNative(Vm* vm, VmFrame* fr, uint32_t idx, uint32_t argc, Val
         case 34: if (argc != 3) return false; *result = fire_chan_send(a[0], a[1], a[2], list); return true;
         case 35: if (argc != 3) return false; *result = fire_chan_receive(a[0], a[1], a[2], list); return true;
         case 36: if (argc != 3) return false; *result = fire_chan_watch(a[0], a[1], a[2]); return true;
+        default: break;
+    }
+    /* `Sleep` of the time package: a function the host runs itself (HostNatives: a wait that terminate ends, the main program serves its queue meanwhile;
+     * packages/time fire_tm_sleep) */
+    if (idx >= VM_NNATIVES && idx - VM_NNATIVES < vm->prog->npackageNatives && argc == 1 && !strcmp(vm->prog->packageNatives[idx - VM_NNATIVES], "Sleep")) {
+        int64_t ticks;
+        char text[160];
+        *result = Undef();
+        if (timeTicksOf(a[0], &ticks)) { sleepTicks(ticks); if (!g_unwind.active) (void)pollSignals(); return true; }
+        if (a[0].kind == K_Class) snprintf(text, sizeof text, "Sleep expects a TimeSpan, got: %s.", className(asObj(a[0])->cls));
+        else if (a[0].kind == K_Int || a[0].kind == K_Float) snprintf(text, sizeof text, "'%s' is not a unit of time.", g_ud[a[0].unit].name);
+        else snprintf(text, sizeof text, "Sleep expects a TimeSpan, a time value or milliseconds, got: %s.", kindName(a[0]));
+        fireError("TimeException", text);
+        return true;
+    }
+    switch (idx) {
         default: return false;
     }
 }
