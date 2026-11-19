@@ -9,10 +9,11 @@
 | --- | --- |
 | `forge run <file>... [-- args]` | compiles the files into one program and runs it in the VM; what follows `--` is `Environment.Args` |
 | `forge run <project.fireproj \| solution.firesln> [-p name]` | runs a project (of a solution: the startup project, or `-p`) |
-| `forge build <file \| project \| solution> [-o out]` | a program: a self-contained VM program, or with `--engine native` a native one; a library project: a package (`.fpk`) |
+| `forge build <file \| project \| solution> [-o out]` | a program: a self-contained VM program ([the VM in C with the program behind it](#programs-of-the-vm-build---engine-vm)), or with `--engine native` a native one; a library project: a package (`.fpk`) |
 | `forge native <file>... [-o out.c]` | only translates to C (next to the runtime header), without building |
 | `forge bytecode <file>... [-o out.fbc]` | compiles the files into one program and writes it as a program file (`.fbc`, the bytecode with everything a VM needs: [the format](../spec/BYTECODE.md#48-das-dateiformat-fbc)) |
 | `forge dump <file>... \| <program.fbc> [-o file]` | a program as text - everything a program file holds, one thing per line, made to be compared (two builds, two compilers) |
+| `forge build-vm <folder> [--variant v]... [--all]` | builds the VM in C (the program `fire`, [VM_C.md](../spec/VM_C.md#das-programm-fire-schritt-7)) for this machine into the folder - the build of forge does it next to forge; `--variant i32`, `f32`, `i32-f32`, `i16`, `i16-f32` (or `--all`): the VMs of `#intwidth`/`#floatwidth` |
 | `forge tables <folder>` | writes the tables of the compiler - opcodes, error messages, the natives every program has, the prelude - as files (`native/tables` of the repository: what the compiler and the VM in C read) |
 | `forge test [file \| project \| solution] [--filter A.B]` | runs the `[Test]` methods ([testing](testing.md)); exit code 0 when all passed |
 | `forge ui <file.fxml> [-o file]` | the script generated from a [markup](../ui/markup.md) file (to look at it; `#include` does it on the fly) |
@@ -56,6 +57,30 @@ forge test All.firesln --filter MathTests
 | `--report json` | `build`/`publish`: the [report for tools](#the-report-for-tools) on stdout instead of the text for people |
 
 The command line goes before the project's settings, which go before the directives in the source and `fire.native.json`.
+
+## Programs of the VM (`build --engine vm`)
+
+`forge build x.fire` (the engine `vm`, the default) writes **one executable**: the VM in C (`fire`, `native/vm`, [VM_C.md](../spec/VM_C.md)) with the
+program behind it - the program file (`.fbc`, as `forge bytecode` writes it, without line tables) and the libraries of the natives of its packages
+(`libfire_pkg_*`, `libfire_gfx` for graphics and windows). Nothing else is needed on the machine that runs it: no .NET, no files next to it.
+
+```bash
+forge build hello.fire -o hello && ./hello a b      # Environment.Args: a b - every argument is the program's
+```
+
+* **Its libraries**: written by the first start into a folder of the user's cache named by their checksums (`FIRE_VM_CACHE`, else
+  `$XDG_CACHE_HOME/fire/native`, `~/.cache/fire/native`, `%LOCALAPPDATA%\fire\native`) and loaded from there; a later start takes them when their
+  length and checksum are right (a damaged one is written again). Windows cannot load a library from memory - the same way for every system.
+* **Exit code**: 0; 1 for an exception nothing caught (its text on stderr); the code of `terminate(code)`; 2 when the file is damaged.
+* **`#intwidth`/`#floatwidth`**: the VM of the program's widths is packed (`fire-i32`, `fire-f32`, `fire-i32-f32`, `fire-i16`, `fire-i16-f32`).
+* **Where forge gets `fire`**: `FIRE_VM_EXE` (a file; its variants next to it), else next to forge (the build of forge, spark and the tests compiles it
+  there - `src/FireVm.targets`, `forge build-vm` - and spark's publish folder, which `setup.iss` packs, carries it), else forge compiles it now with a
+  C compiler of this machine (gcc, clang, tcc, cl - the one that builds the natives of packages) into `<LocalApplicationData>/fire/vm/<rid>/`, once per
+  version of its sources. A `fire` next to forge counts when its stamp (`fire.key`) names the sources this forge carries.
+* **`#noconsole`**, icon and version (Windows): set in the copy of `fire.exe` before the program goes behind it, as for the .NET runtime.
+* **The .NET runtime** (the old way, until M1): `FIRE_VM_ENGINE=dotnet` packs the program with `fire.Runtime` as before (a bundle with the
+  payload of `PayloadFile`; it needs an installed .NET).
+* A hello world: 748 KB (the VM 642 KB, the program file 107 KB; Linux x64, gcc -O2, stripped) - the .NET one is 729 KB plus the installed .NET.
 
 ## The report for tools
 

@@ -4701,6 +4701,8 @@ packerTests:
         }
 
         // 4) End-to-end: pack a standalone file, start it OUTSIDE the compiler folder.
+        //    (the .NET runtime: FIRE_VM_ENGINE=dotnet, the old way until M1; the VM in C below)
+        CVm.EngineOverride = "dotnet";
         var stubName = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
         if (File.Exists(Path.Combine(baseDir, stubName)))
         {
@@ -4738,6 +4740,126 @@ packerTests:
             }
         }
         else Console.WriteLine($"(uebersprungen: {stubName} liegt nicht im Testordner)");
+        CVm.EngineOverride = null;
+
+        // 5) The VM in C (phase B steps 7 and 8, docs/spec/VM_C.md "Gepackte Programme"): `forge build --engine vm` packs `fire` with the program file and the
+        //    libraries of its packages behind it; the libraries are written into the cache of the user (here FIRE_VM_CACHE in the test folder).
+        Console.WriteLine("--- die VM in C (fire) ---");
+        {
+            var cvFile = Path.Combine(tmpDir, "cv.bin");
+            var cvData = Enumerable.Range(0, 3000).Select(i => (byte)(i * 7)).ToArray();
+            using (var fs = new FileStream(cvFile, FileMode.Create))
+            {
+                fs.Write(System.Text.Encoding.ASCII.GetBytes("FIREVMP1 kein Payload, nur ein Kopf"));
+                CVmPayload.Append(fs, new[] { (CVmPayload.ProgramKind, "program.fbc", new byte[] { 1, 2, 3 }), (CVmPayload.LibraryKind, "libx.so", cvData) });
+            }
+            var cvEntries = CVmPayload.Open(cvFile);
+            PackCheck(cvEntries != null && cvEntries.Count == 2 && cvEntries[1].Name == "libx.so" && CVmPayload.Read(cvFile, cvEntries[1])!.SequenceEqual(cvData)
+                && CVmPayload.ReadProgram(cvFile)!.SequenceEqual(new byte[] { 1, 2, 3 }), "C-VM-Payload: Index am Ende gefunden, Rundlauf stimmt");
+            var cvBytes = File.ReadAllBytes(cvFile);
+            cvBytes[(int)cvEntries![1].Offset + 5] ^= 0xFF;
+            File.WriteAllBytes(cvFile, cvBytes);
+            PackCheck(CVmPayload.Read(cvFile, CVmPayload.Open(cvFile)![1]) == null, "C-VM-Payload: ein beschaedigter Eintrag wird erkannt (FNV-1a)");
+            PackCheck(CVmPayload.Open(Path.Combine(tmpDir, "plain.bin")) == null && PayloadFile.Open(cvFile) == null, "C-VM-Payload: eine Datei ohne (oder mit dem anderen) Payload liefert null");
+            bool badName = false;
+            try { using var fs = new MemoryStream(); CVmPayload.Append(fs, new[] { (CVmPayload.LibraryKind, "../x.so", new byte[1]) }); } catch (ArgumentException) { badName = true; }
+            PackCheck(badName, "C-VM-Payload: ein Name, der den Ordner verlaesst, wird abgelehnt");
+            PackCheck(CVm.VariantName(64, 64) == "fire" && CVm.VariantName(32, 32) == "fire-i32-f32" && CVm.VariantName(16, 64) == "fire-i16" && CVm.ParseVariant("i32-f32") == (32, 32)
+                && CVm.ParseVariant("default") == (64, 64) && CVm.ParseVariant("i8") == null, "C-VM: die Namen der Varianten nach Breiten");
+
+            string? fireExe = null;
+            try { fireExe = CVm.Locate(64, 64); } catch (InvalidOperationException ex) { Console.WriteLine("(die VM in C fehlt: " + ex.Message.Split('\n')[0] + ")"); }
+            if (fireExe != null)
+            {
+                PackCheck(Path.GetDirectoryName(fireExe) == Path.GetDirectoryName(Path.Combine(baseDir, "x")) || fireExe.StartsWith(CVm.CacheFolder), $"C-VM: fire liegt neben forge (der Build, FireVm.targets) oder im Cache ({fireExe})");
+                string cvCache = Path.Combine(tmpDir, "vmcache");
+                (int Code, string Out, string Err) RunExe(string exe, string workDir, params string[] args)
+                {
+                    var psi = new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = workDir };
+                    foreach (var a in args) psi.ArgumentList.Add(a);
+                    psi.Environment["FIRE_VM_CACHE"] = cvCache;
+                    psi.Environment.Remove("FIRE_PKG_PATH");
+                    using var proc = System.Diagnostics.Process.Start(psi)!;
+                    var stderrTask = proc.StandardError.ReadToEndAsync();
+                    var output = proc.StandardOutput.ReadToEnd();
+                    proc.WaitForExit(60000);
+                    return (proc.ExitCode, output.Replace("\r\n", "\n"), stderrTask.Result.Replace("\r\n", "\n"));
+                }
+                string Build(string source, string name)
+                {
+                    var exe = Path.Combine(tmpDir, name + (OperatingSystem.IsWindows() ? ".exe" : ""));
+                    new Linker().CompileAndLink(new[] { source }, null, exe);
+                    return exe;
+                }
+                string elsewhere = Path.Combine(tmpDir, "anderswo");
+                Directory.CreateDirectory(elsewhere);
+
+                var cHello = Build("print(\"hallo\")\nprint(\"welt\")", "c_hello");
+                var rHello = RunExe(cHello, elsewhere);
+                long cHelloSize = new FileInfo(cHello).Length;
+                PackCheck(rHello.Code == 0 && rHello.Out == "hallo\nwelt\n", $"C-VM Ende-zu-Ende: die gepackte Datei laeuft allein ({rHello.Code}: {rHello.Out.Trim()}{rHello.Err})");
+                PackCheck(File.ReadAllBytes(cHello).AsSpan(0, (int)new FileInfo(fireExe).Length).SequenceEqual(File.ReadAllBytes(fireExe)) && CVmPayload.Open(cHello) is { Count: 1 }
+                    && Packer.UnpackProgram(cHello) != null, "C-VM: die Datei ist fire mit dem Programm dahinter (ohne Bibliotheken), Packer.UnpackProgram liest es");
+
+                var cArgs = Build("print(Environment.Args.Length)\nforeach (a in Environment.Args) print(\"[\" + a + \"]\")\nterminate(4)", "c_args");
+                var rArgs = RunExe(cArgs, elsewhere, "a", "b c", "--stats");
+                PackCheck(rArgs.Code == 4 && rArgs.Out == "3\n[a]\n[b c]\n[--stats]\n", $"C-VM: jedes Argument gehoert dem Programm, terminate(4) ist der Exitcode ({rArgs.Code}: {rArgs.Out.Replace("\n", "|")})");
+                var cThrow = Build("print(\"vorher\")\nthrow new Exception(\"bumm\")", "c_throw");
+                var rThrow = RunExe(cThrow, elsewhere);
+                PackCheck(rThrow.Code == 1 && rThrow.Out == "vorher\n" && rThrow.Err.Contains("bumm"), $"C-VM: eine unbehandelte Ausnahme endet mit 1 und ihrem Text ({rThrow.Code}: {rThrow.Err.Trim()})");
+
+                var cIo = Build("#import \"io\"\n#import \"time\"\nIO.Stdio.WriteLine(\"io ok\")\nprint(DateTime.Now.Year > 2000)", "c_io");
+                var ioEntries = CVmPayload.Open(cIo)!;
+                PackCheck(ioEntries.Any(e => e.Kind == CVmPayload.LibraryKind && e.Name.Contains("fire_io_io")) && ioEntries.Any(e => e.Name.Contains("fire_time_time")), "C-VM: die Bibliotheken der Pakete (io, time) reisen in der Datei mit");
+                var rIo = RunExe(cIo, elsewhere);
+                PackCheck(rIo.Code == 0 && rIo.Out == "io ok\nTrue\n", $"C-VM: die Natives der Pakete laufen aus den Bibliotheken der Datei ({rIo.Code}: {rIo.Out.Trim()}{rIo.Err})");
+                var ioLib = Directory.Exists(cvCache) ? Directory.GetFiles(cvCache, "libfire_pkg_fire_io_io*", SearchOption.AllDirectories).Concat(Directory.GetFiles(cvCache, "fire_pkg_fire_io_io*", SearchOption.AllDirectories)).FirstOrDefault() : null;
+                PackCheck(ioLib != null, "C-VM: die Bibliotheken liegen im Cache (ein Ordner nach ihren Pruefsummen)");
+                if (ioLib != null)
+                {
+                    var written = File.GetLastWriteTimeUtc(ioLib);
+                    System.Threading.Thread.Sleep(20);
+                    RunExe(cIo, elsewhere);
+                    PackCheck(File.GetLastWriteTimeUtc(ioLib) == written, "C-VM: der zweite Start nimmt die Bibliothek im Cache, ohne sie neu zu schreiben");
+                    File.WriteAllBytes(ioLib, new byte[] { 1, 2, 3 });
+                    var rAgain = RunExe(cIo, elsewhere);
+                    PackCheck(rAgain.Code == 0 && rAgain.Out == "io ok\nTrue\n" && new FileInfo(ioLib).Length > 3, "C-VM: eine beschaedigte Bibliothek im Cache wird neu geschrieben");
+                }
+
+                var cWide = Build("#intwidth 32\nint x = 2147483647\nx = x + 1\nprint(x)", "c_i32");
+                var rWide = RunExe(cWide, elsewhere);
+                PackCheck(rWide.Code == 0 && rWide.Out == "-2147483648\n", $"C-VM: #intwidth 32 packt die Variante fire-i32 ({rWide.Code}: {rWide.Out.Trim()}{rWide.Err})");
+
+                // `fire` itself: run, the arguments after the program, help, version, the exit code of the command line
+                var fbc = Path.Combine(tmpDir, "args.fbc");
+                File.WriteAllBytes(fbc, fire.Bytecode.ProgramFile.Write(new Linker().CompileAndLink(new[] { "foreach (a in Environment.Args) print(a)\nterminate(6)" })));
+                var rRun = RunExe(fireExe, tmpDir, "run", fbc, "x", "--y");
+                var rRun2 = RunExe(fireExe, tmpDir, "run", fbc, "--", "z");
+                var rOld = RunExe(fireExe, tmpDir, fbc, "--", "w");
+                PackCheck(rRun.Code == 6 && rRun.Out == "x\n--y\n" && rRun2.Out == "z\n" && rOld.Code == 6 && rOld.Out == "w\n", $"fire run x.fbc [--] args: die Argumente hinter dem Programm, der Code von terminate ({rRun.Code} {rRun.Out.Replace("\n", "|")} {rRun2.Out.Replace("\n", "|")} {rOld.Out.Replace("\n", "|")})");
+                var rVersion = RunExe(fireExe, tmpDir, "version");
+                var rHelp = RunExe(fireExe, tmpDir, "help");
+                var rNone = RunExe(fireExe, tmpDir);
+                var rBad = RunExe(fireExe, tmpDir, "--gibtsnicht", fbc);
+                var rMissing = RunExe(fireExe, tmpDir, "run", Path.Combine(tmpDir, "nix.fbc"));
+                PackCheck(rVersion.Code == 0 && rVersion.Out.StartsWith("fire ") && rHelp.Code == 0 && rHelp.Out.Contains("fire run") && rNone.Code == 2 && rBad.Code == 2 && rBad.Err.Contains("--gibtsnicht") && rMissing.Code == 2,
+                    "fire: version, help (0), ohne Programm, eine unbekannte Option, eine fehlende Datei (2)");
+
+                // the old way stays selectable until M1
+                CVm.EngineOverride = "dotnet";
+                try
+                {
+                    if (File.Exists(Path.Combine(baseDir, stubName)))
+                    {
+                        var netHello = Build("print(\"hallo\")\nprint(\"welt\")", "net_hello");
+                        long netSize = new FileInfo(netHello).Length;
+                        PackCheck(PayloadFile.Open(netHello) != null && CVmPayload.Open(netHello) == null, "FIRE_VM_ENGINE=dotnet: der alte Weg (die .NET-Runtime) bleibt waehlbar");
+                        Console.WriteLine($"Groesse hello world: VM in C {cHelloSize} B, .NET-Runtime {netSize} B (sie braucht dazu das installierte .NET)");
+                    }
+                }
+                finally { CVm.EngineOverride = null; }
+            }
+        }
     }
     finally
     {
