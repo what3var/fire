@@ -54,6 +54,7 @@ static const char* fcBaseName(const char* path) {
 static int fcCmpOrdinal(const void* a, const void* b) { return strcmp(*(const char* const*)a, *(const char* const*)b); }
 
 #include "linker.c"
+#include "serve.c"
 
 /* FrontendDump.Token */
 static void fcDumpToken(FcBuf* o, const FcToken* t) {
@@ -272,6 +273,7 @@ int main(int argc, char** argv) {
             return result;
         }
     }
+    if (argc >= 2 && strcmp(argv[1], "serve") == 0) return svServe(argc, argv, prelude, store);   /* docs/spec/FORGE_SERVE.md */
     if (argc == 3 && fcIsCommand(argv[1])) return fcDump(argv[1], argv[2], stdout, prelude, store);
     if (argc == 6 && fcIsCommand(argv[1]) && strcmp(argv[2], "--list") == 0 && strcmp(argv[4], "--out") == 0) {
         size_t len = 0;
