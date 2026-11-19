@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include "fire_platform_win32_tcc.h"   /* (TinyCC: the Vista locks and condition variables its XP headers lack) */
 #include "fire_platform_c.h"
 
 #if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT)

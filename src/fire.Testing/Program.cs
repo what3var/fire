@@ -13504,6 +13504,7 @@ else
                     fire.Native.NativeSources one, auto;
                     try { one = fire.Native.CppGenerator.GenerateSources(linkedCase); auto = fire.Native.CppGenerator.GenerateSources(linkedCase, split: fire.Native.SplitMode.Auto, toolchainKind: "gcc"); }
                     catch (fire.Native.NativeNotSupportedException) { continue; }
+                    if (one.Program.Length >= 2 * 1024 * 1024) continue;   // (= ProgramSplit.AutoMinBytes)   // (a large program: auto splits it - that is right)
                     compared++;
                     if (one.Program != auto.Program || auto.Units != null) detail.AppendLine($"auto: {c.Name} ist nicht mehr die eine Datei");
                 }
