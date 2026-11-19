@@ -71,6 +71,29 @@ fire help | fire version
   **Offen**: unter Windows liest die Runtime `Environment.Args` aus der ganzen Befehlszeile (`fire_plat_eachArg` nimmt `GetCommandLineW`) - `fire run x.fbc a`
   gibt dort `run x.fbc a` statt `a` (ein gepacktes Programm nicht: alle Argumente sind seine).
 
+### Benchmarks gegen die C#-VM
+
+Die 9 Programme aus `tests/bench` (die von `fire.Benchmarks`), Modus Performance, Linux x64, gcc -O2, 4 Kerne unter Last (load ~8, andere Builds
+liefen mit): **C-VM** `fire --time x.fbc` - der Lauf (ohne Laden und Abbau; das Minimum aus 5 nach einem Aufwärmlauf), der ganze Prozess, max RSS;
+**C#-VM** `fire.Benchmarks --filter x --runs 5` - `VM.Run()` (Minimum aus 5 nach dem Aufwärmen des JIT), max RSS des Prozesses (darin auch der
+Compiler und der JIT: die C#-VM allein hat keinen eigenen Prozess). Die Ausgaben sind gleich.
+
+| Programm | C-VM Lauf | C-VM Prozess | C-VM RSS | C#-VM Lauf | C#-Prozess RSS | C# / C |
+|---|---:|---:|---:|---:|---:|---:|
+| alloc | 13,9 ms | 15,9 ms | 13,7 MB | 47,3 ms | 101,0 MB | 3,4 |
+| array | 68,7 ms | 72,1 ms | 13,7 MB | 122,6 ms | 83,3 MB | 1,8 |
+| fib | 10,8 ms | 14,1 ms | 13,7 MB | 18,0 ms | 76,9 MB | 1,7 |
+| float | 27,4 ms | 32,4 ms | 13,7 MB | 93,6 ms | 77,5 MB | 3,4 |
+| lambda | 16,1 ms | 18,3 ms | 13,7 MB | 48,6 ms | 77,1 MB | 3,0 |
+| list | 23,7 ms | 27,6 ms | 13,7 MB | 71,8 ms | 86,8 MB | 3,0 |
+| loop | 50,7 ms | 52,8 ms | 13,7 MB | 139,5 ms | 77,4 MB | 2,8 |
+| method | 35,4 ms | 43,0 ms | 13,7 MB | 80,2 ms | 77,8 MB | 2,3 |
+| string | 8,4 ms | 13,8 ms | 13,7 MB | 75,5 ms | 129,0 MB | 9,0 |
+| **Summe** | **255,1 ms** | **290,0 ms** | | **697,1 ms** | | **2,7** |
+
+Die C-VM ist 1,7- bis 9-mal so schnell (zusammen 2,7-mal); ein ganzer Prozess der C-VM (Laden der `.fbc` mit dem Prelude ~0,7 ms, Lauf, Abbau)
+ist kürzer als der Lauf allein in der C#-VM. Der Speicher der C-VM ist bei allen derselbe (13,7 MB, die Tabellen der Runtime und des Programms).
+
 ## Gepackte Programme (Schritt 8)
 
 `forge build --engine vm` (der Standard von `build`) schreibt **eine ausführbare Datei**: `fire` mit dem Programm dahinter
