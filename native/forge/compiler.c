@@ -11,6 +11,7 @@
 #define ResolveTypeRef cpResolveTypeRef
 #define TypeText cpTypeText
 #define AccessText cpAccessText
+#define NoteReceiverTypeArgs cpNoteReceiverTypeArgs
 #define TypeArgText cpTypeArgText
 #define DeclaredTypeOf cpDeclaredTypeOf
 

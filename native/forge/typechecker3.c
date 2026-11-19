@@ -35,7 +35,7 @@ static const FcST* InferConditionalAccess(FcTC* t, FcConditionalAccessExpr* acce
     const FcST* on = stIsDynamic(target) ? target : stWithNull(TC_, target, NUL_Defined);
     if (access->checkMember) {
         switch (ProveMember(t, target, access->member)) {
-            case PR_Proven: break;
+            case PR_Proven: fcSetAdd(t->rr->provenMembers, access); break;
             case PR_Absent:
                 ReportError(t, TC_NeverMemberCode, TF(t, "'%s' has no member '%s'%s - '??.' would always skip it", S_(t, target), access->member, target->kind == STK_Class ? " (nor a class derived from it)" : ""), access->h.line);
                 on = ST_DYNAMIC;
@@ -64,7 +64,12 @@ static const FcST* InferMember(FcTC* t, FcMemberExpr* m, FcMemberUse use) {
     const FcST* member;
     if (resolvedRef && resolvedRef->kind == RR_EnumMember && resolvedRef->enumType) return stEnumOf(TC_, resolvedRef->enumType);
     target = Infer(t, m->target);
-    if (streq0(m->name, "Bits") && use == MU_Read && stIsValueKind(target) && target->kind != STK_Array) return stWithNull(TC_, stWithUnit(TC_, ST_INT, FC_UNITLESS, false), NUL_Defined);
+    if (streq0(m->name, "Bits") && use == MU_Read && stIsValueKind(target) && target->kind != STK_Array) {
+        const char* baseName = target->kind == STK_Int ? (target->raw ? "byte" : "int") : target->kind == STK_Float ? "float" : target->kind == STK_Bool ? "bool" : target->kind == STK_Char ? "char" : "word";
+        int declaredBits = target->bits != 0 ? target->bits : target->wide != 0 ? target->wide : FC_NULL_INT;
+        fcDictPut(t->rr->bitsOf, m, FC_IVAL(BitsOfType(t, baseName, declaredBits) + 1));
+        return stWithNull(TC_, stWithUnit(TC_, ST_INT, FC_UNITLESS, false), NUL_Defined);
+    }
     if (stIsDynamic(target) && (staticClass = StaticClassRef(t, m->target)) != NULL) { target = stClassOf(TC_, staticClass, NULL); isStatic = true; }
     CheckAccess(t, target, m->name, use, 0, m->h.line, isStatic, false);
     CheckInterfaceAccessor(t, target, m->name, use, m->h.line);
@@ -528,8 +533,21 @@ static const FcST* InferTreeArg(FcTC* t, FcExpr* arg, FcLambdaParam* param, FcDi
         return InferExpected(t, arg, shapeType);
     }
     lambda = (FcLambdaExpr*)arg;
+    fcSetAdd(t->rr->treeLambdas, lambda);
     CheckTreeRules(t, ((FcReturnStmt*)lambda->body->statements->items[0])->value, line);
-    return InferExpected(t, arg, shapeType);
+    {
+        FcDict* saved = t->treeTypes;
+        const FcST* r;
+        t->treeTypes = t->rr->treeTypes;
+        FC_TRY(TC_) {
+            r = InferExpected(t, arg, shapeType);
+        } FC_CATCH(TC_) {
+            t->treeTypes = saved;
+            fcRethrow(TC_);
+        } FC_END_TRY;
+        t->treeTypes = saved;
+        return r;
+    }
 }
 
 /* ---- lambdas ---- */
@@ -882,16 +900,29 @@ static FcList* fcTakeParams(FcTC* t, FcList* params, int n) {
     return l;
 }
 
-static const FcST* InferOverloadedCall(FcTC* t, FcCallExpr* c, FcList* candidates) {
+/* _methodTypeArgs[c]: the type arguments found, as the run time takes them */
+static void fcPutMethodTypeArgs(FcTC* t, FcExpr* c, FcList* typeParams, FcDict* map) {
+    FcList* texts = fcListNew(TC_);
+    int i;
+    for (i = 0; i < typeParams->count; i++) {
+        void* found;
+        fcListAdd(TC_, texts, (void*)(fcDictTry(map, ((FcTypeParam*)typeParams->items[i])->name, &found) ? TypeArgTextOfType(t, (const FcST*)found) : ""));
+    }
+    fcDictPut(t->rr->methodTypeArgs, c, texts);
+}
+
+static const FcST* InferOverloadedCall(FcTC* t, FcCallExpr* c, FcList* candidates, const char* receiverClass, bool virtualCall) {
     FcList* args = fcListNew(TC_);
     FcCand* picked;
     FcMethodDecl* method;
     FcDict* map;
+    const char* hint;
     int i;
     for (i = 0; i < c->args->count; i++) fcListAdd(TC_, args, (void*)Infer(t, (FcExpr*)c->args->items[i]));
     if (!(picked = PickOverload(t, candidates, args))) return ST_DYNAMIC;
     method = picked->method;
     map = picked->map;
+    if (receiverClass != NULL && (hint = OverloadHintFor(t, method, candidates, args, receiverClass, virtualCall)) != NULL) fcDictPut(t->rr->overloadHints, c, (void*)hint);
     if (method->typeParams && method->typeParams->count > 0) {
         map = map ? fcDictCopy(TC_, map) : fcDictNew(TC_, FC_KEY_STR);
         if (c->typeArgs && c->typeArgs->count > 0)
@@ -902,6 +933,7 @@ static const FcST* InferOverloadedCall(FcTC* t, FcCallExpr* c, FcList* candidate
             FC_DICT_EACH(open, e) fcDictRemove(map, e->key);
             for (i = 0; i < args->count && i < method->params->count; i++)
                 Bind(t, ((FcLambdaParam*)method->params->items[i])->type, ((FcLambdaParam*)method->params->items[i])->arrayRanks->count, (const FcST*)args->items[i], map, open);
+            fcPutMethodTypeArgs(t, (FcExpr*)c, method->typeParams, map);
             map = WithOpen(t, map, open);
         }
     }
@@ -912,6 +944,8 @@ static const FcST* InferOverloadedCall(FcTC* t, FcCallExpr* c, FcList* candidate
 }
 
 static const FcST* InferCallCore(FcTC* t, FcCallExpr* c) {
+    const char* receiverClass = NULL;
+    bool virtualCall = true;
     FcMethodDecl* method = NULL;
     FcDict* map = NULL;
     const FcST* lambda = NULL;
@@ -935,11 +969,14 @@ static const FcST* InferCallCore(FcTC* t, FcCallExpr* c) {
         const char* baseClass;
         const FcST* builtin;
         const FcST* extended;
-        if (stIsDynamic(target) && (staticClass = StaticClassRef(t, m->target)) != NULL) { target = stClassOf(TC_, staticClass, NULL); staticCall = true; }
+        if (stIsDynamic(target) && (staticClass = StaticClassRef(t, m->target)) != NULL) { target = stClassOf(TC_, staticClass, NULL); staticCall = true; virtualCall = false; }
+        if (m->target->kind == EK_BaseExpr) virtualCall = false;
         if (staticCall) CheckAccess(t, target, m->name, MU_Call, c->args->count, m->h.line, true, false);
         else if (m->target->kind == EK_BaseExpr && (baseClass = BaseClassName(t)) != NULL) CheckAccess(t, stClassOf(TC_, baseClass, NULL), m->name, MU_Call, c->args->count, m->h.line, false, true);
         else CheckAccess(t, target, m->name, MU_Call, c->args->count, m->h.line, false, false);
+        receiverClass = target->cls;
         calleeTarget = target;
+        if (!staticCall) NoteReceiverTypeArgs(t, (FcExpr*)c, target);
         if ((builtin = BuiltinCallType(t, target, m->name, c->args->count)) != NULL) { for (i = 0; i < c->args->count; i++) Infer(t, (FcExpr*)c->args->items[i]); return builtin; }
         if (!staticCall && (extended = ExtensionCallType(t, target, m->name, c->args->count)) != NULL) { for (i = 0; i < c->args->count; i++) Infer(t, (FcExpr*)c->args->items[i]); return extended; }
         if (target->kind == STK_Class) {
@@ -960,6 +997,8 @@ static const FcST* InferCallCore(FcTC* t, FcCallExpr* c) {
             const FcST* returned;
             for (i = 0; i < c->args->count; i++) Infer(t, (FcExpr*)c->args->items[i]);
             returned = DeclaredOrDynamic(t, returnsRef, ranks, NULL);
+            if (ranks == 0 && (streq0(returnsRef->baseName, "int") || streq0(returnsRef->baseName, "float") || streq0(returnsRef->baseName, "bool")))
+                fcPutGuard(t, (FcExpr*)c, returnsRef, TF(t, "The result of '%s'", ((FcIdentifierExpr*)c->callee)->name));
             return stIsNumber(returned) && returned->unit == NULL ? stWithUnit(TC_, returned, FC_UNITLESS, false) : returned;
         }
         goto plainIdentifier;
@@ -971,6 +1010,7 @@ static const FcST* InferCallCore(FcTC* t, FcCallExpr* c) {
         if (t->cls != NULL && !IsLocal(t, id->name)) {
             FcResolvedRef* bare;
             candidates = FindMethods(t, ThisClass(t), id->name, c->args->count);
+            receiverClass = ThisClass(t)->cls;
             if ((bare = (FcResolvedRef*)fcDictGet(t->refs, id)) != NULL && bare->kind == RR_ImplicitThisMember) CheckAccess(t, ThisClass(t), id->name, MU_Call, c->args->count, id->h.line, false, false);
         }
         if (!(candidates && candidates->count > 0) && (variable = Lookup(t, id->name))->kind == STK_Lambda) { lambda = variable; name = id->name; }
@@ -1012,7 +1052,7 @@ static const FcST* InferCallCore(FcTC* t, FcCallExpr* c) {
         if (named->count == 1) candidates = named;
     }
     if (candidates && candidates->count > 1 && c->argNames == NULL) candidates = TreeOverloads(t, c, candidates);
-    if (candidates && candidates->count > 1) return InferOverloadedCall(t, c, candidates);
+    if (candidates && candidates->count > 1) return InferOverloadedCall(t, c, candidates, receiverClass, virtualCall);
     if (candidates && candidates->count == 1) { method = ((FcCand*)candidates->items[0])->method; map = ((FcCand*)candidates->items[0])->map; }
     argParams = method == NULL ? NULL : ArgParams(t, method->params, c->argNames, c->args->count, method->name, c->h.line);
 
@@ -1053,7 +1093,17 @@ static const FcST* InferCallCore(FcTC* t, FcCallExpr* c) {
             if (!record) ReportError(t, TC_ChannelWordCode, "An object goes into a channel only with a word: 'Send(copy x)' (a copy) or 'Send(take x)' (moved) - or fresh ('new', 'new T[n]', an array literal, the result of a call)", c->h.line);
         }
     }
-    if (open) map = WithOpen(t, map, open);
+    if (open) {
+        fcPutMethodTypeArgs(t, (FcExpr*)c, method->typeParams, map);
+        for (i = 0; i < c->args->count; i++) {
+            FcLambdaParam* p = (FcLambdaParam*)argParams->items[i];
+            void* found;
+            if (p && !p->byRef && p->type && p->type->typeArgs == NULL && p->type->arrayRank == 0 && p->arrayRanks->count == 0 && fcDictHas(open, p->type->baseName)
+                && fcDictTry(map, p->type->baseName, &found) && ((const FcST*)found)->kind == STK_Float && ((const FcST*)args->items[i])->kind == STK_Int)
+                fcDictAdd(t->rr->unitChecks, c->args->items[i], (void*)"#any");
+        }
+        map = WithOpen(t, map, open);
+    }
     if (lambda) return CallLambda(t, lambda, args, c, name);
     if (method == NULL) {
         if (c->callee->kind == EK_MemberExpr && calleeTarget) ReportMissingMethod(t, (FcMemberExpr*)c->callee, calleeTarget, c->args->count);
@@ -1159,6 +1209,12 @@ static const FcST* InferNew(FcTC* t, FcNewExpr* n) {
             CheckArguments(t, chosen->params, ctorArgs, n->args, TF(t, "new %s", PlainName(t, plain)), map);
             NoteCall(t, (FcExpr*)n, NULL);
             CheckStoredTemporaries(t, chosen, fcTakeParams(t, chosen->params, ctorArgs->count), n->args, plain);
+            {
+                FcList* methods = fcListNew(TC_);
+                const char* hint;
+                for (i = 0; i < asMethods->count; i++) fcListAdd(TC_, methods, ((FcCand*)asMethods->items[i])->method);
+                if ((hint = ConstructorHint(t, decl, plain, chosen, methods, ctorArgs)) != NULL) fcDictPut(t->rr->overloadHints, n, (void*)hint);
+            }
         }
         return stClassOf(TC_, plain, typeArgs);
     }

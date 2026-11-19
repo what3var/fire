@@ -24,6 +24,8 @@ typedef struct FcResolvedRef {
 
 static FcResolvedRef* fcRef(FcCtx* c, FcRefKind kind) { FcResolvedRef* r = (FcResolvedRef*)fcAlloc(c, sizeof *r); r->kind = kind; return r; }
 
+/* TypeTag (src/fire/Bytecode/OpCode.cs) */
+enum { TAG_Bool, TAG_Int, TAG_Float, TAG_Char, TAG_String, TAG_Word };
 /* FixedCoercion (filled by the type checker) */
 typedef struct FcFixedCoercion { int type; bool toWord; const char* unit; const struct FcU* unitv; } FcFixedCoercion;   /* type: a TypeTag, -1 null; unitv: the unit (NULL: none) */
 

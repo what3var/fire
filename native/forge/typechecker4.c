@@ -787,6 +787,19 @@ static FcList* fcTypeCheck(FcCtx* c, FcList* program, FcResolveResult* resolved,
     t->programWordWidth = 64;
     t->nativeReturns = nativeReturns;
     t->returnWhat = "";
+    t->rr = resolved;
+    t->localTypes = fcListNew(c);
+    if (!resolved->unitChecks) resolved->unitChecks = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->methodTypeArgs) resolved->methodTypeArgs = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->localGuards) resolved->localGuards = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->overloadHints) resolved->overloadHints = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->receiverTypeArgs) resolved->receiverTypeArgs = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->treeLambdas) resolved->treeLambdas = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->treeTypes) resolved->treeTypes = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->treeToCompiled) resolved->treeToCompiled = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->provenMembers) resolved->provenMembers = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->bitsOf) resolved->bitsOf = fcDictNew(c, FC_KEY_PTR);
+    resolved->fixedCoercions = fcDictNew(c, FC_KEY_PTR);   /* (a check before this one decided for itself) */
     for (i = 0; i < program->count; i++) {
         FcStmt* s = (FcStmt*)program->items[i];
         if (s->kind == SK_TypeCheckDirective) fcDictPut(&t->strictBySource, fcFmt(c, "%d", s->source), FC_IVAL(((FcTypeCheckDirective*)s)->strict ? 1 : 2));
@@ -829,3 +842,6 @@ static void fcTypeCheckRun(FcCtx* c, FcList* program, FcResolveResult* resolved,
         fcRethrow(c);
     }
 }
+
+/* the types of the expressions for DeriveFields (TypeChecker._exprTypes) - Derive comes with the derivation of `defined` */
+static void fcNoteExprType(FcTC* t, FcExpr* expr, const FcST* type) { (void)t; (void)expr; (void)type; }

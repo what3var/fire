@@ -11,8 +11,8 @@ typedef enum FcOp {
     OP__COUNT
 } FcOp;
 
-/* TypeTag */
-enum { TAG_Bool, TAG_Int, TAG_Float, TAG_Char, TAG_String, TAG_Word };
+
+
 
 /* ---- EnumType: interned by its key (EnumType.Intern) ---- */
 typedef struct FcEnumType { const char* name; bool isFlags; FcList* names; FcList* values; const char* key; } FcEnumType;   /* values: int64_t* */
