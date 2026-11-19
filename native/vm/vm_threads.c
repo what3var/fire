@@ -205,6 +205,11 @@ static int vmThreadCall(Vm* vm, VmProto* m, Value recv, uint32_t argc, const cha
     for (i = 0; i < argc; i++) av[2 + i] = a[i];
     if ((asObj(recv)->h.flags & 8) && leafAlive(recv)) {
         if (aw && actorAtHome(recv)) return 0;
+        if (vm->pendingArgNames) {   /* (VM.RejectArgNames) */
+            vm->pendingArgNames = NULL;
+            fireError("ArgumentException", "Named arguments are not possible for a method of an actor.");
+            return -1;
+        }
         if (aw) r = actorAwait(recv, vmMsgFn, av, argc + 2);
         else { actorSend(recv, vmMsgFn, av, argc + 2); r = Undef(); }
     } else if (g_isThread && g_secDepth == 0 && g_domainOn && leafAlive(recv) && sharedValue(recv) && !m->readsOnly && !m->isStatic) {

@@ -418,10 +418,63 @@ static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int a
 
 /* Pushes the frame of a call of `p`: its arguments are the top `argc` values of the stack (they become slots 0.. of its scope; the callee holds its own -
  * retain, like the generated code), `drop` values below them go as well (the callee or the receiver). */
+/* A call with named arguments (`f(1, size: 2)`, VM.FillNamedArgs): the positional arguments first, each named one at the parameter of its name; the
+ * parameters that got none are `missing` (their default values follow). False: the ArgumentException is set. */
+static bool vmNamedArgs(VmProto* p, VmScope* s, int argc, const char* names, uint64_t* missing) {
+    Value tmp[64];
+    bool given[64];
+    const char* at[64];
+    size_t len[64];
+    int k = 0, positional, i, j;
+    char text[300];
+    const char* c = names;
+    for (;;) {
+        const char* e = strchr(c, '|');
+        if (k < 64) { at[k] = c; len[k] = e ? (size_t)(e - c) : strlen(c); k++; }
+        if (!e) break;
+        c = e + 1;
+    }
+    positional = argc - k;
+    if (!p->paramNames || p->nparams > 64) { fireError("ArgumentException", "Named arguments need a method whose parameters have names."); return false; }
+    if (positional > p->nparams || positional < 0) {
+        snprintf(text, sizeof text, "Wrong number of arguments: expected %d, got %d.", p->nparams, argc);
+        fireError("ArgumentException", text);
+        return false;
+    }
+    for (i = 0; i < p->nparams; i++) { given[i] = false; tmp[i] = Undef(); }
+    for (i = 0; i < positional; i++) { tmp[i] = s->slots[i]; given[i] = true; }
+    for (j = 0; j < k; j++) {
+        int found = -1;
+        for (i = 0; i < p->nparams && (uint32_t)i < p->nparamNames; i++)
+            if (p->paramNames[i] && strlen(p->paramNames[i]) == len[j] && !strncmp(p->paramNames[i], at[j], len[j])) { found = i; break; }
+        if (found < 0 || given[found]) {
+            snprintf(text, sizeof text, found < 0 ? "There is no parameter '%.*s'." : "The parameter '%.*s' is given twice.", (int)len[j], at[j]);
+            fireError("ArgumentException", text);
+            return false;
+        }
+        tmp[found] = s->slots[positional + j];
+        given[found] = true;
+    }
+    for (i = 0; i < p->nparams; i++) {
+        if (given[i]) continue;
+        if (!((uint32_t)i < p->ndefaults && p->defaults[i])) {
+            snprintf(text, sizeof text, "The parameter '%s' has no value (and no default value).", (uint32_t)i < p->nparamNames && p->paramNames[i] ? p->paramNames[i] : "?");
+            fireError("ArgumentException", text);
+            return false;
+        }
+        *missing |= (uint64_t)1 << i;
+    }
+    for (i = 0; i < p->nparams; i++) s->slots[i] = tmp[i];
+    s->n = s->hi = (uint32_t)p->nparams;
+    return true;
+}
+
 static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8_t kind) {
     VmFrame* f;
     VmScope* s;
     int i, n;
+    uint64_t missing = 0;
+    bool named = false, bad = false;
     if (FIRE_UNLIKELY(p->nspecs != 0) && self.kind == K_Class) p = vmSpecializationFor(vm, p, self, vm->stack + vm->sp - argc, argc);
     n = argc > p->nparams ? argc : p->nparams;
     VmScope* from = vm->nframes > 0 ? vm->frames[vm->nframes - 1].scope : NULL;
@@ -434,6 +487,12 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
         uint64_t mask = vm->copyMask;
         vm->copyMask = 0;
         vmApplyCopyMask(vm, s, mask, p, argc, from);
+    }
+    if (FIRE_UNLIKELY(vm->pendingArgNames != NULL)) {
+        const char* names = vm->pendingArgNames;
+        vm->pendingArgNames = NULL;
+        named = true;
+        bad = !vmNamedArgs(p, s, argc, names, &missing);
     }
     vm->sp -= (uint32_t)(argc + drop);
     f = &vm->frames[vm->nframes++];
@@ -453,6 +512,21 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     f->rec = NULL;
     f->recInit = NULL;
     f->nfin = vm->nfin;
+    if (FIRE_UNLIKELY(named)) {
+        if (bad) { f->ip = g_vmUnwindStub; return; }
+        /* (the parameters a named call left out: their default values) */
+        for (i = 0; i < p->nparams; i++) {
+            Value v;
+            Owned* o;
+            if (!((missing >> i) & 1)) continue;
+            v = vmCallNested(vm, p->defaults[i], 0, NULL, self, FR_NESTED);
+            if (g_unwind.active) { f->ip = g_vmUnwindStub; return; }
+            s->slots[i] = v;
+            o = ownedOf(v);
+            if (o && !o->owner) ownLink(&s->own, o);
+        }
+        argc = p->nparams;
+    }
     /* missing arguments: their default values (a function of their own, run nested), else undefined */
     for (i = argc; i < p->nparams; i++) {
         VmProto* d = (uint32_t)i < p->ndefaults ? p->defaults[i] : NULL;

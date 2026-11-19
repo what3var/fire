@@ -1009,6 +1009,13 @@ static void vmRun(Vm* vm, int32_t base) {
                     OwnList* list = &fr->scope->temp;
                     int ownId = -1;
                     const char* nm = !strncmp(name, "try", 3) ? name + 3 : name;
+                    if (FIRE_UNLIKELY(vm->pendingArgNames != NULL)) {   /* (VM.RejectArgNames) */
+                        char text[300];
+                        vm->pendingArgNames = NULL;
+                        snprintf(text, sizeof text, "Named arguments are not possible for the built-in method '%s'.", name);
+                        fireError("ArgumentException", text);
+                        goto unwind;
+                    }
                     if (!strcmp(nm, "TakeLocal")) ownId = OM_TakeLocal; else if (!strcmp(nm, "TakeUpwards")) ownId = OM_TakeUpwards;
                     else if (!strcmp(nm, "TakeGlobal")) ownId = OM_TakeGlobal; else if (!strcmp(nm, "TakeTo")) ownId = OM_TakeTo;
                     if (ownId >= 0 && ownedOf(recv)) {
@@ -1094,7 +1101,6 @@ static void vmRun(Vm* vm, int32_t base) {
                 vmMethodNotFound(c, name, (int)argc);
                 goto unwind;
             }
-            vm->pendingArgNames = NULL;
             if (FIRE_UNLIKELY((asObj(recv)->h.flags & 8) || g_isThread || vm->awaitNext)) {
                 int tc = vmThreadCall(vm, m, recv, argc, name);
                 if (tc < 0) goto unwind;
