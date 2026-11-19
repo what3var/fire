@@ -453,6 +453,51 @@ static int vmPkgIndexOf(VmPkgLib* lib, const char* name) {
 
 static void vmPkgServe(void);
 
+/* The main program away in a native (the GIL let go, vmPkgAway): a fire thread that asks for a section takes it itself - the main program does not touch
+ * the globals meanwhile (fire_rt.h fire_sectionGrantedAway, THREADING_DESIGN.md section 7) - one thread at a time; the request stays in the queue, where
+ * the main program finds it done. Back from the native, the main program waits until the sections the threads took are done. */
+static fire_atomic32 g_vmAway;
+static fire_mutex g_vmAwayM;
+static bool g_vmAwayInit;
+static SectionReq* g_vmAwayReqs[64];
+static uint32_t g_vmAwayCount;
+static bool vmAwayBusy(void) {   /* (under g_vmAwayM: a section a thread took is not done yet) */
+    uint32_t i;
+    for (i = 0; i < g_vmAwayCount; i++) if (!fire_sectionDone(g_vmAwayReqs[i])) return true;
+    return false;
+}
+FIRE_FN bool fire_vmGrantAway(SectionReq* r) {
+    bool ok = false;
+    if (!fire_atomic_load(&g_vmAway)) return false;
+    fire_mutex_lock(&g_vmAwayM);
+    if (fire_atomic_load(&g_vmAway) && !vmAwayBusy() && g_vmAwayCount < 64) { g_vmAwayReqs[g_vmAwayCount++] = r; ok = true; }
+    fire_mutex_unlock(&g_vmAwayM);
+    return ok;
+}
+static bool vmMainAway(void) { return fire_atomic_load(&g_vmAway) != 0; }
+static void vmAwayBegin(void) {
+    if (!g_vmAwayInit) { fire_mutex_init(&g_vmAwayM); g_vmAwayInit = true; }
+    fire_atomic_store(&g_vmAway, 1);
+    notifyEventAll();   /* (the threads that wait for a section look again) */
+}
+static void vmAwayEnd(void) {
+    bool busy;
+    fire_mutex_lock(&g_vmAwayM);
+    fire_atomic_store(&g_vmAway, 0);
+    busy = vmAwayBusy();
+    if (!busy) g_vmAwayCount = 0;   /* (the requests stay in the queue: drainQueue lets go of them) */
+    fire_mutex_unlock(&g_vmAwayM);
+    while (busy) {   /* (with the GIL in the hand: the thread in its section gets it, until it is done) */
+        gilRelease();
+        fire_plat_sleepMs(0);
+        gilAcquire();
+        fire_mutex_lock(&g_vmAwayM);
+        busy = vmAwayBusy();
+        if (!busy) g_vmAwayCount = 0;
+        fire_mutex_unlock(&g_vmAwayM);
+    }
+}
+
 /* May the strand let go of the GIL while the native runs? Only while there are fire threads, for a library that pumps nothing (no service, no idle: no
  * callbacks into the program while it runs) and arguments without lambdas whose buffers (passed by reference) are the strand's own - not of the shared domain
  * (fire_natArg). */
@@ -491,9 +536,12 @@ static Value vmPkgCall(VmPkgLib* lib, int index, const char* name, int argc, con
     if (vmPkgAway(lib, argc, args)) {
         /* (a native that gets nothing of the shared domain and cannot call back runs beside the other strands - the C# VM's threads call natives at the
          * same time; fire_rt.h fire_natBegin: the main program goes away for it) */
+        bool main = !g_isThread;
+        if (main) vmAwayBegin();
         gilRelease();
         rc = lib->call(index, fargs, argc, &result, error, (int)sizeof error);
         gilAcquire();
+        if (main) vmAwayEnd();
     } else {
         /* (with the GIL in the hand: after a native that took long the strands that wait for the GIL get their turn at once - fire_rt.h fire_natEnd) */
         int64_t t0 = fire_atomic_load(&g_threadsLive) ? fire_plat_nowMs() : 0;

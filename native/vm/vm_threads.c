@@ -278,7 +278,7 @@ static int vmThreadCall(Vm* vm, VmProto* m, Value recv, uint32_t argc, const cha
         else { actorSend(recv, vmMsgFn, av, argc + 2); r = Undef(); }
         vmArgListEnd(&al, vm);
     } else if (g_isThread && g_secDepth == 0 && g_domainOn && leafAlive(recv) && sharedValue(recv) && !m->readsOnly && !m->isStatic) {
-        if (fire_mainAway()) {
+        if (vmMainAway()) {   /* (the main program is in a native: the call runs in a section of this thread - vm_pkg.c) */
             bool ss = sectionScopeEnter(true);
             r = vmCallNested(vm, m, (int)argc, a, recv, FR_NESTED);
             sectionScopeExit(ss);

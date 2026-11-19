@@ -11718,9 +11718,18 @@ FIRE_FN uint32_t reqCount(void) {
 
 FIRE_FN bool fire_sectionGranted(void* ctx) { return fire_atomic_loadAcquire(&((SectionReq*)ctx)->granted) != 0; }
 /* (... or the main program is away in a native: the thread takes the section itself - the request stays in the queue, the main program finds it done) */
+#if defined(FIRE_VM) && !defined(FIRE_NO_GIL)
+/* (the VM with the GIL lets go of it while its main program is in a native of a package that gets nothing of the shared domain: then a thread may take
+ * its section itself, one at a time - native/vm/vm_pkg.c) */
+FIRE_FN bool fire_vmGrantAway(SectionReq* r);
+#endif
 FIRE_FN bool fire_sectionGrantedAway(void* ctx) {
     if (fire_sectionGranted(ctx)) return true;
+#if defined(FIRE_VM) && !defined(FIRE_NO_GIL)
+    if (!fire_vmGrantAway((SectionReq*)ctx)) return false;
+#else
     if (!fire_mainAway()) return false;
+#endif
     fire_atomic_storeRelease(&((SectionReq*)ctx)->granted, 1);
     return true;
 }
