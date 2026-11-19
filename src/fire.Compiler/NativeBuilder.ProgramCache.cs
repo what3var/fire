@@ -23,7 +23,7 @@ namespace fire.Compiler
             private static bool Enabled => Environment.GetEnvironmentVariable("FIRE_PROGRAM_CACHE") is not "0";
 
             /// <summary>The key of the build (null: it is not cached).</summary>
-            public static string? Key(ToolchainDef toolchain, TargetProfile target, string workDir, string exe, IReadOnlyList<(string Executable, string Arguments)> commands, bool stats)
+            public static string? Key(ToolchainDef toolchain, TargetProfile target, string workDir, string exe, IReadOnlyList<(string Executable, string Arguments)> commands, bool stats, int units = 0)
             {
                 if (!Enabled || stats || toolchain.EffectiveKind is not ("gcc" or "clang" or "tcc")) return null;
                 try
@@ -34,6 +34,7 @@ namespace fire.Compiler
                     Add("fire program cache 1");
                     Add(target.Name);
                     Add(ToolchainStamp(toolchain));
+                    if (units > 0) Add($"split {units}");   // (a split program, docs/spec/NATIVE_SPLIT.md: its units - one file keeps the key it had)
                     foreach (var (executable, arguments) in commands)
                     {
                         Add(Stamp(executable));
@@ -48,7 +49,7 @@ namespace fire.Compiler
                         byte[] content = File.ReadAllBytes(path);
                         hash.AppendData(BitConverter.GetBytes(content.LongLength));
                         hash.AppendData(content);
-                        if (name == SourceName && IsDebugProgram(content)) debug = true;
+                        if (name is SourceName or "fire_program.h" && IsDebugProgram(content)) debug = true;   // (a split program: the head is in its header)
                     }
                     // (a debug build: its debug information names the files where they were compiled)
                     if (debug) Add(root);

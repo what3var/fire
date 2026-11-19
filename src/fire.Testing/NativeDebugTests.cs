@@ -776,26 +776,37 @@ static class NativeDebugTests
 
         Check("#line nennt die fire-Zeilen, danach wieder die C-Datei; \"lineDirectives\": false schaltet sie ab", () =>
         {
-            var release = Generate(lineScript, VmExecutionMode.Release, TargetProfile.Host).Program;
             var off = Generate(lineScript, VmExecutionMode.Release, TargetProfile.Host with { Native = TargetProfile.Host.Native with { LineDirectives = false } }).Program;
-            var lines = release.Split('\n');
+            // (a split program, FIRE_SPLIT=1: every unit names itself)
+            var releaseSources = Generate(lineScript, VmExecutionMode.Release, TargetProfile.Host);
+            var files = NativeTestBuild.Texts(releaseSources).ToList();
+            var lines = files.SelectMany(f => f.Text.Split('\n')).ToArray();
             bool user = lines.Any(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"^#line 3 ""fire:source/\d+"" // \d+: ")) && lines.Any(l => l.StartsWith("#line 7 \"fire:source/", StringComparison.Ordinal));
             bool prelude = lines.Any(l => l.StartsWith("#line ", StringComparison.Ordinal) && l.Contains("\"fire:prelude/"));
             // after a function: the line of the C file (the directive names the line after it)
             bool back = true;
-            for (int i = 0; i < lines.Length; i++)
-                if (System.Text.RegularExpressions.Regex.Match(lines[i], @"^#line (\d+) ""fire_program.c""$") is { Success: true } m && int.Parse(m.Groups[1].Value) != i + 2) back = false;
-            bool resets = lines.Count(l => l.EndsWith("\"fire_program.c\"", StringComparison.Ordinal)) > 3;
-            return (user && prelude && back && resets && !off.Contains("#line") && !release.Contains("@@fire-line-reset"), $"user {user}, prelude {prelude}, back {back}, resets {resets}, off {!off.Contains("#line")}");
+            int resetCount = 0;
+            foreach (var (fileName, text) in files)
+            {
+                var own = text.Split('\n');
+                for (int i = 0; i < own.Length; i++)
+                    if (System.Text.RegularExpressions.Regex.Match(own[i], @"^#line (\d+) ""([^""]+)""$") is { Success: true } m && m.Groups[2].Value.StartsWith("fire_program", StringComparison.Ordinal))
+                    {
+                        if (m.Groups[2].Value != fileName || int.Parse(m.Groups[1].Value) != i + 2) back = false;
+                        resetCount++;
+                    }
+            }
+            bool resets = resetCount > 3;
+            return (user && prelude && back && resets && !off.Contains("#line") && files.All(f => !f.Text.Contains("@@fire-line-reset")), $"user {user}, prelude {prelude}, back {back}, resets {resets}, off {!off.Contains("#line")}");
         });
 
         Check("gcc und clang uebersetzen das C eines Debug-Builds ohne Warnung, tcc uebersetzt es; es laeuft ohne Debugger wie die VM", () =>
         {
             var sources = Generate(lineScript, VmExecutionMode.Debug, TargetProfile.Host);
-            string cFile = Path.Combine(workDir, "dbgcompilers.c");
-            File.WriteAllText(cFile, sources.Program);
+            string cFiles = NativeTestBuild.SourceFiles(sources, workDir, "dbgcompilers");
             var detail = new StringBuilder();
-            bool ok = sources.Program.Contains("#define FIRE_DEBUG 1") && sources.Program.Contains("#define FIRE_DEBUG_AGENT 1");
+            string head = (sources.Units?[0].Text ?? sources.Program);   // (a split program: the switches are in its header)
+            bool ok = head.Contains("#define FIRE_DEBUG 1") && head.Contains("#define FIRE_DEBUG_AGENT 1");
             var compilers = new List<(string Tool, string Args)> { ("gcc", "-std=c11 -O0 -g -Wall -Wextra -pedantic -pthread"), ("gcc", "-std=c11 -O2 -Wall -Wextra -pthread") };
             if (HasTool("clang")) compilers.Add(("clang", "-std=c11 -O0 -g -Wall -Wextra -pedantic -pthread"));
             // (TinyCC 0.9.27 ignores noreturn and so reports every function that ends in fatal() as "might return no value" - the built-in tcc toolchain
@@ -805,7 +816,7 @@ static class NativeDebugTests
             {
                 var (tool, args) = compilers[i];
                 string exe = Path.Combine(workDir, $"dbgcompilers_{tool}{i}.bin");
-                string build = RunTool(tool, $"{args} \"{cFile}\" -I\"{workDir}\" -o \"{exe}\" -lm", workDir, out int exit);
+                string build = RunTool(tool, $"{args} {cFiles} -I\"{workDir}\" -o \"{exe}\" -lm", workDir, out int exit);
                 string run = exit == 0 ? RunTool(exe, "", workDir, out _) : "";
                 bool good = exit == 0 && !build.Contains("warning") && run == "fertig 3 16\n";
                 if (!good) detail.Append($"{tool} {args}: {build} -> {run}\n");
@@ -949,9 +960,9 @@ static class NativeDebugTests
                 {
                     var target = TargetProfile.TryGet("windows", out var windows) ? windows : throw new InvalidOperationException("no windows target");
                     var sources = Generate(lineScript, VmExecutionMode.Debug, target);
-                    string cFile = Path.Combine(workDir, "dbgwin.c"), exe = Path.Combine(workDir, "dbgwin.exe");
-                    File.WriteAllText(cFile, sources.Program);
-                    string build = RunTool("x86_64-w64-mingw32-gcc", $"-std=c11 -O0 -g -Wall -Wextra \"{cFile}\" -I\"{workDir}\" -o \"{exe}\" -lws2_32", workDir, out int exit);
+                    string exe = Path.Combine(workDir, "dbgwin.exe");
+                    string cFiles = NativeTestBuild.SourceFiles(sources, workDir, "dbgwin");
+                    string build = RunTool("x86_64-w64-mingw32-gcc", $"-std=c11 -O0 -g -Wall -Wextra {cFiles} -I\"{workDir}\" -o \"{exe}\" -lws2_32", workDir, out int exit);
                     if (exit != 0 || build.Contains("warning")) return (false, build);
                     var environment = new Dictionary<string, string> { ["WINEPREFIX"] = Path.Combine(workDir, "wineprefix"), ["WINEDEBUG"] = "-all", ["LANG"] = "C.UTF-8" };
                     using var c = NativeDebugClient.Launch(exe, workDir, wine, environment);
@@ -1146,7 +1157,7 @@ static class NativeDebugTests
             {
                 var generated = Generate(c.Script, VmExecutionMode.Debug, TargetProfile.FreeRtos);
                 if (!generated.Program.Contains("#define FIRE_DEBUG_TRANSPORT_STDIO 1")) return (false, "no stdio transport in the FreeRTOS build");
-                generated = generated with { Program = generated.Program + "\nint main(void) { fire_start(); return 0; }\n" };
+                generated = NativeTestBuild.Append(generated, "\nint main(void) { fire_start(); return 0; }\n");
                 string exe = Path.Combine(workDir, "dbgrtos" + Math.Abs(c.Name.GetHashCode() % 1000) + ".bin");
                 string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, Path.GetFileNameWithoutExtension(exe), $"{flags} -I\"{Path.Combine(workDir, "sim")}\"", exe, out int exit);
                 if (exit != 0 || build.Contains("warning:")) return (false, "C-Compiler: " + build);

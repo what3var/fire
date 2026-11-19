@@ -35,6 +35,19 @@
 /* The platform layer (docs/spec/NATIVE_BACKEND.md, "Plattformschicht"): everything that depends on the operating system or the board - exit, clock, and for fire
  * threads the mutex, the condition variable, the thread and where the per-thread state lives - is one header per platform package. The generated file names
  * it (FIRE_PLATFORM_HEADER, from the target configuration); without a name the host's own is taken. */
+/* What the platform layer keeps once per program (the scheduler of fire, the coroutine of a worker, the key of the thread slots of TinyCC): a static of the one
+ * file - a program in several translation units (FIRE_SPLIT, docs/spec/NATIVE_SPLIT.md) defines it in unit 0 (FIRE_RT_IMPLEMENTATION), the others declare it.
+ * `FIRE_ONCE T name FIRE_ONCE_INIT(value);` */
+#if !defined(FIRE_SPLIT)
+#define FIRE_ONCE static
+#define FIRE_ONCE_INIT(value) = value
+#elif defined(FIRE_RT_IMPLEMENTATION)
+#define FIRE_ONCE
+#define FIRE_ONCE_INIT(value) = value
+#else
+#define FIRE_ONCE extern
+#define FIRE_ONCE_INIT(value)
+#endif
 #ifndef FIRE_PLATFORM_HEADER
 #if defined(_WIN32)
 #define FIRE_PLATFORM_HEADER "platform/windows/fire_platform.h"

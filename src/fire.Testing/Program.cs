@@ -13361,6 +13361,45 @@ else
             }
         natPipeline.Join();
 
+        // The C in several translation units (docs/spec/NATIVE_SPLIT.md): `auto` keeps a small program the one file it was (byte for byte), `on` splits it the same way
+        // every time, and the units build and run like the one file (FIRE_SPLIT=1 runs the whole group so)
+        const string splitTitle = "Teilen (NATIVE_SPLIT): auto laesst kleine Programme byte-gleich, on teilt deterministisch, die Einheiten bauen und laufen wie die eine Datei";
+        if (TestSelected(splitTitle))
+        {
+            if (fire.Native.SplitModes.FromEnvironment != null) Console.WriteLine("(FIRE_SPLIT ist gesetzt: der Vergleich mit der einen Datei entfaellt)");
+            else
+            {
+                var detail = new System.Text.StringBuilder();
+                int compared = 0;
+                foreach (var c in natCases.Take(40))
+                {
+                    LinkedProgram linkedCase;
+                    try { linkedCase = new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release); } catch (Exception) { continue; }
+                    fire.Native.NativeSources one, auto;
+                    try { one = fire.Native.CppGenerator.GenerateSources(linkedCase); auto = fire.Native.CppGenerator.GenerateSources(linkedCase, split: fire.Native.SplitMode.Auto, toolchainKind: "gcc"); }
+                    catch (fire.Native.NativeNotSupportedException) { continue; }
+                    compared++;
+                    if (one.Program != auto.Program || auto.Units != null) detail.AppendLine($"auto: {c.Name} ist nicht mehr die eine Datei");
+                }
+                const string splitScript = "class Box {\n    int v\n    construct(int v) { this.v = v }\n    int Twice() { return this.v * 2 }\n}\nvar names = [\"a\", \"b\"]\nvar f = func (x) => { return x + 1 }\nvar b = new Box(20)\nprint(\"box \" + b.Twice() + \" \" + f(1) + \" \" + names[1] + \" \" + \"text\".ToUpper())\n";
+                var splitLinked = new Linker().CompileAndLink(new[] { splitScript }, null, null, VmExecutionMode.Release);
+                var on1 = fire.Native.CppGenerator.GenerateSources(splitLinked, split: fire.Native.SplitMode.On, toolchainKind: "gcc");
+                var on2 = fire.Native.CppGenerator.GenerateSources(splitLinked, split: fire.Native.SplitMode.On, toolchainKind: "gcc");
+                var tcc = fire.Native.CppGenerator.GenerateSources(splitLinked, split: fire.Native.SplitMode.Auto, toolchainKind: "tcc");
+                bool units = on1.Units is { Count: >= 4 } u && u[0].Kind == fire.Native.SplitUnitKind.Header && u[1].Name == "fire_program.c" && u.Select(x => x.Name).Distinct().Count() == u.Count
+                    && u.All(x => !x.Text.Contains("@@fire-split") && !x.Text.Contains("@@fire-line-reset"));
+                bool same = on2.Units != null && on1.Units!.Count == on2.Units.Count && on1.Units.Zip(on2.Units).All(p => p.First.Name == p.Second.Name && p.First.Text == p.Second.Text);
+                if (!units) detail.AppendLine("on: " + string.Join(", ", on1.Units?.Select(x => x.Name) ?? Array.Empty<string>()));
+                if (!same) detail.AppendLine("on: zweimal erzeugt nicht gleich");
+                if (tcc.Units != null) detail.AppendLine("auto mit TinyCC: geteilt");
+                string exeFile = Path.Combine(workDir, "split.bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, on1, workDir, "split", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exeFile, out int splitExit);
+                var (splitOut, splitErr, _) = splitExit == 0 ? TestProcess.Run(exeFile, "", workDir) : ("", build, 1);
+                if (splitExit != 0 || build.Contains("warning:") || splitOut != "box 40 2 b TEXT\n") detail.AppendLine($"gebaut: {build}\nAusgabe: {splitOut}{splitErr}");
+                CheckNat(splitTitle, compared >= 20 && detail.Length == 0, $"{compared} verglichen\n{detail}");
+            }
+        }
+
         // Tasks step 1 (docs/ROADMAP_TASKS.md): the thread cases built with ThreadSanitizer instead of ASan (the two do not go together) - the default build,
         // which runs without the GIL on this platform (step 1g): no data race may show up.
         const string tsanTitle = "ThreadSanitizer: die Thread-Faelle laufen ohne Data Race (ohne GIL, auf allen Kernen)";
@@ -14958,17 +14997,23 @@ else
             // bios16 (ROADMAP 13.5): BiosTests (also alone: FIRE_TESTS_ONLY=bios16)
             BiosTests.Run(CheckNat, workDir, dosSource);
         }
-        string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
+        var espSources = fire.Native.CppGenerator.GenerateSources(espLinked, esp);
+        string espCpp = espSources.Program;
         CheckNat("esp32: Einstieg app_main statt main, Defines, 32-Bit-float",
             espCpp.Contains("\nvoid app_main(void)") && !espCpp.Contains("int main(") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")
             && espCpp.Contains("#define FIRE_HAL_ESP32 1") && espCpp.Contains("#define FIRE_DEFAULT_STACK_BYTES 8192") && espCpp.Contains("#define FIRE_FLOAT32 1"));
         {
-            string espFile = Path.Combine(workDir, "esp.c");
-            File.WriteAllText(espFile, espCpp);
-            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
-            string espBuild = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-            CheckNat("esp32: das erzeugte C uebersetzt ohne Warnung", p.ExitCode == 0 && !espBuild.Contains("warning"), espBuild);
+            // (a split program, FIRE_SPLIT=1: every unit on its own)
+            string espBuild = "";
+            int espExit = 0;
+            foreach (var espFile in NativeTestBuild.SourceFiles(espSources, workDir, "esp").Split("\" \"").Select(f => f.Trim('"')))
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
+                espBuild += p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
+                p.WaitForExit();
+                if (p.ExitCode != 0) espExit = p.ExitCode;
+            }
+            CheckNat("esp32: das erzeugte C uebersetzt ohne Warnung", espExit == 0 && !espBuild.Contains("warning"), espBuild);
         }
         var cliEsp = CommandLineParser.Parse(new[] { "native", "a.script", "-t", "esp32" });
         CheckNat("Befehlszeile: -t esp32 / unbekanntes Ziel / -t ausserhalb von native",
@@ -16379,7 +16424,7 @@ else
                     var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
                     string exe = Path.Combine(workDir, $"rtos{index}.bin");
                     // the board's startup code would call the entry point from a task; here main does
-                    generated = generated with { Program = generated.Program + "\nint main(void) { fire_start(); return 0; }\n" };
+                    generated = NativeTestBuild.Append(generated, "\nint main(void) { fire_start(); return 0; }\n");
                     string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"rtos{index}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}-I\"{Path.Combine(workDir, "sim")}\"", exe, out int buildExit);
                     if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C/C++-Compiler: " + build);
                     string actual = RunProc(exe, "", workDir, out _);   // (a FreeRTOS program has no exit code)

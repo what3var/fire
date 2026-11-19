@@ -21,7 +21,8 @@
 #if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT)
 /* TinyCC has no thread-local storage. A build without the GIL (then tasks) keeps the few pointers that must be per thread in slots on a TLS index of
  * Windows (FIRE_TLS_EMULATED, FIRE_TLS_SLOT); a build with the GIL hangs the whole state of a thread on one (FIRE_TLS_STRUCT, fire_tl()). */
-static DWORD fire_tlsSlot = TLS_OUT_OF_INDEXES, fire_tlsSlotsIndex = TLS_OUT_OF_INDEXES;
+FIRE_ONCE DWORD fire_tlsSlot FIRE_ONCE_INIT(TLS_OUT_OF_INDEXES);
+FIRE_ONCE DWORD fire_tlsSlotsIndex FIRE_ONCE_INIT(TLS_OUT_OF_INDEXES);
 static inline DWORD fire_tlsIndexOf(DWORD* index) {
     if (*index == TLS_OUT_OF_INDEXES) {
         DWORD slot = TlsAlloc();

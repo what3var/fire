@@ -14,6 +14,9 @@ namespace fire.Native
     {
         /// <summary>`--stats`: what the generator made of each fire function (null: not asked for).</summary>
         public IReadOnlyList<FuncStat>? Funcs { get; init; }
+        /// <summary>The program in several translation units (docs/spec/NATIVE_SPLIT.md; null: one file, <see cref="Program"/>): the header first, then unit 0
+        /// (`fire_program.c`, which is also <see cref="Program"/>), the helpers, the functions and the natives in C.</summary>
+        public IReadOnlyList<SplitUnit>? Units { get; init; }
     }
 
     /// <summary>
@@ -349,7 +352,8 @@ namespace fire.Native
         /// <see cref="NativesFileName"/> next to the program, compiled with a C++ compiler and linked with it).</summary>
         /// <param name="stripping">How much is left out (<see cref="StrippingLevel"/>); null: level 3, what the program does not reach - a debug build (`#debug`, `-m DEBUG`)
         /// keeps everything.</param>
-        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, StrippingLevel? stripping = null, bool stats = false)
+        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, StrippingLevel? stripping = null, bool stats = false,
+            SplitMode? split = null, string? toolchainKind = null)
         {
             if (ModulesFromEnvironment && program.SourceModules != null)
             {
@@ -362,6 +366,12 @@ namespace fire.Native
                 }
             }
             var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _strip = EffectiveStripping(program, stripping), _collectStats = stats };
+            // (the units, docs/spec/NATIVE_SPLIT.md: FIRE_SPLIT goes before the configuration; a toolchain that cannot build units, `--stats` and a program that
+            // loads plugins stay one file; `auto` decides by the size of the C once it is made)
+            var mode = SplitModes.FromEnvironment ?? split ?? SplitMode.Off;
+            if (mode != SplitMode.Off && !stats && (SplitModes.FromEnvironment == SplitMode.On ? toolchainKind == null || SplitModes.ToolchainCan(toolchainKind)
+                    : mode == SplitMode.On ? SplitModes.ToolchainCan(toolchainKind) : SplitModes.AutoToolchain(toolchainKind)))
+                generator._splitMode = mode;
             string c = generator.Run();
             if (BuildTimes.Enabled)
             {
@@ -371,7 +381,10 @@ namespace fire.Native
                 BuildTimes.Note($"C: {lines} lines, {c.Length / 1024} KB, {generator._funcs.Count} functions{(generator._nativesCode != null ? $", natives in C++ {generator._nativesCode.Length / 1024} KB" : "")}");
                 BuildTimes.Lap("(counting)");
             }
-            return new NativeSources(c, generator._nativesCode) { Funcs = stats ? generator.FuncStats() : null };
+            var units = generator._splitUnits;
+            if (units != null && BuildTimes.Enabled)
+                BuildTimes.Note($"C in {units.Count - 1} units: " + string.Join(", ", units.Skip(1).Select(u => $"{u.Name} {u.Text.Length / 1024} KB")));
+            return new NativeSources(units != null ? units[1].Text : c, generator._nativesCode) { Funcs = stats ? generator.FuncStats() : null, Units = units };
         }
 
         // -------------------------------------------------------------------------------------------------------------
@@ -2044,19 +2057,25 @@ namespace fire.Native
             sb.AppendLine("#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"");
             sb.AppendLine("#pragma GCC diagnostic ignored \"-Wunused-function\"");
             sb.AppendLine("#endif");
+            bool marks = _splitMode != null && !_separate && !Modular && !_openWorld && !_dll && !PointerCallsOn;
+            if (marks) sb.AppendLine(ProgramSplit.Marker("head-end"));
 
             // The natives in C of the packages ("language": "c") and the bridges of graphics and windows: part of this file, after the runtime - a C compiler is enough
             // (TinyCC, a board without C++). Their platform layers come with them (platformSources, ROADMAP 13.3b).
             // (linkage "static": the natives of an import that is a library module live in the file of that module)
-            if (_usesGraphics && NativesOwner(NativeImports.Graphics) == null) AppendStandardNatives(sb, "graphics");
-            if (_usesWindows && NativesOwner(NativeImports.Windows) == null) AppendStandardNatives(sb, "windows");
-            foreach (var (import, _) in _packageImports.Where(p => p.Import.Import.Native is { IsC: true } && !_standardNativesWritten.Contains(p.Import.Name) && NativesOwner(p.Key) == null))
+            if (_usesGraphics && NativesOwner(NativeImports.Graphics) == null) { if (marks) sb.AppendLine(ProgramSplit.Marker("natives " + SplitNativesGroup(NativeImports.Graphics))); AppendStandardNatives(sb, "graphics"); }
+            if (_usesWindows && NativesOwner(NativeImports.Windows) == null) { if (marks) sb.AppendLine(ProgramSplit.Marker("natives " + SplitNativesGroup(NativeImports.Windows))); AppendStandardNatives(sb, "windows"); }
+            foreach (var (import, key) in _packageImports.Where(p => p.Import.Import.Native is { IsC: true } && !_standardNativesWritten.Contains(p.Import.Name) && NativesOwner(p.Key) == null))
+            {
+                if (marks) sb.AppendLine(ProgramSplit.Marker("natives " + SplitNativesGroup(key)));
                 foreach (var (name, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {
                     sb.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\" (C): {name}");
                     sb.AppendLine(PackageNativeText(text));
                     sb.AppendLine($"// ---- end of {name}");
                 }
+            }
+            if (marks) sb.AppendLine(ProgramSplit.Marker("program"));
 
             // linkage "static": the natives in C live in this file only (their state once); the library modules call them through these
             sb.Append(SharedNativeThunks());
@@ -2163,7 +2182,13 @@ namespace fire.Native
                 sb.AppendLine("#endif");
                 foreach (var decl in _externDecls.Values) sb.AppendLine(decl);
             }
-            if (_usesInlineC) sb.Append(InlineCFunctions());
+            if (_usesInlineC)
+            {
+                // (the inline c of the program stays together in one unit: its functions may call each other, as in one file)
+                if (marks) sb.AppendLine(ProgramSplit.Marker("atomic"));
+                sb.Append(InlineCFunctions());
+                if (marks) sb.AppendLine(ProgramSplit.Marker("atomic-end"));
+            }
             sb.AppendLine();
             for (int i = 0; i < _strings.Count; i++)
             {
@@ -2289,8 +2314,15 @@ namespace fire.Native
             sb.AppendLine(RuntimeHooks());
             if (_usesLibCall || Modular) sb.Append(LibraryThunks());
 
-            foreach (var f in _funcs) sb.AppendLine(f.Code);
+            var splitKeys = new List<ProgramSplit.FuncKey>();
+            foreach (var f in _funcs)
+            {
+                if (marks) { sb.AppendLine(ProgramSplit.Marker("func " + splitKeys.Count)); splitKeys.Add(SplitKeyOf(f)); }
+                sb.AppendLine(f.Code);
+            }
+            if (marks) { sb.AppendLine(ProgramSplit.Marker("func " + splitKeys.Count)); splitKeys.Add(SplitKeyOf(main)); }
             sb.AppendLine(main.Code);
+            if (marks) sb.AppendLine(ProgramSplit.Marker("tail"));
             // The entry point is the target configuration's: a process (`int main()`, the exit code is `terminate(n)`) or a function that the board's startup
             // code calls once the scheduler runs (`app_main` in ESP-IDF; there is no process to end).
             var entry = _target.Native.Entry;
@@ -2372,6 +2404,17 @@ namespace fire.Native
             if (PointerCallsOn) { programText = PointerCallsPass(programText); BuildTimes.Lap("C generator: pointer calls pass"); }
             // (a program that loads plugins: the classes from its first own id up to this are its own - a plugin's come after them)
             if (_openWorld) programText = InsertAfterRuntime(programText, $"#define FIRE_PROG_END {_nextClassId}u   // the end of the program's class ids (the classes of plugins come after)\n");
+            if (marks)
+            {
+                // `auto`: a small program stays one file - the marks go, and the text is the one of a build without them
+                if (_splitMode == SplitMode.Auto && programText.Length < ProgramSplit.AutoMinBytes) programText = WithoutSplitMarks(programText);
+                else
+                {
+                    _splitUnits = ProgramSplit.Split(programText, splitKeys, SplitNatives(), ResolveLineResets, ProgramSplit.UnitCost);
+                    BuildTimes.Lap($"C generator: split into {_splitUnits.Count - 1} units");
+                    return _splitUnits[1].Text;
+                }
+            }
             return ResolveLineResets(programText);
         }
 
@@ -4118,7 +4161,13 @@ namespace fire.Native
         private readonly Dictionary<int, string> _lineFiles = new();
 
         /// <summary>Replaces the markers after the functions with `#line` directives that name the C file and its own line again.</summary>
-        private static string ResolveLineResets(string text)
+        private static string ResolveLineResets(string text) => ResolveLineResets(text, ProgramFileName);
+
+        /// <summary>The marker that <see cref="ResolveLineResets(string, string)"/> replaces (the units of a split program put it after a function themselves).</summary>
+        internal const string LineResetMark = LineResetMarker;
+
+        /// <summary><see cref="ResolveLineResets(string)"/> for the file <paramref name="fileName"/> (a unit of a split program).</summary>
+        private static string ResolveLineResets(string text, string fileName)
         {
             if (!text.Contains(LineResetMarker, StringComparison.Ordinal)) return text;
             var result = new StringBuilder(text.Length + 4096);
@@ -4128,7 +4177,7 @@ namespace fire.Native
                 int end = text.IndexOf('\n', start);
                 int next = end < 0 ? text.Length : end + 1;
                 if (string.CompareOrdinal(text, start, LineResetMarker, 0, LineResetMarker.Length) == 0)
-                    result.Append("#line ").Append(lineNo + 1).Append(" \"" + ProgramFileName + "\"\n");
+                    result.Append("#line ").Append(lineNo + 1).Append(" \"").Append(fileName).Append("\"\n");
                 else result.Append(text, start, next - start);
                 lineNo++;
                 start = next;
