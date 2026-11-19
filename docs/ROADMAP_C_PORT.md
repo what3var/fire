@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 und 2 (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -208,7 +208,8 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    den Text des Programms (`forge dump`), die Programmdatei, das C des nativen Backends und das Protokoll von forge, dazu `manifest.sha256`; zwei
    Stände vergleicht `diff -r`. Der Stand des C#-Compilers: 460 Programme ohne Fehler, rund 1 GB, auf 4 Kernen eine halbe Stunde (nicht eingecheckt -
    er ändert sich mit jedem Commit am Compiler). Größe und Geschwindigkeit nativer Programme misst `tests/native-baseline.py`
-   ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)), die Diagnosen stehen bei den Fällen (`.diagnostics`). **Offen:** der AST als Text.
+   ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)), die Diagnosen stehen bei den Fällen (`.diagnostics`). ~~Der AST als Text~~ (umgesetzt mit Phase C 1/2): `forge tokens`/`forge ast`
+   ([FORGE_C.md](spec/FORGE_C.md)).
 5. ~~**spark baut nur noch über die Befehlszeile von forge**~~ (umgesetzt; statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4,
    noch ganz in C#. Build, Build virtual, Build Solution (`forge build <sln> --all`), der Build eines nativen Laufs und Debuggens (`--debug-info`, auch
    ESP32), Publish, Pack Library und Install laufen als `forge build|publish ... --report json` im Kindprozess (`ForgeProcess` in spark): der
@@ -311,7 +312,20 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
 ### Phase C - das Frontend in C
 
 1. Lexer, Präprozessor, `#if`, Diagnosen. Prüfung: Token- und Diagnose-Ausgabe gleich.
+   **Umgesetzt** ([FORGE_C.md](spec/FORGE_C.md)): `native/forge` (`lexer.c`, `preprocessor.c`, `conditional.c`, `diag.c`; je Datei der C#-Commit, dem
+   sie entspricht), gebaut mit `cc -O2 native/forge/forge.c -o forge-c -lm` (gcc, clang, `-Wall -Wextra` ohne Warnung). Das Maß: `forge tokens <datei>`
+   (neu im C#-forge, `FrontendDump.cs`: ein Token je Zeile mit Art, Text, Zeile, Spalte, Länge, Wert, dazu die Diagnosen wie forge sie druckt) und
+   dasselbe von `forge-c tokens`; `tests/compare-frontend.sh` vergleicht über den Korpus: **1255 von 1256 Dateien byte-gleich** (die eine bindet eine
+   `.fxml` ein - Schritt 5), dazu 2512 beschädigte Kopien (`FRONTEND_MUTANTS=2`, die Fehlerwege) alle gleich. Quelltext intern in UTF-16-Einheiten
+   (Spalten), Texte sonst als UTF-8 je Einheit; Ausnahmen als `longjmp` auf dem Kontext, kein globaler Zustand (L6).
 2. AST und Parser. Prüfung: AST-Ausgabe gleich (`SyntaxTests`).
+   **Umgesetzt** ([FORGE_C.md](spec/FORGE_C.md)): `ast.h`/`ast.c` (dieselben Knoten und Felder wie `src/fire/Ast`, getaggte Structs aus der Arena),
+   `parser.c` (`Parser.cs` Methode für Methode, mit `ParseMultiple`: eigene Einheiten, Namespaces, Erweiterungen, generische Namen, Enum-Hilfsklassen),
+   `units.c` (was der Parser von `Unit.cs` braucht). Das Maß: `forge ast` (der Baum als Text mit allen Feldern, die Warnungen, die Diagnosen) - über den
+   Korpus **1255 von 1256 gleich**, die 2512 beschädigten Kopien (75 verschiedene Fehlercodes) alle gleich. Jede Diagnose der Fälle (`.diagnostics`),
+   die aus Lexer, Präprozessor oder Parser kommt, gibt `forge-c ast` wörtlich so aus (`syntax`: 25 von 29, der Rest ist Resolver - Schritt 3).
+   `forge-c ast` ist rund 4-mal so schnell wie `forge ast`. **Offen:** die Markup-Generatoren hinter `#include` (Schritt 5), was erst der Linker setzt
+   (`ProcessedSource.Qualify`/`Module`/`ImportNamespaces`, Schritt 4), die Namen zusammengesetzter Einheiten (`RenderTerms`, mit dem Resolver).
 3. Resolver, Typprüfer, `SetterClaims`. Prüfung: Diagnosen gleich (`DiagnosticTests`, `TypeTests`).
 4. Compiler, Linker, Importe und Preludes. Prüfung: `.fbc` byte-gleich über den Korpus.
 5. Markup-Generatoren (`.fxml`, `.biscuit`, `.fdata`, Falstad). Prüfung: erzeugter fire-Text gleich.

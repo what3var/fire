@@ -1,6 +1,6 @@
 /* native/forge/forge.c - the program forge-c: one file that includes the whole frontend in C (docs/spec/FORGE_C.md).
  *
- *   cc -O2 native/forge/forge.c -o forge-c -lm
+ *   cc -O2 native/forge/forge.c -o forge-c -lm      (gcc, clang; -Wall -Wextra without warnings; libm: Math.Pow of a unit conversion)
  *
  *   forge-c tokens <file.fire>                      the tokens of the preprocessed source (and the diagnostics)
  *   forge-c ast <file.fire>                         the syntax tree (and the diagnostics)
@@ -23,12 +23,10 @@
 #include "lexer.c"
 #include "conditional.c"
 #include "preprocessor.c"
-#ifndef FC_TOKENS_ONLY
 #include "units.c"
 #include "ast.h"
 #include "ast.c"
 #include "parser.c"
-#endif
 
 void fbOutOfMemory(void) {
     fputs("forge-c: out of memory\n", stderr);
@@ -91,7 +89,6 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
         tokens = fcTokenize(c, processed->source, processed->length);
         for (i = 0; i < tokens.count; i++) fcDumpToken(job->out, &tokens.items[i]);
     } else {
-#ifndef FC_TOKENS_ONLY
         FcList* program;
         FcBuf tree = {0};
         c->collecting = true;
@@ -103,7 +100,6 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
         fcBufFree(&tree);
         for (i = 0; i < c->diags->count; i++) fcDiagLogLine(job->out, (const FcDiagnostic*)c->diags->items[i]);
         for (i = 0; i < c->declared->count; i++) fcDumpDeclared(job->out, (const FcDeclaredWarning*)c->declared->items[i]);
-#endif
     }
 }
 
