@@ -41,6 +41,12 @@ typedef struct VmChunk {
     int32_t* lines;         /* (offset, source, line) triples, NULL without line tables */
     uint32_t nlines;
     VmClass* owner;         /* Chunk.OwnerClass: the class whose code it is (access checks), NULL at the top level */
+    /* the debugger (vm_debug.c): the names of the variables a DeclareLocal makes, by the offset of the instruction, and of the parameters (slots of the
+     * function's top level) - Chunk.DebugLocalNames */
+    const char** declNames;
+    uint32_t ndeclNames;
+    const char** localNames;
+    uint32_t nlocalNames;
     /* inline caches by code offset (made on first use): the class id seen last and what it resolved to */
     uint32_t* icCls;
     void** icPtr;
@@ -198,6 +204,13 @@ struct VmProgram {
     /* the strings of the constants (immortal Str, freed with the program) */
     Str** strs;
     uint32_t nstrs, capStrs;
+    /* the debugger (vm_debug.c): the first source of the program itself, the files and SHA-256 of the sources (NULL: the file has none) */
+    int32_t firstUserSource;
+    struct VmChunk** chunks;   /* every chunk of the program (the debugger: the lines with code) */
+    uint32_t nchunks;
+    const char** sourceFiles;
+    const char** sourceHashes;
+    uint32_t nsources;
 };
 
 /* ---- the interpreter ---- */
@@ -212,6 +225,8 @@ typedef struct VmScope {
     OwnList own;
     OwnList temp;
     struct VmScope* nextFree;
+    const char** names;     /* the debugger (vm_debug.c): the names of the slots below `nnames` (the DeclareLocal that made each), NULL: none */
+    uint32_t nnames, capNames;
 } VmScope;
 
 enum { FR_TOP, FR_CALL, FR_CTOR, FR_BASECTOR, FR_NESTED, FR_CATCH };
@@ -320,10 +335,18 @@ typedef struct Vm {
     uint32_t sharedCount;
     uint8_t isStrand;       /* not the main program */
     uint8_t awaitNext;      /* AwaitReply: the next method call on an actor gets a way back (`await a.M()`) */
+    struct VmDbg* dbg;      /* the debugger's state of this strand (vm_debug.c), NULL: none */
 } Vm;
 
 /* A type argument of the VM: the runtime's TArg (its `display` is the text, `holds`/`adapt` stay NULL - the VM checks with its own fitsTArg, VM_SPIKE
  * point 1) and what the VM knows about it. */
 typedef struct VmTArg { TArg ta; const char* text; VmClass* cls; struct VmTArg* next; } VmTArg;
+
+/* the debugger (vm_debug.c) */
+struct VmDbg;
+static void vmDbgStep(Vm* vm);
+static bool vmDbgUnhandled(Value exception);
+static void vmDbgFree(Vm* vm);
+static void vmDbgSnapshot(Vm* vm);
 
 #endif

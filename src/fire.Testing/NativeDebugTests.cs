@@ -79,10 +79,10 @@ sealed class NativeDebugClient : IDisposable
 
     /// <summary>Starts the program with its stdio as the framed transport: FIRE_DEBUG=<paramref name="fireDebug"/> (null: none - a build whose transport is stdio,
     /// like the FreeRTOS simulator), and waits for its hello.</summary>
-    public static NativeDebugClient LaunchStdio(string exe, string workDir, string? fireDebug = "stdio;token=TOKEN")
+    public static NativeDebugClient LaunchStdio(string exe, string workDir, string? fireDebug = "stdio;token=TOKEN", string? launcher = null)
     {
         string token = Guid.NewGuid().ToString("N");
-        var c = new NativeDebugClient(exe, workDir, null, null, fireDebug?.Replace("TOKEN", token), stdio: true);
+        var c = new NativeDebugClient(exe, workDir, launcher, null, fireDebug?.Replace("TOKEN", token), stdio: true);
         c.Start(fireDebug != null && fireDebug.Contains("TOKEN") ? token : null);
         return c;
     }
@@ -171,7 +171,7 @@ sealed class NativeDebugClient : IDisposable
 }
 
 
-static class NativeDebugTests
+static partial class NativeDebugTests
 {
     /// <summary>One step of a debugger run: a command and what to look at afterwards.</summary>
     enum Op { Continue, StepInto, StepOver, StepOut, Resume }
@@ -708,6 +708,7 @@ static class NativeDebugTests
         RunCases(check, cxx, workDir, sanitize);
         RunProtocol(check, cxx, workDir, sanitize);
         RunTransports(check, cxx, workDir, sanitize);
+        RunVmEngine(check, cxx, workDir, sanitize);
     }
 
     static void RunCases(Action<string, bool, string?> check, string cxx, string workDir, string sanitize)
@@ -762,16 +763,21 @@ static class NativeDebugTests
     static JsonElement Find(JsonElement list, string name) => list.EnumerateArray().First(v => v.GetProperty("name").GetString() == name);
 
     /// <summary>The protocol and what is no comparison with the VM: #line, the compilers, gdb, values (expand, set), pause, threads, detach.</summary>
-    static void RunProtocol(Action<string, bool, string?> check, string cxx, string workDir, string sanitize)
+    static void RunProtocol(Action<string, bool, string?> check, string cxx, string workDir, string sanitize, string? vm = null)
     {
         string flags = $"-pthread -O0 -g -Wall -Wextra {sanitize}";
         void Check(string title, Func<(bool Ok, string Detail)> body)
         {
-            string full = "Native-Debugger: " + title;
+            string full = (vm != null ? "VM-Debugger: " : "Native-Debugger: ") + title;
             if (!TestSelectedName(full)) return;
+            if (vm != null && (title.StartsWith("#line") || title.StartsWith("gcc und clang") || title.StartsWith("gdb") || title.StartsWith("Windows"))) return;   // (the C of a native build)
             try { var (ok, detail) = body(); check(full, ok, detail); }
             catch (Exception ex) { check(full, false, ex.ToString()); }
         }
+        // (the C VM: the program is a .fbc that `fire` runs - NativeDebugTests.Vm.cs)
+        string? Bld(string script, string cxx_, string dir, string name, string fl, out string error, string? sourcePath = null) =>
+            vm != null ? BuildVm(script, dir, name, out error, sourcePath) : Build(script, cxx_, dir, name, fl, out error, sourcePath);
+        NativeDebugClient Lch(string exe) => vm != null ? NativeDebugClient.Launch(exe, workDir, vm) : NativeDebugClient.Launch(exe, workDir);
         const string lineScript = "var total = 0\nfor (var i = 0; i < 3; i = i + 1) {\n    total = total + i\n}\nclass U {\n    static int Sq(int x) {\n        var y = x * x\n        return y\n    }\n}\nprint(\"fertig \" + total + \" \" + U.Sq(4))\n";
 
         Check("#line nennt die fire-Zeilen, danach wieder die C-Datei; \"lineDirectives\": false schaltet sie ab", () =>
@@ -819,7 +825,7 @@ static class NativeDebugTests
             {
                 string firePath = Path.Combine(workDir, "dbgline.fire");
                 File.WriteAllText(firePath, lineScript);
-                string? exe = Build(lineScript, cxx, workDir, "dbgline", "-pthread -O0 -g -Wall -Wextra", out string error, firePath);
+                string? exe = Bld(lineScript, cxx, workDir, "dbgline", "-pthread -O0 -g -Wall -Wextra", out string error, firePath);
                 if (exe == null) return (false, error);
                 string output = RunTool("gdb", $"-batch -ex \"break dbgline.fire:7\" -ex run -ex bt \"{exe}\"", workDir, out _);
                 bool ok = output.Contains("dbgline.fire:7") && output.Contains("var y = x * x") && System.Text.RegularExpressions.Regex.IsMatch(output, @"fire_main.*dbgline\.fire:11");
@@ -830,9 +836,9 @@ static class NativeDebugTests
         Check("expand und set: Objekt, Array, Variable, Feld, Element - das Programm rechnet mit den neuen Werten", () =>
         {
             const string script = "class P {\n    int x\n    string name\n    construct(int x) {\n        this.x = x\n        this.name = \"p\"\n    }\n}\nvar p = new P(1)\nvar xs = [1, 2, 3]\nvar count = 5\nvar label = \"a\"\nprint(count)\nprint(label)\nprint(p.x)\nprint(p.name)\nprint(xs[1])\nvar f = 1.5m\nprint(f)\n";
-            string? exe = Build(script, cxx, workDir, "dbgset", flags, out string error);
+            string? exe = Bld(script, cxx, workDir, "dbgset", flags, out string error);
             if (exe == null) return (false, error);
-            using var c = NativeDebugClient.Launch(exe, workDir);
+            using var c = Lch(exe);
             int first = c.Hello.GetProperty("firstUserSource").GetInt32(), main = c.Hello.GetProperty("mainThread").GetInt32();
             c.NextEvent("stopped");
             c.Request("breakpoints", new() { ["breakpoints"] = new[] { new[] { first, 13 }, new[] { first, 19 } } });
@@ -878,9 +884,9 @@ static class NativeDebugTests
         Check("expand und set: gepackte Felder (defined) zwischen Value-Feldern - in der Reihenfolge der Felder, set ueber den Setter", () =>
         {
             const string script = "class P {\n    defined int n = 1\n    string name = \"p\"\n    defined float : m len\n    int x = 3\n}\nvar p = new P()\nprint(p.n)\nprint(p.n + \" \" + p.len + \" \" + p.name + \" \" + p.x)\n";
-            string? exe = Build(script, cxx, workDir, "dbgpacked", flags, out string error);
+            string? exe = Bld(script, cxx, workDir, "dbgpacked", flags, out string error);
             if (exe == null) return (false, error);
-            using var c = NativeDebugClient.Launch(exe, workDir);
+            using var c = Lch(exe);
             int first = c.Hello.GetProperty("firstUserSource").GetInt32(), main = c.Hello.GetProperty("mainThread").GetInt32();
             c.NextEvent("stopped");
             c.Request("breakpoints", new() { ["breakpoints"] = new[] { new[] { first, 9 } } });
@@ -914,15 +920,16 @@ static class NativeDebugTests
         {
             string firePath = Path.Combine(workDir, "dbghello.fire");
             File.WriteAllText(firePath, lineScript);
-            string? exe = Build(lineScript, cxx, workDir, "dbghello", flags, out string error, firePath);
+            string? exe = Bld(lineScript, cxx, workDir, "dbghello", flags, out string error, firePath);
             if (exe == null) return (false, error);
-            string plain = RunTool(exe, "", workDir, out int plainExit);
-            using var c = NativeDebugClient.Launch(exe, workDir);
+            int plainExit;
+            string plain = vm != null ? RunTool(vm, $"\"{exe}\"", workDir, out plainExit) : RunTool(exe, "", workDir, out plainExit);
+            using var c = Lch(exe);
             var hello = c.Hello;
             int first = hello.GetProperty("firstUserSource").GetInt32();
             var src = hello.GetProperty("sources").EnumerateArray().ToList();
             string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(lineScript))).ToLowerInvariant();
-            bool ok = plain == "fertig 3 16\n" && plainExit == 0 && hello.GetProperty("protocol").GetInt32() == 1 && hello.GetProperty("engine").GetString() == "native"
+            bool ok = plain == "fertig 3 16\n" && plainExit == 0 && hello.GetProperty("protocol").GetInt32() == 1 && hello.GetProperty("engine").GetString() == (vm != null ? "vm" : "native")
                 && hello.GetProperty("mode").GetString() == "debug" && src.Count > first && src[first].GetProperty("file").GetString() == Path.GetFullPath(firePath)
                 && src[first].GetProperty("hash").GetString() == hash && src[0].GetProperty("file").ValueKind == JsonValueKind.Null && src[0].GetProperty("hash").ValueKind == JsonValueKind.Null;
             var entry = c.NextEvent("stopped");
@@ -975,9 +982,9 @@ static class NativeDebugTests
         Check("Profiler: profile zaehlt die Zeilen (Schleifenrumpf 100-mal, ein Sprung ans Blockende ist kein Eintritt), sendet sie vor exited, mit den nie gelaufenen Zeilen", () =>
         {
             const string script = "var t = 0\nfor (var i = 0; i < 100; i++) {\n    t = t + i\n    if (i == 50) {\n        print(\"half\")\n    }\n}\nif (t < 0) {\n    print(\"never\")\n}\nprint(t)\n";
-            string? exe = Build(script, cxx, workDir, "dbgprof", flags, out string error);
+            string? exe = Bld(script, cxx, workDir, "dbgprof", flags, out string error);
             if (exe == null) return (false, error);
-            using var c = NativeDebugClient.Launch(exe, workDir);
+            using var c = Lch(exe);
             int first = c.Hello.GetProperty("firstUserSource").GetInt32();
             c.NextEvent("stopped");
             var on = c.Request("profile", new() { ["on"] = true });
@@ -996,9 +1003,9 @@ static class NativeDebugTests
         Check("pause haelt eine Endlosschleife an, terminate beendet das Programm", () =>
         {
             const string script = "var n = 0\nwhile (true) {\n    n = n + 1\n}\n";
-            string? exe = Build(script, cxx, workDir, "dbgpause", flags, out string error);
+            string? exe = Bld(script, cxx, workDir, "dbgpause", flags, out string error);
             if (exe == null) return (false, error);
-            using var c = NativeDebugClient.Launch(exe, workDir);
+            using var c = Lch(exe);
             int first = c.Hello.GetProperty("firstUserSource").GetInt32();
             c.NextEvent("stopped");
             c.Request("continue", new() { ["thread"] = 1 });
@@ -1019,9 +1026,9 @@ static class NativeDebugTests
         Check("Threads: ein neuer fire-Thread meldet sich, ein Haltepunkt haelt nur ihn an, Schritt und Weiterlaufen je Thread, set in seinem Scope", () =>
         {
             const string script = "var done = 0\nfire {\n    var k = 0\n    while (k < 3) {\n        k = k + 1\n    }\n    print(\"thread fertig \" + k)\n}\nvar m = 0\nwhile (m < 2) {\n    m = m + 1\n}\nprint(\"main fertig\")\n";
-            string? exe = Build(script, cxx, workDir, "dbgthreads", flags, out string error);
+            string? exe = Bld(script, cxx, workDir, "dbgthreads", flags, out string error);
             if (exe == null) return (false, error);
-            using var c = NativeDebugClient.Launch(exe, workDir);
+            using var c = Lch(exe);
             int first = c.Hello.GetProperty("firstUserSource").GetInt32(), main = c.Hello.GetProperty("mainThread").GetInt32();
             c.NextEvent("stopped");
             c.Request("breakpoints", new() { ["breakpoints"] = new[] { new[] { first, 5 } } });
@@ -1073,9 +1080,9 @@ static class NativeDebugTests
         Check("Threads: pause haelt alle an, einer laeuft weiter, der andere bleibt stehen; eine unbehandelte Ausnahme im Thread haelt ihn an", () =>
         {
             const string script = "var a = 0\nvar b = 0\nfire {\n    while (true) {\n        b = b + 1\n        if (b == 300000) {\n            throw new ArgumentException(\"im thread\")\n        }\n    }\n}\nwhile (true) {\n    a = a + 1\n}\n";
-            string? exe = Build(script, cxx, workDir, "dbgpauseall", flags, out string error);
+            string? exe = Bld(script, cxx, workDir, "dbgpauseall", flags, out string error);
             if (exe == null) return (false, error);
-            using var c = NativeDebugClient.Launch(exe, workDir);
+            using var c = Lch(exe);
             int main = c.Hello.GetProperty("mainThread").GetInt32();
             c.NextEvent("stopped");
             c.Request("continue", new() { ["thread"] = main });

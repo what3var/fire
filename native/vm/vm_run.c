@@ -648,7 +648,9 @@ static void vmRun(Vm* vm, int32_t base) {
     VmProgram* const prog = vm->prog;
     RELOAD();
     for (;;) {
-        uint32_t op = *ip++;
+        uint32_t op;
+        if (FIRE_UNLIKELY(g_dbgArmed)) { SYNC(); vmDbgStep(vm); RELOAD(); }   /* (the debugger, vm_debug.c) */
+        op = *ip++;
         switch (op) {
         case OP_LoadConst: PUSH(fr->chunk->k[U16(ip)]); ip += 2; break;
         case OP_Pop: sp--; break;

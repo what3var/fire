@@ -19,6 +19,8 @@
 #define FIRE_THREADS 1             /* fire threads, tasks, actors (phase B step 3): the thread model of the runtime with the GIL - one system thread per */
 #define FIRE_GIL 1                 /* fire thread, the safe points of the interpreter are those of the generated code (vm_threads.c) */
 #define FIRE_EXCEPTIONS 1
+#define FIRE_DEBUG 1               /* the debugger (vm_debug.c): the agent of the runtime, armed only with FIRE_DEBUG / --debug */
+#define FIRE_DEBUG_AGENT 1
 #define FIRE_REFLECTION 1         /* (the runtime's probes and the selector of a lambda: the reflection of the VM, vm_reflect.c) */
 #define FIRE_PTRBOUNDS 1          /* (a pointer into an array or a buffer is checked when it is used, like a native build that is not #performance) */
 #define FIRE_NDIMS 16              /* (a program's dimensions are a constant of the generated code; the VM takes room for 16) */
@@ -55,6 +57,7 @@ void fbOutOfMemory(void) { outOfMemory(); }
 #include "vm_run.c"
 #include "vm_reflect.c"
 #include "vm_json.c"
+#include "vm_debug.c"
 
 void fire_vmExit(int code) {
     Vm* vm = g_vmCur;
@@ -207,6 +210,7 @@ static int vmRunFile(const char* path, bool stats) {
         f->spBase = 0; f->kind = FR_TOP; f->catchEnded = 0; f->rec = NULL; f->retMode = RM_PUSH;
         vm->nframes = 1;
     }
+    vmDbgBegin(vm);   /* (FIRE_DEBUG: hello, then the main thread waits for the debugger) */
     vm->exitJump = &jb;
     if (setjmp(jb) == 0) {
         vmRun(vm, 0);
@@ -254,8 +258,9 @@ static int vmRunFile(const char* path, bool stats) {
     vmUnregisterClasses(vm);
     vmNativesUnbind();
     vmJsonEnd();
-    while (vm->freeScopes) { VmScope* s = vm->freeScopes; vm->freeScopes = s->nextFree; free(s->slots); free(s); }
+    while (vm->freeScopes) { VmScope* s = vm->freeScopes; vm->freeScopes = s->nextFree; free(s->slots); free(s->names); free(s); }
     result = vm->terminated ? vm->exitCode : vm->failed ? 1 : 0;
+    vmDbgEnd(vm, result);   /* (the debugger: profile, exited) */
     free(vm->stack);
     free(vm->frames);
     g_enums = vm->savedEnums; g_enumCount = vm->savedEnumCount;
@@ -293,9 +298,18 @@ int main(int argc, char** argv) {
     for (i = 1; i < last; i++) {
         int r;
         if (strcmp(argv[i], "--stats") == 0) { stats = true; continue; }
+        if (strcmp(argv[i], "--debug") == 0 && i + 1 < last) {
+            /* the debugger (docs/spec/NATIVE_DEBUG_PROTOCOL.md): tcp:HOST:PORT;token=T or stdio[;token=T][;wait=MS], like FIRE_DEBUG */
+#if defined(_WIN32)
+            _putenv_s("FIRE_DEBUG", argv[++i]);
+#else
+            setenv("FIRE_DEBUG", argv[++i], 1);
+#endif
+            continue;
+        }
         files++;
         if ((r = vmRunFile(argv[i], stats)) != 0) code = r;
     }
-    if (!files) { fputs("usage: fire [--stats] <program.fbc>... [-- <arguments>]\n", stderr); return 2; }
+    if (!files) { fputs("usage: fire [--stats] [--debug <spec>] <program.fbc>... [-- <arguments>]\n", stderr); return 2; }
     return code;
 }

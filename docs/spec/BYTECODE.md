@@ -1926,7 +1926,7 @@ dieses Format. Es löst MemoryPack ab, dessen Bytes nur .NET lesen konnte und da
 **Aufbau.**
 
 ```
-Datei     := 'F' 'B' 'C' 0x1A   version:u8 (= 1)   flags:u8 (Bit 0: mit Zeilentabellen)
+Datei     := 'F' 'B' 'C' 0x1A   version:u8 (= 1)   flags:u8 (Bit 0: mit Zeilentabellen, Bit 1: mit Quellen)
              Namen Einheiten Enums Programm
 Namen     := list< bytes (UTF-8) >
 Einheiten := list< Einheit >
@@ -1943,6 +1943,7 @@ Programm  := mode:u8 (0 Debug, 1 Release, 2 Performance)  floatWidth:u8  intWidt
              classes:list< Klasse >                         -- jedes Klassenobjekt einmal
              classNames:list< name:str klasse:uint >        -- die Tabelle des Programms: Name -> Index in classes
              topLevel:Chunk
+             [ sources:list< file:str hash:str > ]          -- nur mit Bit 1 der flags der Datei
 
 Klasse    := name:str  base:uint (0 = keine, sonst Index + 1 in classes)
              flags (actor, record, reflectionHelper, keep, notSerializable, noCopy)
@@ -1995,7 +1996,11 @@ String-Konstanten steht als UTF-16, genau so, wie die Runtime einen String hält
 Packages (`fire_pkg_abi.h`).
 
 **Zeilentabellen.** Sie stehen in der Datei, wenn der Schreiber es will: ein Plugin und `forge bytecode` schreiben sie, ein gepacktes Programm
-(`forge build --engine vm`) wie bisher nicht. (Vorher wanderten sie beim Plugin als Text durch `DebugLocalNames`, Tiefe -2; das gibt es nicht mehr.)
+(`forge build --engine vm`) wie bisher nicht.
+
+**Quellen.** Ein Programm im Modus Debug mit Zeilentabellen trägt hinter dem Chunk der obersten Ebene seine Quellen (Bit 1): je Quellindex die Datei
+und den SHA-256 des Texts (`LinkedProgram.SourceFiles`/`SourceHashes`, null für den Prelude und die Preludes der Imports) - was der Debugger der C-VM
+in seinem `hello` sagt ([NATIVE_DEBUG_PROTOCOL.md](NATIVE_DEBUG_PROTOCOL.md), [VM_C.md](VM_C.md#debugger-schritt-6-vm_debugc)), damit spark Haltepunkte nach Datei setzen kann. (Vorher wanderten sie beim Plugin als Text durch `DebugLocalNames`, Tiefe -2; das gibt es nicht mehr.)
 
 **Eine Einheit allein** (`ProgramFile.WriteUnit`/`ReadUnit`): `Namen Einheit` - so merkt sich die Schnittstelle eines Moduls (`StaticLinkage`,
 Format 2) die Einheiten, die es braucht.
