@@ -21,7 +21,7 @@ namespace fire.Debugging
         public static bool? DotnetOverride { get; set; }
 
         /// <summary>spark runs the VM of C# in its own process (FIRE_SPARK_VM=dotnet), not `fire` as a child process.</summary>
-        public static bool UseDotnet => DotnetOverride ?? Environment.GetEnvironmentVariable(SwitchVariable)?.Trim().ToLowerInvariant() is "dotnet" or ".net" or "net" or "cs";
+        public static bool UseDotnet => DotnetOverride ?? System.Environment.GetEnvironmentVariable(SwitchVariable)?.Trim().ToLowerInvariant() is "dotnet" or ".net" or "net" or "cs";
 
         /// <summary>The command line of `fire` for a program file and the program's arguments.</summary>
         public static List<string> Arguments(string programFile, IEnumerable<string> arguments)
@@ -32,10 +32,11 @@ namespace fire.Debugging
             return list;
         }
 
-        /// <summary>The environment of `fire`: FIRE_PKG_PATH with the folders of <paramref name="libraries"/> before what it was (and <paramref name="extra"/>).</summary>
+        /// <summary>The environment of `fire`: FIRE_PKG_PATH with the folders of <paramref name="libraries"/> before what it was, FIRE_STDOUT_LINES (and <paramref name="extra"/>).</summary>
         public static Dictionary<string, string> Environment(IEnumerable<string> libraries, IReadOnlyDictionary<string, string>? extra = null)
         {
-            var env = new Dictionary<string, string>();
+            // (its stdout line by line also into the pipe: the Output panel, the messages of the live view, as they come)
+            var env = new Dictionary<string, string> { ["FIRE_STDOUT_LINES"] = "1" };
             var folders = libraries.Select(l => Path.GetDirectoryName(Path.GetFullPath(l))!).Where(d => d.Length > 0).Distinct().ToList();
             if (System.Environment.GetEnvironmentVariable("FIRE_PKG_PATH") is { Length: > 0 } before) folders.Add(before);
             if (folders.Count > 0) env["FIRE_PKG_PATH"] = string.Join(Path.PathSeparator, folders);

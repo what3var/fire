@@ -666,6 +666,7 @@ static class CircuitEditorTests
             }
             uint[] pixels = Array.Empty<uint>();
             long number = live.CopyFrame(ref pixels, out int w, out int h);
+            Check("Live-Sitzung: das Programm laeuft in fire (ein Prozess fuer sich; FIRE_SPARK_VM=dotnet: in der C#-VM hier)", live.InProcess == fire.Debugging.CVmLaunch.UseDotnet, $"in process {live.InProcess}");
             Check("Live-Sitzung: Bilder kommen beim Host an, Maus und Befehle beim Programm", frame && pong == "pong 7 clicks 1" && w == 200 && h == 100 && number > 0 && pixels.Length == 20000,
                 $"frame {frame}, answer {pong}, {w}x{h}, frame {number}");
             // nothing changes any more: the same picture is not handed over again (no copy, no upload in the host)
