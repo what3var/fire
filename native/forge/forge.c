@@ -4,9 +4,11 @@
  *
  *   forge-c tokens <file.fire>                      the tokens of the preprocessed source (and the diagnostics)
  *   forge-c ast <file.fire>                         the syntax tree (and the diagnostics)
- *   forge-c tokens|ast --list <files.txt> --out <folder>   one output per line of the list: <folder>/<n>.txt
+ *   forge-c diagnostics <file.fire>                 what `forge run` writes to stderr while it compiles, up to the type check (Phase C 3;
+ *                                                   the prelude from FIRE_TABLES, the installed packages from FIRE_PACKAGES)
+ *   forge-c tokens|ast|diagnostics --list <files.txt> --out <folder>   one output per line of the list: <folder>/<n>.txt
  *
- * The output is byte for byte what `forge tokens` / `forge ast` of the C# compiler prints (src/fire.Compiler/FrontendDump.cs);
+ * The output is byte for byte what `forge tokens` / `forge ast` / `forge diagnostics` of the C# compiler prints (src/fire.Compiler/FrontendDump.cs);
  * tests/compare-frontend.sh compares the two over the corpus. */
 #define FIRE_BASE_IMPLEMENTATION
 #include "forge.h"

@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 und 2 (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 3 (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -327,6 +327,15 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    `forge-c ast` ist rund 4-mal so schnell wie `forge ast`. **Offen:** die Markup-Generatoren hinter `#include` (Schritt 5), was erst der Linker setzt
    (`ProcessedSource.Qualify`/`Module`/`ImportNamespaces`, Schritt 4), die Namen zusammengesetzter Einheiten (`RenderTerms`, mit dem Resolver).
 3. Resolver, Typprüfer, `SetterClaims`. Prüfung: Diagnosen gleich (`DiagnosticTests`, `TypeTests`).
+   **Umgesetzt** ([FORGE_C.md](spec/FORGE_C.md)): `resolver.c` (`Resolver.cs` mit `StaticInits`, `AstNames`), `typechecker*.c` (`TypeChecker.cs` mit
+   `TakeLocal`, alle TC0xx und E4052), `setterclaims.c`, `unitv.c` (`Unit.cs` als Wert, mit den Namen zusammengesetzter Einheiten), `linker.c`
+   (`CompileAndLink` bis zur Typprüfung: Prelude, Direktiven mit Wirkung, `#import` mit den Preludes und Natives der installierten Pakete,
+   `new Resource`), `dict.c` (Dictionary/HashSet mit der Reihenfolge von .NET). Das Maß: `forge diagnostics <datei>` (neu, `FrontendDump.cs`: was
+   `forge run` beim Übersetzen auf stderr schreibt, bis zur Typprüfung) und `forge-c diagnostics`; `tests/compare-frontend.sh ... diag`: über den Korpus
+   **1255 von 1256 gleich** (wieder die `.fxml`), die 2512 beschädigten Kopien alle gleich, der ganze Korpus strikt 1255 von 1256; gegen die
+   festgehaltenen `.diagnostics` von `diag`/`types`/`syntax` alle Zeilen des Frontends gleich (38/275/62). Rund 3-mal so schnell wie C#.
+   **Offen** (für Schritt 4, meldet nichts): was die Typprüfung dem Compiler hinterlässt (UnitChecks, LocalGuards, FixedCoercions, OverloadHints,
+   MethodTypeArgs, die Herleitung von `defined`, ...), Projekte und Ziele im Linker.
 4. Compiler, Linker, Importe und Preludes. Prüfung: `.fbc` byte-gleich über den Korpus.
 5. Markup-Generatoren (`.fxml`, `.biscuit`, `.fdata`, Falstad). Prüfung: erzeugter fire-Text gleich.
 
