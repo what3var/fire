@@ -160,7 +160,9 @@ Gelten für jeden Merge, der `native/runtime` oder den Generator berührt, und s
 * `fire_program.c` über den Korpus **byte-gleich** zum Stand davor (der Port ändert den erzeugten Code nicht);
 * **Größe**: `forge build --stats` der Referenzprogramme (Hello World, minimales `ui`-Programm, ein DOS-Ziel) - Code und Daten nicht größer;
 * **Geschwindigkeit**: die Benchmarks aus NATIVE_BACKEND ("Messwerte") nicht langsamer, über die Messschwankung hinaus;
-* **Bauzeit**: nicht länger (forge in C sollte sie verkürzen).
+* **Bauzeit**: nicht länger (forge in C sollte sie verkürzen);
+* **geteilt** ([NATIVE_SPLIT.md](spec/NATIVE_SPLIT.md), Phase A Schritt 7): die native Testgruppe auch mit `FIRE_SPLIT=1` - dieselben Ausgaben; jede
+  Einheit byte-gleich, die eine Datei (`FIRE_SPLIT=0`) ohnehin.
 
 Größe und Geschwindigkeit misst `tests/native-baseline.py measure <forge> <stand.tsv>`: die neun Programme aus `tests/bench` (dieselben, die
 `fire.Benchmarks` in der VM misst) und ein leeres, nativ gebaut - Bytes, Code, Daten, Bauzeit, kürzester von 30 Läufen, Ausgabe;
@@ -226,6 +228,13 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    fehl, wenn sie nicht dem Code entsprechen. Die `.def`-Dateien sind Listen von Makroaufrufen, die C direkt einbindet (mit gcc und clang geprüft).
    **Offen:** die Tabellen hinter den Natives der Basistypen (`__StringCall` mit einer Methodennummer: `StringMethods` usw.) - die Nummern stehen im
    Prelude, die Bedeutung in C# und in `fire_rt.h`; die Codes der Typprüfung (`TC...`), die keinen Katalog haben.
+7. **Das C in Einheiten aufteilen** ([NATIVE_SPLIT.md](spec/NATIVE_SPLIT.md), Phase 1 und 2) - noch im C#-Generator, **vor Phase D**: der Port übernimmt
+   dann den aufgeteilten Generator 1:1 (L3), statt ihn danach ein zweites Mal umzubauen. Die Teilung ist ein letzter Schritt über den fertigen Text
+   (`ProgramSplit`), die Runden, das Weglassen und die Durchgänge über den Text bleiben, wie sie sind. Prüfung wie für die eine Datei: jede Einheit
+   **byte-gleich** zum C#-Generator; die eine Datei (`"split": "off"`, kleine Programme, TinyCC) byte-gleich zum Stand davor. In die
+   [Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build) kommt `FIRE_SPLIT=1` als Testschalter (die native Testgruppe damit, wie
+   `FIRE_MODULES=1`). Phase 1 ist umgesetzt (Stand und Messungen in NATIVE_SPLIT.md); offen sind Phase 2 (Cache der Objekte, Namen aus dem Inhalt)
+   und die Größe des geteilten Programms (siehe dort).
 
 ### Phase B - die VM in C
 

@@ -35,6 +35,19 @@
 /* The platform layer (docs/spec/NATIVE_BACKEND.md, "Plattformschicht"): everything that depends on the operating system or the board - exit, clock, and for fire
  * threads the mutex, the condition variable, the thread and where the per-thread state lives - is one header per platform package. The generated file names
  * it (FIRE_PLATFORM_HEADER, from the target configuration); without a name the host's own is taken. */
+/* What the platform layer keeps once per program (the scheduler of fire, the coroutine of a worker, the key of the thread slots of TinyCC): a static of the one
+ * file - a program in several translation units (FIRE_SPLIT, docs/spec/NATIVE_SPLIT.md) defines it in unit 0 (FIRE_RT_IMPLEMENTATION), the others declare it.
+ * `FIRE_ONCE T name FIRE_ONCE_INIT(value);` */
+#if !defined(FIRE_SPLIT)
+#define FIRE_ONCE static
+#define FIRE_ONCE_INIT(value) = value
+#elif defined(FIRE_RT_IMPLEMENTATION)
+#define FIRE_ONCE
+#define FIRE_ONCE_INIT(value) = value
+#else
+#define FIRE_ONCE extern
+#define FIRE_ONCE_INIT(value)
+#endif
 #ifndef FIRE_PLATFORM_HEADER
 #if defined(_WIN32)
 #define FIRE_PLATFORM_HEADER "platform/windows/fire_platform.h"
@@ -693,6 +706,11 @@ FIRE_FN int64_t fire_natI(Value v) { return v.kind == K_Float ? (int64_t)v.f : (
 #define FIRE_NATR(v) ((v).kind == K_Float ? (v).f : (Real)(v).i)
 
 /* The fewest digits (`%.*e`) that read back as the same number: `digits` is d.ddde+XX. `single`: the number is a float32. */
+/* (the precision is at most 16; where gcc inlines this into a small caller - a unit of a split program - it does not see that and warns about truncation) */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
 FIRE_FN void fire_shortestE(double v, bool single, char* sci, size_t cap) {
     int lo = 0, hi = single ? 8 : 16;
     /* (more digits never read back worse: the smallest precision that works is found by bisection) */
@@ -706,6 +724,9 @@ FIRE_FN void fire_shortestE(double v, bool single, char* sci, size_t cap) {
     }
     snprintf(sci, cap, "%.*e", lo, v);
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 /* Real -> text like .NET Core 3.0+ `double.ToString()` / `float.ToString()`: shortest round-trip digits, positional notation for 1E-4 <= |x| < 1E17 (double)
  * or 1E9 (float), otherwise `d.dddE+XX`. */

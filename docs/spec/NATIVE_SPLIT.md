@@ -1,9 +1,9 @@
 # Das C des Programms in mehreren Dateien (Konzept)
 
-Status: **Konzept, nicht umgesetzt.** Ein natives Programm mit linkage `source` (der Standard) ist heute **eine** C-Datei, `fire_program.c`
-([Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md)). Dieses Dokument beschreibt, wie der Generator sie in mehrere Übersetzungseinheiten teilen könnte, damit
-der C-Compiler sie auf mehreren Kernen und, bei kleinen Änderungen, nur zum Teil neu übersetzt. Die Messungen unten sind ein Versuch mit dem C des Assistenten,
-der dafür von Hand (mit einem Skript) geteilt wurde; der Generator kann es nicht.
+Status: **Phase 1 umgesetzt** (Stand, Entscheidungen und Messungen: [7. Umsetzung von Phase 1](#7-umsetzung-von-phase-1)); Phase 2-4 offen. Ein natives
+Programm mit linkage `source` (der Standard) ist **eine** C-Datei, `fire_program.c` ([Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md)), oder - bei
+`"split"` - mehrere Übersetzungseinheiten, die der C-Compiler auf mehreren Kernen übersetzt. Dieses Dokument war das Konzept dafür; die Messungen in 1. sind
+der Versuch von vorher mit dem von Hand (mit einem Skript) geteilten C des Assistenten.
 
 ## 1. Ziel und was es bringt
 
@@ -377,3 +377,116 @@ Daraus: Strings mit Namen aus ihrem Inhalt und Gruppen nach Quelle - dann trifft
 * **TinyCC** bleibt der Weg für den schnellsten Bau (1 s, eine Datei); die Teilung ist für die optimierten Bauten und für Ziele, die kein TinyCC haben.
 * Unabhängig davon bleibt der größte Hebel auf lange Sicht **weniger C** (die Helfer sind beim Assistenten ein Viertel der Datei) und ein schnellerer Generator,
   der nach der Teilung ein Drittel des Baus ist.
+
+## 7. Umsetzung von Phase 1
+
+Umgesetzt in `fire.Native/ProgramSplit.cs` (die Teilung), `CppGenerator.Split.cs` (die Marken, die Schlüssel der Funktionen, die Natives) und
+`NativeBuilder.SplitCommands`/`CompileUnits` (nebeneinander übersetzen, binden). Der Generator schreibt den Text wie für eine Datei, mit Marken
+(`//@@fire-split ...@@`, je eine Zeile) zwischen Kopf, Natives, Programm, `inline c`, jeder Funktion und dem Schluss; die Durchgänge über den Text laufen
+davor (die Zeigerkonvention und die Plugins schalten die Teilung ab). Ohne Teilung stehen keine Marken im Text - oder `auto` nimmt sie bei einem kleinen
+Programm wieder heraus: **die eine Datei ist Byte für Byte die von vorher** (geprüft: `forge native` vor und nach der Änderung über jeden vierten Fall von
+`tests/cases/native`, die Benchmarks, den Assistenten und Docking - 136 Programme gleich; dazu ein Test in der nativen Gruppe, der für 40 Fälle `auto` mit
+gcc gegen die eine Datei vergleicht).
+
+### Was wohin kommt
+
+| Datei | Inhalt |
+|---|---|
+| `fire_program.h` | `#define FIRE_SPLIT 1`, der Kopf der einen Datei (Schalter, `fire_rt.h`), `FIRE_PS`, `fire_json.h`; die Prototypen, Typen und `#define`s des Programms; `extern`-Deklarationen der Daten und Funktionen, die eine andere Einheit benutzt; die `fire_cn_`-Prototypen der Natives |
+| `fire_program.c` (Einheit 0) | `FIRE_RT_IMPLEMENTATION`, `FIRE_JSON_IMPLEMENTATION`; die Daten (Strings `K<i>`, Typargumente, Klassen-Deskriptoren, Tabellen, Globals, Debug-Tabellen), `fire_init`, der Einsprung; vorweg die `#define`-Zeilen des Kopfs (das C sagt wie die eine Datei, was es ist) |
+| `fire_program_hN.c` | die Helfer (Verteiler, Selektoren, Feld-Helfer, Reflection, JSON-Tabellen, Hooks), nach Kosten geschnitten; die erste mit allem `inline c` des Programms |
+| `fire_program_N.c` | die Rümpfe der fire-Funktionen, sortiert nach (Modul, Quelle, erste Zeile, Klasse, Art) und nach geschätzten Kosten geschnitten (Zeichen des Codes ohne `#line` und Kommentare, Ziel 600 KB je Einheit, `FIRE_SPLIT_UNIT_KB`; ein neues Modul beginnt eine Einheit, sobald die laufende die Hälfte hat); `fire_main` gehört zum Modul des Programms |
+| `fire_natives_<import>.c` | die Natives in C eines Imports, der für sich steht (`NativesStandAlone`, wie bei linkage `static`), `fire_natives_shared.c` die übrigen (graphics, windows, scene3d); dazu je Native, das der Code ruft, `FIRE_PS ... fire_cn_<fn>(...)` - im Programm heißt `fn` per `#define` so (typisierte Natives mit ihren C-Typen) |
+
+**Sichtbarkeit**: ein Symbol, das nur seine Einheit benutzt, bleibt `static`; eines, das eine andere Einheit (oder der Kopf) nennt, wird `FIRE_PS`
+(`visibility("hidden")` mit gcc/clang außer Windows, sonst nichts) und im Kopf deklariert - die Verwendungen findet ein Scanner der Bezeichner je Einheit.
+Konstanten, die über ihre Adresse verglichen werden, haben so genau eine Definition. Kein Präfix `fire__`: die Symbole sind `hidden`, ein Programm exportiert
+sie nicht (die Namen des Generators kollidieren mit keiner Systembibliothek; bleibt ein Mittel, falls doch).
+
+**Die `static inline` Helfer** (Feld-Helfer `gf_`/`sf_`/`sfb_`/`sfo_`, `aget_g`, `targOf_`; beim Assistenten 5800 Stück, 25 000 Zeilen): im Kopf hätten sie
+jede Einheit 4 s (-O0) gekostet. Darum `FIRE_SPLIT_INLINE` (`__OPTIMIZE__`): ein optimierender Bau hat in jeder Einheit die, die sie (transitiv) benutzt - wie in der
+einen Datei einbettbar -, ein Bau ohne Optimierung (-O0, Debug, TinyCC) jeden einmal, `FIRE_PS`, in der letzten Helfer-Einheit.
+
+**Zustand, den es einmal gibt**: was die Runtime als Zustand hat, steht schon hinter `FIRE_RT_IMPLEMENTATION`; nicht so einige `static` der Plattformschicht -
+die Coroutine des Workers (`fire_coro_selfCtx`, beim Assistenten 18 Kopien), der Scheduler von fire (`fire_sched.h`, grüne Threads), die Zeitscheibe von ucontext und
+Emscripten, die Schlüssel der Thread-Slots von TinyCC (posix, win32). Sie sind jetzt `FIRE_ONCE` (fire_rt.h): `static` in der einen Datei (wie vorher), mit
+`FIRE_SPLIT` in Einheit 0 definiert und sonst `extern`. Was danach noch mehrfach vorkommt (`nm`: Caches `FIRE_TLS_CACHE`, `static const` Tabellen,
+`fire_replyCatchInfo` - nirgends über die Adresse verglichen), darf es.
+
+**Zeilen**: jede Einheit nennt sich in `#line` selbst (der Test in `NativeDebugTests` prüft jede); nach einer Funktion mit fire-Zeilen setzt die Einheit
+die eigene Zeile zurück. gcc warnt in einer Einheit über die Wächter, die der Generator mit der nächsten Anweisung auf eine Zeile schreibt
+(`-Wmisleading-indentation`; in der großen einen Datei hört gcc damit auf) - der Kopf schaltet die Warnung ab.
+
+### Modus und Builder
+
+`"split": "auto"` (Standard) | `"on"` | `"off"` in `fire.native.json`, `--split` (build, native, test), `FIRE_SPLIT=1/0` vor beiden. `auto` teilt mit gcc, clang
+(auch MinGW) und Emscripten, wenn das C mindestens 2 MB hat (`ProgramSplit.AutoMinBytes`, etwa 50 000 Zeilen); TinyCC, Open Watcom, `custom` und kleine
+Programme bleiben eine Datei. `on` teilt, wo die Toolchain es kann (gcc, clang, TinyCC, Emscripten, `files` - dann listet die ESP-IDF-Komponente alle
+Einheiten); msvc noch nicht (hier nicht zu prüfen). **Publish** (`ProjectPublisher`) bleibt eine Datei, wenn `fire.native.json` nichts sagt: kleiner, und der
+Compiler sieht das ganze Programm (siehe Größe). Nie geteilt: linkage `static`/`shared`/`plugin`, `FIRE_MODULES=1`, die Zeigerkonvention (Watcom), `--stats`.
+`forge native` schreibt die Einheiten nur mit `on`/`FIRE_SPLIT=1` (`auto` kennt den Compiler nicht).
+
+Der Builder übersetzt jede Einheit mit `-c` (die teuersten zuerst, `FIRE_BUILD_JOBS` zugleich, sonst die Kerne), dann ein Befehl, der bindet (mit Natives in
+C++ der C++-Compiler); `// fire-link:` und `#define FIRE_DEBUG 1` liest er aus dem Kopf. Der Schlüssel des Programm-Caches enthält die Zahl der Einheiten.
+`FIRE_BUILD_TIMES=1` nennt die Größe jeder Einheit, die Zeit jedes Compilers, die Summe, die längste und die Wand-Zeit. Die Tests (`NativeTestBuild`)
+übersetzen die Einheiten eines Falls nacheinander in einem Ordner je Programm.
+
+### Messungen
+
+Gemessen auf dem Rechner dieser Sitzung (4 vCPUs, gcc 13.3), **mit Last von außen** (zwei weitere Agenten bauten; Last 1-6): die Zeiten sind daher grob,
+die Verhältnisse und Größen belastbar. "ganz" ist der ganze `forge build` (Frontend und Generator ~25 s beim Assistenten), "gcc" die Zeit der Compiler.
+
+| Programm | | eine Datei: gcc / ganz | geteilt: gcc Wand / ganz (CPU-Summe) | Programm eine Datei / geteilt |
+|---|---|---:|---:|---:|
+| Assistent (22 Einheiten) | -O2 | 274 s / 299 s | **114 s / 140 s** (446 s) | 10,26 MB / 14,40 MB (+40 %) |
+| | -O0 | 72 s / 94 s | **19 s / 44 s** (75 s) | 11,21 MB / 13,54 MB (+21 %) |
+| Docking (10 Einheiten) | -O2 | 126 s / 137 s | **70 s / 83 s** (235 s) | 5,36 MB / 7,70 MB (+44 %) |
+| | -O0 | 34 s / 46 s | **14 s / 32 s** (50 s) | 6,09 MB / 7,15 MB (+17 %) |
+
+Die Einheiten rechnen bei -O2 zusammen 1,6-1,9-mal so lange wie die eine Datei und das Programm wird um 40 % größer: jede Einheit übersetzt die
+Runtime-Funktionen, die sie nicht einbettet, und die Feld-Helfer, die sie nicht überall einbettet, noch einmal (`nm`: 2,2 MB `.text` doppelt, 2,1 MB davon
+Feld-Helfer und Runtime-Funktionen in mehreren Einheiten). `-ffunction-sections`, `--gc-sections` und `--icf=safe`/`--icf=all` (gold) holen davon fast nichts
+zurück (14,40 -> 14,14 MB): die Kopien sind nicht gleich (je Einheit anders eingebettet und spezialisiert). Das zurückzuholen ist Sache von LTO (Phase 4,
+`-fipa-icf` sieht dann alle Einheiten) - bis dahin bleibt Publish eine Datei. Bei -O0 hat jeder Helfer nur eine Kopie (`FIRE_SPLIT_INLINE` 0).
+
+**Was `hidden` statt `static` kostet** (vorher gemessen, wie empfohlen: die Benchmarks von `tests/bench` mit 100-mal so vielen Durchläufen, eine Datei, gcc
+-O2, kürzester von 7 Läufen; jedes `static` des Programms außer den `static inline` zu `hidden`): `method` 8,8 -> 48,7 ms, `string` 91 -> 149 ms, `alloc`
+100 -> 132 ms, `float` 251 -> 282 ms, die anderen innerhalb der Schwankung. gcc bettet eine Funktion, die nicht `static` ist, schlechter ein und darf ihre
+Signatur nicht ändern. **Entscheidung**: die eine Datei bleibt `static` (und byte-gleich); geteilt wird nur `FIRE_PS`, was wirklich über Einheiten geht, und
+gruppiert nach Quelle und Klasse, damit die meisten Aufrufe in ihrer Einheit bleiben.
+
+**Laufzeit geteilt gegen eine Datei** (dieselben Programme, gcc -O2, `FIRE_SPLIT=1` gegen `0`, abwechselnd laufen gelassen, kürzester von 7; Last 3-5):
+
+| | alloc | array | fib | float | lambda | list | loop | method | string |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| eine Datei (ms) | 117 | 408 | 5,6 | 284 | 369 | 459 | 197 | 9,0 | 83 |
+| geteilt (ms) | 136 | 366 | 5,4 | 260 | 250 | 489 | 130 | 10,1 | 146 |
+| `.text` (Bytes) | 40 939 / 43 631 | 54 972 / 57 104 | 13 773 / 14 722 | 13 446 / 15 313 | 43 467 / 46 318 | 97 049 / 106 748 | 13 515 / 14 112 | 16 765 / 17 721 | 50 738 / 57 837 |
+
+`string` (Methoden des Preludes über Verteiler in der Helfer-Einheit) und `alloc` werden langsamer, die anderen bleiben innerhalb der Schwankung dieser
+Messung. So kleine Programme teilt `auto` nicht; für große ist der Preis zu messen, bevor `auto` dort Standard bleibt (offen).
+
+### Tests
+
+* `FIRE_TESTS_ONLY=native` mit `FIRE_SPLIT=1` (und `FIRE_SPLIT_UNIT_KB=16`/`32`, damit auch kleine Fälle in viele Einheiten zerfallen) über die Familien Besitz,
+  Ausnahmen, Abbruch, Reflection, JSON, inline c, Strings, Spezialisierungen, Bytes, Await, Tasks, Threads/Lambdas und die Fälle mit ui, Http und SQLite:
+  dieselben Ausgaben (AddressSanitizer/UBSan). Was dabei auffiel und behoben ist: der Zustand der Plattform (`FIRE_ONCE`, die grünen Threads liefen nicht),
+  die Warnung über die Einrückung. Abweichend bleiben unter `FIRE_SPLIT=1` nur Prüfungen, die die Form des C in `NativeSources.Program` ansehen (dort steht jetzt
+  nur Einheit 0: Prototypen der Natives in C++, `#include` eines Ziels).
+* **Die ganze native Gruppe mit `FIRE_SPLIT=1`** (Einheiten in Standardgröße, unter AddressSanitizer/UBSan; der Lauf brach nach 1049 von 1418 Prüfungen ab, weil
+  die Objektdateien der Einheiten die Platte füllten - die Tests löschen sie jetzt nach dem Binden): von den 516 Fällen "Native == VM" **512 gleich**; die vier
+  übrigen: zwei Fehler der Teilung, behoben und von Hand nachgeprüft (eine Deklaration im Kopf hinter einem `//`-Kommentar der Zeile davor; eine Warnung
+  `-Wformat-truncation` aus `fire_shortestE`, die gcc erst sieht, wenn er es in eine kleine Einheit einbettet - fire_rt.h schaltet sie dort ab), ein Leck von
+  lavapipe (Vulkan-Treiber, scene3d) unter LeakSanitizer und ein Fall aus der Zeit, als die Platte voll war. Daneben abweichend: Prüfungen der Form des C
+  (`Interface-Aufrufe`, `readonly static`, `defined`-Rechnen, typisierte Arrays sehen in `Program` nach Text, der jetzt in einer anderen Einheit steht) und Wine.
+  Ein zweiter, vollständiger Lauf nach den Korrekturen steht aus (er wurde von einem Neustart der Sitzung beendet).
+* Native-Debugger mit `FIRE_SPLIT=1`: alle Fälle wie in der einen Datei (gdb hält in einer Funktion einer anderen Einheit); nicht prüfbar war Wine (es stürzt hier
+  auch mit der einen Datei ab: `free(): invalid pointer`).
+* Von Hand: gcc, clang, TinyCC (`--split on`), ein Debug-Build, MinGW (baut), Emscripten (baut), grüne Threads und TinyCC mit Threads (`nm` ohne doppelten Zustand).
+* Neu in der nativen Gruppe (ohne `FIRE_SPLIT`): "Teilen (NATIVE_SPLIT)" - `auto` lässt 40 Fälle byte-gleich, `on` teilt deterministisch (zweimal erzeugt, gleiche
+  Einheiten), TinyCC bleibt eine Datei, ein geteiltes Programm baut ohne Warnung und läuft unter den Sanitizern.
+
+### Offen
+
+Die Größe (LTO, Phase 4, oder weniger Kopien: die Feld-Helfer einer Einheit `static` nur, wo sie eingebettet werden); ein Kopf je Einheit (heute ist der
+gemeinsame Kopf beim Assistenten 0,8 MB Deklarationen); msvc; Phase 2 (Objekt-Cache, Namen aus dem Inhalt) und 3.

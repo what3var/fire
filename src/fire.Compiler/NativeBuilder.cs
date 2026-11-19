@@ -34,13 +34,14 @@ namespace fire.Compiler
 
         /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
         public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string?>? sourcePaths = null,
-            StrippingLevel? stripping = null, fire.Runtime.GlobalJobsMode? globalJobs = null, string? toolchainKind = null, fire.Runtime.OptimizeFor? optimize = null, bool stats = false)
+            StrippingLevel? stripping = null, fire.Runtime.GlobalJobsMode? globalJobs = null, string? toolchainKind = null, fire.Runtime.OptimizeFor? optimize = null, bool stats = false,
+            SplitMode? split = null)
         {
             var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchainKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = globalJobs,
                 Optimize = optimize ?? OptimizeOf(null, plan, target) }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program");
-            var generated = CppGenerator.GenerateSources(linked, target, stripping, stats);
-            return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath) { Funcs = generated.Funcs };
+            var generated = CppGenerator.GenerateSources(linked, target, stripping, stats, split, toolchainKind);
+            return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath) { Funcs = generated.Funcs, Units = generated.Units };
         }
 
         /// <summary>`--stats`: the report of the build (NativeStats) into the log and next to the program (.stats.txt, .stats.json).</summary>
@@ -60,6 +61,8 @@ namespace fire.Compiler
         {
             /// <summary>`--stats`: what the generator made of each fire function.</summary>
             public IReadOnlyList<FuncStat>? Funcs { get; init; }
+            /// <summary>The program in several translation units (docs/spec/NATIVE_SPLIT.md; null: one file): the header, unit 0 (<see cref="C"/>), the others.</summary>
+            public IReadOnlyList<SplitUnit>? Units { get; init; }
         }
 
         /// <summary>Writes version info and icon into a Windows executable the toolchain has made (the Win32 resource API; any other platform leaves the file alone).
@@ -85,11 +88,14 @@ namespace fire.Compiler
 
         /// <summary>Writes <paramref name="cpp"/> as <paramref name="fileName"/> into <paramref name="directory"/> with everything it includes: the runtime and the platform package of
         /// the target (a package of your own is copied from the target's <c>platformPath</c>).</summary>
-        public static string WriteFiles(string directory, string cpp, TargetProfile target, string fileName = SourceName, string? configDirectory = null, string? natives = null)
+        public static string WriteFiles(string directory, string cpp, TargetProfile target, string fileName = SourceName, string? configDirectory = null, string? natives = null,
+            IReadOnlyList<SplitUnit>? units = null)
         {
             Directory.CreateDirectory(directory);
             string path = Path.Combine(directory, fileName);
             File.WriteAllText(path, cpp);
+            // (a split program: its header and its other units next to it - unit 0 is `cpp`)
+            if (units != null) foreach (var unit in units) if (unit.Kind != SplitUnitKind.Runtime) File.WriteAllText(Path.Combine(directory, unit.Name), unit.Text);
             string nativesPath = Path.Combine(directory, NativesName);
             if (natives != null) File.WriteAllText(nativesPath, natives);
             else if (File.Exists(nativesPath)) File.Delete(nativesPath);   // (of an earlier build into the same folder)
@@ -161,7 +167,8 @@ namespace fire.Compiler
                 return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
                 return WriteStaticFiles(sources, config, target, toolchain, output, mode, floatWidth, basePath, defines, plan, sourcePaths);
-            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind, OptimizeOf(config, plan, target), config.Stats);
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind, OptimizeOf(config, plan, target), config.Stats,
+                config.SplitValue);
             // natives in C++, and the machine's compiler is C only (TinyCC): the next compiler builds it, the log says so in one line
             if (program.Natives != null && CppFallback(toolchain) is { } cppToolchain)
             {
@@ -176,11 +183,13 @@ namespace fire.Compiler
             if (toolchain.EffectiveKind == "files")
             {
                 string directory = Path.GetFullPath(output);
-                WriteFiles(directory, cpp, target, SourceName, configDirectory, program.Natives);
+                WriteFiles(directory, cpp, target, SourceName, configDirectory, program.Natives, program.Units);
+                // (a split program: every unit is a source of the component - ninja of idf.py compiles them side by side)
+                string moreSources = program.Units == null ? "" : string.Concat(program.Units.Where(u => u.Kind is not (SplitUnitKind.Header or SplitUnitKind.Runtime)).Select(u => $" \"{u.Name}\""));
                 if (toolchain.Layout == "idf-component")
                     File.WriteAllText(Path.Combine(directory, "CMakeLists.txt"),
                         $"# Generated by fire.Native for target '{target.Name}': the program as an ESP-IDF component (call {target.Native.Entry.Name} from the application).\n" +
-                        $"idf_component_register(SRCS \"{SourceName}\"{(program.Natives != null ? $" \"{NativesName}\"" : "")}\n                       INCLUDE_DIRS \".\")\n" +
+                        $"idf_component_register(SRCS \"{SourceName}\"{moreSources}{(program.Natives != null ? $" \"{NativesName}\"" : "")}\n                       INCLUDE_DIRS \".\")\n" +
                         "target_compile_options(${COMPONENT_LIB} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=gnu11> $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17>)\n");
                 log.AppendLine($"{directory}: {SourceName}{(program.Natives != null ? ", " + NativesName : "")}, fire_rt.h and platform/{target.Native.Platform}/ for {target.Name}; the entry point is {target.Native.Entry.Name}");
                 if (!string.IsNullOrWhiteSpace(toolchain.BuildCommand))
@@ -196,7 +205,7 @@ namespace fire.Compiler
             try
             {
                 BuildTimes.Lap("C generator: the program in the builder");
-                string cppFile = WriteFiles(workDir, cpp, target, SourceName, configDirectory, program.Natives);
+                string cppFile = WriteFiles(workDir, cpp, target, SourceName, configDirectory, program.Natives, program.Units);
                 BuildTimes.Lap("writing the files");
                 string? nativesFile = program.Natives != null ? Path.Combine(workDir, NativesName) : null;
                 string exe = Path.GetFullPath(output);
@@ -212,7 +221,10 @@ namespace fire.Compiler
                     toolchain = provided;
                 }
                 bool ok = true;
-                var sourceCommands = BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui).ToList();
+                // (a split program, docs/spec/NATIVE_SPLIT.md: every unit compiled on its own, side by side - the costly ones first -, then one command links)
+                var units = program.Units?.Where(u => u.Kind != SplitUnitKind.Header).OrderByDescending(u => u.Cost).ToList();
+                var sourceCommands = units != null ? SplitCommands(toolchain, target, units, program.Units![0].Name, nativesFile, workDir, exe, gui) : BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui).ToList();
+                int sideBySide = units?.Count ?? 0;
                 string? mapFile = null;
                 if (config.Stats && sourceCommands.Count > 0 && NativeStats.MapOptions(toolchain.EffectiveKind, NativeStats.MapFileOf(exe)) is { } mapOptions)
                 {
@@ -221,7 +233,7 @@ namespace fire.Compiler
                     sourceCommands[^1] = (lastExe, lastArgs + " " + mapOptions);
                 }
                 // (the same files and commands as a program built before: that program - ProgramCache)
-                string? cacheKey = ProgramCache.Key(toolchain, target, workDir, exe, sourceCommands, config.Stats);
+                string? cacheKey = ProgramCache.Key(toolchain, target, workDir, exe, sourceCommands, config.Stats, sideBySide);
                 if (cacheKey != null && ProgramCache.TryRestore(target, cacheKey, exe))
                 {
                     BuildMonitor.Step(BuildPhase.Link, "The program is unchanged: taken from the cache", sourceCommands.Count - 1, sourceCommands.Count);
@@ -230,6 +242,12 @@ namespace fire.Compiler
                     sourceCommands.Clear();
                 }
                 bool compiled = sourceCommands.Count > 0;
+                if (sideBySide > 0 && sourceCommands.Count > 0)
+                {
+                    ok = CompileUnits(sourceCommands.Take(sideBySide).ToList(), units!, workDir, log);
+                    sourceCommands.RemoveRange(0, sideBySide);
+                    if (!ok) sourceCommands.Clear();
+                }
                 for (int c = 0; c < sourceCommands.Count; c++)
                 {
                     var (exeName, arguments) = sourceCommands[c];
@@ -621,6 +639,73 @@ namespace fire.Compiler
                 CompilerCommand(toolchain, target, cFile, workDir, obj, gui: gui, language: "c", compileOnly: true),
                 CompilerCommand(toolchain, target, nativesFile, workDir, exe, gui: gui, language: "c++", extraInputs: new[] { obj }.Concat(libraries ?? Array.Empty<string>()), programFile: cFile),
             };
+        }
+
+        /// <summary>The number of compilers a build runs at the same time (the units of a split program): FIRE_BUILD_JOBS, else the cores of the machine.</summary>
+        public static int BuildJobs => int.TryParse(Environment.GetEnvironmentVariable("FIRE_BUILD_JOBS"), out int n) && n > 0 ? n : Math.Max(1, Environment.ProcessorCount);
+
+        /// <summary>The commands of a split program (docs/spec/NATIVE_SPLIT.md): each unit to an object file (in the order of <paramref name="units"/>), then the command that
+        /// links them - with natives in C++ the C++ compiler, which compiles those too. What the build links (`// fire-link:`) and whether it is a debug build is read from the header.</summary>
+        public static List<(string Executable, string Arguments)> SplitCommands(ToolchainDef toolchain, TargetProfile target, IReadOnlyList<SplitUnit> units, string headerName, string? nativesFile,
+            string workDir, string exe, bool gui = false)
+        {
+            string header = Path.Combine(workDir, headerName);
+            var commands = new List<(string, string)>();
+            var objects = new List<string>();
+            foreach (var unit in units)
+            {
+                string obj = Path.Combine(workDir, Path.ChangeExtension(unit.Name, ".o"));
+                objects.Add(obj);
+                commands.Add(CompilerCommand(toolchain, target, Path.Combine(workDir, unit.Name), workDir, obj, gui: gui, language: "c", compileOnly: true, programFile: header));
+            }
+            // (the objects in the order of the files, not of the compiles: the same program for the same units)
+            var ordered = units.Select((u, i) => (u.Name, Obj: objects[i])).OrderBy(x => x.Name == CppGenerator.ProgramFileName ? "" : x.Name, StringComparer.Ordinal).Select(x => x.Obj).ToList();
+            if (nativesFile != null)
+                commands.Add(CompilerCommand(toolchain, target, nativesFile, workDir, exe, gui: gui, language: "c++", extraInputs: ordered, programFile: header));
+            else
+                commands.Add(CompilerCommand(toolchain, target, ordered[0], workDir, exe, gui: gui, language: "c", extraInputs: ordered.Skip(1), programFile: header));
+            return commands;
+        }
+
+        /// <summary>Compiles the units of a split program side by side (<see cref="BuildJobs"/> at a time, the costly ones first); the log gets each command and what it
+        /// said in the order of the units. False: a unit did not compile.</summary>
+        private static bool CompileUnits(IReadOnlyList<(string Executable, string Arguments)> commands, IReadOnlyList<SplitUnit> units, string workDir, StringBuilder log)
+        {
+            var texts = new string[commands.Count];
+            var oks = new bool[commands.Count];
+            var times = new long[commands.Count];
+            var monitor = BuildMonitor.Current;
+            string Text(int done) => $"Compiling the program (C): {done}/{commands.Count} units";
+            monitor?.Token.ThrowIfCancellationRequested();
+            monitor?.BeginCount(BuildPhase.CompileC, Text(0), commands.Count);
+            var wall = Stopwatch.StartNew();
+            var order = System.Collections.Concurrent.Partitioner.Create(Enumerable.Range(0, commands.Count), System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+            Parallel.ForEach(order, new ParallelOptions { MaxDegreeOfParallelism = BuildJobs }, i =>
+            {
+                if (monitor?.IsCancellationRequested == true) { texts[i] = ""; return; }
+                var watch = Stopwatch.StartNew();
+                var (exeName, arguments) = commands[i];
+                try
+                {
+                    var (stepOk, text) = Run(exeName, arguments, workDir);
+                    oks[i] = stepOk;
+                    texts[i] = $"{exeName} {arguments}\n{text}";
+                }
+                catch (OperationCanceledException) { texts[i] = ""; }
+                times[i] = watch.ElapsedMilliseconds;
+                if (monitor?.IsCancellationRequested == false) monitor.Count(BuildPhase.CompileC, commands.Count, Text);
+            });
+            monitor?.Token.ThrowIfCancellationRequested();
+            var byName = Enumerable.Range(0, commands.Count).OrderBy(i => units[i].Name, StringComparer.Ordinal).ToList();
+            foreach (int i in byName) log.Append(texts[i]);
+            if (BuildTimes.Enabled)
+            {
+                string tool = Path.GetFileName(commands[0].Executable);
+                foreach (int i in byName) BuildTimes.Note($"{tool} unit {units[i].Name}: {times[i]} ms");
+                BuildTimes.Note($"{tool}: {commands.Count} units, {BuildJobs} at a time: {times.Sum()} ms in all, the longest {times.Max()} ms, {wall.ElapsedMilliseconds} ms wall");
+                BuildTimes.Lap($"{tool} (compile {commands.Count} units)");
+            }
+            return oks.All(o => o);
         }
 
         /// <summary>The compiler that stands in for the machine's C-only compiler (TinyCC, chosen in spark's options or automatically) when the program has natives in C++: the

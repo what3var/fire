@@ -46,13 +46,13 @@ typedef struct { fire_taskq waiting; } fire_cond;
 typedef struct fire_thread { fire_task* task; } fire_thread;
 
 /* The scheduler's state (one process, one copy: a static of the generated program). */
-static fire_task fire_sched_main;           /* the program's own thread: its stack is the process's */
-static fire_task* fire_sched_cur = NULL;
-static fire_taskq fire_sched_ready;
-static fire_task* fire_sched_sleepers = NULL;
-static fire_task* fire_sched_dead = NULL;   /* a finished task whose stack is freed by the next switch (not on its own stack) */
+FIRE_ONCE fire_task fire_sched_main;           /* the program's own thread: its stack is the process's */
+FIRE_ONCE fire_task* fire_sched_cur FIRE_ONCE_INIT(NULL);
+FIRE_ONCE fire_taskq fire_sched_ready;
+FIRE_ONCE fire_task* fire_sched_sleepers FIRE_ONCE_INIT(NULL);
+FIRE_ONCE fire_task* fire_sched_dead FIRE_ONCE_INIT(NULL);   /* a finished task whose stack is freed by the next switch (not on its own stack) */
 #ifndef FIRE_SCHED_WANT_DECLARED   /* (a context that has a timer of its own declares it: the interrupt sets it) */
-static volatile int fire_sched_wantSwitch = 0;
+FIRE_ONCE volatile int fire_sched_wantSwitch FIRE_ONCE_INIT(0);
 #endif
 /* the stack of a task: the platform may allocate it itself (Windows 3.x: a segment of its own with the header of a stack) */
 #ifndef FIRE_SCHED_STACK_ALLOC

@@ -175,6 +175,9 @@ namespace fire.Compiler
                 {
                     config = NativeConfig.FindFor(project.FilePath);
                     if (plan.Settings.Linkage != null) config.Linkage = plan.Settings.Linkage;
+                    // (publish: one file unless fire.native.json asks for units - the units build faster, the one file is smaller and lets the compiler see the whole
+                    // program; docs/spec/NATIVE_SPLIT.md)
+                    config.Split ??= "off";
                     target = config.ResolveTarget(targetName);
                     var toolchain = config.ResolveToolchain(target, options.Toolchain ?? toolchainName, fire.Native.ToolchainPurpose.Publish);
                     bool files = toolchain.EffectiveKind == "files";

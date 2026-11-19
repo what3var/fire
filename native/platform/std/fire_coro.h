@@ -179,10 +179,10 @@ __asm__(
 #ifdef FIRE_TLS_EMULATED
 #define fire_coro_selfCtx (*(fire_coro**)&FIRE_TLS_SLOT(2))   /* (TinyCC: a slot on a key of the platform - fire_platform_posix.h) */
 #else
-static FIRE_CORO_TLS fire_coro* fire_coro_selfCtx;
+FIRE_ONCE FIRE_CORO_TLS fire_coro* fire_coro_selfCtx;
 #endif
 #ifdef FIRE_CORO_ASAN
-static FIRE_CORO_TLS fire_coro* fire_coro_prev;
+FIRE_ONCE FIRE_CORO_TLS fire_coro* fire_coro_prev;
 /* (the slot of the worker it runs on - never inlined: see fire_tlGet in fire_rt.h) */
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noinline))

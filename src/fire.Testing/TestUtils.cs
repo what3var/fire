@@ -74,6 +74,29 @@ static class NativeTestBuild
     {
         string cc = fire.Native.ToolchainDef.CCompilerFor(cxx);
         var commands = new List<(string, string)>();
+        if (sources.Units != null)
+        {
+            // a split program (FIRE_SPLIT=1, docs/spec/NATIVE_SPLIT.md): its units in a folder of their own (each includes fire_program.h next to it), every unit to an
+            // object file (through ccache when it is there), then linked - by the C++ compiler when there are natives in C++
+            string unitDir = Path.Combine(dir, ContentName(string.Concat(sources.Units.Select(u => u.Name + "\n" + u.Text)), cc + " " + flags));
+            Directory.CreateDirectory(unitDir);
+            var objects = new List<string>();
+            foreach (var unit in sources.Units)
+            {
+                WriteAtomically(Path.Combine(unitDir, unit.Name), unit.Text);
+                if (unit.Kind == fire.Native.SplitUnitKind.Header) continue;
+                string obj = Path.Combine(dir, name + "_" + Path.GetFileNameWithoutExtension(unit.Name) + ".o");
+                objects.Add(obj);
+                string compile = $"-std=c11 {flags} -c \"{Path.Combine(unitDir, unit.Name)}\" -I\"{dir}\" -o \"{obj}\"";
+                commands.Add(Ccache != null ? (Ccache, cc + " " + compile) : (cc, compile));
+            }
+            string objs = string.Join(" ", objects.Select(o => $"\"{o}\""));
+            if (sources.Natives == null) { commands.Add((cc, $"{flags} {objs} -o \"{exe}\"{tail} -lm")); return commands; }
+            string nFile = Path.Combine(unitDir, "fire_natives.cpp");
+            WriteAtomically(nFile, sources.Natives);
+            commands.Add((cxx, $"-std=c++17 {flags} \"{nFile}\" {objs} -I\"{dir}\" -o \"{exe}\"{tail}"));
+            return commands;
+        }
         if (Ccache != null)
         {
             // with the cache: every unit compiled on its own (-c, through ccache), then linked
@@ -112,6 +135,33 @@ static class NativeTestBuild
         }
     }
 
+    /// <summary>Writes the C of a program for one command that compiles and links it: `name.c` in <paramref name="dir"/>, or - a split program (FIRE_SPLIT=1) - its units in
+    /// `name.split/`; the files to put on the command line, quoted (the runtime files are in <paramref name="dir"/>: -I it).</summary>
+    public static string SourceFiles(fire.Native.NativeSources sources, string dir, string name)
+    {
+        if (sources.Units == null)
+        {
+            string cFile = Path.Combine(dir, name + ".c");
+            File.WriteAllText(cFile, sources.Program);
+            return $"\"{cFile}\"";
+        }
+        string unitDir = Path.Combine(dir, name + ".split");
+        Directory.CreateDirectory(unitDir);
+        foreach (var unit in sources.Units) File.WriteAllText(Path.Combine(unitDir, unit.Name), unit.Text);
+        return string.Join(" ", sources.Units.Where(u => u.Kind != fire.Native.SplitUnitKind.Header).Select(u => $"\"{Path.Combine(unitDir, u.Name)}\""));
+    }
+
+    /// <summary>The program with <paramref name="text"/> after its C (a split program: after unit 0, `fire_program.c`).</summary>
+    public static fire.Native.NativeSources Append(fire.Native.NativeSources sources, string text) => sources with
+    {
+        Program = sources.Program + text,
+        Units = sources.Units?.Select(u => u.Kind == fire.Native.SplitUnitKind.Runtime ? u with { Text = u.Text + text } : u).ToList(),
+    };
+
+    /// <summary>The text of every C file of a program (a split one: its units) with its name.</summary>
+    public static IEnumerable<(string Name, string Text)> Texts(fire.Native.NativeSources sources) =>
+        sources.Units?.Select(u => (u.Name, u.Text)) ?? new[] { (fire.Native.CppGenerator.ProgramFileName, sources.Program) };
+
     /// <summary>Runs the commands of <see cref="Commands"/> with <paramref name="run"/> (tool, arguments -> output, exit code); the output of all, the exit code of the first that failed.
     /// (each command as one of the compiler processes that <see cref="TestJobs.Compiler"/> allows at a time)</summary>
     public static string Build(Func<string, string, (string Output, int Exit)> run, string cxx, fire.Native.NativeSources sources, string dir, string name, string flags, string exe, out int exit, string tail = "")
@@ -124,6 +174,10 @@ static class NativeTestBuild
             output.Append(text);
             if ((exit = code) != 0) break;
         }
+        // (a split program: the object files of its units go - hundreds of cases with sanitizers would fill the disk)
+        if (sources.Units != null)
+            foreach (var obj in Directory.EnumerateFiles(dir, name + "_fire_*.o").ToList())
+                try { File.Delete(obj); } catch (IOException) { }
         return output.ToString();
     }
 

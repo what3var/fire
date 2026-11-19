@@ -23,14 +23,14 @@
 /* TinyCC has no thread-local storage. A build without the GIL (fire_rt.h: FIRE_NO_GIL, then tasks) keeps the few pointers that must be per thread - the
  * running task, the worker, the coroutine of the worker, the windows' tokens - in slots on a key of pthreads (FIRE_TLS_EMULATED, FIRE_TLS_SLOT); a build
  * with the GIL (a debug build, modules) hangs the whole state of a thread on the key (FIRE_TLS_STRUCT, fire_tl()). */
-static pthread_key_t fire_tlsKey;
-static pthread_once_t fire_tlsOnce = PTHREAD_ONCE_INIT;
+FIRE_ONCE pthread_key_t fire_tlsKey;
+FIRE_ONCE pthread_once_t fire_tlsOnce FIRE_ONCE_INIT(PTHREAD_ONCE_INIT);
 static void fire_tlsMakeKey(void) { pthread_key_create(&fire_tlsKey, NULL); }
 static inline void* fire_tls_get(void) { pthread_once(&fire_tlsOnce, fire_tlsMakeKey); return pthread_getspecific(fire_tlsKey); }
 static inline void fire_tls_set(void* p) { pthread_once(&fire_tlsOnce, fire_tlsMakeKey); pthread_setspecific(fire_tlsKey, p); }
 typedef struct FireTlsSlots { void* v[8]; } FireTlsSlots;
-static pthread_key_t fire_tlsSlotKey;
-static pthread_once_t fire_tlsSlotOnce = PTHREAD_ONCE_INIT;
+FIRE_ONCE pthread_key_t fire_tlsSlotKey;
+FIRE_ONCE pthread_once_t fire_tlsSlotOnce FIRE_ONCE_INIT(PTHREAD_ONCE_INIT);
 static void fire_tlsMakeSlotKey(void) { pthread_key_create(&fire_tlsSlotKey, free); }
 static inline FireTlsSlots* fire_tlsSlots(void) {
     FireTlsSlots* s;

@@ -36,8 +36,8 @@ static inline void fire_ctx_swap(fire_ctx* from, fire_ctx* to) {
 }
 
 /* ---- the slice: every 256th safepoint looks at the clock; after 10 ms the next safepoint gives the turn away ---- */
-static unsigned char fire_em_preemptCount;
-static double fire_em_sliceStart;
+FIRE_ONCE unsigned char fire_em_preemptCount;
+FIRE_ONCE double fire_em_sliceStart;
 static int fire_em_preempted(void) {
     double now;
     if (++fire_em_preemptCount != 0) return 0;

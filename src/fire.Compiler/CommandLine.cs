@@ -60,6 +60,8 @@ namespace fire.Compiler
         public string? Linkage { get; init; }
         /// <summary>`--host <program>`: with `--linkage plugin`, the program (linkage "shared") the plugin is built for.</summary>
         public string? Host { get; init; }
+        /// <summary>`--split auto|on|off`: the C of the program in several translation units, compiled at the same time (`"split"` in fire.native.json; docs/spec/NATIVE_SPLIT.md).</summary>
+        public string? Split { get; init; }
         /// <summary>`--global-jobs safepoints|sleep|sync`: when the main program runs the `fire global` jobs by itself (docs/spec/THREADING_DESIGN.md section 7); goes before the
         /// project's `globalJobs`, `#globaljobs`/`#nosync` and fire.native.json. Null: those decide.</summary>
         public fire.Runtime.GlobalJobsMode? GlobalJobs { get; init; }
@@ -102,7 +104,7 @@ namespace fire.Compiler
             """
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--global-jobs safepoints|sleep|sync] [-- <arguments of the program>...]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--linkage source|static|shared|plugin] [--host <program>] [--global-jobs safepoints|sleep|sync]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--linkage source|static|shared|plugin] [--host <program>] [--split auto|on|off] [--global-jobs safepoints|sleep|sync]
               fire.Compiler publish <solution.firesln>|<project.fireproj> [-p <project>] [--toolchain <name>]
               fire.Compiler build|publish ... [--report json] [--overlay <source>=<file>]... [--debug-info] [--check] [--all]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--global-jobs safepoints|sleep|sync]
@@ -146,6 +148,9 @@ namespace fire.Compiler
                     library once as a static library in the user-wide cache (ember cache clean) and links it; shared (Linux, macOS, Windows with MinGW) builds them as shared libraries (DLLs) put next to the program ("linkage" in fire.native.json or the project);
                     plugin builds the classes of the program as a fire plugin (<output>.so/.dll and <output>.fireplugin for the VM) that a program with linkage shared loads with Library.Load.
             --host <program>  With --linkage plugin: the program (built with linkage shared) the plugin is for - its switches and libraries (<program>.firehost next to it).
+            --split auto|on|off  The C of the program in several translation units that the compiler builds at the same time (one per core; FIRE_BUILD_JOBS), then linked:
+                    auto (the default) splits a large program (2 MB of C) built with gcc, clang or Emscripten; on splits whenever the toolchain can; off keeps one file
+                    ("split" in fire.native.json; FIRE_SPLIT=1/0 goes before both; docs/spec/NATIVE_SPLIT.md).
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             -i      Width of int in bits: 16, 32 or 64 (default: whatever the script sets with #intwidth, otherwise 64 - also on small targets).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
@@ -214,6 +219,7 @@ namespace fire.Compiler
             fire.Native.StrippingLevel? stripping = null;
             fire.Runtime.OptimizeFor? optimize = null;
             string? linkage = null;
+            string? split = null;
             string? host = null;
             string? output = null;
             var defines = new List<string>();
@@ -288,6 +294,13 @@ namespace fire.Compiler
                     string? value = i + 1 < args.Count ? args[++i].ToLowerInvariant() : null;
                     if (value is not ("source" or "static" or "shared" or "plugin")) return Fail(command, "--linkage must be followed by source, static, shared or plugin.");
                     linkage = value;
+                }
+                else if (string.Equals(arg, "--split", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--split is only available with build, native and test.");
+                    string? value = i + 1 < args.Count ? args[++i].ToLowerInvariant() : null;
+                    if (fire.Native.SplitModes.Parse(value) == null || string.IsNullOrEmpty(value)) return Fail(command, "--split must be followed by auto, on or off.");
+                    split = value;
                 }
                 else if (string.Equals(arg, "--host", StringComparison.OrdinalIgnoreCase))
                 {
@@ -435,6 +448,7 @@ namespace fire.Compiler
                 Stripping = stripping,
                 Optimize = optimize,
                 Linkage = linkage,
+                Split = split,
                 Report = report,
                 Overlays = overlays,
                 DebugInfo = debugInfo,
@@ -609,6 +623,7 @@ namespace fire.Compiler
             else if (options.Stripping is { } level) { config.Stripping = level; config.StrippingFromCommandLine = true; }
             if (options.Optimize is { } direction) { config.Optimize = fire.Runtime.OptimizeFors.Name(direction); config.OptimizeFromCommandLine = true; }
             if (options.Linkage != null) config.Linkage = options.Linkage;
+            if (options.Split != null) config.Split = options.Split;
             if (options.Host != null) config.Host = options.Host;
             return config;
         }
@@ -699,10 +714,13 @@ namespace fire.Compiler
             {
                 var config = LoadConfig(options);
                 var target = config.ResolveTarget(options.TargetName);
-                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options), stripping: config.Stripping, globalJobs: config.GlobalJobsValue, optimize: NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target));
+                // (only the files: `"split": "on"` or FIRE_SPLIT=1 writes the units next to the program - `auto` needs to know the compiler, it keeps one file)
+                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options), stripping: config.Stripping, globalJobs: config.GlobalJobsValue, optimize: NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target),
+                    toolchainKind: "files", split: config.SplitValue);
                 string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);
-                NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path), program.Natives);
+                NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path), program.Natives, program.Units);
+                if (program.Units != null) stdout.WriteLine($"the program in {program.Units.Count - 1} translation units (docs/spec/NATIVE_SPLIT.md): {string.Join(", ", program.Units.Skip(2).Select(u => u.Name))} next to it, with {program.Units[0].Name}");
                 string natives = program.Natives != null ? Path.Combine(Path.GetDirectoryName(full)!, NativeBuilder.NativesName) : "";
                 string extra = string.Join(" ", target.Native.CompileArgs);
                 stdout.WriteLine(target.IsEmbedded || target.Native.Entry.Kind == fire.Runtime.EntryKind.Function

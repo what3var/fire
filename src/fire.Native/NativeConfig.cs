@@ -75,6 +75,19 @@ namespace fire.Native
         /// <summary>How the libraries and packages are linked (ROADMAP 9): `source` (null, the default: everything is one C file) or `static` (each library a static library of
         /// its own in the user-wide cache, built once per content and switches, linked into the program; docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung").</summary>
         public string? Linkage { get; set; }
+        /// <summary>`"split"`: the C of the program in several translation units, compiled at the same time (`auto` - the default -, `on`, `off`; docs/spec/NATIVE_SPLIT.md).</summary>
+        public string? Split
+        {
+            get => _split;
+            set
+            {
+                if (value != null && SplitModes.Parse(value) == null) throw new NativeConfigException($"{FileName}: \"split\": '{value}' is not one of: auto, on, off.");
+                _split = value;
+            }
+        }
+        private string? _split;
+        /// <summary><see cref="Split"/> as a mode (auto when it is not given).</summary>
+        [JsonIgnore] public SplitMode SplitValue => SplitModes.Parse(_split) ?? SplitMode.Auto;
         /// <summary>`--linkage plugin`: the program the plugin is built for (its path, or its `.firehost` file) - its switches and the interfaces of its libraries.</summary>
         public string? Host { get; set; }
         public Dictionary<string, TargetDef> Targets { get; set; } = new();
