@@ -1,0 +1,13 @@
+// ends with an exception nothing catches - everything of the script must be destroyed afterwards
+class Res {
+    string name
+    construct(string n) { this.name = n; print("open " + n) }
+    destruct() { print("close " + this.name) }
+}
+var keep = new Res("global")
+var h = func () => {
+    var local = new Res("local")
+    throw new Exception("boom")
+}
+h()
+print("not reached")

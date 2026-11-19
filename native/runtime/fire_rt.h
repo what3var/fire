@@ -143,6 +143,11 @@ typedef double Real;
 #ifdef FIRE_DEBUG
 FIRE_RT_FN void fire_dbgExited(int code);   /* the debugger hears that the program ends (fire_debug.h) */
 #endif
+#ifdef FIRE_VM
+/* The VM in C (native/vm, docs/spec/VM_SPIKE.md): what would end the process ends the running script only - the VM goes back to the code that started it
+ * (ROADMAP_C_PORT L6: no exit, no fatal for the host). */
+FIRE_NORETURN void fire_vmExit(int code);
+#endif
 /* Ends the process. With threads the other threads must not run static destructors under their feet: no cleanup, only the streams are flushed. */
 FIRE_NORETURN FIRE_FN void exitNow(int code) {
 #ifdef FIRE_DEBUG
@@ -150,6 +155,9 @@ FIRE_NORETURN FIRE_FN void exitNow(int code) {
 #endif
     fflush(stdout);
     fflush(stderr);
+#ifdef FIRE_VM
+    fire_vmExit(code);
+#endif
     fire_plat_exit(code);
 }
 

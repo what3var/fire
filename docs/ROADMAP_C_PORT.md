@@ -59,7 +59,8 @@ gemeinsame Domäne der Globals.
 * Wo das nicht reicht, verliert die VM: sie nimmt den langsameren Weg oder eine eigene Fassung der Funktion, die Runtime bleibt.
 
 Risiko: `fire_rt.h` ist auf erzeugten Code zugeschnitten (statische Tabellen, `fatal` beendet den Prozess). Darum beginnt Phase B mit einem
-Spike, der genau das - unter diesen Regeln - prüft, bevor irgendetwas anderes portiert wird.
+Spike, der genau das - unter diesen Regeln - prüft, bevor irgendetwas anderes portiert wird. **Geprüft** ([VM_SPIKE.md](spec/VM_SPIKE.md)): L1 trägt, mit einem
+Eingriff hinter `FIRE_VM` (`exitNow` kehrt zur VM zurück); der native Build ist byte-gleich.
 
 ### L2. Die Naht ist das Bytecode-Format, die Reihenfolge VM -> Frontend -> Backend
 
@@ -230,6 +231,14 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
 0. **Spike** (entscheidet L1): Interpreter für rund 30 Opcodes auf `fire_rt.h` - Rechnen, Locals/Scopes, Aufrufe, eine Klasse mit Feldern und
    Destruktor, `try`/`catch`/`resume`, eine Klasse zur Laufzeit registriert, zwei Skripte nacheinander in einem Prozess (L6). Ergebnis: geht es
    ohne Eingriffe in die Runtime, mit Eingriffen hinter `FIRE_VM`, oder gar nicht - gemessen an den Prüfungen für den nativen Build.
+   **Umgesetzt** (`native/vm`, [VM_SPIKE.md](spec/VM_SPIKE.md)): Lader für das ganze `.fbc`-Format, Interpreter mit 69 Opcodes auf den Funktionen der
+   Runtime (Scopes als `OwnList`-Paare, Ausnahmen über ihren Handler-Stapel, Klassen-Deskriptoren und Catch-Typen beim Laden registriert), gebaut mit
+   `cc -O2 native/vm/fire.c -o fire -lm` (gcc, clang). Die Skripte in `native/vm/tests` geben dasselbe aus wie `forge run`; 16 Programme nacheinander in
+   einem Prozess, darunter zwei mit unbehandelter Ausnahme bzw. `fatal`, lassen jeweils nichts zurück. **Ergebnis: mit Eingriffen hinter `FIRE_VM` - genau
+   einem** (`exitNow` ruft `fire_vmExit`, 8 Zeilen); ohne den Schalter ist `fire_rt.h` für den Präprozessor dasselbe, `fire_program.c` und die
+   Executables sind byte-gleich, `native-baseline.py compare`: nichts größer oder langsamer. Die C-VM ist dabei 2,4- bis 6-mal so schnell wie die
+   C#-VM. Was in Phase B einen eigenen Weg der VM braucht (Rückrufe ohne Kontext wie `TArg.holds`, die feste Konfiguration der Runtime für
+   `#intwidth`/`#floatwidth`, Klassen-Ids bei gleichzeitigen Programmen), steht dort unter "Was nicht passt".
 1. `native/base` und der Lader.
 2. Interpreter vollständig: alle Opcodes, die drei Modi (Debug/Release/Performance), Lambdas und Captures, Properties, Überladungen, Generics,
    typisierte Arrays, Zeiger, Records, Besitz (`take`, `TakeTo`, Kopien), Shutdown an sicheren Punkten.
@@ -325,4 +334,5 @@ Offen:
 
 * **ember**: in C mit forge, oder wie die IDE in fire (Tendenz des Benutzers: fire). Der Plan nimmt fire an und hält nur den Teil in C, den
   forge selbst zum Bauen braucht; die Entscheidung muss erst vor Phase D Schritt 3 fallen.
-* **L1** (VM auf `fire_rt.h`): vom Spike abhängig, unter Bedingung 3.
+* ~~**L1** (VM auf `fire_rt.h`): vom Spike abhängig, unter Bedingung 3.~~ Entschieden durch den Spike (19.11.2026, [VM_SPIKE.md](spec/VM_SPIKE.md)):
+  L1 hält, Bedingung 3 ist erfüllt.
