@@ -591,7 +591,21 @@ static Value vmReflNew(Vm* vm, Value cname, Value args, OwnList* list) {
     o = newObject(c->id, c->nlayout, list);
     mask = vm->copyMask;
     vm->copyMask = 0;
-    vmCallNested(vm, ctor, argc, items, o, FR_CTOR);
+    {   /* (vmCallNested, with the record being constructed while its constructor runs, like `new`) */
+        int i;
+        if (vm->sp + (uint32_t)argc + 64 > VM_STACK) fatal("Stack overflow: the operand stack is full.");
+        for (i = 0; i < argc; i++) vm->stack[vm->sp++] = items[i];
+        vmPushCall(vm, ctor, argc, 0, o, FR_CTOR);
+        if (c->flags & VC_RECORD) {
+            RecInit* ri = (RecInit*)malloc(sizeof(RecInit));
+            if (!ri) outOfMemory();
+            ri->o = asObj(o); ri->next = g_recInit; g_recInit = ri;
+            vm->frames[vm->nframes - 1].recInit = ri;
+        }
+        vm->ret = Undef();
+        if (!g_unwind.active) vmRun(vm, vm->nframes - 1);
+        if (!g_unwind.active) vm->sp--;
+    }
     vm->copyMask = mask;
     return g_unwind.active ? Undef() : o;
 }

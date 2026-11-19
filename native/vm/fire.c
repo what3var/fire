@@ -33,6 +33,7 @@ void fbOutOfMemory(void) { outOfMemory(); }
 #include "vm_load.c"
 #include "vm_core.c"
 #include "vm_pkg.c"
+#include "vm_lib.c"
 #include "vm_natives.c"
 #include "vm_run.c"
 #include "vm_reflect.c"

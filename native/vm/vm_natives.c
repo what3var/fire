@@ -3,7 +3,7 @@
  * The natives every program has (native/tables/natives.def - NativeRegistry.CreateDefault) run on the functions of the runtime the generator calls for them
  * (CppGenerator, OpCode.CallNative): print, the methods of the base types by number (__StringCall -> stringCall, __CharCall -> charCall, __MathCall ->
  * mathCall, __BitsCall -> bitsCall, __EnvCall -> envCall, __SbCall -> sbCall, __ResourceCall -> resourceCall), __array_copy, __type_arg, __JsonCall
- * (fire_json.h on the VM's tables, vm_json.c). The threads, tasks and channels (step 3) are not here yet.
+ * (fire_json.h on the VM's tables, vm_json.c), __LibCall (vm_lib.c). The threads, tasks and channels (step 3) are not here yet.
  *
  * Behind them come the natives of the imports, by index in the order the compiler registered them (ImportedPreludes.Insert): graphics and windows
  * (native/tables/bridges.def: the library of both, libfire_gfx), reflection (vm_reflect.c), then the natives of the packages the program file names
@@ -213,12 +213,16 @@ static bool vmCallNative(Vm* vm, VmFrame* fr, uint32_t idx, uint32_t argc, Value
     Value u = Undef();
     switch (idx) {
         case 0: if (argc != 1) return false; *result = print(a[0], list); return true;
-        case 1: if (argc < 2 || argc > 4) return false; *result = stringCall(a[0].i, a[1], (int)argc - 2, argc > 2 ? a[2] : u, argc > 3 ? a[3] : u, list); return true;
+        case 1:
+            if (argc < 2 || argc > 4) return false;
+            if (a[1].kind != K_String) { *result = fireError("ArgumentException", "__StringCall(id, text, ...) expects the string as the second argument."); return true; }
+            *result = stringCall(a[0].i, a[1], (int)argc - 2, argc > 2 ? a[2] : u, argc > 3 ? a[3] : u, list); return true;
         case 2: if (argc != 2) return false; *result = charCall(a[0].i, a[1], list); return true;
         case 3: if (argc != 2) return false; *result = resourceCall(a[0].i, a[1], list); return true;
         case 4: if (argc < 2 || argc > 3) return false; *result = mathCall(a[0].i, a[1], argc > 2 ? a[2] : u); return true;
         case 5: if (argc < 2 || argc > 3) return false; *result = vmJsonCall(vm, fr, argc, a, list); return true;
         case 6: if (argc < 1 || argc > 3) return false; *result = envCall(a[0].i, argc > 1 ? a[1] : u, argc > 2 ? a[2] : u, list); return true;
+        case 7: if (argc < 2 || argc > 5) return false; *result = vmLibraryCall(argc, a, list); return true;
         case 8: if (argc < 2 || argc > 4) return false; *result = bitsCall(a[0].i, a[1], argc > 2 ? a[2] : u, argc > 3 ? a[3] : u); return true;
         case 11: if (argc != 3) return false; *result = fire_arrayCopy(a[0], a[1], a[2]); return true;
         case 21: if (argc != 1) return false; *result = vmTypeArgText(fr, a[0], list); return true;
