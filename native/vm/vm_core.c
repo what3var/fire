@@ -385,7 +385,6 @@ static Value vmCallNested(Vm* vm, VmProto* p, int argc, const Value* args, Value
  * result of a call - it belongs to the call when it lies freshly with the caller, 5 `take x`, 6 a claim of a setter, 8 `try take x`. */
 static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int argc, VmScope* from, Value* held, uint8_t* nheld) {
     int i;
-    (void)vm;
     for (i = 0; i < argc && i < 16; i++) {
         uint32_t bits = (uint32_t)(mask >> (4 * i)) & 15u;
         Value* a = &s->slots[i];
@@ -399,7 +398,17 @@ static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int a
                 retain(c); release(*a); *a = c;
                 break;
             }
-            case 4: case 7: case 6:
+            case 6:
+                /* (a claim site of a setter, `Store(value)`: the value goes to the call if it still belongs to the setter call - its function scope) */
+                if (from) {
+                    VmScope* fb = from;
+                    Owned* o = ownedOf(*a);
+                    while (fb->parent && fb->parent != vm->global && fb->parent != vm->top->global) fb = fb->parent;
+                    if (o && o->owner && (o->owner == &fb->own || o->owner->home == &fb->own) && takeAlive(*a)) takeToList(*a, &s->own);
+                }
+                if ((a->kind == K_Class || a->kind == K_Array || a->kind == K_Buffer) && ownedOf(*a) && ownedOf(*a)->owner == &s->own && *nheld < 6) held[(*nheld)++] = *a;
+                break;
+            case 4: case 7:
                 if (from) { hoistFrom(*a, &from->temp, &s->own); }
                 if ((a->kind == K_Class || a->kind == K_Array || a->kind == K_Buffer) && ownedOf(*a) && ownedOf(*a)->owner == &s->own && *nheld < 6) held[(*nheld)++] = *a;
                 break;
@@ -518,6 +527,7 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     f->recInit = NULL;
     f->nfin = vm->nfin;
     f->nheld = nheld;
+    f->accBase = g_acc.top;
     for (i = 0; i < nheld; i++) f->held[i] = held[i];
     if (FIRE_UNLIKELY(named)) {
         if (bad) { f->ip = g_vmUnwindStub; return; }
@@ -611,6 +621,7 @@ static bool vmReturn(Vm* vm, Value r, int32_t base) {
     retain(r);   /* (the count for the trip; the caller adopts it) */
     vm->sp = f->spBase;
     vm->nfin = f->nfin;
+    if (FIRE_UNLIKELY(g_acc.top > f->accBase) && f->kind != FR_CATCH) g_acc.top = f->accBase;   /* (what the call remembered of its accessors' `this`) */
     vmRecInitEnd(f);
     vmLeaveTo(vm, f, stop);
     vm->nframes--;
@@ -734,6 +745,7 @@ static void vmCatchFn(void* ctx, uint32_t ci, Value e) {
     f->recInit = NULL;
     f->nfin = vm->nfin;
     f->nheld = 0;
+    f->accBase = owner->accBase;   /* (a `return` in the catch is the owner's) */
     base = vm->nframes - 1;
     vmRun(vm, base);
 }

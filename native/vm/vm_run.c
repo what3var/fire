@@ -462,6 +462,12 @@ static void vmTypeArrayOfParam(Vm* vm, Value arr, const char* text, Value self, 
     typeArray(arr, elem, 1, 0, 0, vmConstStrUtf8(vm->prog, "(no unit)"), 1);
 }
 
+/* Does the running call's function scope own it (an argument it was handed - a setter's `value`: VM.OwnedByCallScope)? */
+static bool vmOwnedByCallScope(VmFrame* fr, Owned* o) {
+    VmScope* b = fr->base;
+    return o->owner && (o->owner == &b->own || o->owner == &b->temp || o->owner->home == &b->own);
+}
+
 /* The lists of the scopes of the running call (innermost first: temporaries, then the scope's own) - what `try take`, `is from local` look at. */
 static int vmCallLists(Vm* vm, VmFrame* fr, OwnList** lists, int cap) {
     VmScope* s;
@@ -996,6 +1002,11 @@ static void vmRun(Vm* vm, int32_t base) {
             Value r = POP();
             VmHandlerRec* fin;
             SYNC();
+            if (FIRE_UNLIKELY(g_acc.top > fr->accBase)) {
+                /* (a getter returns what its `this` took over in this call: it goes to the caller after all - VM.PullBackAdopted, before a finally) */
+                VmScope* fb = fr->kind == FR_CATCH ? vm->frames[fr->rec->frame].base : fr->base;
+                accReturn(r, fr->self, fr->accBase, &fb->own, false);
+            }
             if (FIRE_UNLIKELY(fr->kind == FR_CATCH)) {
                 /* `return` in a catch: the owner returns - the value leaves the catch's scopes with a count for the trip (the landing hands it on) */
                 OwnList* lists[64];
@@ -1403,6 +1414,17 @@ static void vmRun(Vm* vm, int32_t base) {
                     }
                     PUSH(x);
                     vm->sp = (uint32_t)(sp - st);
+                    /* (a property assignment in an accessor: a value of the running call goes to the setter like `take x` - VM.OpSetFieldAccessor) */
+                    if (op == OP_SetFieldAccessor && ownedOf(x) && x.kind != K_String) {
+                        OwnList* lists[128];
+                        int ln = vmCallLists(vm, fr, lists, 128);
+                        if (accMine(x, lists, ln, NULL)) vm->copyMask = 5;
+                    } else if (op == OP_SetFieldClaim && ownedOf(x) && x.kind != K_String) {
+                        /* (SetFieldClaim of a property: an unclaimed value - at a claim site of a setter one the setter call still owns - goes to the
+                         * setter it calls, VM.OpSetFieldClaim) */
+                        Owned* o = ownedOf(x);
+                        if ((flags & 2) ? vmOwnedByCallScope(fr, o) : o->owner == &fr->scope->temp) vm->copyMask = 5;
+                    }
                     vmPushCall(vm, s, 1, 0, v, FR_CALL);
                     if (g_unwind.active) goto unwind;
                     vm->frames[vm->nframes - 1].retMode = op == OP_SetFieldOnThis ? RM_DROP : RM_VALUE;
@@ -1449,7 +1471,16 @@ static void vmRun(Vm* vm, int32_t base) {
                 retain(x);
                 release(old);
             }
-            if ((op == OP_SetFieldClaim || op == OP_SetFieldAccessor) && !(flags & 2)) claimToHolder(v, x, &fr->scope->temp);
+            if (op == OP_SetFieldAccessor) {
+                /* (a field of `this` in an accessor: `this` takes over what belongs to the call; a getter remembers it for its `return` - accKeep) */
+                OwnList* lists[128];
+                int ln = vmCallLists(vm, fr, lists, 128);
+                accKeep(fr->self, v, x, lists, ln, NULL, (flags & 1) != 0);
+            } else if (op == OP_SetFieldClaim && !(flags & 2)) claimToHolder(v, x, &fr->scope->temp);
+            else if (op == OP_SetFieldClaim) {   /* (a claim site of a setter: the value it still owns goes to the object - claimKeep) */
+                Owned* o = ownedOf(x);
+                if (o && vmOwnedByCallScope(fr, o) && leafAlive(v) && o != &asObj(v)->h) takeToObject(o, asObj(v));
+            }
             if (op != OP_SetFieldOnThis) PUSH(x);
             break;
         }
@@ -2033,6 +2064,7 @@ static int vmUnwind(Vm* vm, int32_t base) {
         }
         vm->sp = f->spBase;
         vm->nfin = f->nfin;
+        if (FIRE_UNLIKELY(g_acc.top > f->accBase) && f->kind != FR_CATCH) g_acc.top = f->accBase;
         vmRecInitEnd(f);
         vmDropHandlers(vm, vm->nframes - 1);
         vmLeaveTo(vm, f, vmStopOf(vm, f));

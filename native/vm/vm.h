@@ -201,6 +201,7 @@ typedef struct VmFrame {
     RecInit* recInit;       /* a constructor of a record: the record counts as being constructed while it runs (fire_rt.h recInit) */        /* an operator of an object stood for a JumpIfNot (catchEnded bit 1): where its false result jumps to */
     VmHandlerRec* rec;      /* a catch block: the handler it belongs to */
     uint32_t nfin;          /* the finally blocks this frame is in (their records on the VM's stack of finally records) */
+    uint32_t accBase;       /* property accessors (SPEC 2.2): g_acc.top when the call began - what its `this` took over in it lies above */
     uint8_t nheld;          /* the arguments the call took over from its caller (a call's result, `take x`): they die after its locals (vmLeaveTo) */
     Value held[6];
 } VmFrame;
