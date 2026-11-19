@@ -80,7 +80,7 @@ C#-forge, der die Bibliotheken der Pakete gebaut hat) übersetzt jeden Fall mit 
 | `packages` | 93 | 93 | 93 | 93 | 93 | 93 | 93 |
 | `src/fire.Project` (Beispiele, Vorlagen) | 34 | 33 | 33 | 33 | 32 | 32 | 32 |
 | beschädigte Kopien (`FRONTEND_MUTANTS=2`; `fbc`: `=1`) | 2512 | 2512 | 2512 | 2512 | - | 1256 von 1256 | - |
-| der Korpus strikt (jede Quelle mit `//# types: strict`) | 1256 | - | - | 1255 | - | - | - |
+| der Korpus strikt (jede Quelle mit `//# types: strict`) | 1256 | - | - | 1255 | - | 1254 | - |
 
 `fbc` über die Fälle: 957 der 1129 übersetzen (zu Programmdateien von 112 KB bis 1,8 MB - jede mit der ganzen Prelude und den Preludes ihrer
 Importe), 172 sind Fehler des Frontends oder des Compilers; von den beschädigten Kopien übersetzen 361. `tests/run-cases-vm.sh` mit `forge-c`:
@@ -116,7 +116,7 @@ Typprüfung, Schritt 3).
 Geschwindigkeit: `ast` über `tests/cases` und `packages` (1222 Dateien, ein Prozess) 0,55 s gegen 2,2 s des C#-forge.
 
 Geschwindigkeit von `fbc` (Release) über `tests/cases` und `packages` (1222 Dateien, ein Prozess, mit dem Schreiben der Programmdateien): 34,8 s
-gegen 87,1 s des C#-forge. gcc und clang mit `-Wall -Wextra` ohne Warnung; ASan/UBSan über den Korpus ohne Befund (die eine Meldung, ein
+gegen 87,1 s des C#-forge. gcc und clang mit `-Wall -Wextra` ohne Warnung; ASan/UBSan über den Korpus und die beschädigten Kopien ohne Befund (die eine Meldung, ein
 Linksschieben einer negativen Zahl im Zickzack von `ProgramFile`, ist behoben).
 
 ## Dateien
