@@ -1175,6 +1175,7 @@ static const TArg* vmTArgNamed(Vm* vm, const char* text) {
     vm->top->targs = t;
     return &t->ta;
 }
+static uint32_t vmTArgsLen(Vm* vm, TArgs ta);
 static TArgs vmTArgsOf(Vm* vm, VmFrame* fr, const char* text) {
     const TArg* items[16];
     uint32_t n = 0;
@@ -1187,8 +1188,8 @@ static TArgs vmTArgsOf(Vm* vm, VmFrame* fr, const char* text) {
         if (len && s[0] == '$') {
             int k = atoi(s + 1);
             const char* at = (const char*)memchr(s, '@', len);
-            if (at && (size_t)(at - s) + 1 == len) { if (fr->ctargs) ta = fr->ctargs[k]; }   /* `$k@`: of the call */
-            else if (fr->self.kind == K_Class && leafAlive(fr->self)) { TArgs o = objTArgs(asObj(fr->self)); if (o) ta = o[k]; }   /* `$k@Class`: of `this` */
+            if (at && (size_t)(at - s) + 1 == len) { if (fr->ctargs && (uint32_t)k < vmTArgsLen(vm, fr->ctargs)) ta = fr->ctargs[k]; }   /* `$k@`: of the call */
+            else if (fr->self.kind == K_Class && leafAlive(fr->self)) { TArgs o = objTArgs(asObj(fr->self)); if (o && (uint32_t)k < vmTArgsLen(vm, o)) ta = o[k]; }   /* `$k@Class`: of `this` */
         } else if (len) ta = vmTArgNamed(vm, vmIntern(vm->prog, s, len));
         items[n++] = ta;
         if (!e) break;

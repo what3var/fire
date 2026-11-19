@@ -289,6 +289,17 @@ static bool vmTypeArgsFit(Vm* vm, Value v, const VmSpec* sp, Value self, TArgs c
     }
     return true;
 }
+/* A number type argument (`int`, `int:cm`, `int:any`, `float:any m`, DeclaredType.NumberDemand): does the value have the unit it demands as it is
+ * (DeclaredType.UnitFits)? `any` takes every unit; `any m` never fits as it is (the caller converts, a mismatch of the dimension is the exception). */
+static bool vmUnitFitsTArg(Vm* vm, Value v, const char* targ) {
+    size_t k = !strncmp(targ, "int", 3) ? 3 : !strncmp(targ, "float", 5) ? 5 : 0;
+    const char* demand;
+    if (!k || (targ[k] && targ[k] != ':')) return true;
+    demand = targ[k] ? targ + k + 1 : "unitless";
+    if (!strcmp(demand, "any")) return true;
+    if (!strncmp(demand, "any ", 4)) return false;
+    return v.unit == vmUnitOfName(vm, demand);
+}
 static bool vmFitsDeclared(Vm* vm, Value v, const char* text, Value self, TArgs ctargs) {
     VmSpec* sp;
     if (!text) return true;
@@ -299,7 +310,7 @@ static bool vmFitsDeclared(Vm* vm, Value v, const char* text, Value self, TArgs 
         const char* targ = NULL;
         if (sp->owner[0]) targ = vmTypeArgOf(vm, self, sp->owner, sp->typeParam);
         else if (ctargs && ctargs[sp->typeParam] && ctargs[sp->typeParam]->display && ctargs[sp->typeParam]->display[0]) targ = ctargs[sp->typeParam]->display;
-        if (targ) return vmHolds(vm, v, targ, strlen(targ));
+        if (targ) return vmHolds(vm, v, targ, strlen(targ)) && vmUnitFitsTArg(vm, v, targ);
         if (!sp->alts[0]) return true;
     }
     if (!vmHoldsAlts(vm, v, sp->alts)) return false;
@@ -587,7 +598,7 @@ static void vmLamEnter(Vm* vm, Lam* l) {
     f->ctargs = l->targs ? l->targs : f->ctargs;
     for (i = 0; i < ncaps; i++) {
         Value c = lamCaps(l)[i];
-        if (((p->captureCopyMask >> i) & 1) && ownedOf(c) && leafAlive(c)) {
+        if (((p->captureCopyMask >> i) & 1) && ownedOf(c)) {   /* (ownedOf: alive - leafAlive knows no lambdas) */
             c = copyValue(c, true, &f->base->own);
             if (g_unwind.active) return;
         }
@@ -1494,7 +1505,9 @@ static void vmRun(Vm* vm, int32_t base) {
             if (FIRE_UNLIKELY(v.kind != K_Class)) { notObjectAssign(v); goto setFailed; }
             if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); goto setFailed; }
             if (FIRE_UNLIKELY(asObj(v)->h.flags & 2)) {   /* (an object with probes: they hear of it, vm_reflect.c) */
+                VmClass* pc = vmClassOf(vm, asObj(v)->cls);
                 if (!vmProbedSet(vm, fr->chunk, v, name, x)) goto unwind;
+                if (pc && vmFieldIndex(pc, name) >= 0 && leafAlive(v)) goto setStored;   /* (a field: what the store owns goes as without probes) */
                 if (op != OP_SetFieldOnThis) PUSH(x);
                 break;
             }
@@ -1570,6 +1583,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 retain(x);
                 release(old);
             }
+        setStored:
             if (op == OP_SetFieldAccessor) {
                 /* (a field of `this` in an accessor: `this` takes over what belongs to the call; a getter remembers it for its `return` - accKeep) */
                 OwnList* lists[128];
