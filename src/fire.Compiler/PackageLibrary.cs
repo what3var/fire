@@ -65,6 +65,24 @@ namespace fire.Compiler
 
         public static string RuntimeKey(InstalledImport import) => RuntimeKey(import.Import.Native!.IsC ? GenerateCWrapper(import) : GenerateWrapper(import));
 
+        /// <summary>The compiler for the natives of the virtual machine: they run as machine code under every program of the VM (the C engine of ai,
+        /// graphics, compression, ...), so they are built optimised - the machine's toolchain, unless that is TinyCC (barely optimised, and without the
+        /// SIMD kernels it has no `__GNUC__` for): then the machine's compiler for publishing, else any optimising compiler found (gcc, clang, msvc).
+        /// TinyCC only when there is nothing else.</summary>
+        public static ToolchainDef OptimizingToolchain(NativeConfig config, TargetProfile target)
+        {
+            ToolchainDef chosen = config.ResolveToolchain(target);
+            if (!string.Equals(chosen.EffectiveKind, "tcc", StringComparison.OrdinalIgnoreCase)) return chosen;
+            try
+            {
+                var machine = MachineToolchains.Load();
+                if (machine.Resolve(ToolchainPurpose.Publish).Toolchain is { } publish && !string.Equals(publish.EffectiveKind, "tcc", StringComparison.OrdinalIgnoreCase)) return publish;
+                if (machine.CppFallback() is { } other) return other;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or NativeConfigException) { }
+            return chosen;
+        }
+
         public static string KeyFile(string library) => library + ".runtime";
 
         private static bool SameRuntime(string library, Func<string> key)
@@ -131,7 +149,7 @@ namespace fire.Compiler
             var config = new NativeConfig();
             var target = TargetProfile.Host;
             // a toolchain of this machine; none: the host offers to provide one (install w64devkit, change the toolchain, cancel)
-            ToolchainDef? toolchain = ToolchainProvider.Require(config.ResolveToolchain(target),
+            ToolchainDef? toolchain = ToolchainProvider.Require(OptimizingToolchain(config, target),
                 $"The package '{import.Package.Name}' contains native code ({(import.Import.Native.IsC ? "C" : "C++")}) that has to be compiled on this machine, for the virtual machine.");
             if (toolchain == null)
                 throw new PackageException($"The native part of the package '{import.Package.Name}' has to be built with a {(import.Import.Native.IsC ? "C compiler (gcc, clang, tcc or cl)" : "C++ compiler (g++, clang++ or cl)")}, and none was found on this machine. " +
@@ -312,7 +330,7 @@ namespace fire.Compiler
             log?.Invoke($"Building the native part of graphics and windows for {Rid}...");
             using var background = BackgroundWork.Begin("Building the windows and graphics of fire for this machine");
             var target = TargetProfile.Host;
-            ToolchainDef? toolchain = ToolchainProvider.Require(new NativeConfig().ResolveToolchain(target), "The windows and the graphics of fire are C that has to be compiled on this machine, for the virtual machine.");
+            ToolchainDef? toolchain = ToolchainProvider.Require(OptimizingToolchain(new NativeConfig(), target), "The windows and the graphics of fire are C that has to be compiled on this machine, for the virtual machine.");
             if (toolchain == null)
                 throw new PackageException("The windows and the graphics of fire have to be built with a C compiler (gcc, clang, tcc or cl), and none was found on this machine.");
             string work = Path.Combine(Path.GetTempPath(), "fire-pkgbuild-" + Guid.NewGuid().ToString("N"));

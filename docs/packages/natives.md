@@ -451,7 +451,7 @@ them: `forge build`/`forge test` and spark's Build, Run and Debug the Build one,
 for Publish when they are there, else the first one found (Build: tcc, gcc, clang, msvc; Publish: gcc, clang/msvc, tcc). A file of an older fire without the two fields:
 its toolchain is the choice for both. When the Build compiler is TinyCC by that choice and the program has natives in C++, the build takes the next compiler that
 compiles C++ and says so in one line of the log ("TinyCC compiles only C and the program has natives in C++ (gui): built with gcc instead."); a toolchain the project
-names is not replaced - then the build reports that it compiles only C. The natives of packages for the virtual machine are compiled with the machine's toolchain as before.
+names is not replaced - then the build reports that it compiles only C. The natives of packages for the virtual machine (and its library of graphics and windows) are compiled optimised, because every VM program runs them as machine code: with the machine's toolchain, unless that is TinyCC - then with the compiler for Publish, else with any optimising one found (gcc, clang, msvc); TinyCC only when there is nothing else (`PackageLibrary.OptimizingToolchain`).
 
 When there is none, nothing fails silently - the user is told *why* a compiler is needed ("The package 'x' contains native code (C++) ..." or "A native build translates the program to
 C++ ...") and offered:
