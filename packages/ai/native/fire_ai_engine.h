@@ -36,7 +36,27 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <sys/resource.h>
+#if defined(__APPLE__)
+#include <pthread/qos.h>
+#endif
 #define FAI_MMAP 1
+#endif
+
+/* The engine is the hot part of a program that uses it: GCC compiles it optimised also when the program is built without optimisation (-O0: a quick
+ * build of a large program, a debug build) - the matrix products would be ten times slower and the machine's cores busy that much longer.
+ * FIRE_AI_NO_OPTIMIZE: as the rest of the program. (Clang and MSVC follow the program's flags; TinyCC does not optimise.) */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__OPTIMIZE__) && !defined(FIRE_AI_NO_OPTIMIZE)
+#define FAI_OPTIMIZED_HERE 1
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+#endif
+/* (the small functions of the inner loops are always inlined: without optimisation of the whole program GCC inlines nothing on its own) */
+#if defined(__GNUC__) || defined(__clang__)
+#define FAI_INLINE __attribute__((always_inline)) inline
+#else
+#define FAI_INLINE
 #endif
 
 /* ---- errors ------------------------------------------------------------------------------------------------------------------------------------- */
@@ -269,19 +289,25 @@ static float fai_dotQ4_c(const FaiQ4* w, const FaiQ8* x, int64_t blocks) {
 #define FAI_AVX2 1
 #include <immintrin.h>
 #define FAI_AVX2_FN __attribute__((target("avx2,fma")))
-FAI_AVX2_FN static inline __m256 fai_avxBlock(__m256i w, __m256i x, float scale, __m256 acc) {
+FAI_AVX2_FN static FAI_INLINE __m256 fai_avxBlock(__m256i w, __m256i x, float scale, __m256 acc) {
     /* |w| * (x with the sign of w): unsigned times signed bytes, summed in pairs, then in fours */
     __m256i ax = _mm256_sign_epi8(w, w), sy = _mm256_sign_epi8(x, w);
     __m256i p16 = _mm256_maddubs_epi16(ax, sy);
     __m256i p32 = _mm256_madd_epi16(p16, _mm256_set1_epi16(1));
     return _mm256_fmadd_ps(_mm256_cvtepi32_ps(p32), _mm256_set1_ps(scale), acc);
 }
-FAI_AVX2_FN static float fai_hsum(__m256 v) {
+/* The sum of the eight lanes - and the upper halves of the registers cleared (vzeroupper) before the caller's SSE code (scalar float, expf of the C
+ * library): GCC inserts that itself only with -fexpensive-optimizations (-O2); without it every later SSE instruction waits on the dirty upper state, and
+ * the engine built with -O1 or by a -O0 program (see FAI_OPTIMIZED_HERE) was three times slower. */
+FAI_AVX2_FN static FAI_INLINE float fai_hsum(__m256 v) {
+    float r;
     __m128 lo = _mm256_castps256_ps128(v), hi = _mm256_extractf128_ps(v, 1);
     lo = _mm_add_ps(lo, hi);
     lo = _mm_add_ps(lo, _mm_movehl_ps(lo, lo));
     lo = _mm_add_ss(lo, _mm_shuffle_ps(lo, lo, 1));
-    return _mm_cvtss_f32(lo);
+    r = _mm_cvtss_f32(lo);
+    _mm256_zeroupper();
+    return r;
 }
 FAI_AVX2_FN static float fai_dotQ8_avx2(const FaiQ8* w, const FaiQ8* x, int64_t blocks) {
     __m256 acc = _mm256_setzero_ps();
@@ -462,6 +488,27 @@ static void fai_part(FaiPool* p, int index, int parts, int64_t* from, int64_t* t
     *to = *from + step + (index < rest ? 1 : 0);
 }
 
+/* The threads that compute run below the normal priority: the program's own thread (a user interface that shows the answer) and the other programs
+ * of the machine go first - on a busy machine the computing would otherwise take their turns, and a window would show a picture a second.
+ * FIRE_AI_NORMAL_PRIORITY: as the program. */
+static void fai_lowerPriority(void) {
+#if defined(FAI_THREADS) && !defined(FIRE_AI_NORMAL_PRIORITY)
+#if defined(_WIN32)
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#elif defined(__linux__)
+    /* (Linux: the nice value belongs to the thread - who 0 is the calling thread alone; a raise needs no rights) */
+    {
+        int now;
+        errno = 0;
+        now = getpriority(PRIO_PROCESS, 0);
+        if (errno == 0 && now < 5) setpriority(PRIO_PROCESS, 0, 5);
+    }
+#elif defined(__APPLE__)
+    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#endif
+#endif
+}
+
 #ifdef FAI_THREADS
 #ifdef _WIN32
 static DWORD WINAPI fai_workerMain(LPVOID a)
@@ -474,6 +521,7 @@ static void* fai_workerMain(void* a)
     int index = ((FaiWorker*)a)->index;
     int seen = 0;
     free(a);
+    fai_lowerPriority();
     for (;;) {
         int64_t from, to;
 #ifdef _WIN32
@@ -1630,8 +1678,8 @@ static void fai_attJob(void* a, int64_t from, int64_t to) {
     }
 }
 
-static float fai_sigmoid(float x) { return 1.0f / (1.0f + expf(-x)); }
-static float fai_silu(float x) { return x / (1.0f + expf(-x)); }
+static FAI_INLINE float fai_sigmoid(float x) { return 1.0f / (1.0f + expf(-x)); }
+static FAI_INLINE float fai_silu(float x) { return x / (1.0f + expf(-x)); }
 static float fai_softplus(float x) { return x > 20.0f ? x : log1pf(expf(x)); }
 
 /* The attention of a layer for `count` tokens from `pos`: s->xb (normed) in, s->xb2 out. */
@@ -1978,5 +2026,9 @@ static int fai_isEnd(const FaiModel* m, int32_t t) {
     s = &v->tokens[t];
     return (s->n == 13 && memcmp(s->p, "<|endoftext|>", 13) == 0) || (s->n == 10 && memcmp(s->p, "<|im_end|>", 10) == 0) || (s->n == 10 && memcmp(s->p, "<|eot_id|>", 10) == 0);
 }
+
+#ifdef FAI_OPTIMIZED_HERE
+#pragma GCC pop_options
+#endif
 
 #endif

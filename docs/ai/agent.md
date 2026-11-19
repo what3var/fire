@@ -31,7 +31,7 @@ print(agent.Choose("The user wrote: 'it crashes when I press Save'. What is it?"
 | `ThinkingBudget` | the tokens it may think per round (384): then its thinking is closed and it answers (`ThinkingCut`) - a small model may think on and on otherwise |
 | `MaxResultLength` | a tool's answer longer than this (3000 characters) is cut, so a long file does not fill the context |
 | `Reading`, `ReadDone`, `ReadTotal`, `Written`, `InThought`, `Session` | how far it is, for a user interface while no answer comes: reading its prompt (`ReadDone` of `ReadTotal` tokens - on a busy machine that takes long), the tokens written for the question (also the thinking and the calls of tools, all rounds), whether it thinks now; `Session.TokensPerSecond` |
-| `Prepare()` | reads the instructions and tools now, in the background, so the first question does not wait for them (a question that comes earlier goes on from there) |
+| `Prepare()` | reads the instructions and tools now, in the background, so the first question does not wait for them (a question that comes earlier starts when they are read - Prepare is not cancelled, its work is the start of every prompt, and a cancel would wait in the caller's thread for the batch it computes) |
 | `LastEnd` | how the last answer ended: `AI.End.Model` (complete), `MaxTokens` (cut at `Settings.MaxTokens`), `Context`, `Cancelled` |
 | `Calls` | the calls of the last question (`AI.AgentCall`: `Name`, `Arguments`, `Result`) |
 | `Choose(question, options)` | the index of the most likely option: the model reads the question with the options and weighs each (it does not write); the conversation is not changed |

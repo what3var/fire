@@ -286,9 +286,9 @@ static void fire_aib_runJob(FireAiSession* a) {
 }
 
 #ifdef _WIN32
-static DWORD WINAPI fire_aib_thread(LPVOID p) { fire_aib_runJob((FireAiSession*)p); return 0; }
+static DWORD WINAPI fire_aib_thread(LPVOID p) { fai_lowerPriority(); fire_aib_runJob((FireAiSession*)p); return 0; }
 #else
-static void* fire_aib_thread(void* p) { fire_aib_runJob((FireAiSession*)p); return NULL; }
+static void* fire_aib_thread(void* p) { fai_lowerPriority(); fire_aib_runJob((FireAiSession*)p); return NULL; }
 #endif
 
 static void fire_aib_freeJob(FireAiJob* j) {

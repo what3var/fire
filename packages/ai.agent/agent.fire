@@ -98,6 +98,10 @@ namespace AI {
         // the tokens written for the question in the rounds before this one; its thinking was closed by the budget
         int generatedBefore = 0
         bool thinkingCut = false
+        // the answer waits for the instructions that Prepare reads (its job is not cancelled: what it read is the start of the prompt, and a cancel
+        // waits for the batch it computes - seconds on a slow machine, in the thread of the user interface)
+        bool afterPrepare = false
+        bool preparing = false
         bool finalRound = false
         // What the model wrote last, as it wrote it (with the calls of tools and the thinking) - for finding out why it did what it did.
         string LastOutput = ""
@@ -293,10 +297,17 @@ namespace AI {
             if (begin == "") { return }
             this.session.Keep(begin)
             this.session.Start(begin, AI.Settings.Exact(1))
+            this.preparing = true
         }
 
         undefined Generate() {
-            // (a Prepare that still runs stops: what it read stays in the cache)
+            // (a Prepare that still runs: the answer starts when it is done - Update)
+            if (this.session.Busy && this.preparing) {
+                this.afterPrepare = true
+                return
+            }
+            this.afterPrepare = false
+            this.preparing = false
             if (this.session.Busy) { this.session.Cancel() }
             var s = copy this.Settings
             s.Stops.Add(this.finalRound ? "<tool_call>" : "</tool_call>")
@@ -349,6 +360,12 @@ namespace AI {
         // The text of the answer that came since the last call ("" when nothing came). Runs the tools when the model asked for them and goes on.
         string Update() {
             if (!this.running) { return "" }
+            if (this.afterPrepare) {
+                if (this.session.Busy) { return "" }
+                this.session.Take()   // (the token of Prepare)
+                this.Generate()
+                return ""
+            }
             this.raw += this.session.Take()
             if (this.session.Busy) {
                 // thinking too long: its thinking is closed, the model goes on with the answer
@@ -588,8 +605,12 @@ namespace AI {
         // Stops the answer (what came so far stays in the conversation).
         undefined Cancel() {
             if (!this.running) { return }
-            this.session.Cancel()
-            this.raw += this.session.Take()
+            // (the answer still waits for Prepare: that goes on - the instructions are read for the next question)
+            if (this.afterPrepare) { this.afterPrepare = false }
+            else {
+                this.session.Cancel()
+                this.raw += this.session.Take()
+            }
             this.LastEnd = AI.End.Cancelled
             if (AI.Agent.ThinkingOpen(this.raw, this.OpensThinking())) { this.raw += "\n</think>\n\n" }
             this.turns.Add(this.AssistantStart() + this.raw + "<|im_end|>\n")
@@ -630,6 +651,7 @@ namespace AI {
         // each option; it does not write). The conversation is not changed.
         int Choose(string question, string options[]) {
             if (!this.running && this.session.Busy) { this.session.Cancel() }   // (a Prepare)
+            this.preparing = false
             string q = question + "\n\nOptions:\n"
             foreach (o in options) { q += "- " + o + "\n" }
             q += "\nAnswer with one of the options."
@@ -647,6 +669,7 @@ namespace AI {
         // The answer to `question` alone, outside the conversation (nothing is remembered, no tools).
         string Once(string question) {
             if (!this.running && this.session.Busy) { this.session.Cancel() }   // (a Prepare)
+            this.preparing = false
             var s = copy this.Settings
             return this.session.Ask(this.Instructions, question, s)
         }

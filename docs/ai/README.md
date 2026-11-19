@@ -46,7 +46,7 @@ that left out its oldest turns) does not compute the instructions again.
 
 | Member | |
 | --- | --- |
-| `new AI.Session(model, context = 2048, threads = 0)` | `threads` 0: one fewer than the machine has (8 at most) |
+| `new AI.Session(model, context = 2048, threads = 0)` | `threads` 0: one fewer than the machine has (8 at most); they run below the normal priority (the program's own thread - its window - and the other programs go first; the C define `FIRE_AI_NORMAL_PRIORITY` keeps the normal one) |
 | `Start(prompt, settings)` | starts writing the text after `prompt`; returns at once |
 | `Take()` | the text written since the last call (whole characters only) |
 | `State`, `Busy` | `Idle`, `Prompt` (reading the prompt), `Generating`, `Done`, `Failed` (`Error`), `Cancelled` |
