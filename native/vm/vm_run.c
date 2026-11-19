@@ -462,6 +462,17 @@ static void vmTypeArrayOfParam(Vm* vm, Value arr, const char* text, Value self, 
     typeArray(arr, elem, 1, 0, 0, vmConstStrUtf8(vm->prog, "(no unit)"), 1);
 }
 
+/* `return r` that leaves a catch block (r has the count of its trip): the value leaves the catch's scopes, the owner of the try returns (exitReturn). */
+static void vmCatchReturn(Vm* vm, VmFrame* fr, Value r) {
+    OwnList* lists[64];
+    int n = 0;
+    VmScope* s;
+    (void)vm;
+    for (s = fr->scope; s && s != fr->rec->scope && n < 62; s = s->parent) { lists[n++] = &s->temp; lists[n++] = &s->own; }
+    if (n) transferTree(r, lists, n);
+    exitReturn(&fr->rec->h, r);
+}
+
 /* Does the running call's function scope own it (an argument it was handed - a setter's `value`: VM.OwnedByCallScope)? */
 static bool vmOwnedByCallScope(VmFrame* fr, Owned* o) {
     VmScope* b = fr->base;
@@ -1882,6 +1893,10 @@ static void vmRun(Vm* vm, int32_t base) {
                         free(fin);
                         break;
                     }
+                    if (fr->kind == FR_CATCH) {   /* (the finally of a try inside a catch block: the return leaves the catch block too - VM_C.md) */
+                        vmCatchReturn(vm, fr, payload);
+                        goto unwind;
+                    }
                     {   /* (the count it carried through the finally goes once vmReturn counted it for its trip) */
                         bool more = vmReturn(vm, payload, base);
                         release(payload);
@@ -1988,8 +2003,8 @@ static int vmUnwind(Vm* vm, int32_t base) {
         VmFrame* f = &vm->frames[vm->nframes - 1];
         Handler* tg = g_unwind.target;
         VmHandlerRec* rec = tg && tg->fn == vmCatchFn ? (VmHandlerRec*)tg : NULL;
-        if (f->kind != FR_CATCH && rec && rec->frame == vm->nframes - 1) {
-            /* the frame that owns the try: leave the scopes inside it, land */
+        if (rec && rec->frame == vm->nframes - 1) {
+            /* the frame that owns the try (a catch block's pseudo frame too: a try inside a catch block): leave the scopes inside it, land */
             uint8_t kind = g_unwind.kind;
             Value v = g_unwind.value;
             uint32_t label = g_unwind.label, extra = rec->extraExits, ncarry = rec->ncarry, ci;
@@ -1999,12 +2014,25 @@ static int vmUnwind(Vm* vm, int32_t base) {
             for (ci = 0; ci < ncarry; ci++) carry[ci] = rec->carry[ci];
             vm->sp = rec->sp;
             vmLeaveTo(vm, f, rec->scope);
-            while (extra--) { VmScope* s = f->scope; if (s == f->base || s == vm->global) break; f->scope = s->parent; scLeave(vm, s); }
+            while (extra) { VmScope* s = f->scope; if (s == f->base || s == vm->global) break; f->scope = s->parent; scLeave(vm, s); extra--; }
             clearUnwind();
             free(rec);
             vmFreeDead(vm);
             switch (kind) {
-                case UW_JUMP: for (ci = 0; ci < ncarry; ci++) vm->stack[vm->sp++] = carry[ci]; f->ip = f->chunk->code + label; return 1;
+                case UW_JUMP:
+                    if (extra && f->kind == FR_CATCH) {
+                        /* (break/continue out of a catch inside a catch: the jump leaves the outer catch block too - its scope, and what is left of the
+                         * exits for the frame below) */
+                        VmHandlerRec* outer = f->rec;
+                        outer->extraExits += extra - 1;
+                        outer->ncarry = ncarry;
+                        for (ci = 0; ci < ncarry; ci++) outer->carry[ci] = carry[ci];
+                        exitJump(&outer->h, label);
+                        continue;
+                    }
+                    for (ci = 0; ci < ncarry; ci++) vm->stack[vm->sp++] = carry[ci];
+                    f->ip = f->chunk->code + label;
+                    return 1;
                 case UW_RETHROW:
                     if (fin >= 0) {   /* the exception passes this try: its finally runs, EndFinally throws it again */
                         vm->stack[vm->sp++] = v;
@@ -2022,6 +2050,7 @@ static int vmUnwind(Vm* vm, int32_t base) {
                         f->ip = f->chunk->code + fin;
                         return 1;
                     }
+                    if (f->kind == FR_CATCH) { vmCatchReturn(vm, f, v); continue; }   /* (a try inside a catch block: on out of that one) */
                     {
                         bool more = vmReturn(vm, v, base);
                         release(v);   /* (the count of the trip out of the catch) */
