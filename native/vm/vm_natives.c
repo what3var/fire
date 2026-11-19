@@ -5,6 +5,7 @@
  * mathCall, __BitsCall -> bitsCall, __EnvCall -> envCall, __SbCall -> sbCall, __ResourceCall -> resourceCall), __array_copy, __type_arg, __JsonCall
  * (fire_json.h on the VM's tables, vm_json.c), __LibCall (vm_lib.c). The threads, tasks and channels (step 3) are not here yet.
  *
+ * They are a table by name (g_vmCoreNatives), bound to the indices of natives.def when a program starts.
  * Behind them come the natives of the imports, by index in the order the compiler registered them (ImportedPreludes.Insert): graphics and windows
  * (native/tables/bridges.def: the library of both, libfire_gfx), reflection (vm_reflect.c), then the natives of the packages the program file names
  * (`packageNatives`, each with its library). Each is bound by name when the program is loaded (vmNativesBind): to a function of the VM - the table
@@ -127,6 +128,7 @@ static const VmHostNative g_vmHostNatives[] = {
     {NULL, 0, NULL}
 };
 
+static void vmCoreBind(void);
 static bool vmImports(VmProgram* p, const char* name) {
     uint32_t i;
     for (i = 0; i < p->nnativeImports; i++) if (strcmp(p->nativeImports[i], name) == 0) return true;
@@ -156,6 +158,7 @@ static void vmNativesBind(Vm* vm) {
     if (reflection) cap += (uint32_t)(sizeof g_vmBridgeReflection / sizeof g_vmBridgeReflection[0]);
     g_vmNat = (VmNative*)calloc(cap, sizeof(VmNative));
     if (!g_vmNat) outOfMemory();
+    vmCoreBind();
     g_vmPkgUsesGraphics = graphics;
     if (graphics) for (i = 0; g_vmBridgeGraphics[i]; i++) vmNatAdd(&n, g_vmBridgeGraphics[i], gfx);
     if (windows) for (i = 0; g_vmBridgeWindows[i]; i++) vmNatAdd(&n, g_vmBridgeWindows[i], gfx);
@@ -207,28 +210,53 @@ static bool vmOpProbe(Vm* vm, Value target, const char* member, uint32_t flags, 
 static bool vmOpSilenceMember(Value target, const char* member);
 static bool vmOpSilenceValue(Value v);
 
+/* ---- the core natives: what the runtime has (natives.def), by name - the index of a program's call is bound to them when the VM starts ---- */
+typedef Value (*VmCoreFn)(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list);
+typedef struct VmCoreNative { const char* name; int8_t minArgs, maxArgs; VmCoreFn fn; } VmCoreNative;
+#define VM_A(k) (argc > (k) ? a[k] : Undef())
+static Value vmcPrint(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)argc; return print(a[0], list); }
+static Value vmcString(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) {
+    (void)vm; (void)fr;
+    if (a[1].kind != K_String) return fireError("ArgumentException", "__StringCall(id, text, ...) expects the string as the second argument.");
+    return stringCall(a[0].i, a[1], (int)argc - 2, VM_A(2), VM_A(3), list);
+}
+static Value vmcChar(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)argc; return charCall(a[0].i, a[1], list); }
+static Value vmcResource(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)argc; return resourceCall(a[0].i, a[1], list); }
+static Value vmcMath(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)list; return mathCall(a[0].i, a[1], VM_A(2)); }
+static Value vmcJson(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { return vmJsonCall(vm, fr, argc, a, list); }
+static Value vmcEnv(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; return envCall(a[0].i, VM_A(1), VM_A(2), list); }
+static Value vmcLib(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; return vmLibraryCall(argc, a, list); }
+static Value vmcBits(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)list; return bitsCall(a[0].i, a[1], VM_A(2), VM_A(3)); }
+static Value vmcArrayCopy(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)argc; (void)list; return fire_arrayCopy(a[0], a[1], a[2]); }
+static Value vmcTypeArg(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)argc; return vmTypeArgText(fr, a[0], list); }
+static Value vmcSb(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; return sbCall(a[0].i, a[1], VM_A(2), list); }
+#undef VM_A
+static const VmCoreNative g_vmCoreNatives[] = {
+    {"print", 1, 1, vmcPrint}, {"__StringCall", 2, 4, vmcString}, {"__CharCall", 2, 2, vmcChar}, {"__ResourceCall", 2, 2, vmcResource},
+    {"__MathCall", 2, 3, vmcMath}, {"__JsonCall", 2, 3, vmcJson}, {"__EnvCall", 1, 3, vmcEnv}, {"__LibCall", 2, 5, vmcLib}, {"__BitsCall", 2, 4, vmcBits},
+    {"__array_copy", 3, 3, vmcArrayCopy}, {"__type_arg", 1, 1, vmcTypeArg}, {"__SbCall", 2, 3, vmcSb},
+    /* (the natives of the threads, tasks, channels and completions: phase B step 3) */
+    {NULL, 0, 0, NULL}
+};
+static const VmCoreNative* g_vmCore[VM_NNATIVES];   /* by the index of natives.def (NULL: not in the VM yet) */
+static void vmCoreBind(void) {
+    uint32_t i;
+    const VmCoreNative* c;
+    for (i = 0; i < VM_NNATIVES; i++) {
+        g_vmCore[i] = NULL;
+        for (c = g_vmCoreNatives; c->name; c++) if (strcmp(c->name, g_vmNativeNames[i]) == 0) g_vmCore[i] = c;
+    }
+}
+
 /* CallNative `idx` with the top `argc` values of the stack as its arguments: the result replaces them. False: the native is not one of the VM's. */
 static bool vmCallNative(Vm* vm, VmFrame* fr, uint32_t idx, uint32_t argc, Value* a, Value* result) {
     OwnList* list = &fr->scope->temp;
-    Value u = Undef();
-    switch (idx) {
-        case 0: if (argc != 1) return false; *result = print(a[0], list); return true;
-        case 1:
-            if (argc < 2 || argc > 4) return false;
-            if (a[1].kind != K_String) { *result = fireError("ArgumentException", "__StringCall(id, text, ...) expects the string as the second argument."); return true; }
-            *result = stringCall(a[0].i, a[1], (int)argc - 2, argc > 2 ? a[2] : u, argc > 3 ? a[3] : u, list); return true;
-        case 2: if (argc != 2) return false; *result = charCall(a[0].i, a[1], list); return true;
-        case 3: if (argc != 2) return false; *result = resourceCall(a[0].i, a[1], list); return true;
-        case 4: if (argc < 2 || argc > 3) return false; *result = mathCall(a[0].i, a[1], argc > 2 ? a[2] : u); return true;
-        case 5: if (argc < 2 || argc > 3) return false; *result = vmJsonCall(vm, fr, argc, a, list); return true;
-        case 6: if (argc < 1 || argc > 3) return false; *result = envCall(a[0].i, argc > 1 ? a[1] : u, argc > 2 ? a[2] : u, list); return true;
-        case 7: if (argc < 2 || argc > 5) return false; *result = vmLibraryCall(argc, a, list); return true;
-        case 8: if (argc < 2 || argc > 4) return false; *result = bitsCall(a[0].i, a[1], argc > 2 ? a[2] : u, argc > 3 ? a[3] : u); return true;
-        case 11: if (argc != 3) return false; *result = fire_arrayCopy(a[0], a[1], a[2]); return true;
-        case 21: if (argc != 1) return false; *result = vmTypeArgText(fr, a[0], list); return true;
-        case 37: if (argc < 2 || argc > 3) return false; *result = sbCall(a[0].i, a[1], argc > 2 ? a[2] : u, list); return true;
-        default:
-            if (idx >= VM_NNATIVES && idx - VM_NNATIVES < g_vmNatCount) { *result = vmCallImported(vm, fr, &g_vmNat[idx - VM_NNATIVES], argc, a, list); return true; }
-            return false;
+    if (idx < VM_NNATIVES) {
+        const VmCoreNative* c = g_vmCore[idx];
+        if (!c || (int)argc < c->minArgs || (int)argc > c->maxArgs) return false;
+        *result = c->fn(vm, fr, argc, a, list);
+        return true;
     }
+    if (idx - VM_NNATIVES < g_vmNatCount) { *result = vmCallImported(vm, fr, &g_vmNat[idx - VM_NNATIVES], argc, a, list); return true; }
+    return false;
 }
