@@ -13508,11 +13508,11 @@ else
                 try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
                 catch (fire.Native.NativeNotSupportedException) { return; }
                 if (generated.Natives != null) return;   // (natives in C++: not for tcc)
-                string cFile = Path.Combine(workDir, $"tcc{i}.c"), exe = Path.Combine(workDir, $"tcc{i}.bin");
-                File.WriteAllText(cFile, generated.Program);
-                var (bout, berr, bexit) = TestProcess.Run("/usr/bin/tcc", $"-I\"{workDir}\" \"{cFile}\" -o \"{exe}\" -lpthread -lm -ldl", workDir);
+                string exe = Path.Combine(workDir, $"tcc{i}.bin");
+                string cFiles = NativeTestBuild.SourceFiles(generated, workDir, $"tcc{i}");   // (FIRE_SPLIT=1: the units)
+                var (bout, berr, bexit) = TestProcess.Run("/usr/bin/tcc", $"-I\"{workDir}\" {cFiles} -o \"{exe}\" -lpthread -lm -ldl", workDir);
                 if (bexit != 0) { tccReports.Add((i, $"{c.Name}: tcc: {bout}{berr}")); return; }
-                if (!File.ReadAllText(cFile).Contains("FIRE_THREADS")) return;
+                if (!NativeTestBuild.Texts(generated).Any(t => t.Text.Contains("FIRE_THREADS"))) return;
                 var (stdout, stderr, exit) = TestProcess.Run(exe, "", workDir, timeoutMs: 120_000);
                 Interlocked.Increment(ref tccRan);
                 string actual = exit == 0 ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";

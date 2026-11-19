@@ -174,6 +174,10 @@ static class NativeTestBuild
             output.Append(text);
             if ((exit = code) != 0) break;
         }
+        // (a split program: the object files of its units go - hundreds of cases with sanitizers would fill the disk)
+        if (sources.Units != null)
+            foreach (var obj in Directory.EnumerateFiles(dir, name + "_fire_*.o").ToList())
+                try { File.Delete(obj); } catch (IOException) { }
         return output.ToString();
     }
 

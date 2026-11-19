@@ -706,6 +706,11 @@ FIRE_FN int64_t fire_natI(Value v) { return v.kind == K_Float ? (int64_t)v.f : (
 #define FIRE_NATR(v) ((v).kind == K_Float ? (v).f : (Real)(v).i)
 
 /* The fewest digits (`%.*e`) that read back as the same number: `digits` is d.ddde+XX. `single`: the number is a float32. */
+/* (the precision is at most 16; where gcc inlines this into a small caller - a unit of a split program - it does not see that and warns about truncation) */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
 FIRE_FN void fire_shortestE(double v, bool single, char* sci, size_t cap) {
     int lo = 0, hi = single ? 8 : 16;
     /* (more digits never read back worse: the smallest precision that works is found by bisection) */
@@ -719,6 +724,9 @@ FIRE_FN void fire_shortestE(double v, bool single, char* sci, size_t cap) {
     }
     snprintf(sci, cap, "%.*e", lo, v);
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 /* Real -> text like .NET Core 3.0+ `double.ToString()` / `float.ToString()`: shortest round-trip digits, positional notation for 1E-4 <= |x| < 1E17 (double)
  * or 1E9 (float), otherwise `d.dddE+XX`. */

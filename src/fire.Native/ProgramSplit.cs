@@ -790,6 +790,8 @@ namespace fire.Native
                     h.Append($"FIRE_PS {nf.Return} fire_cn_{nf.Function}({(nf.Params.Count == 0 ? "void" : string.Join(", ", nf.Params))});\n#define {nf.Function} fire_cn_{nf.Function}\n");
             }
             var declared = new HashSet<string>(StringComparer.Ordinal);
+            // (a declaration starts on a line of its own: what is before it may end in a // comment)
+            void NewLine() { if (h.Length > 0 && h[^1] != '\n') h.Append('\n'); }
             void HeaderItem(Item item, bool definition)
             {
                 if (item.Kind == K.Group)
@@ -802,7 +804,7 @@ namespace fire.Native
                 if (item.Kind == K.Proto && item.Names.Count > 0 && item.Names.All(inlineDefs.ContainsKey)) return;
                 if (item.Kind is K.Pre or K.Type or K.Trivia) { h.Append(item.Src, item.Start, item.End - item.Start); foreach (var n in item.Names) declared.Add(n); return; }
                 bool ex = IsExported(item);
-                if (item.Kind == K.Proto) { h.Append('\n').Append(Declaration(item, ex)); foreach (var n in item.Names) declared.Add(n); return; }
+                if (item.Kind == K.Proto) { NewLine(); h.Append(Declaration(item, ex)).Append('\n'); foreach (var n in item.Names) declared.Add(n); return; }
                 h.Append(item.Src, item.Start, item.End - item.Start);
             }
             foreach (var (item, mode) in headerItems)
@@ -813,9 +815,9 @@ namespace fire.Native
             {
                 var defs = headerItems.Where(x => x.Mode == 1).Select(x => x.Item).ToList();
                 h.Append("/* the static inline helpers of the program (FIRE_SPLIT_INLINE: in every unit that uses them; else once, in ").Append(inlineHome).Append(") */\n#if FIRE_SPLIT_INLINE\n");
-                foreach (var d in defs) h.Append(Declaration(d, false)).Append('\n');
+                foreach (var d in defs) { NewLine(); h.Append(Declaration(d, false)).Append('\n'); }
                 h.Append("#else\n");
-                foreach (var d in defs) h.Append(Declaration(d, true)).Append('\n');
+                foreach (var d in defs) { NewLine(); h.Append(Declaration(d, true)).Append('\n'); }
                 h.Append("#endif\n");
             }
             if (movedTypes.Count > 0)
@@ -831,11 +833,12 @@ namespace fire.Native
                 {
                     if (!item.Children!.Any(ch => ch.Kind is K.Func or K.Data && IsExported(ch) || ch.Kind == K.Group)) return;
                     foreach (var ch in item.Children!)
-                        if (ch.Kind == K.Pre) h.Append(ch.Src, ch.Start, ch.End - ch.Start);
+                        if (ch.Kind == K.Pre) { NewLine(); h.Append(ch.Src, ch.Start, ch.End - ch.Start); }
                         else Declare(ch);
                     return;
                 }
                 if (item.Kind is not (K.Func or K.Data) || !IsExported(item) || item.Names.All(declared.Contains)) return;
+                NewLine();
                 h.Append(Declaration(item, true)).Append('\n');
                 foreach (var n in item.Names) declared.Add(n);
             }
