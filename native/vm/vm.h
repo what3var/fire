@@ -336,5 +336,6 @@ struct VmDbg;
 static void vmDbgStep(Vm* vm);
 static bool vmDbgUnhandled(Value exception);
 static void vmDbgFree(Vm* vm);
+static void vmDbgSnapshot(Vm* vm);
 
 #endif

@@ -570,8 +570,8 @@ namespace fire.Bytecode
                 _at = 4;
                 int version = U8();
                 if (version != Version) throw new ProgramFileException($"The program file has version {version} of the format; this program reads version {Version}.");
-                int flags = U8();
-                _lines = (flags & FlagLines) != 0;
+                int headerFlags = U8();
+                _lines = (headerFlags & FlagLines) != 0;
 
                 Strings();
                 _units = new Unit[Count()];
@@ -626,7 +626,7 @@ namespace fire.Bytecode
 
                 var topLevel = ChunkRef();
                 List<string?>? sourceFiles = null, sourceHashes = null;
-                if ((flags & FlagSources) != 0)
+                if ((headerFlags & FlagSources) != 0)
                 {
                     sourceFiles = new List<string?>();
                     sourceHashes = new List<string?>();

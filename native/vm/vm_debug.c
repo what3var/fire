@@ -18,8 +18,9 @@
 typedef struct VmDbg {
     DbgFrame cur;            /* g_dbgTop while the strand runs: the position of the innermost visible frame (no function, no variables) */
     uint8_t* hidden;         /* per frame index: run nested (VM_FRAMES) */
-    int32_t lastN;           /* the frames before the last instruction, and its opcode: what made a frame that is new now */
-    uint32_t lastOp;
+    uint16_t* opAt;          /* per frame index: the instruction it runs (seen at its last hook) - what made the frame above it */
+    const void** keyProto;   /* per frame index: the frame the marks are for (its function and its scope: a frame that replaced it is looked at anew) */
+    const void** keyBase;
     VmScope* declScope;      /* a DeclareLocal ran: the scope, the slot it made, its name (written into the scope at the next instruction) */
     uint32_t declSlot;
     const char* declName;
@@ -69,8 +70,10 @@ static VmDbg* vmDbgOf(Vm* vm) {
     d = (VmDbg*)calloc(1, sizeof(VmDbg));
     if (!d) outOfMemory();
     d->hidden = (uint8_t*)calloc(VM_FRAMES, 1);
-    if (!d->hidden) outOfMemory();
-    d->lastOp = 0xFFFFFFFFu;
+    d->opAt = (uint16_t*)calloc(VM_FRAMES, sizeof(uint16_t));
+    d->keyProto = (const void**)calloc(VM_FRAMES, sizeof(void*));
+    d->keyBase = (const void**)calloc(VM_FRAMES, sizeof(void*));
+    if (!d->hidden || !d->opAt || !d->keyProto || !d->keyBase) outOfMemory();
     d->chainN = -1;
     d->cur.lv = -1;
     vm->dbg = d;
@@ -81,12 +84,13 @@ static void vmDbgFree(Vm* vm) {
     VmDbg* d = vm->dbg;
     if (!d) return;
     if (g_dbgTop == &d->cur || (d->frames && g_dbgTop >= d->frames && g_dbgTop < d->frames + d->capFrames)) g_dbgTop = NULL;
-    free(d->hidden); free(d->frames); free(d->fns); free(d->levels); free(d->vars); free(d->slots);
+    free(d->hidden); free(d->opAt); free(d->keyProto); free(d->keyBase); free(d->frames); free(d->fns); free(d->levels); free(d->vars); free(d->slots);
     free(d);
     vm->dbg = NULL;
 }
 
-/* Is a frame that is new since the last instruction run nested? Only the calls of the bytecode make frames the C# VM steps into. */
+/* Is a frame that is new since the last instruction run nested? Only the calls of the bytecode make frames the C# VM steps into (`lastOp`: the instruction
+ * the frame under it runs). */
 static uint8_t vmDbgHiddenFrame(const VmFrame* f, uint32_t lastOp) {
     if (f->kind == FR_TOP || f->kind == FR_CATCH) return 0;
     if (f->kind == FR_NESTED) return VM_DBG_HIDDEN;
@@ -283,6 +287,20 @@ static void vmDbgPark(Vm* vm, VmDbg* d, DbgThread* t, const char* reason) {
     d->chainN = -1;   /* (a `set` may have run code: the frames are looked at again) */
 }
 
+/* The runtime is about to throw an exception it made (vmMakeException): until the next instruction, g_dbgTop is the strand's frames - a fire thread that
+ * the runtime's agent stops at it (fire_dbgUnhandled: nothing of the thread catches it) shows its call stack and its scopes. */
+static void vmDbgSnapshot(Vm* vm) {
+    VmDbg* d;
+    DbgFrame* top;
+    if (!g_dbgSelf || g_dbgNest || vm->nframes <= 0) return;
+    d = vmDbgOf(vm);
+    d->chainN = -1;
+    if (!vmDbgChain(vm, d)) return;
+    top = vmDbgMaterialize(vm, d);
+    vmDbgGlobals();
+    if (top) g_dbgTop = top;
+}
+
 /* Would a catch block take the exception (VM.WouldBeCaught) - the bottom of the script does not count? */
 static void vmUnhandledFn(void* ctx, uint32_t ci, Value e);
 static bool vmDbgWouldBeCaught(Value exception) {
@@ -335,14 +353,21 @@ static FIRE_COLD void vmDbgStep(Vm* vm) {
             if (s->nnames <= d->declSlot) s->nnames = d->declSlot + 1;
         }
     }
-    for (k = d->lastN < 0 ? 0 : d->lastN; k < vm->nframes; k++) d->hidden[k] = vmDbgHiddenFrame(&vm->frames[k], d->lastOp);
-    if (fr->ip < c->code || fr->ip >= c->code + c->ncode) { d->lastN = vm->nframes; d->lastOp = 0xFFFFFFFFu; return; }   /* (the stub of an unwinding) */
+    /* the frames that are new (from the top down to the first one already seen): run nested unless a call of the frame under them made them */
+    for (k = vm->nframes - 1; k >= 0; k--) {
+        VmFrame* f = &vm->frames[k];
+        if (d->keyProto[k] == (const void*)f->proto && d->keyBase[k] == (const void*)f->base) break;
+        d->keyProto[k] = f->proto; d->keyBase[k] = f->base;
+        d->hidden[k] = vmDbgHiddenFrame(f, k > 0 ? d->opAt[k - 1] : 0xFFFFu);
+        d->chainN = -1;
+    }
+    if (fr->ip < c->code || fr->ip >= c->code + c->ncode) { d->opAt[vm->nframes - 1] = 0xFFFFu; return; }   /* (the stub of an unwinding) */
     off = (uint32_t)(fr->ip - c->code);
     op = *fr->ip;
     if (t && !g_dbgNest && vmDbgChain(vm, d)) {
         int32_t src, line;
         uint32_t depth = d->chainDepth;
-        if (g_dbgTop == NULL) g_dbgTop = &d->cur;
+        g_dbgTop = &d->cur;   /* (not a snapshot of vmDbgSnapshot any more) */
         if (c != d->rangeChunk || off < d->rangeStart || off >= d->rangeEnd) {
             if (c->lines) vmDbgLocation(c, off, &d->posSrc, &d->posLine, &d->rangeStart, &d->rangeEnd);
             else { d->posSrc = 0; d->posLine = 0; d->rangeStart = 0; d->rangeEnd = 0xFFFFFFFFu; }
@@ -379,8 +404,7 @@ static FIRE_COLD void vmDbgStep(Vm* vm) {
             }
         }
     }
-    d->lastN = vm->nframes;
-    d->lastOp = op;
+    d->opAt[vm->nframes - 1] = (uint16_t)op;
     if (op == OP_DeclareLocal) {
         d->declScope = fr->scope;
         d->declSlot = fr->scope->n;

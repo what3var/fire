@@ -27,6 +27,7 @@ static Vm* vmStrandNew(Vm* top, uint32_t sharedCount) {
     if (!vm->stack || !vm->frames) outOfMemory();
     vm->sp = 0; vm->nframes = 0;
     vm->freeScopes = NULL;
+    vm->dbg = NULL;   /* (the debugger: its own, vm_debug.c) */
     vm->failed = 0; vm->quiet = 0; vm->terminated = 0; vm->exitCode = 0;
     vm->ret = Undef();
     vm->copyMask = 0;

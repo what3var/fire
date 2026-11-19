@@ -704,6 +704,7 @@ static Value vmMakeException(const char* cls, int argc, const Value* args) {
     clearUnwind();
     if (ctor) vmCallNested(vm, ctor, argc, args, o, FR_CTOR);
     g_unwind = saved;
+    if (FIRE_UNLIKELY(g_dbgArmed)) vmDbgSnapshot(vm);   /* (the runtime throws it: a debugger that stops there sees the frames - vm_debug.c) */
     return o;
 }
 Value makeDivideError(Value message) { return vmMakeException("DivideByZeroException", 1, &message); }

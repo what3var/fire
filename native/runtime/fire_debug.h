@@ -1650,7 +1650,11 @@ void fire_dbgStart(const DbgProgram* program) {
     dbgRegister(&g_dbgMain, "Main");
     g_dbgMain.atEntry = 1;
     dbgPut(&b, "{\"event\":\"hello\",\"protocol\":1,\"token\":"); dbgPutS(&b, token);
+#ifdef FIRE_VM
+    dbgPut(&b, ",\"engine\":\"vm\",\"pid\":"); dbgPutI(&b, dbgPid());   /* (the VM in C, native/vm/vm_debug.c) */
+#else
     dbgPut(&b, ",\"engine\":\"native\",\"pid\":"); dbgPutI(&b, dbgPid());
+#endif
     dbgPut(&b, ",\"target\":"); dbgPutS(&b, program->target);
     dbgPut(&b, ",\"mode\":\"debug\",\"transport\":"); dbgPutS(&b, g_dbgTransport == DBG_T_TCP ? "tcp" : g_dbgTransport == DBG_T_UART ? "uart" : "stdio");
     dbgPut(&b, ",\"firstUserSource\":"); dbgPutI(&b, program->firstUser);
