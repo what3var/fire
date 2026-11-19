@@ -277,11 +277,12 @@ forge, the standard packages as `Source/` - not the .NET runtime), the files of 
 `FIRE_SPLIT`, `FIRE_SPLIT_UNIT_KB`, `FIRE_MODULES`, `FIRE_TEST_OPT`, `FIRE_TEST_SANITIZE`, `FIRE_TEST_NO_NATIVE`, `FIRE_TEST_GIL`, `FIRE_S3D_GPU`, `FIRE_GFX_GPU`,
 `FIRE_TEST_WIN_FORGE`, `IDF_PATH`, `CC`, `CXX`, and the compilers on the PATH (gcc, g++, clang, tcc, MinGW, wine, ccache: the file each resolves to, its size
 and time). So a rebuilt test program or compiler runs everything again, while a changed `.expected` reruns only its case. `FIRE_TESTS_FILTER` is not part
-of the key: a run with a filter continues a full one and the other way round. The checks that stand alone in `Program.cs` (no unit) always run; they are
-recorded (unit `""`) but never skipped - they take seconds. `FIRE_TESTS_UPDATE=1` ignores the records.
+of the key: a run with a filter continues a full one and the other way round; `FIRE_TESTS_ONLY` is, so `FIRE_TESTS_ONLY=native` does not continue a full run.
+The checks that stand alone in `Program.cs` (no unit) always run - their work is done before the check line is printed, so there is nothing to skip; they
+are recorded (unit `""`, for the reader of the file) but never resumed. With a narrow filter they are most of the time of a resumed run (about a minute). `FIRE_TESTS_UPDATE=1` ignores the records.
 
 **`FIRE_TESTS_SHARD=<i>/<n>`** runs only the units whose title hash (SHA-256 of the title, modulo n) is part i: `1/2` and `2/2` together run every unit
-once, on two machines or in two sessions; the checks outside units run in every part. A unit inside a unit (a group) is not split again. Combined with
+once, on two machines or in two sessions (the parts are as big as the hash makes them, not balanced by time); the checks outside units run in every part. A unit inside a unit (a group) is not split again. Combined with
 resume, every part records into the same folder (each run its own file) and a later run without a shard continues from all of them. At the end:
 `[ shard ] Teil 1/2: 214 Einheit(en) hier, 209 in den anderen Teilen (Einheiten je Teil - 1/2: 214, 2/2: 209)`.
 
@@ -295,5 +296,5 @@ The folder is never cleaned by the test program: delete it (or a file of an old 
 every case even when its unit is skipped - the sections after it take their expected outputs from there; it is the cheap part.
 
 **Disk.** The native group deletes the program, objects and sources of a case as soon as it passed (unless `FIRE_TESTS_KEEP=1`), and the object files of
-every build once it is linked; a failed case keeps its files in `/tmp/fire-native-test-*` for a look. Before a build it checks the free space
+every build once it ran (only the ones its own commands wrote); a failed case keeps its files in `/tmp/fire-native-test-*` for a look. Before a build it checks the free space
 (`FIRE_TESTS_MIN_FREE_MB`, `FIRE_TESTS_DISK_WAIT`) and waits for space rather than letting every build fail.
