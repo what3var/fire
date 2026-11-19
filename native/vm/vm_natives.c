@@ -9,7 +9,7 @@
  * Behind them come the natives of the imports, by index in the order the compiler registered them (ImportedPreludes.Insert): graphics and windows
  * (native/tables/bridges.def: the library of both, libfire_gfx), reflection (vm_reflect.c), then the natives of the packages the program file names
  * (`packageNatives`, each with its library). Each is bound by name when the program is loaded (vmNativesBind): to a function of the VM - the table
- * g_vmHostNatives: what a package leaves to its host (`"host": true`: Sleep, __time_unit_ticks) and reflection - or to its library (vm_pkg.c). */
+ * g_vmHostNatives: what a package leaves to its host (`"host": true`: Sleep, __time_unit_ticks, the waits of the devices) and reflection - or to its library (vm_pkg.c). */
 
 /* The text of a type argument (__type_arg): the display text, undefined without one. */
 static Value vmTypeArgText(VmFrame* fr, Value ix, OwnList* list) {
@@ -111,6 +111,41 @@ static Value vmHostUnitTicks(Vm* vm, VmFrame* fr, const Value* a, OwnList* list)
     return Int((int64_t)nearbyint(number * perSecond * 1e7));
 }
 
+/* The waiting functions of the devices package (`WaitFor`, `WaitForString`; run by the host - DeviceHostNatives): the VM waits - with the program's
+ * `#timeout` as the default - and asks the library once per step whether the receive buffer of the device holds the pattern (`__DEVWaitStep`: 1 found,
+ * -1 the device is gone). 1: found, 0: time up or the device is gone, -1: not a time. */
+static VmNative* vmNativeNamed(const char* name);
+static Value vmCallImported(Vm* vm, VmFrame* fr, VmNative* e, uint32_t argc, Value* a, OwnList* list);
+static Value vmHostDevWait(Vm* vm, VmFrame* fr, Value handle, Value needle, Value timeout, OwnList* list) {
+    VmNative* step = vmNativeNamed("__DEVWaitStep");
+    int64_t ticks, deadline;
+    Value args[2];
+    if (timeout.kind == K_Undefined) ticks = g_defaultTimeoutTicks;
+    else if (!timeTicksOf(timeout, &ticks)) return Int(-1);
+    if (!step) fatal("The native function '__DEVWaitStep' of the devices package is not registered.");
+    deadline = fire_plat_nowMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
+    args[0] = handle; args[1] = needle;
+    for (;;) {
+        Value r = vmCallImported(vm, fr, step, 2, args, list);
+        if (g_unwind.active) return Undef();
+        if (r.kind == K_Int && r.i != 0) return Int(r.i == 1 ? 1 : 0);
+        if (fire_plat_nowMs() >= deadline) return Int(0);
+        vmPkgIdle();
+        fire_plat_sleepMs(2);
+    }
+}
+static Value vmHostWaitForString(Vm* vm, VmFrame* fr, const Value* a, OwnList* list) {
+    const Str* s;
+    Buf* b;
+    uint32_t i;
+    if (a[1].kind != K_String) return fireError("ArgumentException", "WaitForString expects a text.");
+    s = strOf(a[1]);
+    b = allocBuf(s->length, list);   /* (one byte per character, Latin1 - like ReadString/WriteString) */
+    for (i = 0; i < s->length; i++) b->data[i] = (uint8_t)s->data[i];
+    return vmHostDevWait(vm, fr, a[0], BufV(b), a[2], list);
+}
+static Value vmHostWaitFor(Vm* vm, VmFrame* fr, const Value* a, OwnList* list) { return vmHostDevWait(vm, fr, a[0], a[1], a[2], list); }
+
 static Value vmReflNative(Vm* vm, VmFrame* fr, uint32_t which, const Value* a, OwnList* list);
 #define VM_REFL(k) static Value vmRefl##k(Vm* vm, VmFrame* fr, const Value* a, OwnList* list) { return vmReflNative(vm, fr, k, a, list); }
 VM_REFL(0) VM_REFL(1) VM_REFL(2) VM_REFL(3) VM_REFL(4) VM_REFL(5) VM_REFL(6) VM_REFL(7) VM_REFL(8) VM_REFL(9) VM_REFL(10) VM_REFL(11) VM_REFL(12) VM_REFL(13)
@@ -121,6 +156,7 @@ VM_REFL(14) VM_REFL(15) VM_REFL(16)
 static const VmHostNative g_vmHostNatives[] = {
     {"Sleep", 1, vmHostSleep},
     {"__time_unit_ticks", 1, vmHostUnitTicks},
+    {"__DEVWaitForString", 3, vmHostWaitForString}, {"__DEVWaitFor", 3, vmHostWaitFor},
     {"__refl_class_name", 1, vmRefl0}, {"__refl_class_info", 1, vmRefl1}, {"__refl_members", 1, vmRefl2}, {"__refl_classes", 0, vmRefl3},
     {"__refl_is_sub", 2, vmRefl4}, {"__refl_get", 2, vmRefl5}, {"__refl_set", 3, vmRefl6}, {"__refl_call", 3, vmRefl7}, {"__refl_new", 2, vmRefl8},
     {"__refl_has", 2, vmRefl9}, {"__refl_selector_path", 1, vmRefl10}, {"__refl_member_kind", 2, vmRefl11}, {"__refl_probe", 4, vmRefl12},
@@ -168,6 +204,13 @@ static void vmNativesBind(Vm* vm) {
 }
 
 static void vmNativesUnbind(void) { free(g_vmNat); g_vmNat = NULL; g_vmNatCount = 0; }
+
+/* The native of an import of this name (NULL: none). */
+static VmNative* vmNativeNamed(const char* name) {
+    uint32_t i;
+    for (i = 0; i < g_vmNatCount; i++) if (strcmp(g_vmNat[i].name, name) == 0) return &g_vmNat[i];
+    return NULL;
+}
 
 /* The name of native `idx` (for messages). */
 static const char* vmNativeName(uint32_t idx) {
