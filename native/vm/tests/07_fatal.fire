@@ -8,4 +8,4 @@ var keep = new Res("kept")
 print("before")
 var a = [1, 2, 3]
 print("not reached")
-//# vm-spike: fails
+
