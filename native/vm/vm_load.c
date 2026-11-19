@@ -484,7 +484,8 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
     rdInt(&r);                               /* firstUserSource */
     p->nativeImports = rdStrList(&r, &p->nnativeImports);
     p->packageNatives = rdOptStrList(&r, &p->npackageNatives);
-    rdOptStrList(&r, NULL); rdOptStrList(&r, NULL);   /* their libraries, graphicsNatives (step 4) */
+    p->packageLibraries = rdOptStrList(&r, &p->npackageLibraries);
+    rdOptStrList(&r, NULL);                  /* graphicsNatives (a packed program: the VM has their order, native/tables/bridges.def) */
     n = rdCount(&r);                         /* customUnits: the units a text may name besides those of fire */
     p->ncustomUnits = n;
     p->customUnits = (struct VmCustomUnit*)vmAlloc(&p->arena, (n + 1) * sizeof(struct VmCustomUnit));

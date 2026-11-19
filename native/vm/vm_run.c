@@ -826,11 +826,8 @@ static void vmRun(Vm* vm, int32_t base) {
             Value r;
             ip += 3;
             SYNC();
-            if (!vmCallNative(vm, fr, idx, argc, sp - argc, &r)) {
-                uint32_t imp = idx - VM_NNATIVES;
-                vmUnsupported(op == OP_CallTryableNative ? "the tryable native" : "the native",
-                    op == OP_CallTryableNative ? "?" : idx < VM_NNATIVES ? g_vmNativeNames[idx] : imp < prog->npackageNatives ? prog->packageNatives[imp] : "?");
-            }
+            if (op == OP_CallTryableNative || !vmCallNative(vm, fr, idx, argc, sp - argc, &r))
+                vmUnsupported(op == OP_CallTryableNative ? "the tryable native" : "the native", op == OP_CallTryableNative ? "?" : vmNativeName(idx));
             sp -= argc;
             CHECK();
             PUSH(r);

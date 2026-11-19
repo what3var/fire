@@ -710,7 +710,7 @@ static void vmRegisterClasses(Vm* vm) {
         d->name = c->name;
         d->nfields = c->nlayout;
         d->messageIndex = vmFieldIndex(c, message);   /* (any object can be thrown: its `message`, if it has one) */
-        d->ticksIndex = -1;
+        d->ticksIndex = vmFieldIndex(c, vmName(p, "ticks"));   /* (a TimeSpan for the waits: a class with a field `ticks`, fire_rt.h timeObjTicks) */
         d->destroy = c->hasDtor ? vmDestroyObj : NULL;
         d->toString = vmHasMethodNamed(c, toString) ? vmToString : NULL;
         /* the catch types an object of the class is: every class of its chain (the catch type of class k is its id + 1; FIRE_EXC_ANY is 0) */

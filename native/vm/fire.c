@@ -31,7 +31,10 @@ void fbOutOfMemory(void) { outOfMemory(); }
 #include "vm.h"
 #include "vm_load.c"
 #include "vm_core.c"
+#include "vm_pkg.c"
 #include "vm_natives.c"
+#include "vm_reflect.c"
+#include "vm_json.c"
 #include "vm_run.c"
 
 void fire_vmExit(int code) {
@@ -73,6 +76,8 @@ static int vmRunFile(const char* path, bool stats) {
         g_resources = res; g_resourceCount = (int)p->nresources;
     }
     vmRegisterClasses(vm);
+    vmPkgBegin(path);
+    vmNativesBind(vm);
     vm->global = scNew(vm, NULL);
     scReserve(vm->global, 256);
     g_globalOwn = &vm->global->own;
@@ -91,6 +96,7 @@ static int vmRunFile(const char* path, bool stats) {
     if (setjmp(jb) == 0) {
         vmRun(vm, 0);
         if (g_unwind.active && g_unwind.target == &vm->bottom) clearUnwind();
+        vmPkgHoldEnd();   /* (open windows of a library hold the program: it serves them until they close) */
     } else {
         /* the runtime wanted to end the process (fatal, terminate): only the script ends - what was half done in the runtime is given up */
         if (!vm->terminated) vm->failed = 2;
@@ -110,6 +116,7 @@ static int vmRunFile(const char* path, bool stats) {
     }
     vm->sp = 0;
     vm->exitJump = NULL;
+    vmPkgEnd();                          /* (the libraries of packages forget the program, the lambdas they had are let go) */
     scLeave(vm, vm->global);             /* the globals and what the global scope owns (with their destructors - not after a failure) */
     for (i = 0; i < p->nclasses; i++) {
         uint32_t k;
@@ -119,6 +126,7 @@ static int vmRunFile(const char* path, bool stats) {
     if (vm->quiet) g_zombies.quiet--;
     g_globalOwn = NULL;
     vmUnregisterClasses(vm);
+    vmNativesUnbind();
     while (vm->freeScopes) { VmScope* s = vm->freeScopes; vm->freeScopes = s->nextFree; free(s->slots); free(s); }
     result = vm->terminated ? vm->exitCode : vm->failed ? 1 : 0;
     free(vm->stack);

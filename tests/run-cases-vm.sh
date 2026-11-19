@@ -4,11 +4,12 @@
 #
 #   tests/run-cases-vm.sh <forge> [<group>...] [-j <jobs>] [--fire <fire>] [--cache <dir>] [--list]
 #
-# <fire>: the C VM (default: built here with cc -O2 into the cache). The program files are kept in the cache (default: a temporary folder, removed at
+# <fire>: the C VM (default: built here with cc -O2 into the cache). The libraries of the natives of packages are looked up in the folder of <forge>
+# (FIRE_PKG_PATH before it). The program files are kept in the cache (default: a temporary folder, removed at
 # the end) and written again only when the case or the forge is newer - a second run with the same --cache only runs the VM.
 # --list: every case with OK/FAIL (default: only those that are not right). At the end: the counts per group, then all.
 set -u
-if [ $# -lt 1 ]; then sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2; fi
+if [ $# -lt 1 ]; then sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2; fi
 forge=$(realpath "$1"); shift
 here=$(cd "$(dirname "$0")" && pwd)
 root=$here/cases
@@ -27,9 +28,11 @@ keep=1; [ -n "$cache" ] || { cache=$(mktemp -d); keep=0; }
 [ $keep = 1 ] || trap 'rm -rf "$cache"' EXIT
 if [ -z "$fire" ]; then
     fire=$cache/fire
-    ${CC:-cc} -O2 -w "$here/../native/vm/fire.c" -o "$fire" -lm -lpthread || exit 1
+    ${CC:-cc} -O2 -w "$here/../native/vm/fire.c" -o "$fire" -lm -lpthread -ldl || exit 1
 fi
-export forge root fire cache
+# the libraries of the packages' natives: those forge built (its package store, Packages/) or brought (Prebuilt/), next to it
+FIRE_PKG_PATH="${FIRE_PKG_PATH:+$FIRE_PKG_PATH:}$(dirname "$forge")"
+export forge root fire cache FIRE_PKG_PATH
 
 one() {   # <group> <case file>
     local group=$1 f=$2 n dir tmp modes mode out code err actual want bad="" types extra fbc cerr ccode
