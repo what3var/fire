@@ -1,12 +1,10 @@
-/* native/forge/typechecker.c - port of src/fire.Compiler/TypeChecker.cs, TypeChecker.TakeLocal.cs and SetterClaims.cs (commit c7f13d97), the
+/* native/forge/typechecker.c - port of src/fire.Compiler/TypeChecker.cs, TypeChecker.TakeLocal.cs and SetterClaims.cs (commit 6bc618e7), the
  * part of Compiler.cs it uses (AnalyzeCoercion) and src/fire/Runtime/BuiltinMembers.cs. Method by method in the order of the C# file; the
- * TC0xx warnings and errors, E4052, the ownership hints TC031/TC035, TC018 (SetterClaims) are reported as there.
+ * TC0xx warnings and errors, E4052, the ownership hints TC031/TC035, TC018 (SetterClaims) are reported as there, and the tables the check leaves
+ * for the bytecode compiler in ResolveResult (UnitChecks, LocalGuards, FixedCoercions, OverloadHints, MethodTypeArgs, ReceiverTypeArgs, the
+ * expression trees, BitsOf, the proven members of `??.`, the derivation of `defined`: Derive) are filled as there (Phase C step 4).
  *
- * Not ported yet (they feed the bytecode compiler, Phase C step 4, and report nothing): the tables the check leaves in ResolveResult - UnitChecks,
- * LocalGuards (and LocalType/DeclareLocalType that only serve them), FixedCoercions, OverloadHints (OverloadHintFor, ConstructorHint, Assumptions),
- * MethodTypeArgs, ReceiverTypeArgs, the expression trees' Types/ToCompiled, AstNames.ProveMember -, the derivation of `defined` (Derive,
- * DeriveReturns, the field candidates, NeedsOf; NoteCall keeps only what TC031 needs: _notedCalls and _callTargets), BitsOf, and the tools
- * MemberLog, VarLog, FIRE_TYPECHECK_SUGGEST. A StaticType is an immutable FcST from the arena; `with` copies it. */
+ * Not ported: the tools MemberLog, VarLog, FIRE_TYPECHECK_SUGGEST. A StaticType is an immutable FcST from the arena; `with` copies it. */
 
 #include <limits.h>
 

@@ -1,5 +1,5 @@
-/* native/forge/setterclaims.c - port of src/fire.Compiler/SetterClaims.cs (commit c7f13d97): the paths through a setter, which call claims `value`
- * on each - here what the type checker asks (Ambiguous, TC018); the claim sites (Sites) are for the compiler (Phase C step 4). */
+/* native/forge/setterclaims.c - port of src/fire.Compiler/SetterClaims.cs (commit 6bc618e7): the paths through a setter, which call claims `value`
+ * on each - what the type checker asks (Ambiguous, TC018) and the claim sites for the compiler (Sites). */
 
 #define SC_MaxPaths 4096
 typedef struct FcScEvent { void* node; bool isAssign; int line; } FcScEvent;

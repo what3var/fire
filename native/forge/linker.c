@@ -1,8 +1,9 @@
-/* native/forge/linker.c - what the frontend needs of the linker (commit c7f13d97): Linker.CompileAndLink up to the type check
- * (src/fire.Compiler/Linker.cs: the prelude, the directives of a build with their effects, `#import` with its preludes and natives),
- * ImportedPreludes.cs (ParseImportName, WithDependencies, Insert), PackageImports.cs (RegisterNames, NativeReturnTypes), ProjectLibraries.cs
- * (ImportKeys, PackageNamespaceOf) and the store of the installed packages (src/fire.Package.Manager/PackageStore.cs: the manifests `package.json`
- * of `<store>/<package>/`, read with a small JSON reader). Not ported: projects (BuildPlan), project libraries, the native build's settings. */
+/* native/forge/linker.c - the linker (commit 6bc618e7): Linker.CompileAndLink (src/fire.Compiler/Linker.cs: the prelude, the directives of a build
+ * with their effects, `#import` with its preludes and natives, the type check, the bytecode compiler, the linked program), ImportedPreludes.cs
+ * (ParseImportName, WithDependencies, Insert), PackageImports.cs (RegisterNames, NativeReturnTypes, NativesOf), PackageLibrary.FileNameFor,
+ * ProjectLibraries.cs (ImportKeys, PackageNamespaceOf), src/fire/Runtime/FloatNarrowing.cs and the store of the installed packages
+ * (src/fire.Package.Manager/PackageStore.cs: the manifests `package.json` of `<store>/<package>/`, read with a small JSON reader). Not ported:
+ * projects (BuildPlan), project libraries, targets, `-D`, OwnImports, packing a program, the conversion of model resources (ModelConverter). */
 
 /* ---- a small JSON reader (the manifests) ---- */
 typedef enum FcJsonKind { FJ_NULL, FJ_BOOL, FJ_NUM, FJ_STR, FJ_ARR, FJ_OBJ } FcJsonKind;
