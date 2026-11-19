@@ -79,6 +79,52 @@ namespace fire.Debugging
             return psi;
         }
 
+        /// <summary>Starts a program under the debugger over its stdio (FIRE_DEBUG=stdio;token=..., the framed transport): the messages and the program's console
+        /// share its stdout, its stdin carries the frames and the lines it reads (<see cref="NativeDebugTarget.WriteInput"/>), its stderr goes to the target's Output.
+        /// Waits until its main thread stands at its entry. Throws <see cref="NativeDebugException"/> (with what the program wrote, when it ended without saying hello).</summary>
+        public static NativeDebugTarget LaunchDebugStdio(string program, IEnumerable<string> arguments, string? workingDirectory, TimeSpan connectTimeout,
+            IReadOnlyDictionary<string, string>? environment = null)
+        {
+            string token = Guid.NewGuid().ToString("N");
+            var env = environment?.ToDictionary(e => e.Key, e => e.Value) ?? new Dictionary<string, string>();
+            env[NativeDebugListener.EnvironmentVariable] = "stdio;token=" + token;
+            var process = new Process { StartInfo = StartInfo(program, arguments, workingDirectory, env), EnableRaisingEvents = true };
+            var early = new List<string>();
+            NativeDebugTarget? target = null;
+            var gate = new object();
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data == null) return;
+                NativeDebugTarget? t;
+                lock (gate) { t = target; if (t == null) early.Add(e.Data); }
+                t?.WriteOutput(e.Data);
+            };
+            process.Start();
+            process.BeginErrorReadLine();
+            var transport = new FramedDebugTransport(process.StandardOutput.BaseStream, process.StandardInput.BaseStream);
+            try
+            {
+                var opened = NativeDebugTarget.OpenFramed(transport, connectTimeout, null, token);
+                lock (gate)
+                {
+                    target = opened;
+                    foreach (var line in early) opened.WriteOutput(line);
+                    early.Clear();
+                }
+                opened.AttachProcess(process, readOutput: false);
+                return opened;
+            }
+            catch (NativeDebugException ex)
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                try { process.WaitForExit(2000); } catch (InvalidOperationException) { }
+                string said;
+                lock (gate) said = string.Join(Environment.NewLine, early.TakeLast(20));
+                string code = process.HasExited ? $" (exit code {process.ExitCode})" : "";
+                throw new NativeDebugException(ex.Message + code + (said.Length > 0 ? Environment.NewLine + said : ""));
+            }
+        }
+
         /// <summary>Starts a native debug build under the debugger: listens on 127.0.0.1, starts the program with FIRE_DEBUG, accepts its connection (the token
         /// must match) and waits until its main thread stands at its entry. The program's output goes to the target's Output. Throws
         /// <see cref="NativeDebugException"/> (with what the program wrote, when it ended without connecting).</summary>

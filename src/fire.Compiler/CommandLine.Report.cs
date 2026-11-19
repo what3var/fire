@@ -23,7 +23,7 @@ namespace fire.Compiler
         /// <summary>Does the command line ask for the report (`build`/`publish` with `--report json`)?</summary>
         public static bool WantsReport(IReadOnlyList<string> args)
         {
-            if (args.Count == 0 || args[0].ToLowerInvariant() is not ("build" or "publish")) return false;
+            if (args.Count == 0 || args[0].ToLowerInvariant() is not ("build" or "publish" or "bytecode")) return false;
             for (int i = 1; i < args.Count; i++)
             {
                 if (args[i] == "--") return false;
@@ -82,11 +82,16 @@ namespace fire.Compiler
             var collector = new DiagnosticCollector { OnReport = report.Diagnostic };
             using var collecting = collector.Begin();
             using var watching = BuildMonitor.Use(monitor);
-            report.Start(options.Command == CommandKind.Publish ? "publish" : "build", string.Join(" ", options.Files.Select(Path.GetFileName)));
+            report.Start(options.Command == CommandKind.Publish ? "publish" : options.Command == CommandKind.Bytecode ? "bytecode" : "build", string.Join(" ", options.Files.Select(Path.GetFileName)));
             Outcome outcome;
             try
             {
-                outcome = options.Command == CommandKind.Publish ? ReportPublish(options, report, monitor) : ReportBuild(options, report, monitor);
+                outcome = options.Command switch
+                {
+                    CommandKind.Publish => ReportPublish(options, report, monitor),
+                    CommandKind.Bytecode => ReportBytecode(options, report),
+                    _ => ReportBuild(options, report, monitor),
+                };
             }
             catch (OperationCanceledException)
             {
@@ -137,6 +142,54 @@ namespace fire.Compiler
             }
             catch (NativeNotSupportedException ex) { return CompileFailure(report, ex); }
             catch (ProjectException ex) { return Failure(report, ExitScriptError, ex.Message); }
+            catch (Package.Manager.PackageException ex) { return Failure(report, ExitScriptError, ex.Message); }
+            catch (Exception ex) when (IsCompileError(ex)) { return CompileFailure(report, ex); }
+        }
+
+        // ------------------------------------------------------------------------------------------------------------------
+        // bytecode (spark's Run/Debug on the VM in C, docs/ROADMAP_C_PORT.md phase B step 9)
+        // ------------------------------------------------------------------------------------------------------------------
+
+        /// <summary>`bytecode --report json`: the program file of the files or of a project (with the overlays), and what `fire` needs to run it - the libraries of
+        /// its packages (built now, outputs "library": their folders go into FIRE_PKG_PATH) and the VM of its widths (output "vm", CVm.Locate).</summary>
+        private static Outcome ReportBytecode(CommandLineOptions options, ForgeReporter report)
+        {
+            try
+            {
+                BuildPlan? plan = null;
+                if (options.Files.Any(IsProjectFile))
+                {
+                    if (options.Files.Count != 1) return Failure(report, ExitUsage, "bytecode takes source files or one project.");
+                    if (!File.Exists(options.Files[0])) return Failure(report, ExitUsage, $"File not found: {options.Files[0]}");
+                    var workspace = Workspace.Open(options.Files[0]);
+                    plan = ProjectBuilder.PlanOrThrow(workspace, ProjectBuilder.SelectProject(workspace, options.ProjectName), TextOf(options));
+                    if (plan.Type == OutputType.Library) return Failure(report, ExitUsage, $"'{plan.Name}' is a library: it is no program by itself (a program that imports it carries it).");
+                }
+                var sources = new List<string>();
+                if (plan != null) sources.AddRange(plan.SourceTexts);
+                else
+                    foreach (var file in options.Files)
+                    {
+                        if (ReadSource(options, file) is not { } text) return Failure(report, ExitUsage, $"File not found: {file}");
+                        sources.Add(text);
+                    }
+                BuildMonitor.Step(BuildPhase.CompileFire, $"Compiling {plan?.Name ?? string.Join(" ", options.Files.Select(Path.GetFileName))}");
+                var linker = plan != null
+                    ? new Linker { Defines = options.Defines, Plan = plan, SourcePaths = plan.SourcePaths.Cast<string?>().ToList(), PackageLibraries = true }
+                    : new Linker { Defines = options.Defines, BasePath = BaseDirectory(options), SourcePaths = SourceFiles(options), PackageLibraries = true };
+                var program = linker.CompileAndLink(sources, null, null, options.Mode, options.FloatWidth);
+                byte[] bytes = fire.Bytecode.ProgramFile.Write(program);
+                string full = Path.GetFullPath(options.OutputFile);
+                Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+                File.WriteAllBytes(full, bytes);
+                report.Log($"{full} ({bytes.Length} bytes)");
+                report.Output("program", full);
+                foreach (string library in program.PackageLibraryFiles ?? new List<string>()) report.Output("library", Path.GetFullPath(library));
+                try { report.Output("vm", CVm.Locate(program.IntWidth, program.FloatWidth, report.Log)); }
+                catch (InvalidOperationException ex) { report.Log("warning: " + ex.Message); }
+                return new Outcome(ExitOk, Summary: full);
+            }
+            catch (ProjectException ex) { return Failure(report, ExitUsage, ex.Message); }
             catch (Package.Manager.PackageException ex) { return Failure(report, ExitScriptError, ex.Message); }
             catch (Exception ex) when (IsCompileError(ex)) { return CompileFailure(report, ex); }
         }

@@ -106,7 +106,7 @@ namespace fire.Compiler
               fire.Compiler publish <solution.firesln>|<project.fireproj> [-p <project>] [--toolchain <name>]
               fire.Compiler build|publish ... [--report json] [--overlay <source>=<file>]... [--debug-info] [--check] [--all]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--global-jobs safepoints|sleep|sync]
-              fire.Compiler bytecode <file>... | <project.fireproj> [-o <out.fbc>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
+              fire.Compiler bytecode <file>... | <project.fireproj> | <solution.firesln> [-p <project>] [-o <out.fbc>] [-m ...] [-f 32|64] [-i 32|64] [-D name]... [--report json] [--overlay <source>=<file>]...
               fire.Compiler dump  <file>... | <project.fireproj> | <program.fbc> [-o <file>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
@@ -163,6 +163,8 @@ namespace fire.Compiler
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
             bytecode  compiles the files into one program and writes it as a program file (default: out.fbc; the format: docs/spec/BYTECODE.md, "Das Dateiformat .fbc").
+                    With --report json (spark's Run/Debug on the VM in C): the report of build, its outputs the program file ("program"), the libraries of its
+                    packages, built now ("library"), and the VM `fire` of its widths ("vm").
             dump    writes a program as text, everything a program file holds, made to be compared: the files compiled into one program, or a program file (.fbc);
                     without -o to the output.
             test    runs the tests: the methods with [Test] (docs/tools/testing.md), in the VM or with --engine native as a native program for this machine. Without a file: the solution or the
@@ -315,14 +317,14 @@ namespace fire.Compiler
                 }
                 else if (TryOption(arg, "--report", "--report", out var reportInline))
                 {
-                    if (command is not (CommandKind.Build or CommandKind.Publish)) return Fail(command, "--report is only available with build and publish.");
+                    if (command is not (CommandKind.Build or CommandKind.Publish or CommandKind.Bytecode)) return Fail(command, "--report is only available with build, publish and bytecode.");
                     string? value = reportInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (value == null || Unquote(value).ToLowerInvariant() != "json") return Fail(command, "--report must be followed by json.");
                     report = "json";
                 }
                 else if (TryOption(arg, "--overlay", "--overlay", out var overlayInline))
                 {
-                    if (command is not (CommandKind.Build or CommandKind.Publish)) return Fail(command, "--overlay is only available with build and publish.");
+                    if (command is not (CommandKind.Build or CommandKind.Publish or CommandKind.Bytecode)) return Fail(command, "--overlay is only available with build, publish and bytecode.");
                     string? value = overlayInline ?? (i + 1 < args.Count ? args[++i] : null);
                     int eq = value == null ? -1 : Unquote(value).LastIndexOf('=');
                     if (value == null || eq <= 0 || eq == Unquote(value).Length - 1) return Fail(command, "--overlay must be followed by <source>=<file with its text>.");

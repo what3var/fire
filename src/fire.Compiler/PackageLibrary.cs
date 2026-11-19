@@ -402,8 +402,9 @@ namespace fire.Compiler
             sb.AppendLine("    {NULL, 0, NULL}");
             sb.AppendLine("};");
             sb.AppendLine($"static const int kCount = {entries.Count};");
-            sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_set_host(const fire_host* host) { g_libraryHost = host; }");
             sb.AppendLine("#include \"fire_gfx_host.h\"");
+            // (FIRE_DISPLAY_SHM: the windows of a program in `fire` are a host's in another process - spark's live view, fire_gfx_host.h)
+            sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_set_host(const fire_host* host) { g_libraryHost = host; fire_gfx_host_fromEnvironment(); }");
             sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_reset(void) { fire_pkgLock(); fire_gfx_host_reset(); fire_pkgUnlock(); }");
             sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_service(void) { fire_pkgService(); }");
             sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_idle(void) { fire_pkgIdle(); }");

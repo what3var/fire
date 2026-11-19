@@ -59,7 +59,7 @@ namespace fire.Editor
             bool native = UsesNativeEngine();
             mnuEngineVm.IsChecked = !native;
             mnuEngineNative.IsChecked = native;
-            ApplyEngineToPanels(native);
+            ApplyEngineToPanels(native || !CVmLaunch.UseDotnet);   // (the VM in C has no operand stack for the panel either)
         }
 
         /// <summary>The stack panel shows the operand stack of the VM - a native program has none: hidden while the engine is native, back for the VM
@@ -115,6 +115,7 @@ namespace fire.Editor
             board?.Dispose();
             var run = _nativeRun;
             _nativeRun = null;
+            _nativeRunIsVm = false;
             _nativePlainRunning = false;
             UpdateRunButtons();
             if (run == null) return;
@@ -143,12 +144,17 @@ namespace fire.Editor
             if (_nativeStarting || BuildRunning()) return;
             if (_nativeRun is { HasExited: false })
             {
-                UpdateStatus("The native program is running - Stop (Shift+F5) ends it.");
+                UpdateStatus(_nativeRunIsVm ? "The program is running - Stop (Shift+F5) ends it." : "The native program is running - Stop (Shift+F5) ends it.");
                 return;
             }
             StopNativeRun();
             _session.Reset();
             _reportedErrors.Clear();
+            if (!UsesNativeEngine())
+            {
+                await StartCVmAsync(first);   // (the VM in C: MainWindow.CVm.cs)
+                return;
+            }
             if (ResolveRunInput(null) is not { } input) return;
 
             fire.Native.NativeConfig config;

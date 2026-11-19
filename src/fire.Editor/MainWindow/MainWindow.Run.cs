@@ -82,7 +82,9 @@ namespace fire.Editor
                 _runtimeProcess = _nativeRun ?? nativeTarget?.Process;
                 if (_runtimeProcess != null && _runtimeProcess != _nativeRun) WatchExit(_runtimeProcess);
                 bool remote = _nativeRun == null && nativeTarget != null && _runtimeProcess == null;
-                string what = _runtimeProcess != null || nativeTarget != null ? $"native, {_session.ActiveExecutionMode ?? _session.ExecutionMode}" : $"VM, {_session.ActiveExecutionMode ?? _session.ExecutionMode}";
+                bool vmInC = nativeTarget?.Engine == "vm" || _nativeRun != null && _nativeRunIsVm;
+                string what = vmInC ? $"VM in C, {_session.ActiveExecutionMode ?? _session.ExecutionMode}"
+                    : _runtimeProcess != null || nativeTarget != null ? $"native, {_session.ActiveExecutionMode ?? _session.ExecutionMode}" : $"VM, {_session.ActiveExecutionMode ?? _session.ExecutionMode}";
                 _runtimePanel.Start(_runtimeProcess, what, remote);
                 if (tool != null && !IsToolVisible(tool))
                 {
@@ -323,7 +325,7 @@ namespace fire.Editor
         private async void Run_Click(object? sender, RoutedEventArgs e)
         {
             if (_isBusy || BuildRunning()) return; // running right now - there is nothing to continue
-            if ((!_session.HasProgram || _session.IsFinished) && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.Continue); return; }
+            if ((!_session.HasProgram || _session.IsFinished) && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.Continue); return; }
             if ((!_session.HasProgram || _session.IsFinished) && !await CompileAndPrepareAsync(null)) return;
             if (!_session.HasProgram) return;
             BeginStep();
@@ -334,7 +336,7 @@ namespace fire.Editor
         private async void Restart_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
-            if (UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.Continue); return; }
+            if (RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.Continue); return; }
             if (!await CompileAndPrepareAsync(null) || !_session.HasProgram) return;
             BeginStep();
             _session.Continue(BreakpointLocations());
@@ -457,7 +459,7 @@ namespace fire.Editor
         private async void Step_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
-            if (!_session.HasProgram && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.StepLine); return; }
+            if (!_session.HasProgram && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.StepLine); return; }
             if (!_session.HasProgram) await CompileAndPrepareAsync(null);
             if (!_session.HasProgram || _isBusy) return;
             BeginStep();
@@ -467,7 +469,7 @@ namespace fire.Editor
         private async void StepInto_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
-            if (!_session.HasProgram && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.StepInto); return; }
+            if (!_session.HasProgram && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.StepInto); return; }
             if (!_session.HasProgram) await CompileAndPrepareAsync(null);
             if (!_session.HasProgram || _isBusy) return;
             BeginStep();
@@ -537,7 +539,7 @@ namespace fire.Editor
         private async void StartWithoutDebugging_Click(object? sender, RoutedEventArgs e)
         {
             if (_isBusy || BuildRunning()) return;
-            if ((!_session.HasProgram || _session.IsFinished) && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
+            if ((!_session.HasProgram || _session.IsFinished) && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
             if ((!_session.HasProgram || _session.IsFinished) && !await CompileAndPrepareAsync(null)) return;
             if (!_session.HasProgram || _isBusy) return;
             BeginStep();
@@ -547,7 +549,7 @@ namespace fire.Editor
         private async void RunToEnd_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
-            if (!_session.HasProgram && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
+            if (!_session.HasProgram && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
             if (!_session.HasProgram) await CompileAndPrepareAsync(null);
             if (!_session.HasProgram || _isBusy) return;
             BeginStep();

@@ -111,6 +111,42 @@ static Value vmLibCall(Value fn, Value sig, Value args, Value release, OwnList* 
 }
 #endif
 
+/* `extern string __HostCommand()` without a library: the next command of the host that runs the program (spark's live view, LiveSession: one line on the
+ * program's standard input; "" when none has come). Never waits. (Windows: none yet.) */
+#if !defined(_WIN32)
+#include <poll.h>
+#include <unistd.h>
+static char g_vmHostCmd[4096];
+static size_t g_vmHostCmdLen;
+static Value vmHostCommand(OwnList* list) {
+    for (;;) {
+        char* nl = g_vmHostCmdLen ? (char*)memchr(g_vmHostCmd, '\n', g_vmHostCmdLen) : NULL;
+        if (nl) {
+            size_t n = (size_t)(nl - g_vmHostCmd);
+            Value v;
+            *nl = 0;
+            if (n > 0 && g_vmHostCmd[n - 1] == '\r') g_vmHostCmd[n - 1] = 0;
+            v = strFromUtf8(g_vmHostCmd, list);
+            memmove(g_vmHostCmd, nl + 1, g_vmHostCmdLen - n - 1);
+            g_vmHostCmdLen -= n + 1;
+            return v;
+        }
+        if (g_vmHostCmdLen == sizeof g_vmHostCmd) g_vmHostCmdLen = 0;   /* (a line longer than the buffer: dropped) */
+        {
+            struct pollfd pfd;
+            ssize_t got;
+            pfd.fd = 0; pfd.events = POLLIN; pfd.revents = 0;
+            if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & (POLLIN | POLLHUP))) return strFromUtf8("", list);
+            got = read(0, g_vmHostCmd + g_vmHostCmdLen, sizeof g_vmHostCmd - g_vmHostCmdLen);
+            if (got <= 0) return strFromUtf8("", list);
+            g_vmHostCmdLen += (size_t)got;
+        }
+    }
+}
+#else
+static Value vmHostCommand(OwnList* list) { return strFromUtf8("", list); }
+#endif
+
 /* CallExtern: a function of a C library (`#extern "lib"` + `extern int f(int)`, SPEC 8.1) - by its signature, like Library (VM.ResolveDynamicExtern). An
  * `inline c` function needs a C compiler while the program runs: not in this VM. */
 static Value vmCallExtern(VmProgram* p, const char* name, int argc, const Value* args, OwnList* list) {
@@ -119,6 +155,7 @@ static Value vmCallExtern(VmProgram* p, const char* name, int argc, const Value*
     char text[600];
     for (i = 0; i < p->nexterns; i++) if (p->externs[i].name == name) e = &p->externs[i];
     if (!e) { snprintf(text, sizeof text, "The extern function '%s' is not declared.", name); fatal(text); }
+    if (!e->lib && !e->inlineC && argc == 0 && strcmp(name, "__HostCommand") == 0) return vmHostCommand(list);
     if (e->inlineC || !e->lib) { snprintf(text, sizeof text, "the inline C function %s", name); vmUnsupported(text, NULL); }
 #ifdef VM_LIB_CALLS
     if (!e->fn) {
