@@ -264,7 +264,8 @@ namespace fire.Debugging
         public int Pid { get; }
         public string? TargetName { get; }
         public string? Mode { get; }
-        public string Engine => "native";
+        /// <summary>"native", or "vm" for a program of the VM in C (`fire x.fbc` says so in its hello - docs/spec/VM_C.md, "Debugger").</summary>
+        public string Engine => Hello.Str("engine") == "vm" ? "vm" : "native";
         public IReadOnlyList<string?> SourceFiles { get; private set; }
         /// <summary>SHA-256 (hex) of each source as the compiler got it (null: the prelude, a library).</summary>
         public IReadOnlyList<string?> SourceHashes { get; private set; }

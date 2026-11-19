@@ -20,6 +20,9 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   compiles again and starts, `Shift+F5` stops; `F9` sets a breakpoint, `F10`/`F11` step; the panels *Threads*, *Scope* and *Stack* show the paused program.
   *Run > Run Engine* chooses *Virtual Machine* (the default) or *Native* (a native build that runs) - saved in the `engine` setting of the project that
   Start runs, for a single script in spark's settings; native programs are debugged the same way, an ESP32 over its serial port ([targets](../targets/README.md)).
+  The virtual machine is the VM in C: forge compiles the program file (`forge bytecode --report json`), spark runs `fire run x.fbc` as a child process - its
+  output in the *Output* panel, the line below it is its input, *Stop* ends it - and debugs it like a native program; a crash of the program does not take
+  spark with it. `FIRE_SPARK_VM=dotnet` runs it in the C# VM inside spark as before (until milestone M1, [VM_C.md](../spec/VM_C.md#spark-auf-der-c-vm-schritt-9)).
 - **The start project:** *Start* runs the **start project** of the solution from every file that belongs to the solution - a file of any of its projects
   (also of a library), a project file, the solution file, the notes; without a solution the project itself. Only a script that belongs to no project runs
   on its own. The box next to the mode in the *Run* tool strip lists the programs of the solution and chooses the start project; so does *Set as Start

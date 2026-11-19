@@ -514,7 +514,11 @@ static void vmDbgBegin(Vm* vm) {
 #endif
     g_vmDbgUndef = Undef();
     vmDbgOf(vm);
+    /* (the runtime's agent parks the main thread at its entry as one without the GIL - a native program starts so -, but here it holds it: given back while it
+     * waits, else `scopes`/`globals`/`this` at the entry - spark's panels ask for them at once - wait for it in the agent forever) */
+    gilRelease();
     fire_dbgStart(&g_vmDbgProg);
+    gilAcquire();
 }
 
 /* The program under the debugger has ended (everything it had is gone): `profile`, `exited`. */

@@ -55,7 +55,7 @@ forge test All.firesln --filter MathTests
 | `--check` | `build` of a library project: only compiled (for the target of `-t` or the project), not packed |
 | `--debug-info` | a native `build` for the debugger: without optimisation, with debug information, not stripped (spark's native *Debug*) |
 | `--overlay <source>=<file>` | `build`/`publish`: the text of `<source>` is read from `<file>` - an editor's unsaved text (repeatable; the source need not exist) |
-| `--report json` | `build`/`publish`: the [report for tools](#the-report-for-tools) on stdout instead of the text for people |
+| `--report json` | `build`/`publish`/`bytecode`: the [report for tools](#the-report-for-tools) on stdout instead of the text for people (`bytecode`: the outputs `program` - the `.fbc` -, `library` - each library of its packages, built now - and `vm` - the `fire` of its widths; spark's Run/Debug on the VM in C) |
 
 The command line goes before the project's settings, which go before the directives in the source and `fire.native.json`.
 

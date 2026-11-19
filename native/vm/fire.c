@@ -540,6 +540,8 @@ int main(int argc, char** argv) {
     VmPayEntry* entries;
     uint32_t nentries;
     int packed;
+    /* FIRE_STDOUT_LINES=1: stdout is written line by line also into a pipe (spark's Output panel shows a running program's lines as they come) */
+    { const char* lines = getenv("FIRE_STDOUT_LINES"); if (lines != NULL && *lines == '1') setvbuf(stdout, NULL, _IOLBF, 0); }
     if (fire_plat_programPath(self, sizeof self) <= 0) snprintf(self, sizeof self, "%s", argc > 0 && argv[0] ? argv[0] : "fire");
 
     /* a packed program: every argument is the program's */

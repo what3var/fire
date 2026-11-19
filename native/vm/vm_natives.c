@@ -257,7 +257,29 @@ static bool vmOpSilenceValue(Value v);
 typedef Value (*VmCoreFn)(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list);
 typedef struct VmCoreNative { const char* name; int8_t minArgs, maxArgs; VmCoreFn fn; } VmCoreNative;
 #define VM_A(k) (argc > (k) ? a[k] : Undef())
-static Value vmcPrint(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)argc; return print(a[0], list); }
+/* FIRE_PRINT_RECORDS=1: one `print` is one line of stdout - a line break in its text is written as \x1F (spark's live view: LiveSession gets each print
+ * as one message, also one of several lines, as from the C# VM in its process). */
+static int g_vmPrintRecords = -1;
+static Value vmPrintRecord(Value v, OwnList* list) {
+    Piece p;
+    fire_char16 small[256];
+    fire_char16* buf;
+    uint32_t i;
+    pieceOf(v, &p, list);
+    if (FIRE_UNLIKELY(g_unwind.active)) return Undef();   /* ToString() threw */
+    buf = p.n <= 256 ? small : (fire_char16*)malloc((size_t)p.n * sizeof(fire_char16));
+    if (!buf) outOfMemory();
+    for (i = 0; i < p.n; i++) buf[i] = p.p[i] == '\n' ? (fire_char16)0x1F : p.p[i];
+    writeUtf16(buf, p.n, stdout);
+    fputc('\n', stdout);
+    if (buf != small) free(buf);
+    return Undef();
+}
+static Value vmcPrint(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) {
+    (void)vm; (void)fr; (void)argc;
+    if (g_vmPrintRecords < 0) { const char* e = getenv("FIRE_PRINT_RECORDS"); g_vmPrintRecords = e != NULL && *e == '1'; }
+    return g_vmPrintRecords ? vmPrintRecord(a[0], list) : print(a[0], list);
+}
 static Value vmcString(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) {
     (void)vm; (void)fr;
     if (a[1].kind != K_String) return fireError("ArgumentException", "__StringCall(id, text, ...) expects the string as the second argument.");

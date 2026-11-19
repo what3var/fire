@@ -72,6 +72,10 @@ namespace fire.Compiler
         /// says which file it is in. With a <see cref="Plan"/> these are the files of the project.</summary>
         public IReadOnlyList<string?>? SourcePaths { get; set; }
 
+        /// <summary>The libraries of the packages (and of graphics/windows) are built and named in LinkedProgram.PackageLibraryFiles also without a packed file: a program
+        /// file that `fire` runs (`forge bytecode --report json`, spark's live view) - `fire` finds them through FIRE_PKG_PATH.</summary>
+        public bool PackageLibraries { get; set; }
+
         /// <summary>Write the reflection metadata of the classes (ClassMeta) even when the program does not import `reflection`: a plugin (`--linkage plugin`),
         /// whose classes the program that loads it reaches by reflection (Reflect.Get/Set, `Type.Of(x).Members`).</summary>
         public bool ClassMeta { get; set; }
@@ -656,11 +660,11 @@ namespace fire.Compiler
 
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
-            List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
+            List<string>? packageLibraryFiles = (!string.IsNullOrEmpty(outname) || PackageLibraries) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
             // graphics and windows in C (the default of the VM): a packed program binds their natives to the library of both, which travels with it
             List<string>? graphicsNatives = null;
             // (the VM in C has graphics and windows only in C: its packed program always carries the library)
-            if (!string.IsNullOrEmpty(outname) && Engine != "native" && nativeImports.Contains(NativeImports.Graphics) && (GraphicsLibrary.Wanted(false) || !CVm.UseDotnet) && GraphicsLibrary.Locate() is { } gfxLibrary)
+            if ((!string.IsNullOrEmpty(outname) || PackageLibraries) && Engine != "native" && nativeImports.Contains(NativeImports.Graphics) && (PackageLibraries || GraphicsLibrary.Wanted(false) || !CVm.UseDotnet) && GraphicsLibrary.Locate() is { } gfxLibrary)
             {
                 graphicsNatives = natives.Names.Where(n => n.StartsWith("__GRPH", StringComparison.Ordinal)).OrderBy(natives.IndexOf).ToList();
                 (packageLibraryFiles ??= new List<string>()).Add(gfxLibrary);

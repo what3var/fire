@@ -1,6 +1,6 @@
 # Die VM in C (`native/vm`)
 
-Status: **Phase B, Schritte 1 bis 8** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-b---die-vm-in-c) (19.11.2026). Der Spike davor:
+Status: **Phase B, Schritte 1 bis 8, Schritt 9 zum größten Teil** (spark auf der C-VM, [unten](#spark-auf-der-c-vm-schritt-9)) aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-b---die-vm-in-c) (19.11.2026). Der Spike davor:
 [VM_SPIKE.md](VM_SPIKE.md). Die VM ist ein Interpreter auf `fire_rt.h` (L1): dieselben `Value`s, Objekte, Besitzlisten, Ausnahmen, Texte und
 Threads wie ein natives Programm; was nur die VM braucht, liegt in ihren Seitentabellen. Die Runtime ist **nicht** geändert bis auf Eingriffe hinter
 `FIRE_VM`: `exitNow` aus dem Spike, für den Debugger `"engine": "vm"` im `hello`, und `fire_vmGrantAway` für die Sektionen, während das Hauptprogramm
@@ -39,6 +39,8 @@ der Paket-Natives sucht die VM im Ordner von forge (der Runner setzt `FIRE_PKG_P
 | `vm_debug.c` | der Debugger: das Protokoll nativer Programme über den Agenten der Runtime (`fire_debug.h`), die Halte vor jeder Instruktion, die Frames für den Agenten | `VM.StepLine`/`StepInto`/`StepOut`/`RunUntilBreakpoint`, `DebugScopeChain`, `DebugGlobals`, `PauseOnUnhandled` |
 | `fire.c` | das Programm `fire`: Befehlszeile, Programme nacheinander in einem Prozess, Abbau nach jedem (L6), die Varianten der Breiten, das Payload eines gepackten Programms | `fire.Runtime/Program.cs`, `Runtime.cs`, `PayloadLoader` |
 | `src/fire.Compiler/CVm.cs`, `src/fire.Runtime/CVmPayload.cs` | `forge build --engine vm`: `fire` finden oder bauen, das Programm dahinter packen; das Format des Payloads in C# | `Packer`, `PayloadFile` |
+| `src/fire.Compiler/Debugging/CVmLaunch.cs`, `src/fire.Editor/MainWindow/MainWindow.CVm.cs` | spark: Ausführen/Debuggen eines Programms der VM als Kindprozess `fire run x.fbc` | `RuntimeSession`, `VmDebugTarget` in spark |
+| `src/fire.Compiler/HostDisplayFile.cs`, `native/abi/fire_gfx_host.h` (`FIRE_DISPLAY_SHM`) | die Fenster eines Programms in `fire` als Bilder in der IDE: eine Datei, die beide abbilden | `GraphicsLibrary.Instance` (Host-Display im Prozess) |
 
 ## Das Programm fire (Schritt 7)
 
@@ -126,6 +128,62 @@ liest `fire` den Fuß seiner eigenen Datei (`fire_plat_programPath`): ist ein Pa
   anderen Ordner, die Argumente und `terminate`, eine unbehandelte Ausnahme, io/time aus den Bibliotheken der Datei, der Cache (zweiter Start schreibt
   nichts, eine beschädigte Bibliothek wird ersetzt), `#intwidth 32` mit `fire-i32`, `fire run`/`help`/`version`/Exitcodes der Befehlszeile,
   `FIRE_VM_ENGINE=dotnet`; die Prüfungen der .NET-Einzeldatei laufen mit `FIRE_VM_ENGINE=dotnet`.
+
+## spark auf der C-VM (Schritt 9)
+
+spark führt Programme der Engine `vm` nicht mehr in seinem Prozess aus (L4), sondern als Kindprozess `fire`. **Schalter**: `FIRE_SPARK_VM=dotnet` behält den
+alten Weg (die C#-VM in spark: `DebugSession.CompileAsync`, `VmDebugTarget`, `LiveSession` im Prozess) bis M1; ohne ihn die C-VM (`CVmLaunch.UseDotnet`).
+
+**Ausführen und Debuggen** (`MainWindow.CVm.cs`, `CVmLaunch`): F5/F10/F11/Ctrl+F5 mit der Engine `vm` übersetzen über forge -
+`forge bytecode <datei|projekt> -m <modus> -o <bin/vm-<modus>/name.fbc> --report json` mit den Overlays des Editors (der Bericht von `build`; neu für
+`bytecode`: `--report`, `--overlay`, `-p`). Der Bericht nennt die Programmdatei (`program`), die Bibliotheken der Pakete, die forge dafür jetzt baut
+(`library`, `Linker.PackageLibraries` - sonst nur für ein gepacktes Programm), und das `fire` der Breiten des Programms (`vm`, `CVm.Locate`). Dann:
+
+* **Release/Performance**: `fire run x.fbc [-- args]`, `FIRE_PKG_PATH` = die Ordner der Bibliotheken; stdout und stderr zeilenweise ins Output-Panel, das
+  Eingabefeld darunter schreibt in stdin (`IO.Stdio.ReadLine`), der Exitcode in die Statuszeile, Stop (Shift+F5) beendet den Prozessbaum.
+* **Debug**: derselbe Aufruf mit `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T` (`NativeLaunch.LaunchDebug`, stdin bleibt offen: die Eingabe geht auch beim Debuggen über
+  die Pipe), `NativeDebugTarget` wie bei einem nativen Programm; das `hello` sagt `"engine": "vm"` (`IDebugTarget.Engine`). Haltepunkte, Schritte, Scopes, Globals,
+  Threads, `set`, Profil sind die des Agenten (Schritt 6); das Stack-Panel (Operandenstapel) ist wie bei nativ ausgeblendet. **Nicht** gerahmt über stdio
+  (`NativeLaunch.LaunchDebugStdio` gibt es, `framed: true`): die Natives der Pakete (io) lesen stdin selbst und nähmen die Rahmen mit.
+* **`FIRE_STDOUT_LINES=1`** (setzt spark): `fire` schreibt stdout auch in eine Pipe zeilenweise (`setvbuf`), sonst käme die Ausgabe erst am Ende.
+* **Behoben**: der Hauptthread wartete am Einstieg mit der GIL (der Agent parkt ihn als einen ohne - ein natives Programm startet so); `scopes`/`globals`/`this`
+  am Einstieg - die Panels von spark fragen sofort - hingen im Agenten für immer (`vmDbgBegin` gibt die GIL ab, solange er wartet).
+
+**Programme im Fenster der IDE** (`LiveSession`: der Schaltplan-Editor; L4 "der heikelste Teil"). Was die Ansicht braucht: Bilder in ihrer Größe mit etwa 60/s
+(ein unverändertes Bild wird nicht noch einmal übergeben), Maus, Tasten, Text, Rad, Größe, Schließen; den Mauszeiger des Programms; Nachrichten des Programms
+(`print`, eine Nachricht je `print`, auch mehrzeilig) und Befehle des Hosts (`extern string __HostCommand()`, "" wenn keiner da ist, ohne zu warten). Der Fokus
+bleibt in spark (die Ansicht reicht die Tasten weiter, das Programm hat kein Fenster des Systems). Das Protokoll:
+
+* **Bilder, Zeiger, Ereignisse: eine Datei, die beide abbilden** (`HostDisplayFile` in C#, `FIRE_DISPLAY_SHM=<datei>` für `fire`; unter Linux in `/dev/shm`,
+  dünn besetzt). Kopf (4 KB): `FIRESHM1`, Version, Größen; `eventWrite`/`eventRead` eines Rings (1024 Ereignisse zu 128 Bytes, die Felder von
+  `FireDisplayHostEvent` ohne `data`); `frameSeq` (ungerade, während das Programm schreibt - der Host kopiert, wenn sie gerade und vorher wie nachher dieselbe
+  ist), Breite, Höhe, Fenster, Zeiger, pid; dahinter das Bild (RGBA, Platz für 3840 x 2160). Kein Pipe, keine Sperre zwischen den Prozessen: spark schaut
+  etwa alle 8 ms nach; ein Bild mit vsync wartet im Programm 1/60 s. Im Programm ist das der Host-Display von `fire_display_headless.h` (`fire_display_host`) -
+  `fire_gfx_host_fromEnvironment` in `fire_gfx_host.h`, gerufen von `fire_pkg_set_host` der Bibliothek von graphics und windows, also **nur in der Bibliothek der
+  VM**, nicht im nativen Build. Windows: noch nicht (die Variable wird dort übergangen).
+* **Nachrichten**: stdout, `FIRE_PRINT_RECORDS=1` - ein `print` ist eine Zeile, ein Zeilenumbruch in seinem Text kommt als `\x1F` (ein Haken an `print` der VM).
+* **Befehle**: stdin, eine Zeile je Befehl; `__HostCommand()` ohne `#extern` liest sie ohne zu warten (ein Haken in `vmCallExtern`, POSIX: `poll`).
+* **Übersetzt** wird das Programm der Ansicht in spark (`Linker` mit `PackageLibraries`, `ProgramFile.Write`) - wie die übrigen Sprachdienste bis M2 (`forge serve`).
+* **Rückfall**: scheitert das Programm in `fire`, bevor es ein Bild gezeigt hat, startet `LiveSession` es in der C#-VM von spark neu (`ChildFailure` sagt,
+  warum). Heute so beim Schaltplan-Editor: die C-VM wirft in `UI.CircuitView.DrawBackground` eine `DestroyedException` (`new Renderer(this.gridLayer)` gleich
+  nach `this.gridLayer = new Framebuffer(w, h)`, nur auf dem Weg über `UI.Root.Update` - `Paint`, `FillBack`, `DrawChild`; `view.DrawAll(ui, 0, 0)` direkt
+  nach `Measure`/`Arrange` geht). Ein Fall für den Korpus der VM.
+* **Treiber-Agent und Geräte**: der Treiber-Agent von spark (`PackageDriverAgent`, eine `LiveSession`) bleibt in der C#-VM (`InProcessOnly`): seine Treiber kommen
+  als fire-Plugins, die die C-VM nicht lädt, und die Geräte, die er macht, teilt sich der `DeviceManager` von spark mit den Programmen der C#-VM
+  (`fire_host.dev_*`). Ein Programm in `fire` nimmt die C-Treiber seines Pakets (devices), nicht die Geräte von spark - das geteilte Gerät zwischen IDE und
+  Programm braucht einen neuen Weg (ein Protokoll) oder entfällt bis Phase F.
+* **Noch im Prozess**: `UiPreview` (Entwurfsansicht von FXML) und das Vorschaufenster der Blöcke (`BlockPreviewWindow`, `RuntimeSession`). Plan: das Skript der
+  Vorschau läuft in `fire` mit `FIRE_DISPLAY_SHM`; da es kein Fenster zeigt, sondern den Framebuffer nach `@fb ID` liest, braucht `fire_gfx_host.h` dafür eine
+  Aufnahme - am Ende des Programms (`fire_pkg_reset` bei gesetztem `FIRE_DISPLAY_SHM`) oder auf `@fb` hin den Framebuffer mit dieser Nummer in den Bildbereich
+  der Datei schreiben (`fire_gfx_host_pixels` gibt es); die Rechtecke kommen wie heute als `print`. Die Entwurfsansicht rendert bei jeder Änderung neu: ein
+  Prozess je Bild kostet rund 15 ms (ein ganzer Prozess der C-VM, siehe die Benchmarks), das Übersetzen bleibt in spark.
+
+**Tests**: `FIRE_TESTS_ONLY=cvmrun` (`CVmRunTests.cs`: ein falsches `fire` - Befehlszeile, Umgebung, Eingabe, beide Ausgaben, Exitcode, Stop, ein Programm, das
+sich nicht verbindet -, das echte forge und `fire`: der Bericht von `bytecode`, Overlay, Fehler, ein Konsolenprogramm, ein Fensterprogramm ohne Bildschirm,
+Debuggen mit engine vm, Scopes am Einstieg, Haltepunkt, Variablen, Schritt, Ende mit dem Code von `terminate`); `FIRE_TESTS_ONLY=circuiteditor` (die
+Live-Sitzung läuft in `fire`, Bilder, Maus, Befehle, ein mehrzeiliges `print`, der Rückfall); `drivers`, `debugger`, `forgereport`, `packer` und
+`native` mit `FIRE_TESTS_FILTER=VM-Debugger` unverändert grün. Unter Xvfb mit spark selbst: ein Konsolenprogramm (Ausgabe, Eingabe), ein Fensterprogramm
+(sein Fenster aus `fire`, Stop), Debuggen mit einem Haltepunkt (Halt, Scope-Panel, F10), der Schaltplan-Editor (über den Rückfall).
 
 ## Lader
 
