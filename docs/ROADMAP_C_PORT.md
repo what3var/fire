@@ -380,6 +380,12 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
 5. `ToolchainSetup` (lädt unter Windows einen Compiler): braucht HTTPS und Entpacken im Werkzeug - über das System (WinHTTP) statt eigener TLS.
 6. `forge conformance` ersetzt den Kern von `fire.Testing`; Installer (`setup.iss`) und Paketierung ohne .NET-Werkzeuge.
 7. `fire_embed.h` und die Packages `forge`/`script` (L6), mit Tests in fire (ein Programm übersetzt und startet ein Skript, VM und nativ).
+8. **forge mit einem Frontend in fire** (Wunsch vom 19.11.2026): ein kleines fire-Programm (`tools/forge.fire`: `#import "forge"`, die
+   Befehlszeile unverändert an `Forge.Main(args)` durchgereicht, Ausgabe und Exitcode zurück), das mit forge selbst für jedes Ziel gebaut
+   wird - fire baut sich damit selbst für andere Plattformen (`forge build tools/forge.fire --engine native -t <ziel>`; libforge und die VM sind C
+   und gehen als Natives des Packages mit). Voraussetzungen: Schritt 7 (Package `forge`, ohne globalen Zustand, ohne `exit` - L6), die
+   Toolchains im Ziel (Prozesse starten, Dateien), die Standard-Packages als Quellen im Ziel. Prüfung: das so gebaute forge übersetzt den Korpus
+   byte-gleich wie das C-forge und baut sich selbst noch einmal (Fixpunkt).
 
 **M3:** forge und die VM sind C-Programme und C-Bibliotheken; wer nur sie braucht, braucht kein .NET. Der Bau von fire selbst braucht nur einen
 C-Compiler. `fire`, `fire.Compiler`, `fire.Native` und der Kern von `fire.Testing` verlassen die Solution; .NET steckt nur noch in spark und ember.
