@@ -1,0 +1,11 @@
+// ends with an error of the runtime (here: something the spike does not support, which the runtime reports with fatal) - the process must go on
+class Res {
+    string name
+    construct(string n) { this.name = n; print("open " + n) }
+    destruct() { print("close " + this.name) }
+}
+var keep = new Res("kept")
+print("before")
+var a = [1, 2, 3]
+print("not reached")
+//# vm-spike: fails

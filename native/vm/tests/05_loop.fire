@@ -1,0 +1,6 @@
+// a counting loop (speed)
+var sum = 0
+for (var i = 0; i < 3000000; i = i + 1) {
+    sum = sum + i % 7
+}
+print(sum)
