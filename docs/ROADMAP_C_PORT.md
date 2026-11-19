@@ -299,9 +299,27 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    .NET). Windows (MinGW) übersetzt, nicht gelaufen. Tests: `FIRE_TESTS_ONLY=packer`.
 9. **spark auf die C-VM** (L4): Ausführen als Kindprozess, Debuggen über `NativeDebugTarget`, `LiveSession` und `UiPreview` über Kindprozess und
    gemeinsamen Speicher, Treiber-Agent und Geräte.
+   **Zum größten Teil umgesetzt** ([VM_C.md](spec/VM_C.md#spark-auf-der-c-vm-schritt-9)): F5/F10/F11/Ctrl+F5 mit der Engine `vm` übersetzen über
+   `forge bytecode ... --report json` (mit den Overlays; der Bericht nennt die `.fbc`, die Bibliotheken der Pakete und das `fire` der Breiten) und starten
+   `fire run x.fbc` als Kindprozess - Ausgabe ins Output-Panel (zeilenweise: `FIRE_STDOUT_LINES`), Eingabe über die Pipe, Exitcode, Stop; Debug über
+   `NativeDebugTarget` (TCP, `"engine": "vm"`), dieselben Panels wie nativ. `FIRE_SPARK_VM=dotnet` behält die C#-VM in spark bis M1. `LiveSession`
+   (Schaltplan-Editor) läuft in `fire`: Bilder, Zeiger und Ereignisse über eine Datei, die beide abbilden (`FIRE_DISPLAY_SHM`, der Host-Display der
+   Bibliothek von graphics/windows), Nachrichten über stdout (`FIRE_PRINT_RECORDS`), Befehle über stdin (`__HostCommand`); scheitert ein Programm in `fire`
+   vor seinem ersten Bild, läuft es in der C#-VM weiter. Behoben in der VM: der Hauptthread wartete am Einstieg mit der GIL (Scopes am Einstieg hingen).
+   Tests: `FIRE_TESTS_ONLY=cvmrun`, die Live-Sitzung in `circuiteditor`; unter Xvfb mit spark: Konsolen- und Fensterprogramm, Haltepunkt, Schaltplan.
+   **Offen**: der Schaltplan-Editor selbst läuft wegen eines Fehlers der C-VM noch über den Rückfall (`DestroyedException` in `UI.CircuitView.DrawBackground`);
+   `UiPreview` und die Vorschau der Blöcke laufen noch im Prozess (Plan in VM_C.md); der Treiber-Agent bleibt in der C#-VM (fire-Plugins, das geteilte Gerät);
+   `FIRE_DISPLAY_SHM` und `__HostCommand` unter Windows; "Build virtual" und `check` (MCP) übersetzen noch in spark (M2).
 
 **M1:** forge (noch C#) und spark benutzen nur noch die C-VM. `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget`
 werden entfernt.
+**Stand** (19.11.2026): Ausführen und Debuggen in spark und `forge build --engine vm` gehen über die C-VM. Was das Entfernen noch aufhält:
+(1) die Fälle des Korpus, die die C-VM noch nicht richtig macht (rund 55 von 1128, dazu der Fehler im Schaltplan-Editor) - solange gibt es den Rückfall der
+Live-Sitzung und `FIRE_SPARK_VM=dotnet`; (2) fire-Plugins in der C-VM (Treiber-Agent, `Library.Load` von `.fireplugin`); (3) das geteilte Gerät zwischen
+spark und einem Programm (`fire_host.dev_*`, `DeviceManager`) - ein Protokoll oder bis Phase F ohne; (4) `UiPreview`/Blockvorschau in `fire`;
+(5) `forge run`, `forge test` und die Tests (`fire.Testing`: RuntimeSession, VmDebugTarget, die C#-VM als Vergleich) hängen an `fire.Runtime`;
+(6) `forge build --engine vm` mit `FIRE_VM_ENGINE=dotnet`, der .NET-Packer; (7) Windows: `fire` ungeprüft gelaufen, `FIRE_DISPLAY_SHM`, `__HostCommand`,
+`Environment.Args`.
 
 Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt die `Value` der VM direkt, keine Kopien, Objekte dürfen hinüber).
 
