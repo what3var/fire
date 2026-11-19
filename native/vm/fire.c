@@ -33,9 +33,9 @@ void fbOutOfMemory(void) { outOfMemory(); }
 #include "vm_core.c"
 #include "vm_pkg.c"
 #include "vm_natives.c"
+#include "vm_run.c"
 #include "vm_reflect.c"
 #include "vm_json.c"
-#include "vm_run.c"
 
 void fire_vmExit(int code) {
     Vm* vm = g_vmCur;
@@ -127,6 +127,7 @@ static int vmRunFile(const char* path, bool stats) {
     g_globalOwn = NULL;
     vmUnregisterClasses(vm);
     vmNativesUnbind();
+    vmJsonEnd();
     while (vm->freeScopes) { VmScope* s = vm->freeScopes; vm->freeScopes = s->nextFree; free(s->slots); free(s); }
     result = vm->terminated ? vm->exitCode : vm->failed ? 1 : 0;
     free(vm->stack);

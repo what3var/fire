@@ -90,7 +90,13 @@ static const char** rdOptStrList(VmReader* r, uint32_t* count) {
     if (count) *count = n;
     return l;
 }
-static void rdAttributes(VmReader* r) { uint32_t n = rdCount(r); while (n--) { rdName(r); rdStrList(r, NULL); rdName(r); } }
+static VmAttr* rdAttributes(VmReader* r, uint32_t* count) {
+    uint32_t n = rdCount(r), i;
+    VmAttr* a = (VmAttr*)vmAlloc(&r->p->arena, (n + 1) * sizeof(VmAttr));
+    for (i = 0; i < n; i++) { a[i].name = rdName(r); a[i].texts = rdStrList(r, &a[i].ntexts); a[i].json = rdName(r); }
+    *count = n;
+    return a;
+}
 
 /* ---- interning: every name of the program once, so that a name compares by its pointer ---- */
 static const char* vmIntern(VmProgram* p, const char* s, size_t n) { return fbIntern(&p->interns, s, n); }
@@ -199,7 +205,7 @@ static VmProto* rdProto(VmReader* r) {
     f->isStatic = (uint8_t)(flags & 1);
     f->readsOnly = (uint8_t)((flags >> 1) & 1);
     f->refMask = rdUInt(r); f->captureCopyMask = rdUInt(r); f->captureMovedMask = rdUInt(r);
-    rdOptStrList(r, NULL);                      /* selectorPath (reflection) */
+    f->selectorPath = rdOptStrList(r, &f->nselectorPath);   /* (reflection: a lambda that is a member chain on its parameter) */
     f->paramTypes = rdOptStrList(r, &f->nparamTypes);
     f->fieldGetterOf = rdStr(r);
     f->paramNames = rdOptStrList(r, &f->nparamNames);
@@ -309,10 +315,21 @@ static VmClass* rdClass(VmReader* r) {
     c->name = rdName(r);
     c->baseRef = rdCount(r);
     c->flags = (uint8_t)rdU8(r);
-    if (rdU8(r)) {   /* meta (reflection, phase B step 5): parsed */
+    if (rdU8(r)) {   /* meta (ClassMeta: what reflection describes) */
+        VmMeta* m = (VmMeta*)vmAlloc(a, sizeof(VmMeta));
         n = rdCount(r);
-        while (n--) { rdName(r); rdName(r); rdName(r); rdName(r); rdU8(r); rdName(r); rdStrList(r, NULL); rdStrList(r, NULL); rdAttributes(r); }
-        rdStrList(r, NULL); rdAttributes(r); rdStrList(r, NULL);
+        m->nmembers = n;
+        m->members = (VmMember*)vmAlloc(a, (n + 1) * sizeof(VmMember));
+        for (i = 0; i < n; i++) {
+            VmMember* e = &m->members[i];
+            e->name = rdName(r); e->kind = rdName(r); e->type = rdName(r); e->access = rdName(r); e->flags = (uint8_t)rdU8(r); e->unit = rdName(r);
+            e->pnames = rdStrList(r, &e->npnames); e->ptypes = rdStrList(r, &e->nptypes);
+            e->attrs = rdAttributes(r, &e->nattrs);
+        }
+        m->baseNames = rdStrList(r, &m->nbaseNames);
+        m->attrs = rdAttributes(r, &m->nattrs);
+        m->declIfaces = rdStrList(r, &m->ndeclIfaces);
+        c->meta = m;
     }
     c->interfaces = rdStrList(r, &c->ninterfaces);
     c->baseTypeArgs = rdOptStrList(r, &c->nbaseTypeArgs);
@@ -329,7 +346,7 @@ static VmClass* rdClass(VmReader* r) {
         fi->name = rdName(r); fi->requiredUnit = rdStr(r); fi->unitId = 0xFFFFFFFFu; fi->requiredKind = (uint8_t)rdU8(r); fi->requiredType = rdStr(r);
         fi->requiredArray = (uint32_t)rdUInt(r); fi->requiredArrayType = rdStr(r); fi->arrayOfParam = rdStr(r);
         fi->flags = (uint8_t)rdU8(r); fi->access = (uint8_t)rdU8(r); fi->typeText = rdName(r);
-        if (rdU8(r)) rdAttributes(r);
+        if (rdU8(r)) fi->attrs = rdAttributes(r, &fi->nattrs);
     }
     {
         uint32_t nv = rdCount(r), nf;

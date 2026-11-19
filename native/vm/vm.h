@@ -70,9 +70,30 @@ struct VmProto {
     uint32_t nspecParamKinds;
     VmClass* owner;            /* the class whose member it is (NULL: a lambda or the top level) */
     VmClass* declaring;        /* the class that declares it (for a method: owner) */
+    const char** selectorPath; /* a lambda `c => c.radius`: the member chain (reflection; NULL: none) */
+    uint32_t nselectorPath;
 };
 
 typedef struct VmField { const char* name; VmProto* init; } VmField;
+/* An attribute (`[JsonName("x")]`, AttributeMeta): its name, the texts of its arguments, their values as JSON (a value the compiler did not know: undefined). */
+typedef struct VmAttr { const char* name; const char** texts; uint32_t ntexts; const char* json; } VmAttr;
+/* A member as reflection describes it (MemberMeta): name, kind ("field", "property", "method", "constructor"), type, access, flags (1 static, 2 readonly, 4 can
+ * read, 8 can write), unit, parameter names and types, attributes. */
+typedef struct VmMember {
+    const char* name; const char* kind; const char* type; const char* access;
+    uint8_t flags;
+    const char* unit;
+    const char** pnames; uint32_t npnames;
+    const char** ptypes; uint32_t nptypes;
+    VmAttr* attrs; uint32_t nattrs;
+} VmMember;
+/* What the compiler wrote for reflection about a class (ClassMeta; NULL: nothing - a class the program does not reflect). */
+typedef struct VmMeta {
+    VmMember* members; uint32_t nmembers;
+    const char** baseNames; uint32_t nbaseNames;
+    VmAttr* attrs; uint32_t nattrs;
+    const char** declIfaces; uint32_t ndeclIfaces;
+} VmMeta;
 /* FieldInfo: what a field declares (its unit, kind, class, typed array, access) */
 typedef struct VmFieldInfo {
     const char* name;
@@ -86,6 +107,8 @@ typedef struct VmFieldInfo {
     uint8_t flags;             /* 1 derivedDefined, 2 static */
     uint8_t access;            /* 0 public, 1 private, 2 protected */
     const char* typeText;
+    VmAttr* attrs;             /* its attributes (NULL: none) */
+    uint32_t nattrs;
 } VmFieldInfo;
 typedef struct VmMethod { const char* name; VmProto** ov; uint32_t nov; } VmMethod;
 typedef struct VmCtor { int32_t arity; VmProto* p; } VmCtor;
@@ -129,6 +152,7 @@ struct VmClass {
     bool isException;       /* Exception or derived from it */
     bool hasDtor;           /* it or a base has a destructor */
     bool layoutDone;
+    VmMeta* meta;           /* reflection (NULL: none) */
 };
 
 typedef struct VmUnitDecl { const char* converter; const char* ulconverter; } VmUnitDecl;
