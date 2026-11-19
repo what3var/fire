@@ -302,7 +302,16 @@ static FcParser* ForSource(FcCtx* c, FcTokens tokens, FcProcessed* src, int sour
     p->usingNamespaces = src->usings;
     p->sourceIndex = sourceIndex;
     p->fileName = src->name;
-    /* (ProcessedSource.Qualify: none for the dumps; Parser.SourceImportNamespaces is for the resolver) */
+    if (src->qualify != NULL) {
+        const char* ns;
+        p->currentNamespace = p->implicitNamespace = src->qualify;
+        for (ns = src->qualify; ns && ns[0]; ns = strchr(ns, '.') ? fcStrN(c, ns, (size_t)(strrchr(ns, '.') - ns)) : NULL)
+            fbMapPut(&c->declaredNamespaces, ns, (void*)1);
+    }
+    /* Parser.SourceImportNamespaces (for the resolver) */
+    if (!c->sourceImportNamespaces) c->sourceImportNamespaces = fcListNew(c);
+    while (c->sourceImportNamespaces->count <= sourceIndex) fcListAdd(c, c->sourceImportNamespaces, NULL);
+    c->sourceImportNamespaces->items[sourceIndex] = src->importNamespaces && src->importNamespaces->count > 0 ? src->importNamespaces : NULL;
     return p;
 }
 
@@ -862,6 +871,7 @@ FcList* fcParseMultiple(FcCtx* c, FcProcessed** sources, int count) {
     m.unitDecls = fcListNew(c);
     m.combined = fcListNew(c);
     fbMapFree(&c->declaredNamespaces);
+    c->sourceImportNamespaces = NULL;
     for (i = 0; i < count; i++) fcMultiLex(c, &m, i);
     DefineUnits(c, m.unitDecls);
     for (i = 0; i < count; i++) fcMultiParse(c, &m, i);

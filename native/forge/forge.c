@@ -27,6 +27,10 @@
 #include "ast.h"
 #include "ast.c"
 #include "parser.c"
+#include "dict.c"
+#include "typeref.c"
+#include "resolver.c"
+#include "typechecker.c"
 
 void fbOutOfMemory(void) {
     fputs("forge-c: out of memory\n", stderr);
@@ -39,6 +43,9 @@ static const char* fcBaseName(const char* path) {
     for (p = path; *p; p++) if (*p == '/' || *p == '\\') last = p + 1;
     return last;
 }
+static int fcCmpOrdinal(const void* a, const void* b) { return strcmp(*(const char* const*)a, *(const char* const*)b); }
+
+#include "linker.c"
 
 /* FrontendDump.Token */
 static void fcDumpToken(FcBuf* o, const FcToken* t) {
@@ -66,7 +73,32 @@ static void fcDumpToken(FcBuf* o, const FcToken* t) {
     fcBufChar(o, '\n');
 }
 
-typedef struct FcDumpJob { const char* command; const char* path; FcBuf* out; } FcDumpJob;
+typedef struct FcDumpJob { const char* command; const char* path; FcBuf* out; const char* prelude; const char* store; } FcDumpJob;
+
+/* `//# types: strict` among the last 12 lines of the file (as tests/run-cases.sh runs it) */
+static bool fcStrictTag(const char* path) {
+    size_t len = 0;
+    uint8_t* text = fbReadFile(path, &len);
+    int lines = 0;
+    size_t i, end;
+    bool strict = false;
+    if (!text) return false;
+    end = len;
+    if (end > 0 && text[end - 1] == '\n') end--;
+    for (i = end; ; ) {
+        size_t start = i;
+        size_t a, b;
+        while (start > 0 && text[start - 1] != '\n') start--;
+        a = start; b = i;
+        while (a < b && (text[a] == ' ' || text[a] == '\t' || text[a] == '\r')) a++;
+        while (b > a && (text[b - 1] == ' ' || text[b - 1] == '\t' || text[b - 1] == '\r')) b--;
+        if (b - a == 17 && memcmp(text + a, "//# types: strict", 17) == 0) strict = true;
+        if (++lines >= 12 || start == 0) break;
+        i = start - 1;
+    }
+    free(text);
+    return strict;
+}
 
 static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
     FcU16 text = {0};
@@ -79,6 +111,13 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
     source = (const uint16_t*)fcAlloc(c, sizeof(uint16_t) * (size_t)(n + 1));
     if (n) memcpy((void*)source, text.p, sizeof(uint16_t) * (size_t)n);
     fcU16Free(&text);
+    if (strcmp(job->command, "diagnostics") == 0) {
+        fcU16Free(&text);
+        c->collecting = true;
+        fcCompileFrontend(c, job->path, job->prelude, job->store, fcStrictTag(job->path));
+        for (i = 0; i < c->diags->count; i++) fcDiagLogLine(job->out, (const FcDiagnostic*)c->diags->items[i]);
+        return;
+    }
     fcSymbolsForHost(c, c->symbols);
     full = (char*)fcFullPath(c, ".", job->path);
     processed = fcPreprocess(c, source, n, fcDirectoryName(c, full));
@@ -104,20 +143,21 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
 }
 
 /* one file: what FrontendDump.Dump writes (on an exception of the frontend only the diagnostics after what was written before) */
-static int fcDump(const char* command, const char* path, FILE* out) {
+static int fcDump(const char* command, const char* path, FILE* out, const char* prelude, const char* store) {
     FcCtx ctx;
     FcBuf o = {0};
     FcDumpJob job;
     volatile int result = 0;
     fcCtxInit(&ctx);
     fcBufStr(&o, "");
-    job.command = command; job.path = path; job.out = &o;
+    job.command = command; job.path = path; job.out = &o; job.prelude = prelude; job.store = store;
     FC_TRY(&ctx) {
         fcDumpRun(&ctx, &job);
     } FC_CATCH(&ctx) {
         FcList* diags = fcDiagnosticsOf(&ctx, &ctx.err, NULL);
         int i;
         if (strcmp(command, "ast") == 0) o.len = 0, o.p[0] = 0;   /* (the tree is written only when the parse is done) */
+        if (strcmp(command, "diagnostics") == 0) { o.len = 0; o.p[0] = 0; for (i = 0; i < ctx.diags->count; i++) fcDiagLogLine(&o, (const FcDiagnostic*)ctx.diags->items[i]); }
         for (i = 0; i < diags->count; i++) fcDiagLogLine(&o, (const FcDiagnostic*)diags->items[i]);
         result = 1;
     } FC_END_TRY;
@@ -127,9 +167,36 @@ static int fcDump(const char* command, const char* path, FILE* out) {
     return result;
 }
 
+/* where the prelude (native/tables/prelude.fire) and the installed packages are: FIRE_TABLES / FIRE_PACKAGES, else next to the program
+ * (<dir>/../tables, <dir>/Packages), else native/tables of the working directory */
+static const char* fcFindPrelude(const char* exe, char* buf, size_t n) {
+    const char* env = getenv("FIRE_TABLES");
+    const char* slash = strrchr(exe, '/');
+    FILE* f;
+    if (env) { snprintf(buf, n, "%s/prelude.fire", env); return buf; }
+    if (slash) {
+        snprintf(buf, n, "%.*s/../tables/prelude.fire", (int)(slash - exe), exe);
+        if ((f = fopen(buf, "rb")) != NULL) { fclose(f); return buf; }
+    }
+    snprintf(buf, n, "native/tables/prelude.fire");
+    return buf;
+}
+static const char* fcFindStore(const char* exe, char* buf, size_t n) {
+    const char* env = getenv("FIRE_PACKAGES");
+    const char* slash = strrchr(exe, '/');
+    if (env) { snprintf(buf, n, "%s", env); return buf; }
+    if (slash) snprintf(buf, n, "%.*s/Packages", (int)(slash - exe), exe); else snprintf(buf, n, "Packages");
+    return buf;
+}
+
+static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0; }
+
 int main(int argc, char** argv) {
-    if (argc == 3 && (strcmp(argv[1], "tokens") == 0 || strcmp(argv[1], "ast") == 0)) return fcDump(argv[1], argv[2], stdout);
-    if (argc == 6 && (strcmp(argv[1], "tokens") == 0 || strcmp(argv[1], "ast") == 0) && strcmp(argv[2], "--list") == 0 && strcmp(argv[4], "--out") == 0) {
+    char preludeBuf[4096], storeBuf[4096];
+    const char* prelude = fcFindPrelude(argv[0], preludeBuf, sizeof preludeBuf);
+    const char* store = fcFindStore(argv[0], storeBuf, sizeof storeBuf);
+    if (argc == 3 && fcIsCommand(argv[1])) return fcDump(argv[1], argv[2], stdout, prelude, store);
+    if (argc == 6 && fcIsCommand(argv[1]) && strcmp(argv[2], "--list") == 0 && strcmp(argv[4], "--out") == 0) {
         size_t len = 0;
         uint8_t* list = fbReadFile(argv[3], &len);
         char* p;
@@ -152,7 +219,7 @@ int main(int argc, char** argv) {
             if (*p) {
                 snprintf(outPath, sizeof outPath, "%s/%d.txt", argv[5], n);
                 f = fopen(outPath, "wb");
-                if (f) { fcDump(argv[1], p, f); fclose(f); }
+                if (f) { fcDump(argv[1], p, f, prelude, store); fclose(f); }
             }
             if (!e) break;
             p = e + 1;
@@ -160,6 +227,6 @@ int main(int argc, char** argv) {
         free(list);
         return 0;
     }
-    fprintf(stderr, "usage: forge-c tokens|ast <file.fire> | forge-c tokens|ast --list <files.txt> --out <folder>\n");
+    fprintf(stderr, "usage: forge-c tokens|ast|diagnostics <file.fire> | forge-c tokens|ast|diagnostics --list <files.txt> --out <folder>\n");
     return 2;
 }

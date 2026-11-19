@@ -8,6 +8,10 @@ typedef struct FcProcessed {
     FcList* usings;           /* fc8 */
     FcList* importNamespaces; /* fc8 */
     const char* name;
+    /* set by the linker (Phase C 3): ProcessedSource.NotSerializable, Module, Qualify */
+    bool notSerializable;
+    const char* module;
+    const char* qualify;
 } FcProcessed;
 
 typedef struct FcPreprocessor {
@@ -292,6 +296,7 @@ static void fcProcessInner(FcPreprocessor* pp, const uint16_t* source, int lengt
                 FcList* args = fcParseDirectiveArgs(c, argument, def->name, def->paramCount, lineNo + 1);
                 int before = out->len;
                 if (strcmp(def->name, "include") == 0) fcIncludeHandler(pp, basePath, args, lineNo + 1, out);
+                else if (c->directiveHook) c->directiveHook(c, c->directiveState, def->name, args, lineNo + 1, pp->importNamespaces);
                 if (out->len > before) { if (!fcU16EndsWithNewline(out, before)) fcU16Unit(out, '\n'); }
                 else fcU16Unit(out, '\n');
             }
@@ -316,7 +321,7 @@ FcProcessed* fcPreprocess(FcCtx* c, const uint16_t* source, int length, const ch
     pp.includeChain = fcListNew(c);
     pp.usings = fcListNew(c);
     pp.importNamespaces = fcListNew(c);
-    pp.alreadyIncluded = fcListNew(c);
+    pp.alreadyIncluded = c->sharedIncluded ? c->sharedIncluded : fcListNew(c);
     fcU16Put(&out, NULL, 0);
     fcProcessInner(&pp, source, length, basePath, &out);
     copy = (uint16_t*)fcAlloc(c, sizeof(uint16_t) * (size_t)(out.len + 1));

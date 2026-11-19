@@ -30,11 +30,14 @@ void fcU16Unit(FcU16* b, uint16_t c);
 void fcU16Free(FcU16* b);
 
 /* ---- lists (in the arena of the context): NULL is C#'s null, an empty list is a list ---- */
-typedef struct FcList { void** items; int count, cap; bool own; } FcList;   /* own: an OwnNamespaceList (TypeRef.Namespaces) */
+struct FcList { void** items; int count, cap; bool own; };   /* own: an OwnNamespaceList (TypeRef.Namespaces) */
 
 /* ---- exceptions: the C# throw/catch/finally, on the context ---- */
-typedef enum FcErrKind { FC_ERR_NONE, FC_ERR_LEX, FC_ERR_PRE, FC_ERR_PARSE, FC_ERR_INTERNAL } FcErrKind;
-typedef struct FcError { FcErrKind kind; const char* message; int line, column; const char* file; } FcError;
+/* FC_ERR_RESOLVE: a ResolverException (one: message, line, source; the combined one of Resolver.Resolve: `list` of FcError*); FC_ERR_TYPECHECK: a
+ * TypeCheckException (`list` of FcDiagnostic*); FC_ERR_LINKER: an exception of the linker (CompileDiagnostics.Of: its message, area Linker) */
+typedef enum FcErrKind { FC_ERR_NONE, FC_ERR_LEX, FC_ERR_PRE, FC_ERR_PARSE, FC_ERR_INTERNAL, FC_ERR_RESOLVE, FC_ERR_TYPECHECK, FC_ERR_LINKER } FcErrKind;
+typedef struct FcList FcList;
+typedef struct FcError { FcErrKind kind; const char* message; int line, column; const char* file; int source; FcList* list; } FcError;
 typedef struct FcTry { jmp_buf jb; struct FcTry* prev; } FcTry;
 
 /* ---- diagnostics (Diagnostics.cs) ---- */
@@ -47,7 +50,8 @@ typedef struct FcCatalogEntry { const char* code; FcArea area; int literalLength
 
 typedef struct FcCustomUnit FcCustomUnit;
 
-typedef struct FcCtx {
+typedef struct FcCtx FcCtx;
+struct FcCtx {
     FbArena arena;
     FcTry* tryTop;
     FcError err;
@@ -67,7 +71,14 @@ typedef struct FcCtx {
     FbMap declaredNamespaces;
     FbMap unitWords;       /* Parser.DefineUnits: the symbols and names of the declared units */
     bool hasDeclaredNamespaces;
-} FcCtx;
+    /* Parser.SourceImportNamespaces: by the index of a source, its import namespaces (NULL: none) */
+    FcList* sourceImportNamespaces;
+    /* the qualifier of each source (ProcessedSource.Qualify), set by the linker before ParseMultiple; NULL: none */
+    /* the linker (Phase C 3): the set of included files shared by all sources of a program (NULL: one per source), the effects of its directives */
+    FcList* sharedIncluded;
+    void (*directiveHook)(struct FcCtx* c, void* state, const char* name, FcList* args, int line, FcList* importNamespaces);
+    void* directiveState;
+};
 
 void fcCtxInit(FcCtx* c);
 void fcCtxFree(FcCtx* c);

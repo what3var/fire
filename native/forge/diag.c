@@ -166,6 +166,29 @@ FcList* fcDiagnosticsOf(FcCtx* c, const FcError* e, const char* file) {
             fcListAdd(c, r, fcDiagNew(c, line, e->message, FC_SEV_ERROR, fcCodeOf(c, FC_AREA_PREPROCESSOR, e->message), file, 0));
             break;
         }
+        case FC_ERR_RESOLVE: {
+            /* ResolverException: every error it carries (one thrown on its own: itself) */
+            int i;
+            if (e->list) for (i = 0; i < e->list->count; i++) {
+                const FcError* x = (const FcError*)e->list->items[i];
+                fcListAdd(c, r, fcDiagNew(c, x->line, x->message, FC_SEV_ERROR, fcCodeOf(c, FC_AREA_RESOLVER, x->message), file, 0));
+            }
+            else fcListAdd(c, r, fcDiagNew(c, e->line, e->message, FC_SEV_ERROR, fcCodeOf(c, FC_AREA_RESOLVER, e->message), file, 0));
+            break;
+        }
+        case FC_ERR_TYPECHECK: {
+            int i;
+            for (i = 0; i < e->list->count; i++) {
+                FcDiagnostic* d = (FcDiagnostic*)fcAlloc(c, sizeof *d);
+                *d = *(const FcDiagnostic*)e->list->items[i];
+                if (!d->file) d->file = file;
+                fcListAdd(c, r, d);
+            }
+            break;
+        }
+        case FC_ERR_LINKER:
+            fcListAdd(c, r, fcDiagNew(c, 1, e->message, FC_SEV_ERROR, fcCodeOf(c, FC_AREA_LINKER, e->message), file, 0));
+            break;
         default:
             fcListAdd(c, r, fcDiagNew(c, 1, fcFmt(c, "internal: %s", e->message ? e->message : "?"), FC_SEV_ERROR, "E9999", file, 0));
             break;
