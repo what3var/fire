@@ -302,7 +302,16 @@ static FcParser* ForSource(FcCtx* c, FcTokens tokens, FcProcessed* src, int sour
     p->usingNamespaces = src->usings;
     p->sourceIndex = sourceIndex;
     p->fileName = src->name;
-    /* (ProcessedSource.Qualify: none for the dumps; Parser.SourceImportNamespaces is for the resolver) */
+    if (src->qualify != NULL) {
+        const char* ns;
+        p->currentNamespace = p->implicitNamespace = src->qualify;
+        for (ns = src->qualify; ns && ns[0]; ns = strchr(ns, '.') ? fcStrN(c, ns, (size_t)(strrchr(ns, '.') - ns)) : NULL)
+            fbMapPut(&c->declaredNamespaces, ns, (void*)1);
+    }
+    /* Parser.SourceImportNamespaces (for the resolver) */
+    if (!c->sourceImportNamespaces) c->sourceImportNamespaces = fcListNew(c);
+    while (c->sourceImportNamespaces->count <= sourceIndex) fcListAdd(c, c->sourceImportNamespaces, NULL);
+    c->sourceImportNamespaces->items[sourceIndex] = src->importNamespaces && src->importNamespaces->count > 0 ? src->importNamespaces : NULL;
     return p;
 }
 
@@ -862,6 +871,7 @@ FcList* fcParseMultiple(FcCtx* c, FcProcessed** sources, int count) {
     m.unitDecls = fcListNew(c);
     m.combined = fcListNew(c);
     fbMapFree(&c->declaredNamespaces);
+    c->sourceImportNamespaces = NULL;
     for (i = 0; i < count; i++) fcMultiLex(c, &m, i);
     DefineUnits(c, m.unitDecls);
     for (i = 0; i < count; i++) fcMultiParse(c, &m, i);
@@ -3856,8 +3866,8 @@ static FcValue LiteralValue(FcParser* p, FcToken* tok) {
     FcValue v;
     memset(&v, 0, sizeof v);
     switch (tok->type) {
-        case TT_IntLiteral: v.kind = VK_Int; v.i = tok->intValue; v.unit = fcLiteralUnitText(p->ctx, tok->unitSuffix); break;
-        case TT_FloatLiteral: v.kind = VK_Float; v.f = tok->floatValue; v.unit = fcLiteralUnitText(p->ctx, tok->unitSuffix); break;
+        case TT_IntLiteral: v.kind = VK_Int; v.i = tok->intValue; v.unit = fcLiteralUnitText(p->ctx, tok->unitSuffix); v.unitv = fcUParse(p->ctx, tok->unitSuffix); break;
+        case TT_FloatLiteral: v.kind = VK_Float; v.f = tok->floatValue; v.unit = fcLiteralUnitText(p->ctx, tok->unitSuffix); v.unitv = fcUParse(p->ctx, tok->unitSuffix); break;
         case TT_StringLiteral: v.kind = VK_String; v.s = tok->stringValue; break;
         case TT_CharLiteral: v.kind = VK_Char; v.s = tok->stringValue; break;
         case TT_True: v.kind = VK_Bool; v.b = true; break;

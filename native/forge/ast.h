@@ -21,7 +21,7 @@ typedef enum FcGlobalJobsMode { GJM_Sync, GJM_Safepoints, GJM_Sleep } FcGlobalJo
 
 /* ---- values (a LiteralExpr's Value) ---- */
 typedef enum FcValueKind { VK_Bool, VK_Int, VK_Float, VK_Char, VK_String, VK_Undefined } FcValueKind;
-typedef struct FcValue { FcValueKind kind; int64_t i; double f; bool b; const char* s; const char* unit; } FcValue;   /* unit: its text, NULL: unitless */
+typedef struct FcValue { FcValueKind kind; int64_t i; double f; bool b; const char* s; const char* unit; const struct FcU* unitv; } FcValue;   /* unit: its text, NULL: unitless; unitv: Unit.Parse of the suffix (the type checker) */
 
 /* ---- TypeRef, LambdaSignature ---- */
 typedef struct FcLambdaSignature { const char* returnTypeName; FcList* paramTypeNames; bool isSelector; const char* selectorKind; bool isExpression; } FcLambdaSignature;

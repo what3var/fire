@@ -1,0 +1,441 @@
+/* native/forge/linker.c - what the frontend needs of the linker (commit c7f13d97): Linker.CompileAndLink up to the type check
+ * (src/fire.Compiler/Linker.cs: the prelude, the directives of a build with their effects, `#import` with its preludes and natives),
+ * ImportedPreludes.cs (ParseImportName, WithDependencies, Insert), PackageImports.cs (RegisterNames, NativeReturnTypes), ProjectLibraries.cs
+ * (ImportKeys, PackageNamespaceOf) and the store of the installed packages (src/fire.Package.Manager/PackageStore.cs: the manifests `package.json`
+ * of `<store>/<package>/`, read with a small JSON reader). Not ported: projects (BuildPlan), project libraries, the native build's settings. */
+
+/* ---- a small JSON reader (the manifests) ---- */
+typedef enum FcJsonKind { FJ_NULL, FJ_BOOL, FJ_NUM, FJ_STR, FJ_ARR, FJ_OBJ } FcJsonKind;
+typedef struct FcJson { FcJsonKind kind; bool b; double n; const char* s; FcList* items; FcList* keys; } FcJson;
+typedef struct FcJsonReader { FcCtx* c; const char* p; bool bad; } FcJsonReader;
+
+static void fcJsonWs(FcJsonReader* j) { while (*j->p == ' ' || *j->p == '\t' || *j->p == '\n' || *j->p == '\r') j->p++; }
+static FcJson* fcJsonValue(FcJsonReader* j);
+static const char* fcJsonString(FcJsonReader* j) {
+    FcBuf b = {0};
+    if (*j->p != '"') { j->bad = true; return ""; }
+    j->p++;
+    fcBufStr(&b, "");
+    while (*j->p && *j->p != '"') {
+        if (*j->p == '\\') {
+            j->p++;
+            switch (*j->p) {
+                case 'n': fcBufChar(&b, '\n'); break;
+                case 't': fcBufChar(&b, '\t'); break;
+                case 'r': fcBufChar(&b, '\r'); break;
+                case 'b': fcBufChar(&b, '\b'); break;
+                case 'f': fcBufChar(&b, '\f'); break;
+                case 'u': {
+                    unsigned v = 0;
+                    int k;
+                    for (k = 0; k < 4 && j->p[1]; k++) { char h = *++j->p; v = v * 16 + (unsigned)(h >= 'a' ? h - 'a' + 10 : h >= 'A' ? h - 'A' + 10 : h - '0'); }
+                    fcBufUnit(&b, (uint16_t)v);
+                    break;
+                }
+                default: fcBufChar(&b, *j->p); break;
+            }
+            if (*j->p) j->p++;
+        } else {
+            /* UTF-8 as fc8: each UTF-16 unit */
+            const unsigned char* q = (const unsigned char*)j->p;
+            uint32_t cp;
+            int n = 1;
+            if (*q < 0x80) cp = *q;
+            else if ((*q & 0xE0) == 0xC0) { cp = *q & 0x1F; n = 2; }
+            else if ((*q & 0xF0) == 0xE0) { cp = *q & 0x0F; n = 3; }
+            else { cp = *q & 0x07; n = 4; }
+            { int k; for (k = 1; k < n && q[k]; k++) cp = (cp << 6) | (q[k] & 0x3F); }
+            if (cp >= 0x10000) { cp -= 0x10000; fcBufUnit(&b, (uint16_t)(0xD800 + (cp >> 10))); fcBufUnit(&b, (uint16_t)(0xDC00 + (cp & 0x3FF))); }
+            else fcBufUnit(&b, (uint16_t)cp);
+            j->p += n;
+        }
+    }
+    if (*j->p == '"') j->p++; else j->bad = true;
+    return fcBufDone(j->c, &b);
+}
+static FcJson* fcJsonValue(FcJsonReader* j) {
+    FcJson* v = (FcJson*)fcAlloc(j->c, sizeof *v);
+    fcJsonWs(j);
+    if (*j->p == '{') {
+        v->kind = FJ_OBJ; v->keys = fcListNew(j->c); v->items = fcListNew(j->c);
+        j->p++;
+        fcJsonWs(j);
+        if (*j->p == '}') { j->p++; return v; }
+        while (!j->bad) {
+            const char* key;
+            fcJsonWs(j);
+            key = fcJsonString(j);
+            fcJsonWs(j);
+            if (*j->p != ':') { j->bad = true; break; }
+            j->p++;
+            fcListAdd(j->c, v->keys, (void*)key);
+            fcListAdd(j->c, v->items, fcJsonValue(j));
+            fcJsonWs(j);
+            if (*j->p == ',') { j->p++; continue; }
+            if (*j->p == '}') { j->p++; break; }
+            j->bad = true;
+        }
+    } else if (*j->p == '[') {
+        v->kind = FJ_ARR; v->items = fcListNew(j->c);
+        j->p++;
+        fcJsonWs(j);
+        if (*j->p == ']') { j->p++; return v; }
+        while (!j->bad) {
+            fcListAdd(j->c, v->items, fcJsonValue(j));
+            fcJsonWs(j);
+            if (*j->p == ',') { j->p++; continue; }
+            if (*j->p == ']') { j->p++; break; }
+            j->bad = true;
+        }
+    } else if (*j->p == '"') { v->kind = FJ_STR; v->s = fcJsonString(j); }
+    else if (strncmp(j->p, "true", 4) == 0) { v->kind = FJ_BOOL; v->b = true; j->p += 4; }
+    else if (strncmp(j->p, "false", 5) == 0) { v->kind = FJ_BOOL; j->p += 5; }
+    else if (strncmp(j->p, "null", 4) == 0) { v->kind = FJ_NULL; j->p += 4; }
+    else { char* end; v->kind = FJ_NUM; v->n = strtod(j->p, &end); if (end == j->p) j->bad = true; j->p = end; }
+    return v;
+}
+static FcJson* fcJsonGet(const FcJson* o, const char* key) {
+    int i;
+    if (!o || o->kind != FJ_OBJ) return NULL;
+    for (i = 0; i < o->keys->count; i++) if (fcAsciiIEq((const char*)o->keys->items[i], key)) return (FcJson*)o->items->items[i];
+    return NULL;
+}
+static const char* fcJsonStr(const FcJson* o, const char* key) { FcJson* v = fcJsonGet(o, key); return v && v->kind == FJ_STR ? v->s : NULL; }
+
+/* ---- the store of the installed packages ---- */
+typedef struct FcPkgImport {
+    const char* name;
+    bool standard;
+    const char* prelude;          /* relative to the package's folder, NULL: none */
+    FcList* requires;             /* fc8 */
+    bool notSerializable;         /* "serializable": false */
+    bool hasNative;
+    FcList* functions;            /* names */
+    FcList* returns;              /* their "returns" (NULL: none), in the same order */
+    const char* dir;              /* the package's folder */
+} FcPkgImport;
+
+typedef struct FcStore { const char* root; FcList* imports; bool loaded; } FcStore;
+
+static int fcCmpIgnoreCase(const void* a, const void* b) {
+    const char* x = *(const char* const*)a;
+    const char* y = *(const char* const*)b;
+    for (;; x++, y++) {
+        int cx = (unsigned char)*x, cy = (unsigned char)*y;
+        if (cx >= 'a' && cx <= 'z') cx -= 32;
+        if (cy >= 'a' && cy <= 'z') cy -= 32;
+        if (cx != cy || !cx) return cx - cy;
+    }
+}
+
+#ifndef _WIN32
+#include <dirent.h>
+#endif
+static void fcStoreLoad(FcCtx* c, FcStore* store) {
+    FcList* dirs = fcListNew(c);
+    int i, k, f;
+    store->loaded = true;
+    store->imports = fcListNew(c);
+#ifndef _WIN32
+    {
+        DIR* d = opendir(store->root);
+        struct dirent* e;
+        if (!d) return;
+        while ((e = readdir(d)) != NULL) {
+            if (e->d_name[0] == '.') continue;
+            fcListAdd(c, dirs, (void*)fcFmt(c, "%s/%s", store->root, e->d_name));
+        }
+        closedir(d);
+    }
+#endif
+    if (dirs->count > 1) qsort(dirs->items, (size_t)dirs->count, sizeof(void*), fcCmpIgnoreCase);
+    for (i = 0; i < dirs->count; i++) {
+        const char* dir = (const char*)dirs->items[i];
+        size_t len = 0;
+        uint8_t* text = fbReadFile(fcFmt(c, "%s/package.json", dir), &len);
+        FcJsonReader j;
+        FcJson* manifest;
+        FcJson* imports;
+        if (!text) continue;
+        text = (uint8_t*)realloc(text, len + 1);
+        text[len] = 0;
+        j.c = c; j.p = (const char*)text; j.bad = false;
+        if (len >= 3 && text[0] == 0xEF && text[1] == 0xBB && text[2] == 0xBF) j.p += 3;
+        manifest = fcJsonValue(&j);
+        free(text);
+        if (j.bad || manifest->kind != FJ_OBJ) continue;
+        imports = fcJsonGet(manifest, "imports");
+        if (!imports || imports->kind != FJ_ARR) continue;
+        for (k = 0; k < imports->items->count; k++) {
+            FcJson* im = (FcJson*)imports->items->items[k];
+            FcPkgImport* pi = (FcPkgImport*)fcAlloc(c, sizeof *pi);
+            FcJson* v;
+            pi->name = fcJsonStr(im, "name");
+            if (!pi->name) continue;
+            v = fcJsonGet(im, "standard"); pi->standard = v && v->kind == FJ_BOOL && v->b;
+            pi->prelude = fcJsonStr(im, "prelude");
+            v = fcJsonGet(im, "serializable"); pi->notSerializable = v && v->kind == FJ_BOOL && !v->b;
+            pi->requires = fcListNew(c);
+            v = fcJsonGet(im, "requires");
+            if (v && v->kind == FJ_ARR) for (f = 0; f < v->items->count; f++) if (((FcJson*)v->items->items[f])->kind == FJ_STR) fcListAdd(c, pi->requires, (void*)((FcJson*)v->items->items[f])->s);
+            pi->functions = fcListNew(c);
+            pi->returns = fcListNew(c);
+            v = fcJsonGet(im, "native");
+            if (v && v->kind == FJ_OBJ) {
+                FcJson* fns = fcJsonGet(v, "functions");
+                pi->hasNative = true;
+                if (fns && fns->kind == FJ_ARR)
+                    for (f = 0; f < fns->items->count; f++) {
+                        FcJson* fn = (FcJson*)fns->items->items[f];
+                        if (!fcJsonStr(fn, "name")) continue;
+                        fcListAdd(c, pi->functions, (void*)fcJsonStr(fn, "name"));
+                        fcListAdd(c, pi->returns, (void*)fcJsonStr(fn, "returns"));
+                    }
+            }
+            pi->dir = dir;
+            fcListAdd(c, store->imports, pi);
+        }
+    }
+}
+static FcPkgImport* fcStoreFindImport(FcCtx* c, FcStore* store, const char* name) {
+    int i;
+    if (!store->loaded) fcStoreLoad(c, store);
+    for (i = 0; i < store->imports->count; i++) if (fcAsciiIEq(((FcPkgImport*)store->imports->items[i])->name, name)) return (FcPkgImport*)store->imports->items[i];
+    return NULL;
+}
+static const char* fcAsciiLower(FcCtx* c, const char* s) {
+    char* r = (char*)fcStr(c, s);
+    char* q;
+    for (q = r; *q; q++) if (*q >= 'A' && *q <= 'Z') *q = (char)(*q - 'A' + 'a');
+    return r;
+}
+static const char* fcImportKey(FcCtx* c, const FcPkgImport* pi) { return fcFmt(c, "pkg:%s", fcAsciiLower(c, pi->name)); }
+static FcPkgImport* fcStoreFindKey(FcCtx* c, FcStore* store, const char* key) {
+    return fcStartsWith(key, "pkg:") ? fcStoreFindImport(c, store, key + 4) : NULL;
+}
+
+/* StandardPackages.Bridges */
+static const char* const fcStandardBridges[] = { "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net",
+    "process", "hash", "compression", "ai", "ai.agent", "ai.models", "assistant", "mcp", "tls", "http", "http.rpc", "http.pages", "data", "data.sqlite", "data.memory", "data.mysql",
+    "data.sqlserver", "data.postgres", "http.data", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics",
+    "ui.docking", "json", "net.channel", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86" };
+
+/* ---- the linker ---- */
+typedef struct FcLinker {
+    FcCtx* c;
+    FcStore store;
+    FcDict nativeImports;       /* HashSet<string> */
+    FcDict natives;             /* the names of the NativeRegistry */
+    int directiveIntWidth, directiveFloatWidth;   /* FC_NULL_INT: none */
+} FcLinker;
+
+/* ImportedPreludes.ParseImportName */
+static const char* fcParseImportName(FcLinker* L, const char* name) {
+    FcCtx* c = L->c;
+    const char* lower = fcAsciiLower(c, name);
+    FcPkgImport* pi;
+    size_t i;
+    bool bridge = false;
+    if (streq0(lower, "graphics") || streq0(lower, "windows") || streq0(lower, "ui") || streq0(lower, "linq") || streq0(lower, "reflection")) return lower;
+    if ((pi = fcStoreFindImport(c, &L->store, name)) != NULL) return fcImportKey(c, pi);
+    for (i = 0; i < sizeof fcStandardBridges / sizeof fcStandardBridges[0]; i++) if (streq0(lower, fcStandardBridges[i])) bridge = true;
+    if (bridge) fcThrow(c, FC_ERR_PRE, 0, 0, NULL, fcFmt(c, "The standard package 'fire-%s' for `#import \"%s\"` is not installed (start ember or spark once, or `ember install fire-%s`).", lower, name, lower));
+    fcThrow(c, FC_ERR_PRE, 0, 0, NULL, fcFmt(c, "'%s' is not a known extension (installed packages: `ember list`, available ones: `ember find`; a library project of the solution needs a reference in the project file).", name));
+}
+
+/* ImportedPreludes.WithDependencies */
+static void fcWithDependencies(FcLinker* L, const char* importKey, FcDict* visited, FcList* out) {
+    FcCtx* c = L->c;
+    int i;
+    if (fcStartsWith(importKey, "pkg:")) {
+        FcPkgImport* pi;
+        if (!fcSetAdd(visited, importKey)) return;
+        if ((pi = fcStoreFindKey(c, &L->store, importKey)) != NULL)
+            for (i = 0; i < pi->requires->count; i++) fcWithDependencies(L, fcParseImportName(L, (const char*)pi->requires->items[i]), visited, out);
+        fcListAdd(c, out, (void*)importKey);
+        return;
+    }
+    if (streq0(importKey, "windows")) fcListAdd(c, out, (void*)"graphics");
+    if (streq0(importKey, "ui")) { fcListAdd(c, out, (void*)"graphics"); fcListAdd(c, out, (void*)"windows"); fcListAdd(c, out, (void*)"reflection"); }
+    if (streq0(importKey, "linq")) fcListAdd(c, out, (void*)"reflection");
+    fcListAdd(c, out, (void*)importKey);
+}
+
+/* the directives of a build with their effects (Linker.CompileAndLink's registry) */
+static void fcLinkerDirective(FcCtx* c, void* state, const char* name, FcList* args, int line, FcList* importNamespaces) {
+    FcLinker* L = (FcLinker*)state;
+    FcToken* arg = args->count > 0 ? (FcToken*)args->items[0] : NULL;
+    (void)line;
+    if (streq0(name, "import")) {
+        FcList* keys;
+        FcPkgImport* pi;
+        int i;
+        if (arg->type != TT_StringLiteral) fcThrow(c, FC_ERR_LINKER, 1, 0, NULL, "Wrong arguments for the 'import' directive.");
+        keys = fcListNew(c);
+        fcWithDependencies(L, fcParseImportName(L, arg->stringValue), fcDictNew(c, FC_KEY_STR), keys);
+        for (i = 0; i < keys->count; i++) fcSetAdd(&L->nativeImports, keys->items[i]);
+        /* ProjectLibraries.PackageNamespaceOf */
+        pi = fcStoreFindImport(c, &L->store, arg->stringValue);
+        if (pi && !pi->standard && pi->prelude && pi->prelude[0] && !fcListHasStr(importNamespaces, pi->name)) fcListAdd(c, importNamespaces, (void*)pi->name);
+        return;
+    }
+    if (streq0(name, "floatwidth")) {
+        if (!(arg->type == TT_IntLiteral && (arg->intValue == 32 || arg->intValue == 64))) fcThrow(c, FC_ERR_LINKER, 1, 0, NULL, "The 'floatwidth' directive expects 32 or 64.");
+        L->directiveFloatWidth = (int)arg->intValue;
+        return;
+    }
+    if (streq0(name, "intwidth")) {
+        if (!(arg->type == TT_IntLiteral && (arg->intValue == 16 || arg->intValue == 32 || arg->intValue == 64))) fcThrow(c, FC_ERR_LINKER, 1, 0, NULL, "The 'intwidth' directive expects 16, 32 or 64.");
+        L->directiveIntWidth = (int)arg->intValue;
+        return;
+    }
+    if (streq0(name, "name") || streq0(name, "codename") || streq0(name, "description") || streq0(name, "author") || streq0(name, "comments") || streq0(name, "icon")
+        || streq0(name, "version") || streq0(name, "fileversion")) {
+        if (arg->type != TT_StringLiteral) fcThrow(c, FC_ERR_LINKER, 1, 0, NULL, fcFmt(c, "Wrong arguments for the '%s' directive.", name));
+    }
+}
+
+static void fcRegisterNative(FcLinker* L, const char* name) { fcSetAdd(&L->natives, name); }
+
+/* the text of a file as fc8 units (File.ReadAllText) into the arena */
+static bool fcReadSource(FcCtx* c, const char* path, const uint16_t** source, int* length) {
+    FcU16 text = {0};
+    uint16_t* copy;
+    if (!fcReadText(path, &text)) return false;
+    copy = (uint16_t*)fcAlloc(c, sizeof(uint16_t) * (size_t)(text.len + 1));
+    if (text.len) memcpy(copy, text.p, sizeof(uint16_t) * (size_t)text.len);
+    *source = copy;
+    *length = text.len;
+    fcU16Free(&text);
+    return true;
+}
+
+static FcProcessed* fcPreludeOf(FcLinker* L, FcPkgImport* pi, const char* key) {
+    FcCtx* c = L->c;
+    const char* path = fcFmt(c, "%s/%s", pi->dir, pi->prelude);
+    const uint16_t* src;
+    int len;
+    FcProcessed* p;
+    if (!fcReadSource(c, path, &src, &len)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "cannot read the prelude '%s'", path));
+    p = fcPreprocess(c, src, len, fcDirectoryName(c, fcFullPath(c, ".", path)));
+    p->module = key;
+    p->notSerializable = pi->notSerializable;
+    p->qualify = !pi->standard && pi->prelude && pi->prelude[0] ? pi->name : NULL;
+    return p;
+}
+
+static FcProcessed* fcBuiltInPrelude(FcLinker* L, const char* name) {
+    FcCtx* c = L->c;
+    FcPkgImport* pi = fcStoreFindImport(c, &L->store, name);
+    if (!pi || !pi->prelude || !pi->prelude[0])
+        fcThrow(c, FC_ERR_PRE, 0, 0, NULL, fcFmt(c, "The standard package 'fire-%s' for `#import \"%s\"` is not installed (start ember or spark once, or `ember install fire-%s`).", name, name, name));
+    return fcPreludeOf(L, pi, name);
+}
+
+#define FC_BRIDGE_graphics 1
+#define FC_BRIDGE_windows 2
+#define FC_BRIDGE_reflection 3
+static void fcRegisterBridge(FcLinker* L, int which) {
+#define FIRE_BRIDGE_NATIVE(import, index, name) if (which == FC_BRIDGE_##import) fcRegisterNative(L, name);
+#include "../tables/bridges.def"
+#undef FIRE_BRIDGE_NATIVE
+}
+
+/* ImportedPreludes.Insert: the preludes behind the standard prelude (each insertion before the earlier ones); the number inserted */
+static int fcInsertPreludes(FcLinker* L, FcList* processed) {
+    FcCtx* c = L->c;
+    int inserted = 0, i;
+    FcList* keys = fcListNew(c);
+    if (fcDictHas(&L->nativeImports, "graphics")) { fcListInsert(c, processed, 1, fcBuiltInPrelude(L, "graphics")); inserted++; fcRegisterBridge(L, FC_BRIDGE_graphics); }
+    if (fcDictHas(&L->nativeImports, "windows")) { fcListInsert(c, processed, 1, fcBuiltInPrelude(L, "windows")); inserted++; fcRegisterBridge(L, FC_BRIDGE_windows); }
+    if (fcDictHas(&L->nativeImports, "ui")) { fcListInsert(c, processed, 1, fcBuiltInPrelude(L, "ui")); inserted++; }
+    if (fcDictHas(&L->nativeImports, "linq")) { fcListInsert(c, processed, 1, fcBuiltInPrelude(L, "linq")); inserted++; }
+    if (fcDictHas(&L->nativeImports, "reflection")) { fcListInsert(c, processed, 1, fcBuiltInPrelude(L, "reflection")); inserted++; fcRegisterBridge(L, FC_BRIDGE_reflection); }
+    FC_DICT_EACH(&L->nativeImports, e) if (fcStartsWith((const char*)e->key, "pkg:")) fcListAdd(c, keys, (void*)e->key);
+    if (keys->count > 1) qsort(keys->items, (size_t)keys->count, sizeof(void*), fcCmpOrdinal);
+    for (i = 0; i < keys->count; i++) {
+        const char* key = (const char*)keys->items[i];
+        FcPkgImport* pi = fcStoreFindKey(c, &L->store, key);
+        int f;
+        if (!pi) fcThrow(c, FC_ERR_LINKER, 1, 0, NULL, fcFmt(c, "The import '%s' belongs to a package that is not installed.", key + 4));
+        if (pi->prelude && pi->prelude[0]) { fcListInsert(c, processed, 1, fcPreludeOf(L, pi, key)); inserted++; }
+        for (f = 0; f < pi->functions->count; f++) fcRegisterNative(L, (const char*)pi->functions->items[f]);
+    }
+    return inserted;
+}
+
+/* PackageImports.NativeReturnTypes */
+static FcDict* fcNativeReturnTypes(FcLinker* L) {
+    FcCtx* c = L->c;
+    FcDict* types = fcDictNew(c, FC_KEY_STR);
+    int f;
+    FC_DICT_EACH(&L->nativeImports, e) {
+        FcPkgImport* pi;
+        if (!fcStartsWith((const char*)e->key, "pkg:") || !(pi = fcStoreFindKey(c, &L->store, (const char*)e->key)) || !pi->hasNative) continue;
+        for (f = 0; f < pi->functions->count; f++) {
+            const char* ret = (const char*)pi->returns->items[f];
+            const char* t;
+            const char* end;
+            if (!ret) continue;
+            for (t = ret; *t == ' ' || *t == '\t'; t++) {}
+            if (!*t) continue;
+            end = t + strlen(t);
+            while (end > t && (end[-1] == ' ' || end[-1] == '\t')) end--;
+            fcDictAdd(types, pi->functions->items[f], (void*)fcStrN(c, t, (size_t)(end - t)));
+        }
+    }
+    return types;
+}
+
+/* the result of the frontend: the program as the type checker left it */
+typedef struct FcFrontend { FcList* program; FcResolveResult* resolved; int firstUserSource; FcList* processed; } FcFrontend;
+
+static void fcTypeCheckRun(FcCtx* c, FcList* program, FcResolveResult* resolved, bool strict, int firstUserSource, int reportFrom, int intWidth, int floatWidth, FcDict* nativeReturns);
+
+/* Linker.CompileAndLink up to and with the type check (FrontendOnly) for one file */
+static FcFrontend* fcCompileFrontend(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict) {
+    FcLinker* L = (FcLinker*)fcAlloc(c, sizeof *L);
+    FcList* processed = fcListNew(c);
+    FcFrontend* fe = (FcFrontend*)fcAlloc(c, sizeof *fe);
+    const uint16_t* src;
+    int len, firstUserSource = 1;
+    const char* full = fcFullPath(c, ".", path);
+    const char* folder = fcDirectoryName(c, full);
+    FcProcessed* p;
+    FcProcessed** arr;
+    int i, intWidth, floatWidth;
+    L->c = c;
+    L->store.root = storeRoot;
+    L->directiveIntWidth = L->directiveFloatWidth = FC_NULL_INT;
+    fcDictInit(c, &L->nativeImports, FC_KEY_STR);
+    fcDictInit(c, &L->natives, FC_KEY_STR);
+    fcRegisterNative(L, "print");
+#define FIRE_NATIVE(index, name, tryable) fcRegisterNative(L, name);
+#include "../tables/natives.def"
+#undef FIRE_NATIVE
+    fcSetAdd(&L->nativeImports, "print");
+    fcSymbolsForHost(c, c->symbols);
+    c->sharedIncluded = fcListNew(c);
+    fcListAdd(c, c->sharedIncluded, (void*)full);
+    c->resourcePaths = fcListNew(c);
+    c->directiveHook = fcLinkerDirective;
+    c->directiveState = L;
+    if (!fcReadSource(c, preludePath, &src, &len)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "cannot read the prelude '%s'", preludePath));
+    fcListAdd(c, processed, fcPreprocess(c, src, len, folder));
+    if (!fcReadSource(c, full, &src, &len)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "cannot read '%s'", path));
+    p = fcPreprocess(c, src, len, folder);
+    p->name = fcStr(c, fcBaseName(path));
+    fcListAdd(c, processed, p);
+    firstUserSource += fcInsertPreludes(L, processed);
+    c->directiveHook = NULL;
+    arr = (FcProcessed**)fcAlloc(c, sizeof(FcProcessed*) * (size_t)processed->count);
+    for (i = 0; i < processed->count; i++) arr[i] = (FcProcessed*)processed->items[i];
+    fe->program = fcParseMultiple(c, arr, processed->count);
+    fe->resolved = fcResolve(c, fe->program, &L->natives, NULL);
+    fe->firstUserSource = firstUserSource;
+    fe->processed = processed;
+    intWidth = L->directiveIntWidth != FC_NULL_INT ? L->directiveIntWidth : 64;
+    floatWidth = L->directiveFloatWidth != FC_NULL_INT ? L->directiveFloatWidth : 64;
+    fcTypeCheckRun(c, fe->program, fe->resolved, strict, firstUserSource, firstUserSource, intWidth, floatWidth, fcNativeReturnTypes(L));
+    return fe;
+}

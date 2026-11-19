@@ -274,6 +274,8 @@ void fcThrow(FcCtx* c, FcErrKind kind, int line, int column, const char* file, c
     c->err.column = column;
     c->err.file = file;
     c->err.message = message;
+    c->err.source = -1;
+    c->err.list = NULL;
     fcRethrow(c);
 }
 void fcThrowF(FcCtx* c, FcErrKind kind, int line, int column, const char* file, const char* fmt, ...) {

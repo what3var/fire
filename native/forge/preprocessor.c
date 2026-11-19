@@ -8,6 +8,10 @@ typedef struct FcProcessed {
     FcList* usings;           /* fc8 */
     FcList* importNamespaces; /* fc8 */
     const char* name;
+    /* set by the linker (Phase C 3): ProcessedSource.NotSerializable, Module, Qualify */
+    bool notSerializable;
+    const char* module;
+    const char* qualify;
 } FcProcessed;
 
 typedef struct FcPreprocessor {
@@ -243,6 +247,76 @@ static void fcIncludeHandler(FcPreprocessor* pp, const char* basePath, FcList* a
     fcProcessFileRecursive(pp, fullPath, out);
 }
 
+/* Preprocessor.IsCode: the index is not in a string or behind `//` */
+static bool fcIsCodeAt(const uint16_t* line, int n, int index) {
+    bool inString = false;
+    int i;
+    for (i = 0; i < index; i++) {
+        uint16_t ch = line[i];
+        if (inString) { if (ch == '\\') i++; else if (ch == '"') inString = false; }
+        else if (ch == '"') inString = true;
+        else if (ch == '/' && i + 1 < n && line[i + 1] == '/') return false;
+    }
+    return !inString;
+}
+static bool fcIsWordUnit(uint16_t ch) { return fcIsLetterOrDigit(ch) || ch == '_'; }
+static bool fcIsRegexSpace(uint16_t ch) { return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\f' || ch == '\v' || fcIsWhiteSpace(ch); }
+/* Preprocessor.ResolveResources: `new Resource("path")` in the code of a line becomes `new Resource(<id>)` (the regex
+ * \bnew\s+Resource\s*\(\s*"((?:[^"\\]|\\.)*)"\s*\)) */
+static void fcResolveResources(FcCtx* c, FcSlice line, const char* basePath, int lineNo, FcU16* out) {
+    static const uint16_t kResource[] = { 'R', 'e', 's', 'o', 'u', 'r', 'c', 'e' };
+    const uint16_t* p = line.p;
+    int n = line.n, i = 0, copied = 0;
+    while (i + 3 <= n) {
+        int j, strStart, strEnd;
+        if (!(p[i] == 'n' && p[i + 1] == 'e' && p[i + 2] == 'w' && (i == 0 || !fcIsWordUnit(p[i - 1])) && (i + 3 >= n || !fcIsWordUnit(p[i + 3])))) { i++; continue; }
+        j = i + 3;
+        if (j >= n || !fcIsRegexSpace(p[j])) { i++; continue; }
+        while (j < n && fcIsRegexSpace(p[j])) j++;
+        if (j + 8 > n || memcmp(p + j, kResource, sizeof kResource) != 0) { i++; continue; }
+        j += 8;
+        while (j < n && fcIsRegexSpace(p[j])) j++;
+        if (j >= n || p[j] != '(') { i++; continue; }
+        j++;
+        while (j < n && fcIsRegexSpace(p[j])) j++;
+        if (j >= n || p[j] != '"') { i++; continue; }
+        strStart = ++j;
+        while (j < n && p[j] != '"') { if (p[j] == '\\') { if (j + 1 >= n) break; j += 2; } else j++; }
+        if (j >= n || p[j] != '"') { i++; continue; }
+        strEnd = j++;
+        while (j < n && fcIsRegexSpace(p[j])) j++;
+        if (j >= n || p[j] != ')') { i++; continue; }
+        j++;
+        if (fcIsCodeAt(p, n, i)) {
+            /* Regex.Unescape of the path */
+            FcU16 path = {0};
+            const char* rel;
+            const char* full;
+            int k, id = -1;
+            char num[32];
+            for (k = strStart; k < strEnd; k++) {
+                uint16_t ch = p[k];
+                if (ch == '\\' && k + 1 < strEnd) {
+                    uint16_t e = p[++k];
+                    fcU16Unit(&path, e == 'n' ? '\n' : e == 't' ? '\t' : e == 'r' ? '\r' : e);
+                } else fcU16Unit(&path, ch);
+            }
+            rel = fc8FromU16(c, path.p, path.len);
+            fcU16Free(&path);
+            full = fcFullPath(c, basePath, rel);
+            if (!fcFileExists(full)) fcPreError(c, fcFmt(c, "Resource file not found: '%s' ('%s', line %d).", rel, full, lineNo));
+            for (k = 0; k < c->resourcePaths->count; k++) if (strcmp((const char*)c->resourcePaths->items[k], full) == 0) id = k;
+            if (id < 0) { id = c->resourcePaths->count; fcListAdd(c, c->resourcePaths, (void*)full); }
+            fcU16Put(out, p + copied, i - copied);
+            snprintf(num, sizeof num, "new Resource(%d)", id);
+            for (k = 0; num[k]; k++) fcU16Unit(out, (uint16_t)num[k]);
+            copied = j;
+        }
+        i = j;
+    }
+    fcU16Put(out, p + copied, n - copied);
+}
+
 static bool fcU16EndsWithNewline(const FcU16* b, int from) { return b->len > from && b->p[b->len - 1] == '\n'; }
 
 static void fcProcessInner(FcPreprocessor* pp, const uint16_t* source, int length, const char* basePath, FcU16* out) {
@@ -269,7 +343,10 @@ static void fcProcessInner(FcPreprocessor* pp, const uint16_t* source, int lengt
         match = fcDirectiveLine(c, line, &name, &argument, &hasArgument);
         if (!match && fcCondActive(&conditional)) fcInlineFeed(&inlineC, line);
         if (!match) {
-            if (fcCondActive(&conditional)) fcU16Put(out, line.p, line.n);
+            if (fcCondActive(&conditional)) {
+                if (c->resourcePaths) fcResolveResources(c, line, basePath, lineNo + 1, out);
+                else fcU16Put(out, line.p, line.n);
+            }
             fcU16Unit(out, '\n');
             goto next;
         }
@@ -292,6 +369,7 @@ static void fcProcessInner(FcPreprocessor* pp, const uint16_t* source, int lengt
                 FcList* args = fcParseDirectiveArgs(c, argument, def->name, def->paramCount, lineNo + 1);
                 int before = out->len;
                 if (strcmp(def->name, "include") == 0) fcIncludeHandler(pp, basePath, args, lineNo + 1, out);
+                else if (c->directiveHook) c->directiveHook(c, c->directiveState, def->name, args, lineNo + 1, pp->importNamespaces);
                 if (out->len > before) { if (!fcU16EndsWithNewline(out, before)) fcU16Unit(out, '\n'); }
                 else fcU16Unit(out, '\n');
             }
@@ -305,6 +383,17 @@ static void fcProcessInner(FcPreprocessor* pp, const uint16_t* source, int lengt
     free(conditional.frames);
 }
 
+/* fcProcessInner, and on an exception the buffer freed (an error of a directive's handler, Phase C 3) */
+static void fcProcessGuarded(FcPreprocessor* pp, const uint16_t* source, int length, const char* basePath, FcU16* out) {
+    FcCtx* c = pp->ctx;
+    FC_TRY(c) {
+        fcProcessInner(pp, source, length, basePath, out);
+    } FC_CATCH(c) {
+        fcU16Free(out);
+        fcRethrow(c);
+    } FC_END_TRY;
+}
+
 /* Preprocessor.Process(source, basePath, registry): the default registry with the symbols of the context */
 FcProcessed* fcPreprocess(FcCtx* c, const uint16_t* source, int length, const char* basePath) {
     FcPreprocessor pp;
@@ -316,9 +405,9 @@ FcProcessed* fcPreprocess(FcCtx* c, const uint16_t* source, int length, const ch
     pp.includeChain = fcListNew(c);
     pp.usings = fcListNew(c);
     pp.importNamespaces = fcListNew(c);
-    pp.alreadyIncluded = fcListNew(c);
+    pp.alreadyIncluded = c->sharedIncluded ? c->sharedIncluded : fcListNew(c);
     fcU16Put(&out, NULL, 0);
-    fcProcessInner(&pp, source, length, basePath, &out);
+    fcProcessGuarded(&pp, source, length, basePath, &out);
     copy = (uint16_t*)fcAlloc(c, sizeof(uint16_t) * (size_t)(out.len + 1));
     if (out.len) memcpy(copy, out.p, sizeof(uint16_t) * (size_t)out.len);
     r->source = copy;
