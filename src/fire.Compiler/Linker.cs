@@ -659,7 +659,8 @@ namespace fire.Compiler
             List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
             // graphics and windows in C (the default of the VM): a packed program binds their natives to the library of both, which travels with it
             List<string>? graphicsNatives = null;
-            if (!string.IsNullOrEmpty(outname) && Engine != "native" && nativeImports.Contains(NativeImports.Graphics) && GraphicsLibrary.Wanted(false) && GraphicsLibrary.Locate() is { } gfxLibrary)
+            // (the VM in C has graphics and windows only in C: its packed program always carries the library)
+            if (!string.IsNullOrEmpty(outname) && Engine != "native" && nativeImports.Contains(NativeImports.Graphics) && (GraphicsLibrary.Wanted(false) || !CVm.UseDotnet) && GraphicsLibrary.Locate() is { } gfxLibrary)
             {
                 graphicsNatives = natives.Names.Where(n => n.StartsWith("__GRPH", StringComparison.Ordinal)).OrderBy(natives.IndexOf).ToList();
                 (packageLibraryFiles ??= new List<string>()).Add(gfxLibrary);
@@ -676,7 +677,7 @@ namespace fire.Compiler
                 var tempfile = outname + ".tmp";
                 try
                 {
-                    Packer.PackProgram(linkedProgram, tempfile, apphost =>
+                    void Customize(string apphost)
                     {
                         Utilities.PeResourceEditor.SetSubsystem(apphost, assemblyInfo.Subsystem);   // the PE header decides about the console window (plain bytes, any OS)
                         if (!OperatingSystem.IsWindows()) return; // PeResourceEditor nutzt Win32-APIs
@@ -685,7 +686,10 @@ namespace fire.Compiler
 
                         if (File.Exists(assemblyInfo.IconPath))
                             PeResourceEditor.SetIcon(apphost, assemblyInfo.IconPath);
-                    });
+                    }
+                    // the VM in C with the program behind it (phase B step 8, CVm); FIRE_VM_ENGINE=dotnet: the .NET runtime as before (until M1)
+                    if (CVm.UseDotnet) Packer.PackProgram(linkedProgram, tempfile, Customize);
+                    else CVm.Pack(linkedProgram, tempfile, Customize);
                     File.Move(tempfile, outname, true);
                 }
                 finally

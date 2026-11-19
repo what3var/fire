@@ -1,0 +1,19 @@
+<Project>
+  <!--
+    The VM in C (the program fire, native/vm/fire.c, docs/spec/VM_C.md "Das Programm fire"): after the build it is compiled with the C compiler of this machine next to
+    forge (forge build-vm: only when its sources changed; the stamp fire.key), and a publish takes it along into the publish folder (setup.iss packs that folder).
+    forge build with the engine vm packs programs with it. A machine without a C compiler still builds (the step only warns); forge then builds the VM when it first packs
+    a program (into the user's cache), or FIRE_VM_ENGINE=dotnet packs with the .NET runtime. A publish for another machine (with a RuntimeIdentifier of another) builds nothing here: forge builds
+    its VM there on demand. BuildFireVm=false leaves the step out.
+    Imported by fire.Compiler, fire.Editor and fire.Testing (their output folders hold the compiler).
+  -->
+  <Target Name="BuildFireVm" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('$(TargetDir)forge.dll') And '$(BuildFireVm)' != 'false'">
+    <Exec Command="dotnet &quot;$(TargetDir)forge.dll&quot; build-vm &quot;$(TargetDir).&quot; --rid &quot;$(RuntimeIdentifier)&quot;" ContinueOnError="true" StandardOutputImportance="low" />
+  </Target>
+  <Target Name="PublishFireVm" AfterTargets="Publish" Condition="'$(DesignTimeBuild)' != 'true' And '$(BuildFireVm)' != 'false'">
+    <ItemGroup>
+      <_FireVmFiles Include="$(TargetDir)fire;$(TargetDir)fire.key;$(TargetDir)fire.exe;$(TargetDir)fire.exe.key;$(TargetDir)fire-*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_FireVmFiles)" DestinationFolder="$(PublishDir)" Condition="Exists('%(FullPath)')" ContinueOnError="true" />
+  </Target>
+</Project>

@@ -26,6 +26,14 @@
     <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The VM in C (the program fire): its sources travel with forge, which builds it on a machine that has none next to it (CVm.cs). The runtime comes from fire.Native. -->
+    <EmbeddedResource Include="..\..\native\vm\*.c;..\..\native\vm\*.h" LogicalName="cvm/vm/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\native\base\*.h" LogicalName="cvm/base/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\native\tables\*.def" LogicalName="cvm/tables/%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <Import Project="..\StandardSources.targets" />
+  <Import Project="..\FireVm.targets" />
 
 </Project>

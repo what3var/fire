@@ -78,6 +78,7 @@
   </PropertyGroup>
 
   <Import Project="..\StandardSources.targets" />
+  <Import Project="..\FireVm.targets" />
 
   <!--
     The publish profile FolderProfile (Properties/PublishProfiles) sets PublishTools: after spark, forge and ember are published into the same folder - spark starts
