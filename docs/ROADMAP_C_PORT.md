@@ -239,9 +239,19 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    Executables sind byte-gleich, `native-baseline.py compare`: nichts größer oder langsamer. Die C-VM ist dabei 2,4- bis 6-mal so schnell wie die
    C#-VM. Was in Phase B einen eigenen Weg der VM braucht (Rückrufe ohne Kontext wie `TArg.holds`, die feste Konfiguration der Runtime für
    `#intwidth`/`#floatwidth`, Klassen-Ids bei gleichzeitigen Programmen), steht dort unter "Was nicht passt".
-1. `native/base` und der Lader.
+1. `native/base` und der Lader. **Umgesetzt** ([VM_C.md](spec/VM_C.md)): `native/base/fire_base.h` (Arena, internierte Namen, geordnete Map,
+   Dateien - ohne globalen Zustand); der Lader behält das ganze Programm bis auf Reflection-Meta, Externs und Debug-Namen, die Einheiten und Enums
+   der Datei werden beim Start die Tabellen der Runtime.
 2. Interpreter vollständig: alle Opcodes, die drei Modi (Debug/Release/Performance), Lambdas und Captures, Properties, Überladungen, Generics,
    typisierte Arrays, Zeiger, Records, Besitz (`take`, `TakeTo`, Kopien), Shutdown an sicheren Punkten.
+   **Zum größten Teil umgesetzt** ([VM_C.md](spec/VM_C.md)): alle Opcodes außer denen der Threads/Aktoren (Schritt 3) und der Probes (Schritt 5);
+   Überladung nach Typ, Properties, Operatoren, Erweiterungen der Basistypen, Generics mit Typargumenten je Objekt und Aufruf, Spezialisierungen,
+   `DeclaredType`, Arrays einer Klasse und nach Typargument, Records, `finally`, Einheiten des Programms mit Umrechnungsfunktionen, Zugriffsprüfung
+   (nicht in Performance). Die Rückrufe ohne Kontext (VM_SPIKE Punkt 1) sind eigene Fassungen der VM bzw. ein Vorrat an Trampolinen; die Runtime ist
+   unverändert (der native Build ebenso). Maß: `tests/run-cases-vm.sh <forge>` übersetzt jeden Fall mit dem C#-forge und führt ihn mit der C-VM aus -
+   **751 von 1126** richtig (Spike: 306); von den übrigen brauchen rund 320 die Schritte 3 bis 5. **Offen in Schritt 2**: `#intwidth`/`#floatwidth`
+   (eine VM-Variante je Breite), benannte Argumente, die Reihenfolge der Destruktoren weitergereichter Argumente, Typargumente in Deklarationen
+   generischer Klassen, Besitz in Property-Accessoren, Shutdown an sicheren Punkten (kommt mit den Threads, Schritt 3).
 3. Threads, Tasks, Aktoren, `sync globals`, Abbruch, `on`-Lambdas - über die Abschnitte der Runtime.
 4. Natives: eine Tabelle Name -> Funktion für die Kern-Natives (in der Runtime vorhanden, heute vom Generator direkt aufgerufen); Paket-Natives
    zunächst unverändert als Shared Library über die [C-ABI v1](../native/abi/fire_pkg_abi.h), den Host (`fire_host`: IO-/Netz-Regeln, Lambdas, Dienste) in C.
