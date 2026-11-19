@@ -473,6 +473,13 @@ Messung. So kleine Programme teilt `auto` nicht; für große ist der Preis zu me
   dieselben Ausgaben (AddressSanitizer/UBSan). Was dabei auffiel und behoben ist: der Zustand der Plattform (`FIRE_ONCE`, die grünen Threads liefen nicht),
   die Warnung über die Einrückung. Abweichend bleiben unter `FIRE_SPLIT=1` nur Prüfungen, die die Form des C in `NativeSources.Program` ansehen (dort steht jetzt
   nur Einheit 0: Prototypen der Natives in C++, `#include` eines Ziels).
+* **Die ganze native Gruppe mit `FIRE_SPLIT=1`** (Einheiten in Standardgröße, unter AddressSanitizer/UBSan; der Lauf brach nach 1049 von 1418 Prüfungen ab, weil
+  die Objektdateien der Einheiten die Platte füllten - die Tests löschen sie jetzt nach dem Binden): von den 516 Fällen "Native == VM" **512 gleich**; die vier
+  übrigen: zwei Fehler der Teilung, behoben und von Hand nachgeprüft (eine Deklaration im Kopf hinter einem `//`-Kommentar der Zeile davor; eine Warnung
+  `-Wformat-truncation` aus `fire_shortestE`, die gcc erst sieht, wenn er es in eine kleine Einheit einbettet - fire_rt.h schaltet sie dort ab), ein Leck von
+  lavapipe (Vulkan-Treiber, scene3d) unter LeakSanitizer und ein Fall aus der Zeit, als die Platte voll war. Daneben abweichend: Prüfungen der Form des C
+  (`Interface-Aufrufe`, `readonly static`, `defined`-Rechnen, typisierte Arrays sehen in `Program` nach Text, der jetzt in einer anderen Einheit steht) und Wine.
+  Ein zweiter, vollständiger Lauf nach den Korrekturen steht aus (er wurde von einem Neustart der Sitzung beendet).
 * Native-Debugger mit `FIRE_SPLIT=1`: alle Fälle wie in der einen Datei (gdb hält in einer Funktion einer anderen Einheit); nicht prüfbar war Wine (es stürzt hier
   auch mit der einen Datei ab: `free(): invalid pointer`).
 * Von Hand: gcc, clang, TinyCC (`--split on`), ein Debug-Build, MinGW (baut), Emscripten (baut), grüne Threads und TinyCC mit Threads (`nm` ohne doppelten Zustand).
