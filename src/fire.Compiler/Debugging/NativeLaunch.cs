@@ -128,8 +128,9 @@ namespace fire.Debugging
         /// <summary>Starts a native debug build under the debugger: listens on 127.0.0.1, starts the program with FIRE_DEBUG, accepts its connection (the token
         /// must match) and waits until its main thread stands at its entry. The program's output goes to the target's Output. Throws
         /// <see cref="NativeDebugException"/> (with what the program wrote, when it ended without connecting).</summary>
+        /// <param name="keepInput">The program's stdin stays open (the caller writes lines to it - the VM in C); else it reads the end of its input at once.</param>
         public static NativeDebugTarget LaunchDebug(string program, IEnumerable<string> arguments, string? workingDirectory, TimeSpan connectTimeout,
-            IReadOnlyDictionary<string, string>? environment = null)
+            IReadOnlyDictionary<string, string>? environment = null, bool keepInput = false)
         {
             using var listener = NativeDebugListener.Start();
             var env = environment?.ToDictionary(e => e.Key, e => e.Value) ?? new Dictionary<string, string>();
@@ -146,7 +147,7 @@ namespace fire.Debugging
                 target.WriteOutput(line);
             }
             var process = Start(program, arguments, workingDirectory, OnLine, null, env);
-            process.StandardInput.Close();
+            if (!keepInput) process.StandardInput.Close();
             try
             {
                 var accepted = listener.Accept(connectTimeout, () =>

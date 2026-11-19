@@ -8,7 +8,7 @@ namespace fire.Debugging
 {
     /// <summary>
     /// spark on the VM in C (docs/ROADMAP_C_PORT.md, phase B step 9, L4): a program of the VM runs as a child process `fire run x.fbc [-- args]` - its output line by line,
-    /// its input through the pipe, its exit code; under the debugger with FIRE_DEBUG over its stdio (framed: the input of the program goes with it), debugged by
+    /// its input through the pipe, its exit code; under the debugger with FIRE_DEBUG (TCP; the input still through the pipe), debugged by
     /// <see cref="NativeDebugTarget"/> like a native program (its hello says engine "vm"). The libraries of its packages are where forge built them: their folders go
     /// into FIRE_PKG_PATH. <see cref="UseDotnet"/> (FIRE_SPARK_VM=dotnet) keeps the C# VM in spark's process until M1.
     /// </summary>
@@ -62,9 +62,12 @@ namespace fire.Debugging
             catch (Exception ex) when (ex is IOException or InvalidOperationException or ObjectDisposedException) { return false; }
         }
 
-        /// <summary>A run under the debugger: `fire run x.fbc` with FIRE_DEBUG over its stdio, connected and at its entry (see <see cref="NativeLaunch.LaunchDebugStdio"/>).</summary>
+        /// <summary>A run under the debugger: `fire run x.fbc` with FIRE_DEBUG over TCP (127.0.0.1, a token), connected and at its entry; its stdin stays open for
+        /// <see cref="WriteInput"/> (target.Process). Over TCP and not framed over stdio (<see cref="NativeLaunch.LaunchDebugStdio"/>, <paramref name="framed"/>): the natives of
+        /// the packages (io's ReadLine) read stdin themselves and would take the frames (docs/spec/VM_C.md, "Debugger", open points).</summary>
         public static NativeDebugTarget LaunchDebug(string fire, string programFile, IEnumerable<string> arguments, string? workingDirectory, TimeSpan timeout,
-            IReadOnlyDictionary<string, string>? environment) =>
-            NativeLaunch.LaunchDebugStdio(fire, Arguments(programFile, arguments), workingDirectory, timeout, environment);
+            IReadOnlyDictionary<string, string>? environment, bool framed = false) =>
+            framed ? NativeLaunch.LaunchDebugStdio(fire, Arguments(programFile, arguments), workingDirectory, timeout, environment)
+                   : NativeLaunch.LaunchDebug(fire, Arguments(programFile, arguments), workingDirectory, timeout, environment, keepInput: true);
     }
 }

@@ -12,7 +12,7 @@ namespace fire.Editor
     // spark on the VM in C (docs/ROADMAP_C_PORT.md, phase B step 9 - L4): a run of the engine "vm" is a child process. forge compiles the program to a program file
     // (`forge bytecode ... --report json`, with the text of the editor as overlays; its report names the libraries of the packages and the `fire` of the program's widths),
     // then spark starts `fire run x.fbc` - Release/Performance: its output in the Output panel, a line below it is its input, the exit code in the status bar, Stop kills it;
-    // Debug: with FIRE_DEBUG over its stdio, debugged by NativeDebugTarget as a native program is (the same panels, without the operand stack; its hello says engine
+    // Debug: with FIRE_DEBUG (TCP; its input still through the pipe), debugged by NativeDebugTarget as a native program is (the same panels, without the operand stack; its hello says engine
     // "vm"). FIRE_SPARK_VM=dotnet keeps the C# VM in spark's process (DebugSession.CompileAsync, VmDebugTarget) until M1.
     public partial class MainWindow
     {
@@ -77,7 +77,7 @@ namespace fire.Editor
                 }
                 EndBuildJob(job, BuildOutcome.Succeeded);
 
-                string fire = result.Output("vm") ?? await Task.Run(() => CVm.Locate(64, 64));
+                string vm = result.Output("vm") ?? await Task.Run(() => CVm.Locate(64, 64));
                 var environment = CVmLaunch.Environment(result.Outputs.Where(o => o.Kind == "library").Select(o => o.Path));
                 var arguments = RunArguments(input);
                 string workingDirectory = input.Project?.Directory ?? input.BaseDirectory ?? Path.GetDirectoryName(defaultPath ?? built)!;
@@ -86,7 +86,7 @@ namespace fire.Editor
                     // a plain run: the output into the Output panel, a line below it to its input, the end in the status bar
                     var started = DateTime.Now;
                     System.Diagnostics.Process? run = null;
-                    run = CVmLaunch.Start(fire, built, arguments, workingDirectory, OnScriptOutput, code => Dispatcher.UIThread.Post(() =>
+                    run = CVmLaunch.Start(vm, built, arguments, workingDirectory, OnScriptOutput, code => Dispatcher.UIThread.Post(() =>
                     {
                         FlushPendingOutput();
                         UpdateStatus($"Program finished (exit code {code}, {(DateTime.Now - started).TotalSeconds:0.0} s).");
@@ -112,7 +112,7 @@ namespace fire.Editor
 
                 UpdateStatus($"Starting {input.What} in the VM under the debugger...");
                 NativeDebugTarget debugTarget;
-                try { debugTarget = await Task.Run(() => CVmLaunch.LaunchDebug(fire, built, arguments, workingDirectory, TimeSpan.FromSeconds(30), environment)); }
+                try { debugTarget = await Task.Run(() => CVmLaunch.LaunchDebug(vm, built, arguments, workingDirectory, TimeSpan.FromSeconds(30), environment)); }
                 catch (Exception ex) when (ex is NativeDebugException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
                 {
                     _isBusy = false;
@@ -121,6 +121,14 @@ namespace fire.Editor
                     return;
                 }
                 AttachNativeDebugTarget(debugTarget, input, first);
+                // (over TCP the program's stdin is still the pipe: a line below the Output panel goes there)
+                if (!debugTarget.CarriesConsole && debugTarget.Process is { } process)
+                    _output.InputTarget = line =>
+                    {
+                        if (!CVmLaunch.WriteInput(process, line)) return false;
+                        OnScriptOutput(line);
+                        return true;
+                    };
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
