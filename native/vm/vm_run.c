@@ -874,7 +874,14 @@ static void vmRun(Vm* vm, int32_t base) {
             l = lamOf(callee);
             if (FIRE_UNLIKELY(l->o.flags & 1)) { destroyedError(callee); goto unwind; }
             if (l->fn == vmLamThunk) {
-                vmPushCall(vm, vmLamProto(l), (int)argc, 1, l->on, FR_CALL);
+                VmProto* lp = vmLamProto(l);
+                if (FIRE_UNLIKELY((int)argc != lp->nparams) && ((int)argc > lp->nparams || !vmAllTrailingDefaults(lp, (int)argc))) {
+                    char text[160];
+                    snprintf(text, sizeof text, "Wrong number of arguments: expected %d%s, got %u.", lp->nparams, (int)argc < lp->nparams ? " (the missing parameters have no default value)" : "", argc);
+                    fireError("ArgumentException", text);
+                    goto unwind;
+                }
+                vmPushCall(vm, lp, (int)argc, 1, l->on, FR_CALL);
                 vmLamEnter(vm, l);
                 if (g_unwind.active) goto unwind;
             } else {
@@ -1477,6 +1484,28 @@ static void vmRun(Vm* vm, int32_t base) {
                     CHECK();
                     ip = t + 5;
                     break;
+                }
+                /* (`new int[n]`, `new Dog[n]`: the typed array at once - its elements are the zero of the type: 0, "", an enum's first value) */
+                if (t[0] == OP_TypeArray && t[2] == 1 && !(t[1] & 0x80)) {
+                    uint32_t elem = t[1] & 0x3F, unitIdx = U16(t + 3), unit = 0;
+                    uint8_t fl = (t[1] & 0x40) ? 8 : 0;
+                    Value unitText = vmConstStrUtf8(prog, "(no unit)");
+                    const char* txt = unitIdx != 0xFFFF && unitIdx < fr->chunk->nk ? fr->chunk->kname[unitIdx] : NULL;
+                    bool ok = true;
+                    if (elem == 13) {
+                        uint32_t ac = txt ? vmArrClassOf(vm, txt) : 0;
+                        if (!ac) ok = false; else { unit = ac; fl |= 16; unitText = vmConstStrUtf8(prog, g_vmArrClasses[ac - 1].display); }
+                    } else if (txt) {
+                        VmDemand* d = vmDemand(vm, txt);
+                        if (d->any) { fl |= 4; unitText = vmConstStrUtf8(prog, "any"); }
+                        else { unit = d->unit; unitText = d->display; fl |= d->dimensionOnly ? 3 : 1; }
+                    }
+                    if (ok && elem >= 1 && elem <= 10) {
+                        sp[-1] = newTypedArray(n, (uint8_t)elem, unit, fl, unitText, &fr->scope->temp);
+                        CHECK();
+                        ip = t + 5;
+                        break;
+                    }
                 }
             }
             sp[-1] = newArray(n, &fr->scope->temp);
