@@ -383,8 +383,9 @@ static Value vmCallNested(Vm* vm, VmProto* p, int argc, const Value* args, Value
 
 /* The way each argument goes in (CopyArgs, 4 bits each: VM.ApplyCopyMask): 1 flat copy, 2 deep copy, 3 an address (a `ref` parameter keeps it), 4/7 the
  * result of a call - it belongs to the call when it lies freshly with the caller, 5 `take x`, 6 a claim of a setter, 8 `try take x`. */
-static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int argc, VmScope* from) {
+static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int argc, VmScope* from, Value* held, uint8_t* nheld) {
     int i;
+    (void)vm;
     for (i = 0; i < argc && i < 16; i++) {
         uint32_t bits = (uint32_t)(mask >> (4 * i)) & 15u;
         Value* a = &s->slots[i];
@@ -400,9 +401,11 @@ static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int a
             }
             case 4: case 7: case 6:
                 if (from) { hoistFrom(*a, &from->temp, &s->own); }
+                if ((a->kind == K_Class || a->kind == K_Array || a->kind == K_Buffer) && ownedOf(*a) && ownedOf(*a)->owner == &s->own && *nheld < 6) held[(*nheld)++] = *a;
                 break;
             case 5:
                 if (takeAlive(*a)) takeToList(*a, &s->own);
+                if ((a->kind == K_Class || a->kind == K_Array || a->kind == K_Buffer) && ownedOf(*a) && ownedOf(*a)->owner == &s->own && *nheld < 6) held[(*nheld)++] = *a;
                 break;
             case 8:
                 if (from && ownedOf(*a)) {
@@ -475,6 +478,8 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     int i, n;
     uint64_t missing = 0;
     bool named = false, bad = false;
+    Value held[6];
+    uint8_t nheld = 0;
     if (FIRE_UNLIKELY(p->nspecs != 0) && self.kind == K_Class) p = vmSpecializationFor(vm, p, self, vm->stack + vm->sp - argc, argc);
     n = argc > p->nparams ? argc : p->nparams;
     VmScope* from = vm->nframes > 0 ? vm->frames[vm->nframes - 1].scope : NULL;
@@ -486,7 +491,7 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     if (FIRE_UNLIKELY(vm->copyMask != 0)) {
         uint64_t mask = vm->copyMask;
         vm->copyMask = 0;
-        vmApplyCopyMask(vm, s, mask, p, argc, from);
+        vmApplyCopyMask(vm, s, mask, p, argc, from, held, &nheld);
     }
     if (FIRE_UNLIKELY(vm->pendingArgNames != NULL)) {
         const char* names = vm->pendingArgNames;
@@ -512,6 +517,8 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     f->rec = NULL;
     f->recInit = NULL;
     f->nfin = vm->nfin;
+    f->nheld = nheld;
+    for (i = 0; i < nheld; i++) f->held[i] = held[i];
     if (FIRE_UNLIKELY(named)) {
         if (bad) { f->ip = g_vmUnwindStub; return; }
         /* (the parameters a named call left out: their default values) */
@@ -570,6 +577,15 @@ static void vmLeaveTo(Vm* vm, VmFrame* f, VmScope* stop) {
     while (f->scope != stop && f->scope) {
         VmScope* s = f->scope;
         f->scope = s->parent;
+        if (FIRE_UNLIKELY(f->nheld) && s == f->base) {
+            /* (what the call took over from its caller dies after the call's locals - the generated code: the argument list goes after the callee) */
+            uint32_t i;
+            for (i = 0; i < f->nheld; i++) {
+                Owned* o = leafAlive(f->held[i]) ? ownedOf(f->held[i]) : NULL;
+                if (o && o->owner == &s->own) { ownUnlink(o); ownLink(&s->own, o); }
+            }
+            f->nheld = 0;
+        }
         scLeave(vm, s);
     }
 }
@@ -717,6 +733,7 @@ static void vmCatchFn(void* ctx, uint32_t ci, Value e) {
     f->rec = rec;
     f->recInit = NULL;
     f->nfin = vm->nfin;
+    f->nheld = 0;
     base = vm->nframes - 1;
     vmRun(vm, base);
 }
