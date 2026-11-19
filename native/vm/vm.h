@@ -251,6 +251,8 @@ struct VmHandlerRec {
     bool inCatch;           /* its catch block runs (a finally of the try still runs after it) */
     uint32_t ncarry;        /* the values the catch block pushed after its end (the completion of a finally: EnterFinallyNormal, PushJump) */
     Value carry[4];
+    struct VmScope* deferred;   /* the catch block's own scope, left: it dies when the owner leaves the try's scope - after the scopes of the throw site
+                                 * (SPEC 2.3, CppGenerator DeferCatchRelease) */
     VmHandlerRec* nextDead; /* given up (its catch block ended with another exception): freed at the next landing */
 };
 

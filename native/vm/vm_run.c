@@ -799,7 +799,7 @@ static void vmRun(Vm* vm, int32_t base) {
             VmScope* s = fr->scope;
             if (FIRE_UNLIKELY(fr->catchEnded & 1)) { fr->rec->extraExits++; break; }   /* (break/continue out of a catch: the owner's scopes, left when it lands) */
             SYNC();
-            if (fr->kind == FR_CATCH && s == fr->base) { fr->scope = fr->rec->scope; scLeave(vm, s); fr->catchEnded |= 1; break; }
+            if (fr->kind == FR_CATCH && s == fr->base) { fr->scope = fr->rec->scope; fr->rec->deferred = s; fr->catchEnded |= 1; break; }   /* (it dies at the landing, after the throw site) */
             if (s == vm->global || s == fr->base) break;
             fr->scope = s->parent;
             scLeave(vm, s);
@@ -1887,7 +1887,7 @@ static void vmRun(Vm* vm, int32_t base) {
             ip += 2;
             if (!r) outOfMemory();
             if (!t->resolved) vmResolveHandler(vm, t);
-            r->vm = vm; r->t = t; r->frame = vm->nframes - 1; r->scope = fr->scope; r->sp = (uint32_t)(sp - st); r->extraExits = 0; r->inCatch = false; r->ncarry = 0;
+            r->vm = vm; r->t = t; r->frame = vm->nframes - 1; r->scope = fr->scope; r->sp = (uint32_t)(sp - st); r->extraExits = 0; r->inCatch = false; r->ncarry = 0; r->deferred = NULL;
             r->h.fn = vmCatchFn; r->h.ctx = r; r->h.info = &t->info;
             pushHandler(&r->h);
             break;
@@ -2031,7 +2031,7 @@ static void vmRun(Vm* vm, int32_t base) {
  * to, like the generated functions return one by one. 1: the run goes on (at the landing place), 0: the base frame of this run is gone - the caller (a catch
  * block's callback, a nested call) goes on unwinding. */
 static void vmFreeDead(Vm* vm) {
-    while (vm->dead) { VmHandlerRec* r = vm->dead; vm->dead = r->nextDead; free(r); }
+    while (vm->dead) { VmHandlerRec* r = vm->dead; vm->dead = r->nextDead; vmLeaveDeferred(vm, r); free(r); }
 }
 static int vmUnwind(Vm* vm, int32_t base) {
     for (;;) {
@@ -2049,6 +2049,7 @@ static int vmUnwind(Vm* vm, int32_t base) {
             for (ci = 0; ci < ncarry; ci++) carry[ci] = rec->carry[ci];
             vm->sp = rec->sp;
             vmLeaveTo(vm, f, rec->scope);
+            vmLeaveDeferred(vm, rec);   /* (the catch block's scope: after the throw site's) */
             while (extra) { VmScope* s = f->scope; if (s == f->base || s == vm->global) break; f->scope = s->parent; scLeave(vm, s); extra--; }
             clearUnwind();
             free(rec);
@@ -2131,6 +2132,12 @@ static int vmUnwind(Vm* vm, int32_t base) {
         if (FIRE_UNLIKELY(g_acc.top > f->accBase) && f->kind != FR_CATCH) g_acc.top = f->accBase;
         vmRecInitEnd(f);
         vmDropHandlers(vm, vm->nframes - 1);
+        if (f->kind == FR_CATCH && f->scope != f->rec->scope && !(g_unwind.kind == UW_RESUME && g_unwind.token == f->rec->token)) {
+            /* (a catch block left by a return or another exception: its own scope dies after the throw site's - its handler keeps it) */
+            vmLeaveTo(vm, f, f->base);
+            f->scope = f->rec->scope;
+            f->rec->deferred = f->base;
+        }
         vmLeaveTo(vm, f, vmStopOf(vm, f));
         if (f->kind == FR_CTOR || f->kind == FR_BASECTOR) ctorEnd(f->self);   /* (a constructor that ended with an exception made no object: no destructor) */
         vm->nframes--;

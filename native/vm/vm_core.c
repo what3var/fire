@@ -582,10 +582,22 @@ static void vmRecInitEnd(VmFrame* f) {
     f->recInit = NULL;
 }
 
+/* The scope of a catch block dies after the scopes of the throw site (SPEC 2.3, like a native build: CppGenerator DeferCatchRelease): what its handler
+ * kept of it goes when the owner's scope of the try is reached - at the landing, or (a catch left by another exception) when the owner leaves past it. */
+static void vmLeaveDeferred(Vm* vm, VmHandlerRec* r) {
+    VmScope* d = r->deferred;
+    if (d) { r->deferred = NULL; scLeave(vm, d); }
+}
+static void vmLeaveDeferredAt(Vm* vm, VmScope* s) {
+    VmHandlerRec* r;
+    for (r = vm->dead; r; r = r->nextDead) if (r->deferred && r->scope == s) vmLeaveDeferred(vm, r);
+}
+
 /* Leaves the scopes of the frame down to `stop` (excluded). */
 static void vmLeaveTo(Vm* vm, VmFrame* f, VmScope* stop) {
     while (f->scope != stop && f->scope) {
         VmScope* s = f->scope;
+        if (FIRE_UNLIKELY(vm->dead != NULL)) vmLeaveDeferredAt(vm, s);
         f->scope = s->parent;
         if (FIRE_UNLIKELY(f->nheld) && s == f->base) {
             /* (what the call took over from its caller dies after the call's locals - the generated code: the argument list goes after the callee) */
@@ -598,6 +610,7 @@ static void vmLeaveTo(Vm* vm, VmFrame* f, VmScope* stop) {
         }
         scLeave(vm, s);
     }
+    if (FIRE_UNLIKELY(vm->dead != NULL) && f->scope) vmLeaveDeferredAt(vm, f->scope);
 }
 static VmScope* vmStopOf(Vm* vm, VmFrame* f) {
     if (f->kind == FR_TOP) return vm->global;
@@ -726,6 +739,7 @@ static void vmCatchFn(void* ctx, uint32_t ci, Value e) {
     if (vm->nframes >= VM_FRAMES) fatal("Stack overflow: too many nested calls.");
     rec->token = g_pending ? g_pending->token : 0;
     rec->inCatch = true;
+    rec->deferred = NULL;
     s = scNew(vm, rec->scope);
     scDefine(s, e);
     f = &vm->frames[vm->nframes++];
