@@ -66,6 +66,8 @@ struct VmProto {
     const char** specArgs;
     uint32_t nspecArgs;
     int64_t specDefinedMask;
+    const uint8_t* specParamKinds;   /* per parameter of a specialization its DeclaredKind (NULL: none) */
+    uint32_t nspecParamKinds;
     VmClass* owner;            /* the class whose member it is (NULL: a lambda or the top level) */
     VmClass* declaring;        /* the class that declares it (for a method: owner) */
 };
@@ -189,7 +191,8 @@ typedef struct VmFrame {
     uint8_t catchEnded;     /* a catch block: its scope is left - the next Jump leaves the catch */
     uint8_t retMode;        /* what the caller gets on return: RM_PUSH the result, RM_VALUE `after` instead (a setter, SetIndex), RM_DROP nothing */
     Value after;
-    uint32_t opJump;        /* an operator of an object stood for a JumpIfNot (catchEnded bit 1): where its false result jumps to */
+    uint32_t opJump;
+    RecInit* recInit;       /* a constructor of a record: the record counts as being constructed while it runs (fire_rt.h recInit) */        /* an operator of an object stood for a JumpIfNot (catchEnded bit 1): where its false result jumps to */
     VmHandlerRec* rec;      /* a catch block: the handler it belongs to */
     uint32_t nfin;          /* the finally blocks this frame is in (their records on the VM's stack of finally records) */
 } VmFrame;
@@ -237,7 +240,9 @@ typedef struct Vm {
     uint64_t copyMask;      /* CopyArgs: how the arguments of the next call go in */
     TArgs pendingTArgs;     /* SetTypeArgs: the type arguments of the next `new` / call / lambda */
     uint8_t pendingTArgsFor;
-    const char* pendingArgNames; /* ArgNames: the names of the next call's arguments */
+    uint32_t pendingTArgsN;
+    const char* pendingArgNames;
+    bool initNext;          /* InitNext (`with`): the store that follows writes a record that is being made */ /* ArgNames: the names of the next call's arguments */
     VmHandlerRec* dead;     /* handlers whose catch block was left by another exception (the runtime may still read them until its throwValue returns) */
     jmp_buf* exitJump;      /* the runtime's exitNow (FIRE_VM): back to the runner of the script */
     VmFinally fin[VM_FINALLY];

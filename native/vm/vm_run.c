@@ -92,7 +92,7 @@ static FIRE_COLD void vmAccessDenied(const char* what, const char* name, VmClass
  * exception. True when it threw. */
 static const fire_char16 g_vmUnitlessD[] = {117, 110, 105, 116, 108, 101, 115, 115, 0};
 static const Str g_vmUnitless = {{IMMORTAL, R_Str}, 8, g_vmUnitlessD};
-static bool vmGuard(Value* v, uint32_t required, const char* what) {
+static bool vmGuard(Value* v, uint32_t required, const char* what, bool slot) {
     static const uint8_t kinds[] = { K_Bool, K_Int, K_Float, K_Char, K_String, K_Word };
     uint32_t tag = (required & 0x1F);
     uint8_t kind;
@@ -100,7 +100,12 @@ static bool vmGuard(Value* v, uint32_t required, const char* what) {
     kind = kinds[tag - 1];
     if (kind == K_String) {
         if (v->kind == K_String || (v->kind == K_Undefined && !(required & 0x20))) return false;
-        return guardStrSlot(v) || g_unwind.active;
+        {   /* (a slot holds a count of the text: the old value lets go of it) */
+            Value old = *v;
+            *v = guardStr(*v);
+            if (slot && !g_unwind.active) { retain(*v); release(old); }
+            return g_unwind.active;
+        }
     }
     if (v->kind == kind && (!(required & 0x80) || v->unit == 0) && (kind != K_Int || v->reserved == 0)) return false;
     if (v->kind == K_Undefined && !(required & 0x20)) return false;
@@ -213,11 +218,12 @@ static const char* vmTypeArgOf(Vm* vm, Value obj, const char* declaring, int k) 
     const char* args[16];
     uint32_t n = 0, i;
     TArgs ta;
+    char plainBuf[160];
     if (!c || !leafAlive(obj)) return NULL;
     ta = objTArgs(asObj(obj));
     if (ta) for (n = 0; n < (uint32_t)(c->typeParams > 0 ? c->typeParams : 0) && n < 16; n++) args[n] = ta[n] ? ta[n]->display : NULL;
     else n = 0;
-    while (c && strcmp(c->name, declaring) != 0) {
+    while (c && strcmp(c->name, declaring) != 0 && strcmp(vmPlainName(c->name, plainBuf, sizeof plainBuf), declaring) != 0) {
         const char* next[16];
         uint32_t m = 0;
         if (!c->baseTypeArgs) { n = 0; }
@@ -250,8 +256,80 @@ static bool vmFitsDeclared(Vm* vm, Value v, const char* text, Value self, TArgs 
     }
     return vmHoldsAlts(vm, v, sp->alts);
 }
-/* the text of a declaration for its message ("... is a Dog, not Cat.") */
+/* the text of a declaration for its message ("... is a Dog, not Cat.", "... is a T (int), not String.") */
 static const char* vmDeclaredDisplay(Vm* vm, const char* text) { return text ? vmSpec(vm, text)->display : "?"; }
+static const char* vmDeclaredDisplayFor(Vm* vm, const char* text, Value self, TArgs ctargs, char* buf, size_t cap) {
+    VmSpec* sp;
+    const char* targ = NULL;
+    if (!text) return "?";
+    sp = vmSpec(vm, text);
+    if (sp->typeParam < 0) return sp->display;
+    if (sp->owner[0]) targ = vmTypeArgOf(vm, self, sp->owner, sp->typeParam);
+    else if (ctargs && ctargs[sp->typeParam] && ctargs[sp->typeParam]->display) targ = ctargs[sp->typeParam]->display;
+    if (!targ || !targ[0]) return sp->display;
+    {
+        char plain[160];
+        const char* colon = strchr(targ, ':');
+        if (colon && (!strncmp(targ, "int:", 4) || !strncmp(targ, "float:", 6))) snprintf(plain, sizeof plain, "%.*s : %s", (int)(colon - targ), targ, colon + 1);
+        else if (!strncmp(targ, "in:", 3)) snprintf(plain, sizeof plain, "in %s", targ + 3);
+        else vmPlainName(targ, plain, sizeof plain);
+        { const char* paren = strstr(sp->display, " ("); int dn = paren ? (int)(paren - sp->display) : (int)strlen(sp->display); snprintf(buf, cap, "%.*s (%s)", dn, sp->display, plain); }
+    }
+    return buf;
+}
+
+/* GuardLocalType/GuardTopType, a field declared with a class (VM.OpGuardLocalType): the value fits, or - a number for a `T` that stands for a number
+ * (`int`, `float : cm`) - is converted into it (DeclaredType.FitsOrConvert), or becomes its text for a `T` that stands for `string` (DECISIONS D14); otherwise
+ * the ArgumentException. True when it threw. */
+static bool vmGuardType(Vm* vm, Value* v, const char* text, Value self, TArgs ctargs, const char* what, bool slot) {
+    VmSpec* sp;
+    const char* targ = NULL;
+    char db[240];
+    if (!text || vmFitsDeclared(vm, *v, text, self, ctargs)) return false;
+    sp = vmSpec(vm, text);
+    if (sp->typeParam >= 0) {
+        if (sp->owner[0]) targ = vmTypeArgOf(vm, self, sp->owner, sp->typeParam);
+        else if (ctargs && ctargs[sp->typeParam] && ctargs[sp->typeParam]->display && ctargs[sp->typeParam]->display[0]) targ = ctargs[sp->typeParam]->display;
+    }
+    if (targ && (v->kind == K_Int || v->kind == K_Float)) {
+        bool isFloat = !strncmp(targ, "float", 5) && (!targ[5] || targ[5] == ':');
+        bool isInt = !strncmp(targ, "int", 3) && (!targ[3] || targ[3] == ':');
+        if (isFloat || (isInt && v->kind == K_Int)) {
+            char demand[200];
+            const char* colon = strchr(targ, ':');
+            snprintf(demand, sizeof demand, "%s%s", isFloat ? "#" : "", colon ? colon + 1 : "unitless");
+            *v = vmAdaptUnit(vm, *v, vmName(vm->prog, demand));
+            return g_unwind.active;
+        }
+    }
+    if (v->kind != K_String && v->kind != K_Undefined && (targ ? !strcmp(targ, "string") : (sp->typeParam < 0 && !strcmp(sp->alts, "string"))))
+    {
+        Value old = *v;
+        *v = guardStr(*v);
+        if (slot && !g_unwind.active) { retain(*v); release(old); }
+        return g_unwind.active;
+    }
+    guardClassFailed(*v, vmDeclaredDisplayFor(vm, text, self, ctargs, db, sizeof db), what ? what : "A value");
+    return true;
+}
+
+/* `T items[]`, `new T[n]` (OpCode.TypeArrayOfParam, FieldInfo.ArrayOfParam): the array is typed by the type argument when that is int, float, bool or char
+ * (DeclaredType.TypedElementOf; an array of a class: not yet). `text`: `$k@Class` or `$k@`. */
+static void vmTypeArrayOfParam(Vm* vm, Value arr, const char* text, Value self, TArgs ctargs) {
+    const char* targ = NULL;
+    int k;
+    const char* at;
+    uint8_t elem;
+    if (arr.kind != K_Array || !text || text[0] != '$') return;
+    k = atoi(text + 1);
+    at = strchr(text, '@');
+    if (at && at[1]) targ = vmTypeArgOf(vm, self, at + 1, k);
+    else if (ctargs && ctargs[k]) targ = ctargs[k]->display;
+    if (!targ) return;
+    elem = !strcmp(targ, "int") ? 4 : !strcmp(targ, "float") ? 8 : !strcmp(targ, "bool") ? 9 : !strcmp(targ, "char") ? 10 : 0;
+    if (!elem) return;
+    typeArray(arr, elem, 1, 0, 0, vmConstStrUtf8(vm->prog, "(no unit)"), 1);
+}
 
 /* The lists of the scopes of the running call (innermost first: temporaries, then the scope's own) - what `try take`, `is from local` look at. */
 static int vmCallLists(Vm* vm, VmFrame* fr, OwnList** lists, int cap) {
@@ -786,6 +864,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 free(fin);
                 break;
             }
+            if (FIRE_UNLIKELY(fr->recInit != NULL)) { recordCtorEnd(fr->self, asObj(fr->self)->cls); CHECK(); }
             if (!vmReturn(vm, r, base)) return;
             RELOAD();
             goto afterReturn;
@@ -1012,8 +1091,18 @@ static void vmRun(Vm* vm, int32_t base) {
                 owner = objOwned(asObj(h));
             }
             o = newObject(c->id, c->nlayout, owner);   /* unclaimed: the statement temporaries (SPEC 2.1) */
-            if (vm->pendingTArgsFor == 0 && vm->pendingTArgs) { objSetTArgs(asObj(o), vm->pendingTArgs); vm->pendingTArgs = NULL; }
+            if (vm->pendingTArgsFor == 0 && vm->pendingTArgs) {
+                objSetTArgs(asObj(o), vm->pendingTArgs);
+                if (c->typeParams < (int32_t)vm->pendingTArgsN) c->typeParams = (int32_t)vm->pendingTArgsN;
+                vm->pendingTArgs = NULL;
+            }
             vmPushCall(vm, ctor, (int)argc, op == OP_NewObjectOwned ? 1 : 0, o, FR_CTOR);
+            if (c->flags & VC_RECORD) {
+                RecInit* ri = (RecInit*)malloc(sizeof(RecInit));
+                if (!ri) outOfMemory();
+                ri->o = asObj(o); ri->next = g_recInit; g_recInit = ri;
+                vm->frames[vm->nframes - 1].recInit = ri;
+            }
             if (g_unwind.active) goto unwind;
             RELOAD();
             break;
@@ -1045,6 +1134,7 @@ static void vmRun(Vm* vm, int32_t base) {
             uint32_t forCall = ip[2];
             ip += 3;
             vm->pendingTArgs = vmTArgsOf(vm, fr, text);
+            { const char* q; vm->pendingTArgsN = 1; for (q = text; q && *q; q++) if (*q == '|') vm->pendingTArgsN++; }
             vm->pendingTArgsFor = (uint8_t)(forCall == 3 ? 1 : forCall);
             break;
         }
@@ -1158,15 +1248,16 @@ static void vmRun(Vm* vm, int32_t base) {
                     if (fi && fi->requiredKind) {
                         char what[200];
                         snprintf(what, sizeof what, "Field '%s'", name);
-                        if (vmGuard(&x, fi->requiredKind, what)) goto unwind;
+                        if (vmGuard(&x, fi->requiredKind, what, false)) goto unwind;
                     }
-                    if (fi && fi->requiredType && !vmFitsDeclared(vm, x, fi->requiredType, v, NULL)) {
+                    if (fi && fi->requiredType) {
                         char what[200];
                         snprintf(what, sizeof what, "Field '%s'", name);
-                        guardClassFailed(x, vmDeclaredDisplay(vm, fi->requiredType), what);
-                        goto unwind;
+                        if (vmGuardType(vm, &x, fi->requiredType, v, NULL, what, false)) goto unwind;
                     }
-                    if ((c->flags & VC_RECORD) && !recInit(asObj(v))) { recordWriteError(asObj(v), name); goto unwind; }
+                    if (fi && fi->arrayOfParam && x.kind == K_Array) { vmTypeArrayOfParam(vm, x, fi->arrayOfParam, v, NULL); CHECK(); }
+                    if ((c->flags & VC_RECORD) && !recInit(asObj(v)) && !vm->initNext) { recordWriteError(asObj(v), name); goto unwind; }
+                    vm->initNext = false;
                     if (!checks) vmIcSet(fr->chunk, at, asObj(v)->cls, (void*)(intptr_t)idx);
                 }
             }
@@ -1253,7 +1344,7 @@ static void vmRun(Vm* vm, int32_t base) {
             const char* what = KNAME(U16(ip + 3));
             uint32_t required = ((tag & 0x7F) + 1) | (tag & 0x80);
             ip += 7;
-            if (slot < fr->scope->hi) { SYNC(); if (vmGuard(&fr->scope->slots[slot], required, what)) goto unwind; }
+            if (slot < fr->scope->hi) { SYNC(); if (vmGuard(&fr->scope->slots[slot], required, what, true)) goto unwind; }
             break;
         }
         case OP_GuardTop: {
@@ -1261,7 +1352,7 @@ static void vmRun(Vm* vm, int32_t base) {
             const char* what = KNAME(U16(ip + 1));
             ip += 3;
             SYNC();
-            if (vmGuard(&sp[-1], required, what)) goto unwind;
+            if (vmGuard(&sp[-1], required, what, false)) goto unwind;
             break;
         }
         case OP_GuardTopType: case OP_GuardLocalType: {
@@ -1271,7 +1362,7 @@ static void vmRun(Vm* vm, int32_t base) {
             if (op == OP_GuardTopType) { spec = KNAME(U16(ip)); what = KNAME(U16(ip + 2)); v = &sp[-1]; ip += 4; }
             else { uint32_t slot = U16(ip); spec = KNAME(U16(ip + 2)); what = KNAME(U16(ip + 4)); ip += 6; v = slot < fr->scope->hi ? &fr->scope->slots[slot] : NULL; }
             SYNC();
-            if (v && spec && !vmFitsDeclared(vm, *v, spec, fr->self, fr->ctargs)) { guardClassFailed(*v, vmDeclaredDisplay(vm, spec), what ? what : "A value"); goto unwind; }
+            if (v && spec && vmGuardType(vm, v, spec, fr->self, fr->ctargs, what, op == OP_GuardLocalType)) goto unwind;
             break;
         }
         case OP_CheckUnit: {
@@ -1317,7 +1408,7 @@ static void vmRun(Vm* vm, int32_t base) {
         }
         case OP_Trust: break;
         case OP_RecordCheck: { uint32_t m = *ip++; SYNC(); if (m == 1) recordRequire(sp[-1]); else (void)recordCheckV(sp[-1]); CHECK(); break; }
-        case OP_InitNext: break;
+        case OP_InitNext: vm->initNext = true; break;
 
         /* ---- arrays ---- */
         case OP_NewArray: {
@@ -1399,7 +1490,7 @@ static void vmRun(Vm* vm, int32_t base) {
             }
             break;
         }
-        case OP_TypeArrayOfParam: { ip += 2; break; }
+        case OP_TypeArrayOfParam: { const char* t = KNAME(U16(ip)); ip += 2; SYNC(); vmTypeArrayOfParam(vm, sp[-1], t, fr->self, fr->ctargs); CHECK(); break; }
         case OP_ArrayGet: {
             Value i = sp[-1], a = sp[-2];
             if (FIRE_UNLIKELY(a.kind == K_Class)) {
@@ -1652,6 +1743,7 @@ static int vmUnwind(Vm* vm, int32_t base) {
         }
         vm->sp = f->spBase;
         vm->nfin = f->nfin;
+        vmRecInitEnd(f);
         vmDropHandlers(vm, vm->nframes - 1);
         vmLeaveTo(vm, f, vmStopOf(vm, f));
         if (f->kind == FR_CTOR || f->kind == FR_BASECTOR) ctorEnd(f->self);   /* (a constructor that ended with an exception made no object: no destructor) */

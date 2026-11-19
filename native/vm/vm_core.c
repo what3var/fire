@@ -330,6 +330,40 @@ static VmProto* vmFindCtor(Vm* vm, VmClass* c, int argc, const Value* args) {
     }
 }
 
+/* DeclaredKind.Fits: a value fits a declaration int/float/bool/... without converting it */
+static bool vmKindFits(Value v, uint8_t required) {
+    static const uint8_t kinds[] = { K_Bool, K_Int, K_Float, K_Char, K_String, K_Word };
+    uint32_t tag = required & 0x1F;
+    if (required == 0) return true;
+    if (v.kind == K_Undefined) return !(required & 0x20);
+    if (tag == 0 || tag > 6 || v.kind != kinds[tag - 1]) return false;
+    if ((required & 0x80) && v.unit != 0) return false;
+    return !(v.kind == K_Int && v.reserved != 0);
+}
+/* A typed specialization written in the class (`Add<int>`, SPEC 5.8.1) runs instead of the generic method when the object's type arguments are its
+ * own and the arguments fit (VM.SpecializationFor). */
+static const char* vmTypeArgOf(Vm* vm, Value obj, const char* declaring, int k);
+static VmProto* vmSpecializationFor(Vm* vm, VmProto* p, Value self, const Value* args, int argc) {
+    uint32_t s;
+    for (s = 0; s < p->nspecs; s++) {
+        VmProto* sp = p->specs[s];
+        bool fits = sp->specArgs != NULL && argc == sp->nparams;
+        int i;
+        uint32_t k;
+        for (i = 0; fits && i < argc && i < 64; i++)
+            fits = sp->specParamKinds && (uint32_t)i < sp->nspecParamKinds ? vmKindFits(args[i], sp->specParamKinds[i]) : !((sp->specDefinedMask >> i) & 1) || args[i].kind != K_Undefined;
+        for (k = 0; fits && k < sp->nspecArgs; k++) {
+            const char* want = sp->specArgs[k];
+            const char* have;
+            if (want && !strcmp(want, "any")) continue;
+            have = sp->specOwner ? vmTypeArgOf(vm, self, sp->specOwner, (int)k) : NULL;
+            fits = have && want && !strcmp(have, want);
+        }
+        if (fits) return sp;
+    }
+    return p;
+}
+
 /* ---- access (VM.IsMemberAccessAllowed): private only from the declaring class, protected from it and the classes derived from it ---- */
 static bool vmAccessAllowed(VmChunk* caller, VmClass* declaring, uint8_t access) {
     VmClass* rc = caller ? caller->owner : NULL;
@@ -386,7 +420,9 @@ static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int a
 static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8_t kind) {
     VmFrame* f;
     VmScope* s;
-    int i, n = argc > p->nparams ? argc : p->nparams;
+    int i, n;
+    if (FIRE_UNLIKELY(p->nspecs != 0) && self.kind == K_Class) p = vmSpecializationFor(vm, p, self, vm->stack + vm->sp - argc, argc);
+    n = argc > p->nparams ? argc : p->nparams;
     VmScope* from = vm->nframes > 0 ? vm->frames[vm->nframes - 1].scope : NULL;
     if (FIRE_UNLIKELY(vm->nframes >= VM_FRAMES)) fatal("Stack overflow: too many nested calls.");
     s = scNew(vm, vm->global);
@@ -414,6 +450,7 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     f->retMode = RM_PUSH;
     f->after = Undef();
     f->rec = NULL;
+    f->recInit = NULL;
     f->nfin = vm->nfin;
     /* missing arguments: their default values (a function of their own, run nested), else undefined */
     for (i = argc; i < p->nparams; i++) {
@@ -439,6 +476,15 @@ static void vmDropHandlers(Vm* vm, int32_t frame) {
         popHandler();
         free(r);
     }
+}
+
+/* The end of a frame of a record's constructor: the record is no longer being constructed. */
+static void vmRecInitEnd(VmFrame* f) {
+    RecInit** p;
+    if (!f->recInit) return;
+    for (p = &g_recInit; *p; p = &(*p)->next) if (*p == f->recInit) { *p = f->recInit->next; break; }
+    free(f->recInit);
+    f->recInit = NULL;
 }
 
 /* Leaves the scopes of the frame down to `stop` (excluded). */
@@ -471,6 +517,7 @@ static bool vmReturn(Vm* vm, Value r, int32_t base) {
     retain(r);   /* (the count for the trip; the caller adopts it) */
     vm->sp = f->spBase;
     vm->nfin = f->nfin;
+    vmRecInitEnd(f);
     vmLeaveTo(vm, f, stop);
     vm->nframes--;
     switch (kind) {
@@ -590,6 +637,7 @@ static void vmCatchFn(void* ctx, uint32_t ci, Value e) {
     f->retMode = RM_PUSH;
     f->after = Undef();
     f->rec = rec;
+    f->recInit = NULL;
     f->nfin = vm->nfin;
     base = vm->nframes - 1;
     vmRun(vm, base);
@@ -622,6 +670,16 @@ static int64_t vmRecHash(Value a) {
     uint32_t i;
     for (i = 0; i < x->nfields; i++) h = fire_mixHash(h * 31u + (uint64_t)keyHash(objFields(x)[i]));
     return (int64_t)h;
+}
+
+static bool vmRecCheck(Value a) {
+    Vm* vm = g_vmCur;
+    Obj* x = asObj(a);
+    VmClass* c = vmClassOf(vm, x->cls);
+    uint32_t i;
+    for (i = 0; c && i < x->nfields && i < c->nlayout; i++)
+        if (!recFieldOk(objFields(x)[i])) return recordFieldError(a, c->layout[i], objFields(x)[i]);
+    return true;
 }
 
 /* ---- the class descriptors: the program's classes registered at run time (like fireRegisterPlugin does for the classes of a plugin) ---- */
@@ -666,7 +724,7 @@ static void vmRegisterClasses(Vm* vm) {
         }
         d->flags = 0;
         for (k = c; k; k = k->base) if (k->flags & VC_NOCOPY) d->flags = 1;
-        if (c->flags & VC_RECORD) { d->recEq = vmRecEq; d->recHash = vmRecHash; }
+        if (c->flags & VC_RECORD) { d->recEq = vmRecEq; d->recHash = vmRecHash; d->recCheck = vmRecCheck; }
     }
     vm->descs = rows;
     g_classDescs = rows;

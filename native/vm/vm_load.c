@@ -215,7 +215,7 @@ static VmProto* rdProto(VmReader* r) {
     f->specArgs = rdOptStrList(r, &f->nspecArgs);
     f->specDefinedMask = rdInt(r);
     n = rdCount(r);
-    if (n) rdNeed(r, n - 1);                    /* specParamKinds (the C bodies of the native backend) */
+    if (n) { f->nspecParamKinds = n - 1; f->specParamKinds = rdNeed(r, n - 1); }   /* specParamKinds */
     return f;
 }
 
