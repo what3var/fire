@@ -287,14 +287,22 @@ static VmChunk* rdChunk(VmReader* r) {
     return c;
 }
 
-static void rdType(VmReader* r) {
+/* A TypeRef; `out` (may be NULL) gets its C text for a signature of `Library`: `int[32]`, `float`, `char**` ("void" for none). */
+static void rdTypeText(VmReader* r, char* out, size_t cap) {
     uint32_t n;
-    if (!rdU8(r)) return;
-    rdName(r); rdInt(r); rdInt(r);
+    const char* base;
+    int64_t bits, depth;
+    if (!rdU8(r)) { if (out) snprintf(out, cap, "void"); return; }
+    base = rdName(r); bits = rdInt(r); depth = rdInt(r);
+    if (out) {
+        size_t at = (size_t)snprintf(out, cap, bits > 0 ? "%s[%d]" : "%s", base, (int)(bits - 1));
+        while (depth-- > 0 && at + 1 < cap) out[at++] = '*';
+        if (at < cap) out[at] = 0;
+    }
     if (rdU8(r)) { rdStr(r); rdStrList(r, NULL); rdU8(r); rdName(r); rdU8(r); }
     rdOptStrList(r, NULL); rdStr(r); rdInt(r); rdInt(r);
     n = rdCount(r);
-    if (n) { n--; while (n--) { if (!rdU8(r)) rdFail(r, "a type argument is missing"); r->at--; rdType(r); } }
+    if (n) { n--; while (n--) { if (!rdU8(r)) rdFail(r, "a type argument is missing"); r->at--; rdTypeText(r, NULL, 0); } }
     rdU8(r);
 }
 
@@ -529,12 +537,26 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
     p->nresources = n;
     p->resources = vmAlloc(&p->arena, (n + 1) * sizeof(*p->resources));
     for (i = 0; i < n; i++) { p->resources[i].name = rdName(&r); p->resources[i].len = rdCount(&r); p->resources[i].data = rdNeed(&r, p->resources[i].len); }
-    n = rdCount(&r);                         /* externs */
-    while (n--) {
-        uint32_t m;
-        rdName(&r); rdStr(&r);
-        for (m = rdCount(&r); m > 0; m--) rdType(&r);
-        rdType(&r); rdStr(&r); rdOptStrList(&r, NULL); rdInt(&r); rdInt(&r); rdStr(&r);
+    n = rdCount(&r);                         /* externs: a function of a C library as a signature of `Library` (vm_lib.c) */
+    p->nexterns = n;
+    p->externs = (VmExtern*)vmAlloc(&p->arena, (n + 1) * sizeof(VmExtern));
+    for (i = 0; i < n; i++) {
+        uint32_t m, k;
+        char sig[400], t[64];
+        size_t at;
+        VmExtern* e = &p->externs[i];
+        e->name = rdName(&r); e->lib = rdStr(&r);
+        m = rdCount(&r);
+        at = 0; sig[0] = 0;
+        for (k = 0; k < m; k++) { rdTypeText(&r, t, sizeof t); at += (size_t)snprintf(sig + at, sizeof sig > at ? sizeof sig - at : 0, "%s%s", k ? "," : "", t); }
+        rdTypeText(&r, t, sizeof t);
+        {
+            char full[480];
+            snprintf(full, sizeof full, "%s(%s)", t, sig);
+            e->signature = vmName(p, full);
+        }
+        e->inlineC = rdStr(&r) != NULL;
+        rdOptStrList(&r, NULL); rdInt(&r); rdInt(&r); rdStr(&r);
     }
     n = rdCount(&r);
     p->nclasses = n;

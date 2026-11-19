@@ -834,6 +834,19 @@ static void vmRun(Vm* vm, int32_t base) {
             break;
         }
 
+        case OP_CallExtern: {   /* (a function of a C library, vm_lib.c) */
+            const char* name = KNAME(U16(ip));
+            uint32_t argc = ip[2];
+            Value r;
+            ip += 3;
+            SYNC();
+            r = vmCallExtern(prog, name, (int)argc, sp - argc, &fr->scope->temp);
+            sp -= argc;
+            CHECK();
+            PUSH(r);
+            break;
+        }
+
         /* ---- lambdas and calls ---- */
         case OP_MakeLambda: case OP_MakeLambdaCapturing: {
             VmProto* p = fr->chunk->fn[U16(ip)];

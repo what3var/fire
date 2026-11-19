@@ -45,9 +45,8 @@ static int64_t vmLibNarrow(int64_t x, const VmLibType* t) {
     switch (t->width) { case 8: return (int8_t)x; case 16: return (int16_t)x; case 32: return (int32_t)x; default: return x; }
 }
 
-/* `__LibCall(4, fn, signature, args, release)`: calls the function. */
-static Value vmLibCall(Value fn, Value sig, Value args, Value release, OwnList* list) {
-    char text[256];
+/* Calls `f` with the C signature `text` (without white space, valid) and `count` arguments. */
+static Value vmLibInvoke(void* f, const char* text, const Value* items, int count, Value release, OwnList* list) {
     const char* s = text;
     VmLibType ret, ps[8];
     int n = 0, i, ni = 0, nf = 0;
@@ -55,26 +54,22 @@ static Value vmLibCall(Value fn, Value sig, Value args, Value release, OwnList* 
     double fv[8] = {0};
     ExternString strs[8];
     ExternPtr ptrs[8];
-    Arr* a;
     Value result;
-    void* f = fn.kind == K_Int ? (void*)(intptr_t)fn.i : NULL;
-    if (!fire_libSigNorm(sig, text, sizeof text) || fire_libSigArity(text) < 0 || !vmLibType(&s, &ret) || *s++ != '(')
-        return fireError("LibraryException", "The signature of a native function is not known to this native build.");
+    if (!vmLibType(&s, &ret) || *s++ != '(') return fireError("LibraryException", "The signature of a native function is not known to this native build.");
     while (*s && *s != ')' && n < 8) {
         if (!vmLibType(&s, &ps[n])) break;
         if (!(ps[n].base == 'v' && ps[n].depth == 0)) n++;
         if (*s == ',') s++;
     }
-    a = args.kind == K_Array ? arrOf(args) : NULL;
-    if (!a || (int)a->length != n) {
+    if (count != n) {
         char t[160];
-        snprintf(t, sizeof t, "The function expects %d argument(s), got %d.", n, a ? (int)a->length : 0);
+        snprintf(t, sizeof t, "The function expects %d argument(s), got %d.", n, count);
         return fireError("ArgumentException", t);
     }
     memset(strs, 0, sizeof strs);
     memset(ptrs, 0, sizeof ptrs);
     for (i = 0; i < n; i++) {
-        Value v = arrItems(a)[i];
+        Value v = items[i];
         if (ps[i].depth > 0) { externPtrInit(&ptrs[i], v); iv[ni++] = (int64_t)(intptr_t)ptrs[i].raw; }
         else if (ps[i].base == 's') { externStringInit(&strs[i], v); iv[ni++] = (int64_t)(intptr_t)strs[i].p; }
         else if (ps[i].base == 'f') fv[nf++] = ps[i].width == 32 ? vmLibFloatBits((float)externFloat(v)) : externFloat(v);
@@ -106,7 +101,42 @@ static Value vmLibCall(Value fn, Value sig, Value args, Value release, OwnList* 
     for (i = n; i-- > 0;) { if (ps[i].depth > 0) externPtrFree(&ptrs[i]); else if (ps[i].base == 's') externStringFree(&strs[i]); }
     return result;
 }
+
+/* `__LibCall(4, fn, signature, args, release)`: calls the function. */
+static Value vmLibCall(Value fn, Value sig, Value args, Value release, OwnList* list) {
+    char text[256];
+    Arr* a = args.kind == K_Array ? arrOf(args) : NULL;
+    if (!fire_libSigNorm(sig, text, sizeof text) || fire_libSigArity(text) < 0) return fireError("LibraryException", "The signature of a native function is not known to this native build.");
+    return vmLibInvoke(fn.kind == K_Int ? (void*)(intptr_t)fn.i : NULL, text, a ? arrItems(a) : NULL, a ? (int)a->length : 0, release, list);
+}
 #endif
+
+/* CallExtern: a function of a C library (`#extern "lib"` + `extern int f(int)`, SPEC 8.1) - by its signature, like Library (VM.ResolveDynamicExtern). An
+ * `inline c` function needs a C compiler while the program runs: not in this VM. */
+static Value vmCallExtern(VmProgram* p, const char* name, int argc, const Value* args, OwnList* list) {
+    VmExtern* e = NULL;
+    uint32_t i;
+    char text[600];
+    for (i = 0; i < p->nexterns; i++) if (p->externs[i].name == name) e = &p->externs[i];
+    if (!e) { snprintf(text, sizeof text, "The extern function '%s' is not declared.", name); fatal(text); }
+    if (e->inlineC || !e->lib) { snprintf(text, sizeof text, "the inline C function %s", name); vmUnsupported(text, NULL); }
+#ifdef VM_LIB_CALLS
+    if (!e->fn) {
+        void* h = fire_plat_dlopen(e->lib);
+        if (!h) {
+            const char* why = fire_plat_dlerror();
+            snprintf(text, sizeof text, "Native library '%s' could not be loaded (for extern '%s', declared with '#extern \"%s\"'): %s", e->lib, name, e->lib, why ? why : "not found");
+            fatal(text);
+        }
+        e->fn = fire_plat_dlsym(h, name);
+        if (!e->fn) { snprintf(text, sizeof text, "Function '%s' was not found in '%s'.", name, e->lib); fatal(text); }
+    }
+    return vmLibInvoke(e->fn, e->signature, args, argc, Undef(), list);
+#else
+    (void)argc; (void)args; (void)list;
+    vmUnsupported("extern functions on this machine", name);
+#endif
+}
 
 /* `__LibCall(id, a, b, c, d)`. */
 static Value vmLibraryCall(uint32_t argc, const Value* a, OwnList* list) {
