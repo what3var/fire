@@ -105,9 +105,11 @@ static bool vmGuard(Value* v, uint32_t required, const char* what, bool slot) {
         if (v->kind == K_String || (v->kind == K_Undefined && !(required & 0x20))) return false;
         {   /* (a slot holds a count of the text: the old value lets go of it) */
             Value old = *v;
-            *v = guardStr(*v);
-            if (slot && !g_unwind.active) { retain(*v); release(old); }
-            return g_unwind.active;
+            Value t = guardStr(*v);
+            if (g_unwind.active) return true;   /* (ToString() threw: the slot keeps what it held - the text it may have made is the pool's) */
+            *v = t;
+            if (slot) { retain(t); release(old); }
+            return false;
         }
     }
     if (v->kind == kind && (!(required & 0x80) || v->unit == 0) && (kind != K_Int || v->reserved == 0)) return false;
