@@ -342,7 +342,7 @@ static void vmRun(Vm* vm, int32_t base) {
             VmScope* s = scAncestor(fr->scope, U16(ip));
             uint32_t slot = U16(ip + 2);
             ip += 4;
-            PUSH(slot < s->n ? s->slots[slot] : Undef());
+            PUSH(slot < s->hi ? s->slots[slot] : Undef());
             break;
         }
         case OP_StoreLocal: case OP_StoreLocalPop: {
@@ -359,7 +359,7 @@ static void vmRun(Vm* vm, int32_t base) {
             if (op == OP_StoreLocalPop) sp--;
             break;
         }
-        case OP_LoadGlobal: { uint32_t slot = U16(ip); Value v; ip += 2; v = slot < vm->global->n ? vm->global->slots[slot] : Undef(); if (FIRE_UNLIKELY(isRef(v))) holdTemp(v, &fr->scope->temp); PUSH(v); break; }
+        case OP_LoadGlobal: { uint32_t slot = U16(ip); Value v; ip += 2; v = slot < vm->global->hi ? vm->global->slots[slot] : Undef(); if (FIRE_UNLIKELY(isRef(v))) holdTemp(v, &fr->scope->temp); PUSH(v); break; }
         case OP_StoreGlobal: case OP_StoreGlobalPop: {
             uint32_t slot = U16(ip);
             Value v = sp[-1], old;
@@ -422,7 +422,7 @@ static void vmRun(Vm* vm, int32_t base) {
         case OP_ShiftRightLogical: { Value b, a; VM_OPERATOR("operator>>>") b = POP(); a = sp[-1]; SYNC(); sp[-1] = ushr(a, b); CHECK(); break; }
         case OP_Neg: { SYNC(); sp[-1] = negate(sp[-1]); CHECK(); break; }
         case OP_BitNot: { SYNC(); sp[-1] = bitNot(sp[-1]); CHECK(); break; }
-        case OP_LogicalNot: { Value v = sp[-1]; bool t; SYNC(); t = truthy(v); CHECK(); sp[-1] = Bool(!t); break; }
+        case OP_LogicalNot: { Value v = sp[-1]; if (FIRE_LIKELY(v.kind == K_Bool)) sp[-1] = Bool(v.i == 0); else { SYNC(); sp[-1] = lnot(v); CHECK(); } break; }
         case OP_Eq: case OP_NotEq: {
             Value b, a;
             bool r;
@@ -1187,7 +1187,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 VmClass* c = vmClassOfValue(vm, v);
                 char acc[200];
                 if (c && leafAlive(v)) {
-                    has = vmFieldIndex(c, name) >= 0 || vmHasMethodNamed(c, name) || fire_builtinHas(v, name);
+                    has = vmFieldIndex(c, name) >= 0 || vmHasMethodNamed(c, name) || !strcmp(name, "TakeTo") || !strcmp(name, "TakeLocal") || !strcmp(name, "TakeUpwards") || !strcmp(name, "TakeGlobal");
                     if (!has) { snprintf(acc, sizeof acc, "get_%s", name); has = vmHasMethodNamed(c, vmName(prog, acc)); }
                 }
             } else has = fire_builtinHas(v, name);
@@ -1227,7 +1227,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 RELOAD();
                 break;
             }
-            if (!PERF) {
+            if (!PERF && op != OP_SetStaticFieldOnInit) {
                 VmClass* declaring = NULL;
                 const VmFieldInfo* fi = vmFieldInfo(c, name, &declaring);
                 if (fi && fi->access && !vmAccessAllowed(fr->chunk, declaring, fi->access)) { vmAccessDenied("Static field", name, declaring, fi->access, "accessed"); goto unwind; }
@@ -1253,7 +1253,7 @@ static void vmRun(Vm* vm, int32_t base) {
             const char* what = KNAME(U16(ip + 3));
             uint32_t required = ((tag & 0x7F) + 1) | (tag & 0x80);
             ip += 7;
-            if (slot < fr->scope->n) { SYNC(); if (vmGuard(&fr->scope->slots[slot], required, what)) goto unwind; }
+            if (slot < fr->scope->hi) { SYNC(); if (vmGuard(&fr->scope->slots[slot], required, what)) goto unwind; }
             break;
         }
         case OP_GuardTop: {
@@ -1269,7 +1269,7 @@ static void vmRun(Vm* vm, int32_t base) {
             const char* what;
             Value* v;
             if (op == OP_GuardTopType) { spec = KNAME(U16(ip)); what = KNAME(U16(ip + 2)); v = &sp[-1]; ip += 4; }
-            else { uint32_t slot = U16(ip); spec = KNAME(U16(ip + 2)); what = KNAME(U16(ip + 4)); ip += 6; v = slot < fr->scope->n ? &fr->scope->slots[slot] : NULL; }
+            else { uint32_t slot = U16(ip); spec = KNAME(U16(ip + 2)); what = KNAME(U16(ip + 4)); ip += 6; v = slot < fr->scope->hi ? &fr->scope->slots[slot] : NULL; }
             SYNC();
             if (v && spec && !vmFitsDeclared(vm, *v, spec, fr->self, fr->ctargs)) { guardClassFailed(*v, vmDeclaredDisplay(vm, spec), what ? what : "A value"); goto unwind; }
             break;
@@ -1286,7 +1286,7 @@ static void vmRun(Vm* vm, int32_t base) {
             const char* name = KNAME(U16(ip + 2));
             ip += 4;
             SYNC();
-            if (slot < fr->scope->n) { requireRef(fr->scope->slots[slot], name ? name : "?"); CHECK(); }
+            if (slot < fr->scope->hi) { requireRef(fr->scope->slots[slot], name ? name : "?"); CHECK(); }
             break;
         }
         case OP_CastTo: {

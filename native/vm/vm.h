@@ -166,7 +166,7 @@ struct VmProgram {
 typedef struct VmScope {
     struct VmScope* parent;
     Value* slots;
-    uint32_t n, cap;
+    uint32_t n, hi, cap;    /* n: the slots declared so far (DeclareLocal takes the next); hi: the slots in use (one written before its declaration) */
     OwnList own;
     OwnList temp;
     struct VmScope* nextFree;

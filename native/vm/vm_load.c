@@ -119,9 +119,9 @@ static Value vmConstStr(VmProgram* p, const fire_char16* d, uint32_t n) {
 static Value vmConstStrUtf8(VmProgram* p, const char* s) {
     fire_char16 small[256];
     uint32_t n = (uint32_t)strlen(s);
-    fire_char16* d = n < 256 ? small : (fire_char16*)malloc((n + 1) * sizeof(fire_char16));
+    fire_char16* d = n + 2 < 256 ? small : (fire_char16*)malloc((n + 2) * sizeof(fire_char16));
     Value v;
-    n = utf8ToUtf16(s, d, n + 1);
+    n = utf8ToUtf16(s, d, n + 2);
     v = vmConstStr(p, d, n);
     if (d != small) free(d);
     return v;

@@ -43,9 +43,11 @@ static VmScope* scNew(Vm* vm, VmScope* parent) {
     }
     s->parent = parent;
     s->n = 0;
+    s->hi = 0;
     s->own = scopeList(poolMark());
     s->temp = scopeList(0xFFFFFFFFu);
     s->temp.home = &s->own;
+    s->own.parent = parent ? &parent->own : NULL;   /* (TakeUpwards: a block scope goes to the scope around it, a call scope to the global scope) */
     return s;
 }
 static void scReserve(VmScope* s, uint32_t n) {
@@ -59,12 +61,14 @@ static void scReserve(VmScope* s, uint32_t n) {
     }
 }
 static void scDefine(VmScope* s, Value v) {
-    if (s->n == s->cap) scReserve(s, s->n + 1);
     retain(v);
+    if (s->n < s->hi) { Value old = s->slots[s->n]; s->slots[s->n++] = v; release(old); return; }   /* (a global written before its declaration: the declaration's value counts) */
+    if (s->n == s->cap) scReserve(s, s->n + 1);
     s->slots[s->n++] = v;
+    s->hi = s->n;
 }
 static Value* scSlot(VmScope* s, uint32_t slot) {
-    if (FIRE_UNLIKELY(slot >= s->n)) { scReserve(s, slot + 1); while (s->n <= slot) s->slots[s->n++] = Undef(); }
+    if (FIRE_UNLIKELY(slot >= s->hi)) { scReserve(s, slot + 1); while (s->hi <= slot) s->slots[s->hi++] = Undef(); }
     return &s->slots[slot];
 }
 /* The scope ends: what it owns is destroyed (destructors run), its temporaries and slots let go. */
@@ -72,8 +76,8 @@ static void scLeave(Vm* vm, VmScope* s) {
     uint32_t i;
     leave(&s->temp);
     leave(&s->own);
-    for (i = 0; i < s->n; i++) release(s->slots[i]);
-    s->n = 0;
+    for (i = 0; i < s->hi; i++) release(s->slots[i]);
+    s->n = s->hi = 0;
     s->nextFree = vm->freeScopes;
     vm->freeScopes = s;
 }
@@ -388,7 +392,7 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
     s = scNew(vm, vm->global);
     scReserve(s, (uint32_t)n + 4);
     for (i = 0; i < argc; i++) { Value a = vm->stack[vm->sp - (uint32_t)argc + (uint32_t)i]; retain(a); s->slots[i] = a; }
-    s->n = (uint32_t)argc;
+    s->n = s->hi = (uint32_t)argc;
     if (FIRE_UNLIKELY(vm->copyMask != 0)) {
         uint64_t mask = vm->copyMask;
         vm->copyMask = 0;
@@ -417,10 +421,11 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
         Value v = Undef();
         if (d) {
             v = vmCallNested(vm, d, 0, NULL, self, FR_NESTED);
-            if (g_unwind.active) { s->slots[s->n++] = Undef(); continue; }
+            if (g_unwind.active) { s->slots[s->n++] = Undef(); s->hi = s->n; continue; }
         }
         /* (the slot takes the count of the trip; what has no owner belongs to the call) */
         s->slots[s->n++] = v;
+        s->hi = s->n;
         if (d) { Owned* o = ownedOf(v); if (o && !o->owner) ownLink(&s->own, o); }
     }
 }
@@ -646,12 +651,12 @@ static void vmRegisterClasses(Vm* vm) {
         c->typeParams = tick ? atoi(tick + 1) : 0;
         d->name = c->name;
         d->nfields = c->nlayout;
-        d->messageIndex = c->isException ? vmFieldIndex(c, message) : -1;
+        d->messageIndex = vmFieldIndex(c, message);   /* (any object can be thrown: its `message`, if it has one) */
         d->ticksIndex = -1;
         d->destroy = c->hasDtor ? vmDestroyObj : NULL;
         d->toString = vmHasMethodNamed(c, toString) ? vmToString : NULL;
         /* the catch types an object of the class is: every class of its chain (the catch type of class k is its id + 1; FIRE_EXC_ANY is 0) */
-        if (c->isException) {
+        {   /* (any object can be thrown and caught by its class)  */
             int32_t* types = (int32_t*)malloc((depth + 1) * sizeof(int32_t));
             if (!types) outOfMemory();
             for (k = c; k; k = k->base) types[t++] = (int32_t)k->id + 1;
