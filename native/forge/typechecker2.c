@@ -61,9 +61,13 @@ static void Check(FcTC* t, FcStmt* stmt) {
             FcReturnStmt* r = (FcReturnStmt*)stmt;
             if (r->value) {
                 const FcST* type = InferExpected(t, r->value, t->returnType);
+                NoteReturn(t, r->value, type);
                 if (t->collectedReturns) fcListAdd(TC_, t->collectedReturns, (void*)type);
-                if (t->returnType) CheckAssignable(t, type, t->returnType, r->h.line, "the return value", TC_ReturnCode, r->value);
-            } else if (t->collectedReturns) fcListAdd(TC_, t->collectedReturns, (void*)ST_UNDEFINED);
+                if (t->returnType) {
+                    CheckAssignable(t, type, t->returnType, r->h.line, "the return value", TC_ReturnCode, r->value);
+                    if (t->returnTypeRef) GuardValue(t, r->value, type, t->returnType, t->returnTypeRef, t->returnWhat);
+                }
+            } else { NoteReturn(t, NULL, NULL); if (t->collectedReturns) fcListAdd(TC_, t->collectedReturns, (void*)ST_UNDEFINED); }
             break;
         }
         case SK_ThrowStmt: Infer(t, ((FcThrowStmt*)stmt)->value); break;
@@ -179,12 +183,14 @@ static void CheckVarDecl(FcTC* t, FcVarDeclStmt* v) {
         if (v->initializer) {
             target = WithInitializerUnit(t, target, v->type, v->arrayRanks->count, init);
             CheckAssignable(t, init, target, v->h.line, TF(t, "'%s'", v->name), TC_AssignCode, v->initializer);
+            if (v->arrayRanks->count == 0 && v->type != NULL) GuardLocalValue(t, v->initializer, init, target, v->type, v->name);
         }
         if (stIsValueKind(target) && target->nul != NUL_Defined && v->arrayRanks->count == 0)
             target = stWithNull(TC_, target, fcInitNull(v->initializer == NULL, init->nul));
         else if (HoldsUndefinedAsObject(target) && target->nul != NUL_Defined && v->arrayRanks->count == 0)
             target = stWithNull(TC_, target, fcInitNull(v->initializer == NULL, init->nul));
         Declare(t, v->name, target);
+        if (v->arrayRanks->count == 0 && v->type && v->type->arrayRank == 0 && v->type->pointerDepth == 0) DeclareLocalType(t, v->name, v->type, -1);
     } else {
         const FcST* type = init->kind == STK_Undefined ? ST_DYNAMIC : init;
         bool pending = false;
@@ -206,16 +212,20 @@ static void CheckVarDecl(FcTC* t, FcVarDeclStmt* v) {
             if (v->type && v->type->unit && !streq0(v->type->unit, "any")) {
                 const char* unitName = v->type->unit;
                 const FcST* demanded = fcStartsWith(unitName, "any ") ? stWithUnit(TC_, type, fcUParse(TC_, unitName + 4), true) : stWithUnit(TC_, type, fcUParse(TC_, unitName), false);
-                if (v->initializer) CheckUnitAssignable(t, init, demanded, v->h.line, TF(t, "'%s'", v->name));
+                if (v->initializer) CheckUnitAssignable(t, init, demanded, v->h.line, TF(t, "'%s'", v->name), NULL);
                 type = demanded;
             } else type = stWithUnit(TC_, type, NULL, false);
         }
         Declare(t, v->name, type);
+        if (type->kind == STK_Float && v->initializer && v->initializer->kind == EK_ConditionalExpr) fcDictPut(t->rr->unitChecks, v->initializer, (void*)"#any");
         if (pending) {
             FcDict* scope = (FcDict*)t->scopes->items[t->scopes->count - 1];
             FcPendingVar* pv = (FcPendingVar*)fcAlloc(TC_, sizeof *pv);
             pv->scope = scope; pv->name = v->name; pv->line = v->h.line; pv->source = t->source;
             fcDictPut(&t->pendingVars, fcPendingKey(t, scope, v->name), pv);
+        } else if (v->arrayRanks->count == 0) {
+            FcTypeRef* guardType = GuardTypeOf(t, type);
+            if (guardType) DeclareLocalType(t, v->name, guardType, -1);
         }
     }
 }
@@ -241,6 +251,7 @@ static void TypePendingVar(FcTC* t, FcIdentifierExpr* id, const FcST* value) {
         }
         type = stIsNumber(value) ? stWithUnit(TC_, value, NULL, false) : value;
         fcDictPut(scope, id->name, (void*)type);
+        { FcTypeRef* guardType = GuardTypeOf(t, type); if (guardType) DeclareLocalType(t, id->name, guardType, i); }
         Report(t, TC_LateVarTypeCode, TF(t, "The type of '%s' (%s) comes from its first assignment, not from its declaration (line %d): declare it with the type ('%s %s')", id->name, S_(t, type), declared->line, S_(t, type), id->name), id->h.line);
         return;
     }
@@ -457,7 +468,18 @@ static void CheckMembers(FcTC* t, FcList* members, const char* ownerName) {
                 if (untyped && !isOperator) ReportNoReturnType(t, m->name, m->h.line);
                 t->collectedReturns = NULL;
                 t->bodyTypeParams = m->typeParams;
-                CheckBody(t, m->params, m->body, untyped ? NULL : Declared(t, m->returnType, 0, NULL), untyped ? NULL : m->returnType, TF(t, "Return value of '%s'", m->name));
+                {
+                    FcList* outerNotes = t->retNotes;
+                    FcDict* outerParams = t->plainParams;
+                    FcStmt* last;
+                    t->retNotes = fcListNew(TC_);
+                    t->plainParams = PlainParams(t, m->params, m->body);
+                    CheckBody(t, m->params, m->body, untyped ? NULL : Declared(t, m->returnType, 0, NULL), untyped ? NULL : m->returnType, TF(t, "Return value of '%s'", m->name));
+                    last = m->body->statements->count > 0 ? (FcStmt*)m->body->statements->items[m->body->statements->count - 1] : NULL;
+                    fcDictPut(&t->returns, m, fcReturnsNew(t, t->retNotes, last && ((last->kind == SK_ReturnStmt && ((FcReturnStmt*)last)->value) || last->kind == SK_ThrowStmt)));
+                    t->retNotes = outerNotes;
+                    t->plainParams = outerParams;
+                }
                 t->bodyTypeParams = previousTypeParams;
                 t->collectedReturns = previousCollected;
                 break;
@@ -470,7 +492,12 @@ static void CheckMembers(FcTC* t, FcList* members, const char* ownerName) {
                 if ((baseOfCtor = BaseClassName(t)) != NULL) CheckConstructorAccess(t, baseOfCtor, c->baseArgs ? c->baseArgs->count : 0, c->h.line);
                 wasCtor = t->inConstructor;
                 t->inConstructor = true;
-                CheckBody(t, c->params, c->body, NULL, NULL, "");
+                {
+                    FcDict* ctorOuterParams = t->plainParams;
+                    t->plainParams = PlainParams(t, c->params, c->body);
+                    CheckBody(t, c->params, c->body, NULL, NULL, "");
+                    t->plainParams = ctorOuterParams;
+                }
                 t->inConstructor = wasCtor;
                 break;
             }
@@ -523,6 +550,9 @@ static void CheckBody(FcTC* t, FcList* parameters, FcBlockStmt* body, const FcST
             if (!(stIsNumber(lt) && lt->unit && fcUIsUnitless(lt->unit))) declaredParam = stWithUnit(TC_, declaredParam, NULL, false);
         }
         Declare(t, p->name, MayBeUndefined(t, declaredParam));
+        if (p->type && p->type->arrayRank == 0 && p->type->pointerDepth == 0 && (p->type->nonNull || (streq0(p->type->baseName, "string") && p->type->lambdaSignature == NULL))
+            && p->arrayRanks->count == 0 && !p->byRef)
+            DeclareLocalType(t, p->name, p->type, -1);
     }
     for (i = 0; i < body->statements->count; i++) Check(t, (FcStmt*)body->statements->items[i]);
     Pop(t);
@@ -604,16 +634,18 @@ static const FcST* InferCoercionOperand(FcTC* t, const FcCoercionInfo* info, int
     if (info->explicitUnit) type = ExplicitUnitResult(t, type, info->explicitUnit, false, line);
     return type;
 }
-/* AutoTypeResult: the type; known/plan are not kept (FixedCoercions: step 4) - *known says whether the compiler could fix it */
-static const FcST* AutoTypeResult(FcTC* t, const FcST* operand, const FcST* target, bool declared, int line, bool* known) {
+/* AutoTypeResult: the type, the plan (FixedCoercion) and whether the compiler can emit it without looking at the anchor */
+static const FcST* AutoTypeResult(FcTC* t, const FcST* operand, const FcST* target, bool declared, int line, bool* known, FcFixedCoercion* plan) {
     const FcU* unit = stIsNumber(operand) ? operand->unit : (operand->kind == STK_Enum || operand->kind == STK_Char || operand->kind == STK_Word) ? FC_UNITLESS : NULL;
     bool dimensionOnly = stIsNumber(operand) && operand->unitIsDimension;
     bool neverNumber = operand->kind == STK_Bool || operand->kind == STK_String || operand->kind == STK_Class || operand->kind == STK_Object || operand->kind == STK_Array || operand->kind == STK_Lambda;
 #define IMPOSSIBLE(to) Report(t, TC_ImpossibleCastCode, TF(t, "A value of type '%s' is never converted to '%s' by '!': the conversion always fails at run time", S_(t, operand), to), line)
     *known = true;
+    plan->type = -1; plan->toWord = false; plan->unit = NULL; plan->unitv = NULL;
     switch (target->kind) {
         case STK_Float:
             if (neverNumber && operand->nul == NUL_Defined) IMPOSSIBLE("float");
+            plan->type = TAG_Float;
             return stWithUnit(TC_, ST_FLOAT, unit, dimensionOnly);
         case STK_Enum:
             if (declared) break;
@@ -625,19 +657,23 @@ static const FcST* AutoTypeResult(FcTC* t, const FcST* operand, const FcST* targ
             result->wide = operand->kind == STK_Int ? operand->wide : 0;
             *known = declared || operand->kind == STK_Float || operand->kind == STK_Char || operand->kind == STK_Enum || operand->kind == STK_Word || operand->kind == STK_Undefined
                 || (operand->kind == STK_Int && operand->wide == 0) || neverNumber;
+            plan->type = TAG_Int;
             return stWithUnit(TC_, result, unit, dimensionOnly);
         }
-        case STK_Word: return ST_WORD;
+        case STK_Word: plan->toWord = true; return ST_WORD;
         case STK_Char:
             if (neverNumber && operand->nul == NUL_Defined) IMPOSSIBLE("char");
+            plan->type = TAG_Char;
             return ST_CHAR;
         case STK_Bool:
             if (declared) break;
             if (!stIsDynamic(operand) && operand->kind != STK_Bool) NoConversion(t, operand, "bool", line);
+            plan->type = TAG_Bool;
             return ST_BOOL;
         case STK_String:
             if (declared) break;
             if (!stIsDynamic(operand) && operand->kind != STK_String) NoConversion(t, operand, "string", line);
+            plan->type = TAG_String;
             return ST_STRING;
         default: break;
     }
@@ -647,26 +683,37 @@ static const FcST* AutoTypeResult(FcTC* t, const FcST* operand, const FcST* targ
 }
 static const FcST* AutoCoercionResult(FcTC* t, FcExpr* expr, const FcCoercionInfo* info, const FcST* operand, const FcST* target, bool declared, bool fix) {
     const FcST* type = operand;
-    (void)fix;
+    FcFixedCoercion plan;
+    bool known = target != NULL && fix;
+    plan.type = -1; plan.toWord = false; plan.unit = NULL; plan.unitv = NULL;
     if (ciTypeIsAuto(info) && target != NULL) {
         bool typeKnown;
-        type = AutoTypeResult(t, type, target, declared, expr->line, &typeKnown);
+        FcFixedCoercion typePlan;
+        type = AutoTypeResult(t, type, target, declared, expr->line, &typeKnown, &typePlan);
+        if (declared && !typeKnown) { typePlan.type = -1; typePlan.toWord = false; typePlan.unit = NULL; typePlan.unitv = NULL; }
+        else known = known && typeKnown;
+        plan = typePlan;
     }
     if (ciUnitIsAuto(info)) {
         const FcU* unit;
         if (target == NULL) unit = FC_UNITLESS;
         else if (stIsNumber(target)) unit = target->unit != NULL && !target->unitIsDimension ? target->unit : declared ? FC_UNITLESS : NULL;
         else unit = declared || target->kind == STK_Enum || target->kind == STK_Bool || target->kind == STK_Char || target->kind == STK_String || target->kind == STK_Word ? FC_UNITLESS : NULL;
-        if (unit == NULL)
+        if (unit == NULL) {
+            known = false;
             type = type->kind == STK_Float || (info->relabelAuto && stIsNumber(type)) ? stWithUnit(TC_, type, NULL, false) : ST_DYNAMIC;
-        else {
+        } else {
             const FcU* from = type->unit;
             if (!info->relabelAuto && type->kind == STK_Int && from && !type->unitIsDimension && !fcUEquals(from, unit) && fcUCompatible(from, unit)
                 && fcUIsLinear(from) && fcUIsLinear(unit) && !fcUIsUnitless(unit) && fcUConversionFactorTo(from, unit) < 1)
                 Report(t, TC_UnitLossCode, TF(t, "A whole number in '%s' converted into '%s' may lose its fraction (convert it as a float: 'x:!' next to a float, or 'x!float:')", UnitText(t, from), UnitText(t, unit)), expr->line);
             type = UnitResult(t, type, unit, info->relabelAuto);
+            plan.unitv = unit;
         }
     }
+    /* FixCoercion */
+    if (known) { FcFixedCoercion* p = (FcFixedCoercion*)fcAlloc(TC_, sizeof *p); *p = plan; fcDictPut(t->rr->fixedCoercions, expr, p); }
+    else fcDictRemove(t->rr->fixedCoercions, expr);
     return type;
 }
 static const FcST* InferAutoCoercion(FcTC* t, FcExpr* expr, const FcCoercionInfo* info) {
@@ -681,8 +728,25 @@ static const FcST* InferAutoCoercion(FcTC* t, FcExpr* expr, const FcCoercionInfo
 }
 
 static const FcST* InferCore(FcTC* t, FcExpr* expr);
+/* the width of a type for `int.Bits` / `x.Bits` */
+static int BitsOfType(FcTC* t, const char* baseName, int width) {
+    if (streq0(baseName, "int")) return width != FC_NULL_INT ? width : t->programIntWidth;
+    if (streq0(baseName, "float")) return width != FC_NULL_INT ? width : t->programFloatWidth;
+    if (streq0(baseName, "byte")) return 8;
+    if (streq0(baseName, "char")) return 16;
+    if (streq0(baseName, "bool")) return 1;
+    return t->programWordWidth;
+}
+static const FcST* InferWithNull(FcTC* t, FcExpr* expr);
+static void fcNoteExprType(FcTC* t, FcExpr* expr, const FcST* type);
 static const FcST* Infer(FcTC* t, FcExpr* expr) {
+    const FcST* result = InferWithNull(t, expr);
+    fcNoteExprType(t, expr, result);
+    return result;
+}
+static const FcST* InferWithNull(FcTC* t, FcExpr* expr) {
     const FcST* type = InferCore(t, expr);
+    if (t->treeTypes) fcDictPut(t->treeTypes, expr, (void*)S_(t, type));
     switch (expr->kind) {
         case EK_LiteralExpr:
             if (((FcLiteralExpr*)expr)->value.kind == VK_Undefined) return stWithNull(TC_, type, NUL_MayBeUndefined);
@@ -715,7 +779,9 @@ static void CheckSizeKind(FcTC* t, const FcST* size, const char* what, int line)
 static const FcST* InferCore(FcTC* t, FcExpr* expr) {
     int i;
     switch (expr->kind) {
-        case EK_TypeBitsExpr: return stWithNull(TC_, stWithUnit(TC_, ST_INT, FC_UNITLESS, false), NUL_Defined);
+        case EK_TypeBitsExpr:
+            fcDictPut(t->rr->bitsOf, expr, FC_IVAL(BitsOfType(t, ((FcTypeBitsExpr*)expr)->baseName, ((FcTypeBitsExpr*)expr)->width) + 1));
+            return stWithNull(TC_, stWithUnit(TC_, ST_INT, FC_UNITLESS, false), NUL_Defined);
         case EK_LiteralExpr: {
             FcValue* v = &((FcLiteralExpr*)expr)->value;
             switch (v->kind) {
@@ -723,12 +789,13 @@ static const FcST* InferCore(FcTC* t, FcExpr* expr) {
                 case VK_Int: return stWithUnit(TC_, ST_INT, fcLiteralUnit(t, v), false);
                 case VK_Float: return stWithUnit(TC_, ST_FLOAT, fcLiteralUnit(t, v), false);
                 case VK_Char: return ST_CHAR;
-                case VK_String: return ST_STRING;
+                case VK_String: { int n = fc8Units(v->s); if (n > 0 && n < 128) fcSetAdd(&t->stringLiterals, v->s); return ST_STRING; }
                 case VK_Undefined: return ST_UNDEFINED;
             }
             return ST_DYNAMIC;
         }
         case EK_IdentifierExpr:
+            fcSetAdd(&t->unseenNames, ((FcIdentifierExpr*)expr)->name);
             CheckImplicitThisAccess(t, (FcIdentifierExpr*)expr, MU_Read);
             return Lookup(t, ((FcIdentifierExpr*)expr)->name);
         case EK_ThisExpr: return t->thisType ? t->thisType : (t->cls ? ThisClass(t) : ST_DYNAMIC);
@@ -897,11 +964,11 @@ static void InferOperands(FcTC* t, FcBinaryExpr* b, const FcST** left, const FcS
         const FcST* anchor = Infer(t, b->left);
         const FcST* operand = InferCoercionOperand(t, &rightInfo, b->right->line);
         *left = anchor;
-        *right = AutoCoercionResult(t, b->right, &rightInfo, operand, anchor, false, true);
+        *right = AutoCoercionResult(t, b->right, &rightInfo, operand, anchor, false, (b->op != BOP_Eq && b->op != BOP_NotEq) || anchor->nul == NUL_Defined);
     } else {
         const FcST* operand = InferCoercionOperand(t, &leftInfo, b->left->line);
         const FcST* anchor = Infer(t, b->right);
-        *left = AutoCoercionResult(t, b->left, &leftInfo, operand, anchor, false, true);
+        *left = AutoCoercionResult(t, b->left, &leftInfo, operand, anchor, false, (b->op != BOP_Eq && b->op != BOP_NotEq) || anchor->nul == NUL_Defined);
         *right = anchor;
     }
 }
@@ -1016,6 +1083,7 @@ static const FcST* InferAssign(FcTC* t, FcAssignExpr* a) {
             FcMethodDecl* setter;
             FcDict* map;
             CheckIndexKind(t, tt, Infer(t, ix->index), ix->h.line);
+            NoteReceiverTypeArgs(t, (FcExpr*)ix, tt);
             if (tt->kind == STK_Array) target = tt->element;
             else if (tt->kind == STK_Class && (setter = FindMethod(t, tt, "SetIndex", 2, &map)) != NULL) {
                 FcLambdaParam* p1 = (FcLambdaParam*)setter->params->items[1];
@@ -1028,9 +1096,15 @@ static const FcST* InferAssign(FcTC* t, FcAssignExpr* a) {
     }
     value = InferExpected(t, a->value, target);
     if (a->target->kind == EK_IdentifierExpr && fcDictCount(&t->pendingVars) > 0) TypePendingVar(t, (FcIdentifierExpr*)a->target, value);
+    if (t->deriveDefined && (a->target->kind == EK_MemberExpr || (a->target->kind == EK_IdentifierExpr && IsFieldRef(t, (FcIdentifierExpr*)a->target))))
+        NoteFieldWrite(t, a->target, a->target->kind == EK_MemberExpr ? ((FcMemberExpr*)a->target)->name : ((FcIdentifierExpr*)a->target)->name, a->value, value);
     what = a->target->kind == EK_IdentifierExpr ? TF(t, "'%s'", ((FcIdentifierExpr*)a->target)->name) : a->target->kind == EK_MemberExpr ? TF(t, "'%s'", ((FcMemberExpr*)a->target)->name)
         : a->target->kind == EK_IndexExpr ? "an element" : "the target";
     CheckAssignable(t, value, target, a->h.line, what, TC_AssignCode, a->value);
+    if (a->target->kind == EK_IdentifierExpr) {
+        FcTypeRef* localType = LocalType(t, ((FcIdentifierExpr*)a->target)->name);
+        if (localType) GuardLocalValue(t, a->value, value, target, localType, ((FcIdentifierExpr*)a->target)->name);
+    }
     if (a->target->kind == EK_IdentifierExpr && stIsValueKind(target) && target->nul != NUL_Defined)
         for (i = t->scopes->count - 1; i >= 0; i--) {
             void* cur;
@@ -1066,6 +1140,7 @@ static const FcST* InferIndex(FcTC* t, FcIndexExpr* ix) {
     FcMethodDecl* getter;
     FcDict* map;
     CheckIndexKind(t, target, Infer(t, ix->index), ix->h.line);
+    NoteReceiverTypeArgs(t, (FcExpr*)ix, target);
     if (target->kind == STK_Array) return target->element;
     if (target->kind == STK_String) return ST_CHAR;
     if (target->kind == STK_Class && (getter = FindMethod(t, target, "GetIndex", 1, &map)) != NULL && getter->returnType) return DeclaredOrDynamic(t, getter->returnType, 0, map);

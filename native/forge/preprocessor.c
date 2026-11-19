@@ -306,7 +306,7 @@ static void fcResolveResources(FcCtx* c, FcSlice line, const char* basePath, int
             full = fcFullPath(c, basePath, rel);
             if (!fcFileExists(full)) fcPreError(c, fcFmt(c, "Resource file not found: '%s' ('%s', line %d).", rel, full, lineNo));
             for (k = 0; k < c->resourcePaths->count; k++) if (strcmp((const char*)c->resourcePaths->items[k], full) == 0) id = k;
-            if (id < 0) { id = c->resourcePaths->count; fcListAdd(c, c->resourcePaths, (void*)full); }
+            if (id < 0) { id = c->resourcePaths->count; fcListAdd(c, c->resourcePaths, (void*)full); if (c->resourceNames) fcListAdd(c, c->resourceNames, (void*)rel); }
             fcU16Put(out, p + copied, i - copied);
             snprintf(num, sizeof num, "new Resource(%d)", id);
             for (k = 0; num[k]; k++) fcU16Unit(out, (uint16_t)num[k]);

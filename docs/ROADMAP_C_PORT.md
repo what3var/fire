@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 3 (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 4 (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -364,6 +364,17 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    **Offen** (für Schritt 4, meldet nichts): was die Typprüfung dem Compiler hinterlässt (UnitChecks, LocalGuards, FixedCoercions, OverloadHints,
    MethodTypeArgs, die Herleitung von `defined`, ...), Projekte und Ziele im Linker.
 4. Compiler, Linker, Importe und Preludes. Prüfung: `.fbc` byte-gleich über den Korpus.
+   **Umgesetzt** ([FORGE_C.md](spec/FORGE_C.md)): `compiler.c`/`compiler2.c` (`Compiler.cs` Methode für Methode), `compilertrees.c`
+   (`Compiler.Trees.cs`), `bytecode.c` (Chunk, FunctionProto, RuntimeClass, ClassMeta, DeclaredType/DeclaredKind, EnumType, die Konstanten),
+   `programfile.c` (der Schreiber von `ProgramFile`, mit SHA-256 für die Tabelle der Quellen), im Typprüfer alles, was er dem Compiler hinterlässt
+   (UnitChecks, LocalGuards, FixedCoercions, OverloadHints, MethodTypeArgs, ReceiverTypeArgs, Ausdrucksbäume, BitsOf, die Herleitung von
+   `defined`), `linker.c` bis zum gelinkten Programm (Natives in der Reihenfolge der NativeRegistry mit `bridges.def` und den Paketen,
+   `NativesOf`, `FloatNarrowing`, Ressourcen, eigene Einheiten, Quellen). Das Maß: `forge fbc <modus> <datei>` (neu, `FrontendDump.cs`: die Bytes
+   von `forge bytecode -m <modus>`) und `forge-c fbc`; `tests/compare-frontend.sh ... fbc`: **1254 von 1256 byte-gleich** in Debug (mit der
+   Tabelle der Quellen), Release und Performance (die zwei: die `.fxml` - Schritt 5 - und Modelle als Ressourcen, die der C#-Linker umwandelt -
+   `ModelConverter`, Phase D), dazu 1256 beschädigte Kopien alle gleich. Ende zu Ende: `forge-c bytecode` + die VM in C über
+   `tests/run-cases-vm.sh` **1126 von 1128** - wie mit dem C#-forge. **Offen** (für Phase D): Projekte, Ziele, `-D`, Plugins (`ClassMeta`,
+   `OwnImports`), das Packen eines Programms, `.fpk`, `ModelConverter`.
 5. Markup-Generatoren (`.fxml`, `.biscuit`, `.fdata`, Falstad). Prüfung: erzeugter fire-Text gleich.
 
 6. `forge serve` (L4) auf dem C-Frontend; spark stellt `Language/` (4 300 Zeilen) darauf um, die Completion-Tests wandern auf Protokollebene.

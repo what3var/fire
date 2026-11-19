@@ -787,6 +787,33 @@ static FcList* fcTypeCheck(FcCtx* c, FcList* program, FcResolveResult* resolved,
     t->programWordWidth = 64;
     t->nativeReturns = nativeReturns;
     t->returnWhat = "";
+    t->rr = resolved;
+    t->localTypes = fcListNew(c);
+    t->deriveDefined = fcDeriveDefined();
+    fcDictInit(c, &t->calls, FC_KEY_STR);
+    fcDictInit(c, &t->stringCalls, FC_KEY_STR);
+    fcDictInit(c, &t->returns, FC_KEY_PTR);
+    fcDictInit(c, &t->paramIds, FC_KEY_PTR);
+    fcDictInit(c, &t->unseenNames, FC_KEY_STR);
+    fcDictInit(c, &t->unseenCtors, FC_KEY_STR);
+    fcDictInit(c, &t->stringLiterals, FC_KEY_STR);
+    fcDictInit(c, &t->baseClasses, FC_KEY_STR);
+    fcDictInit(c, &t->exprTypes, FC_KEY_PTR);
+    fcDictInit(c, &t->fieldOwner, FC_KEY_PTR);
+    fcDictInit(c, &t->otherFieldNames, FC_KEY_STR);
+    fcDictInit(c, &t->fieldBad, FC_KEY_PTR);
+    fcDictInit(c, &t->fieldNeeds, FC_KEY_PTR);
+    if (!resolved->unitChecks) resolved->unitChecks = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->methodTypeArgs) resolved->methodTypeArgs = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->localGuards) resolved->localGuards = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->overloadHints) resolved->overloadHints = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->receiverTypeArgs) resolved->receiverTypeArgs = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->treeLambdas) resolved->treeLambdas = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->treeTypes) resolved->treeTypes = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->treeToCompiled) resolved->treeToCompiled = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->provenMembers) resolved->provenMembers = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->bitsOf) resolved->bitsOf = fcDictNew(c, FC_KEY_PTR);
+    resolved->fixedCoercions = fcDictNew(c, FC_KEY_PTR);   /* (a check before this one decided for itself) */
     for (i = 0; i < program->count; i++) {
         FcStmt* s = (FcStmt*)program->items[i];
         if (s->kind == SK_TypeCheckDirective) fcDictPut(&t->strictBySource, fcFmt(c, "%d", s->source), FC_IVAL(((FcTypeCheckDirective*)s)->strict ? 1 : 2));
@@ -804,6 +831,7 @@ static FcList* fcTypeCheck(FcCtx* c, FcList* program, FcResolveResult* resolved,
     ReportPendingVars(t, (FcDict*)t->scopes->items[0]);
     ReportStoredTemporaries(t);
     CheckBlockTakeLocals(t, program);
+    if (t->deriveDefined) Derive(t, resolved);
     return t->diagnostics;
 }
 
@@ -829,3 +857,762 @@ static void fcTypeCheckRun(FcCtx* c, FcList* program, FcResolveResult* resolved,
         fcRethrow(c);
     }
 }
+
+/* ---- deriving `defined` for the parameters, returns and fields of the program (TypeChecker.cs: NoteCall, NoteReturn, DeriveReturns,
+ * DerivationCandidates, FieldCandidates, SetBeforeRead, BaseConstructionSafe, FieldsOf, FieldNeed, NoteFieldWrite, DisqualifyFields, Derive) ---- */
+
+typedef struct FcCallInfo { bool* defined; int count; int calls; FcList** needs; } FcCallInfo;
+typedef struct FcStrCalls { bool* strings; int count; } FcStrCalls;
+typedef struct FcRetNote { bool ok; const char* needs; } FcRetNote;
+struct FcReturns { FcList* notes; bool ends; };
+static FcReturns* fcReturnsNew(FcTC* t, FcList* notes, bool ends) { FcReturns* r = (FcReturns*)fcAlloc(TC_, sizeof *r); r->notes = notes; r->ends = ends; return r; }
+
+static bool fcDeriveDefined(void) { const char* v = getenv("FIRE_NO_DERIVE"); return !(v && strcmp(v, "1") == 0); }
+static bool fcInferUninitializedDefined(void) { const char* v = getenv("FIRE_INFER_UNINITIALIZED_DEFINED"); return !(v && strcmp(v, "0") == 0); }
+static const char* MethodKey(FcTC* t, const char* name, int count) { return TF(t, "%s/%d", name, count); }
+static const char* CtorKey(FcTC* t, const char* cls, int count) { return TF(t, "new:%s/%d", cls, count); }
+static bool fcCalledByTheLanguage(const char* n) {
+    static const char* const names[] = { "GetIndex", "SetIndex", "CompareTo", "Equals", "GetHashCode", "ToString", "GetEnumerator", "MoveNext", "GetCurrent", "Dispose", "Close", "TakeTo", "Main" };
+    size_t i;
+    for (i = 0; i < sizeof names / sizeof names[0]; i++) if (streq0(n, names[i])) return true;
+    return false;
+}
+static const char* ParamId(FcTC* t, FcLambdaParam* p) {
+    void* id;
+    if (fcDictTry(&t->paramIds, p, &id)) return (const char*)id;
+    id = (void*)TF(t, "par:%d", fcDictCount(&t->paramIds));
+    fcDictPut(&t->paramIds, p, id);
+    return (const char*)id;
+}
+static bool fcReflectionUsed(FcTC* t) {
+    if (!t->reflectionKnown) {
+        FcClassDecl* r = (FcClassDecl*)fcDictGet(t->classes, "Reflect");
+        t->reflectionUsed = r && r->h.source < t->firstUserSource;
+        t->reflectionKnown = true;
+    }
+    return t->reflectionUsed;
+}
+static bool fcInferDefinedClass(FcClassDecl* decl) {
+    int i;
+    if (!decl->attributes) return false;
+    for (i = 0; i < decl->attributes->count; i++) if (streq0(((FcAttributeDecl*)decl->attributes->items[i])->name, "InferDefined")) return true;
+    return false;
+}
+
+/* the nodes below an expression or a statement (AstNames.Walk / AstNodes) */
+static void fcExprNodes(FcCtx* c, FcExpr* e, FcList** tags, FcList** nodes) {
+    FcAllNodes k;
+    k.c = c; k.tags = fcListNew(c); k.nodes = fcListNew(c);
+    fcWalkExpr(e, fcAllVisit, &k);
+    *tags = k.tags; *nodes = k.nodes;
+}
+static bool fcMentionsName(FcList* tags, FcList* nodes, const char* name) {
+    int i;
+    for (i = 0; i < nodes->count; i++) {
+        FcExpr* e;
+        if (FC_VALI(tags->items[i]) != FN_EXPR) continue;
+        e = (FcExpr*)nodes->items[i];
+        if (e->kind == EK_IdentifierExpr && streq0(((FcIdentifierExpr*)e)->name, name)) return true;
+        if (e->kind == EK_MemberExpr && streq0(((FcMemberExpr*)e)->name, name)) return true;
+    }
+    return false;
+}
+static bool fcHasCallLike(FcList* tags, FcList* nodes, bool awaitToo) {
+    int i;
+    for (i = 0; i < nodes->count; i++) {
+        FcExprKind k;
+        if (FC_VALI(tags->items[i]) != FN_EXPR) continue;
+        k = ((FcExpr*)nodes->items[i])->kind;
+        if (k == EK_CallExpr || k == EK_NewExpr || k == EK_ThisExpr || k == EK_BaseExpr || k == EK_LambdaExpr || (awaitToo && k == EK_AwaitOnExpr)) return true;
+    }
+    return false;
+}
+
+/* NeedsOf: what a value that is not certainly a number depends on */
+static const char* FieldNeed(FcTC* t, FcExpr* access, const char* name);
+static bool IsFieldRef(FcTC* t, FcIdentifierExpr* id);
+static const char* NeedsOf(FcTC* t, FcExpr* e) {
+    void* v;
+    if (e->kind == EK_CallExpr && fcDictTry(&t->callTargets, e, &v) && ((FcMethodDecl*)v)->h.source >= t->firstUserSource)
+        return TF(t, "ret:%s", MethodKey(t, ((FcMethodDecl*)v)->name, ((FcMethodDecl*)v)->params->count));
+    if (e->kind == EK_IdentifierExpr && t->plainParams && fcDictTry(t->plainParams, ((FcIdentifierExpr*)e)->name, &v)) return ParamId(t, (FcLambdaParam*)v);
+    if (e->kind == EK_MemberExpr && t->deriveDefined) { const char* key = FieldNeed(t, e, ((FcMemberExpr*)e)->name); if (key) return key; }
+    if (e->kind == EK_IdentifierExpr && t->deriveDefined && IsFieldRef(t, (FcIdentifierExpr*)e)) { const char* key = FieldNeed(t, e, ((FcIdentifierExpr*)e)->name); if (key) return key; }
+    return NULL;
+}
+/* PlainParams: the parameters the body never assigns */
+static FcDict* PlainParams(FcTC* t, FcList* parameters, FcBlockStmt* body) {
+    FcDict* assigned;
+    FcDict* plain;
+    int i;
+    if (!t->deriveDefined || parameters->count == 0) return NULL;
+    assigned = fcAstNamesAssigned(TC_, body);
+    plain = fcDictNew(TC_, FC_KEY_STR);
+    for (i = 0; i < parameters->count; i++) {
+        FcLambdaParam* p = (FcLambdaParam*)parameters->items[i];
+        if (!p->byRef && !fcDictHas(assigned, p->name)) fcDictPut(plain, p->name, p);
+    }
+    return plain;
+}
+
+/* NoteCall: a call resolved to one method or constructor - which parameters got a number (argParams may hold NULL) */
+static void NoteCallFull(FcTC* t, FcExpr* call, const char* key, FcList* parameters, FcList* argParams, FcList* args, FcList* argExprs, FcMethodDecl* target) {
+    FcCallInfo* entry;
+    FcStrCalls* strings;
+    int i, j, n = parameters->count;
+    fcSetAdd(&t->notedCalls, call);
+    if (target != NULL) fcDictPut(&t->callTargets, call, target);
+    entry = (FcCallInfo*)fcDictGet(&t->calls, key);
+    if (!entry || entry->count != n) {
+        FcCallInfo* fresh = (FcCallInfo*)fcAlloc(TC_, sizeof *fresh);
+        fresh->count = n;
+        fresh->calls = entry ? entry->calls : 0;
+        fresh->defined = (bool*)fcAlloc(TC_, sizeof(bool) * (size_t)(n + 1));
+        fresh->needs = (FcList**)fcAlloc(TC_, sizeof(FcList*) * (size_t)(n + 1));
+        for (j = 0; j < n; j++) { fresh->defined[j] = true; fresh->needs[j] = NULL; }
+        entry = fresh;
+    }
+    for (j = 0; j < n; j++) {
+        bool given = false, ok = false;
+        const char* needs = NULL;
+        FcLambdaParam* pj = (FcLambdaParam*)parameters->items[j];
+        for (i = 0; i < argParams->count && i < args->count; i++)
+            if (argParams->items[i] == pj) {
+                given = true;
+                ok = ((const FcST*)args->items[i])->nul == NUL_Defined;
+                if (!ok && i < argExprs->count) needs = NeedsOf(t, (FcExpr*)argExprs->items[i]);
+            }
+        if (!given) {
+            FcExpr* d = pj->defaultValue;
+            ok = d && ((d->kind == EK_LiteralExpr && (((FcLiteralExpr*)d)->value.kind == VK_Int || ((FcLiteralExpr*)d)->value.kind == VK_Float))
+                || (d->kind == EK_UnaryExpr && ((FcUnaryExpr*)d)->op == UOP_Negate && ((FcUnaryExpr*)d)->operand->kind == EK_LiteralExpr
+                    && (((FcLiteralExpr*)((FcUnaryExpr*)d)->operand)->value.kind == VK_Int || ((FcLiteralExpr*)((FcUnaryExpr*)d)->operand)->value.kind == VK_Float)));
+        }
+        if (needs != NULL) { if (!entry->needs[j]) entry->needs[j] = fcListNew(TC_); fcListAdd(TC_, entry->needs[j], (void*)needs); }
+        else if (!ok) entry->defined[j] = false;
+    }
+    strings = (FcStrCalls*)fcDictGet(&t->stringCalls, key);
+    if (!strings || strings->count != n) {
+        strings = (FcStrCalls*)fcAlloc(TC_, sizeof *strings);
+        strings->count = n;
+        strings->strings = (bool*)fcAlloc(TC_, sizeof(bool) * (size_t)(n + 1));
+        for (j = 0; j < n; j++) strings->strings[j] = true;
+        fcDictPut(&t->stringCalls, key, strings);
+    }
+    for (j = 0; j < n; j++) {
+        bool given = false, isString = true;
+        FcLambdaParam* pj = (FcLambdaParam*)parameters->items[j];
+        for (i = 0; i < argParams->count && i < args->count; i++)
+            if (argParams->items[i] == pj) {
+                FcSKind k = ((const FcST*)args->items[i])->kind;
+                given = true;
+                isString = isString && (k == STK_String || k == STK_Undefined);
+            }
+        if (!given) {
+            FcExpr* d = pj->defaultValue;
+            isString = d == NULL || (d->kind == EK_LiteralExpr && (((FcLiteralExpr*)d)->value.kind == VK_String || ((FcLiteralExpr*)d)->value.kind == VK_Undefined));
+        }
+        if (!isString) strings->strings[j] = false;
+    }
+    entry->calls++;
+    fcDictPut(&t->calls, key, entry);
+}
+
+/* NoteReturn */
+static void NoteReturn(FcTC* t, FcExpr* value, const FcST* type) {
+    FcRetNote* n;
+    if (t->retNotes == NULL) return;
+    n = (FcRetNote*)fcAlloc(TC_, sizeof *n);
+    if (value == NULL || type == NULL) n->ok = false;
+    else if (type->nul == NUL_Defined) n->ok = true;
+    else n->needs = NeedsOf(t, value);
+    fcListAdd(TC_, t->retNotes, n);
+}
+
+/* ---- fields ---- */
+static bool SetBeforeRead(FcTC* t, FcClassDecl* decl, FcFieldDecl* fd);
+static FcDict* FieldCandidates(FcTC* t) {
+    int i;
+    if (t->fieldCands) return t->fieldCands;
+    t->fieldCands = fcDictNew(TC_, FC_KEY_STR);
+    FC_DICT_EACH(t->classes, e) {
+        FcClassDecl* decl = (FcClassDecl*)e->value;
+        for (i = 0; i < decl->members->count; i++) {
+            FcStmt* member = (FcStmt*)decl->members->items[i];
+            FcFieldDecl* fd;
+            bool candidate;
+            if (member->kind == SK_PropertyDecl && !(((FcPropertyDecl*)member)->type && ((FcPropertyDecl*)member)->type->nonNull)) { fcSetAdd(&t->otherFieldNames, ((FcPropertyDecl*)member)->name); continue; }
+            if (member->kind != SK_FieldDecl) continue;
+            fd = (FcFieldDecl*)member;
+            candidate = (decl->h.source >= t->firstUserSource || fcInferDefinedClass(decl)) && (fcInferDefinedClass(decl) || !fcReflectionUsed(t)) && !decl->isRecord && fd->arrayRanks->count == 0
+                && fd->type && !fd->type->nonNull && fd->type->pointerDepth == 0 && fd->type->arrayRank == 0 && fd->type->lambdaSignature == NULL && fd->type->typeArgs == NULL
+                && (streq0(fd->type->baseName, "int") || streq0(fd->type->baseName, "float") || streq0(fd->type->baseName, "bool"))
+                && (fd->initializer == NULL ? fcInferUninitializedDefined() && SetBeforeRead(t, decl, fd) : IsConstantValue(fd->initializer));
+            if (candidate) {
+                FcList* list = (FcList*)fcDictGet(t->fieldCands, fd->name);
+                if (!list) { list = fcListNew(TC_); fcDictPut(t->fieldCands, fd->name, list); }
+                fcListAdd(TC_, list, fd);
+                fcDictPut(&t->fieldOwner, fd, (void*)e->key);
+            } else if (!(fd->type && fd->type->nonNull)) fcSetAdd(&t->otherFieldNames, fd->name);
+        }
+    }
+    return t->fieldCands;
+}
+static const char* FieldKey(FcTC* t, FcFieldDecl* fd) { return TF(t, "fld:%s.%s", (const char*)fcDictGet(&t->fieldOwner, fd), fd->name); }
+
+static bool fcDerivesFromDecl(FcTC* t, FcClassDecl* c, FcClassDecl* ancestor) {
+    FcDict* seen = fcDictNew(TC_, FC_KEY_PTR);
+    FcClassDecl* cur = c;
+    int i;
+    while (cur && fcSetAdd(seen, cur)) {
+        FcClassDecl* next = NULL;
+        if (cur->baseRefs)
+            for (i = 0; i < cur->baseRefs->count && !next; i++) {
+                FcTypeRef* b = (FcTypeRef*)cur->baseRefs->items[i];
+                const char* n = NameOf(t, b);
+                if (!(next = (FcClassDecl*)fcDictGet(t->classes, n ? n : ""))) next = (FcClassDecl*)fcDictGet(t->classes, PlainName(t, b->baseName));
+            }
+        if (!next) return false;
+        if (next == ancestor) return true;
+        cur = next;
+    }
+    return false;
+}
+static void fcBelowAdd(FcTC* t, FcDict* below, FcClassDecl* c) {
+    int i;
+    for (i = 0; i < c->members->count; i++) {
+        FcStmt* m = (FcStmt*)c->members->items[i];
+        if (m->kind == SK_MethodDecl) fcSetAdd(below, ((FcMethodDecl*)m)->name);
+        else if (m->kind == SK_PropertyDecl) fcSetAdd(below, ((FcPropertyDecl*)m)->name);
+        else if (m->kind == SK_FieldDecl) fcSetAdd(below, ((FcFieldDecl*)m)->name);
+    }
+    (void)t;
+}
+typedef struct FcPending { bool isStmt; void* node; } FcPending;
+static void fcPendingAdd(FcTC* t, FcList* q, bool isStmt, void* node) { FcPending* p = (FcPending*)fcAlloc(TC_, sizeof *p); p->isStmt = isStmt; p->node = node; fcListAdd(TC_, q, p); }
+static bool BaseConstructionSafe(FcTC* t, FcClassDecl* decl, FcFieldDecl* fd) {
+    FcDict* below = fcDictNew(TC_, FC_KEY_STR);
+    FcList* derived = fcListNew(TC_);
+    FcList* pending = fcListNew(TC_);
+    FcDict* seen = fcDictNew(TC_, FC_KEY_STR);
+    FcList* chain = fcListNew(TC_);
+    FcClassDecl* cur;
+    int i, k, head = 0;
+    FC_DICT_EACH(t->classes, e) { FcClassDecl* c = (FcClassDecl*)e->value; if (c != decl && fcDerivesFromDecl(t, c, decl)) fcListAdd(TC_, derived, c); }
+    fcBelowAdd(t, below, decl);
+    for (i = 0; i < derived->count; i++) fcBelowAdd(t, below, (FcClassDecl*)derived->items[i]);
+    for (i = 0; i < derived->count; i++) {
+        FcClassDecl* c = (FcClassDecl*)derived->items[i];
+        for (k = 0; k < c->members->count; k++) {
+            FcStmt* m = (FcStmt*)c->members->items[k];
+            FcList* tags;
+            FcList* nodes;
+            if (m->kind != SK_FieldDecl || !((FcFieldDecl*)m)->initializer) continue;
+            fcExprNodes(TC_, ((FcFieldDecl*)m)->initializer, &tags, &nodes);
+            if (fcHasCallLike(tags, nodes, false) || fcMentionsName(tags, nodes, fd->name)) return false;
+        }
+    }
+    for (cur = decl;;) {
+        FcTypeRef* baseRef = NULL;
+        FcClassDecl* bc;
+        const char* n;
+        if (cur->baseRefs)
+            for (i = 0; i < cur->baseRefs->count && !baseRef; i++) {
+                FcTypeRef* b = (FcTypeRef*)cur->baseRefs->items[i];
+                const char* nm = NameOf(t, b);
+                if (!fcDictHas(&t->interfaces, nm ? nm : "") && !fcDictHas(&t->interfaces, PlainName(t, b->baseName))) baseRef = b;
+            }
+        if (!baseRef) break;
+        n = NameOf(t, baseRef);
+        if (!(bc = (FcClassDecl*)fcDictGet(t->classes, n ? n : "")) && !(bc = (FcClassDecl*)fcDictGet(t->classes, PlainName(t, baseRef->baseName)))) return false;
+        { bool found = false; for (i = 0; i < chain->count; i++) if (chain->items[i] == bc) found = true; if (found) break; }
+        fcListAdd(TC_, chain, bc);
+        cur = bc;
+    }
+    if (chain->count == 0) return true;
+    for (i = 0; i < chain->count; i++) {
+        FcClassDecl* bc = (FcClassDecl*)chain->items[i];
+        for (k = 0; k < bc->members->count; k++) {
+            FcStmt* m = (FcStmt*)bc->members->items[k];
+            if (m->kind == SK_ConstructorDecl) {
+                FcConstructorDecl* ctor = (FcConstructorDecl*)m;
+                int a;
+                fcPendingAdd(t, pending, true, ctor->body);
+                if (ctor->baseArgs) for (a = 0; a < ctor->baseArgs->count; a++) fcPendingAdd(t, pending, false, ctor->baseArgs->items[a]);
+            }
+        }
+        for (k = 0; k < bc->members->count; k++) {
+            FcStmt* m = (FcStmt*)bc->members->items[k];
+            if (m->kind == SK_FieldDecl && ((FcFieldDecl*)m)->initializer) fcPendingAdd(t, pending, false, ((FcFieldDecl*)m)->initializer);
+        }
+    }
+    while (head < pending->count) {
+        FcPending* p = (FcPending*)pending->items[head++];
+        FcList* tags;
+        FcList* nodes;
+        int thisTargets = 0, thisCount = 0;
+        if (p->isStmt) fcAstWalkAll(TC_, (FcStmt*)p->node, &tags, &nodes);
+        else fcExprNodes(TC_, (FcExpr*)p->node, &tags, &nodes);
+        for (i = 0; i < nodes->count; i++) {
+            FcExpr* e;
+            if (FC_VALI(tags->items[i]) != FN_EXPR) continue;
+            e = (FcExpr*)nodes->items[i];
+            if (e->kind == EK_MemberExpr && ((FcMemberExpr*)e)->target->kind == EK_ThisExpr) thisTargets++;
+            if (e->kind == EK_ThisExpr) thisCount++;
+        }
+        if (thisCount > thisTargets) return false;
+        for (i = 0; i < nodes->count; i++) {
+            FcExpr* e;
+            const char* used = NULL;
+            if (FC_VALI(tags->items[i]) != FN_EXPR) continue;
+            e = (FcExpr*)nodes->items[i];
+            if (e->kind == EK_MemberExpr && ((FcMemberExpr*)e)->target->kind == EK_ThisExpr) used = ((FcMemberExpr*)e)->name;
+            else if (e->kind == EK_IdentifierExpr) {
+                FcResolvedRef* r;
+                used = fcDictTry(t->refs, e, (void**)&r) && r->kind != RR_ImplicitThisMember ? NULL : ((FcIdentifierExpr*)e)->name;
+            }
+            if (used == NULL) continue;
+            if (fcDictHas(below, used)) return false;
+            if (!fcSetAdd(seen, used)) continue;
+            for (k = 0; k < chain->count; k++) {
+                FcClassDecl* bc = (FcClassDecl*)chain->items[k];
+                int q;
+                for (q = 0; q < bc->members->count; q++) {
+                    FcStmt* m = (FcStmt*)bc->members->items[q];
+                    if (m->kind == SK_MethodDecl && streq0(((FcMethodDecl*)m)->name, used)) fcPendingAdd(t, pending, true, ((FcMethodDecl*)m)->body);
+                    else if (m->kind == SK_PropertyDecl && streq0(((FcPropertyDecl*)m)->name, used)) {
+                        if (((FcPropertyDecl*)m)->getter) fcPendingAdd(t, pending, true, ((FcPropertyDecl*)m)->getter);
+                        if (((FcPropertyDecl*)m)->setter) fcPendingAdd(t, pending, true, ((FcPropertyDecl*)m)->setter);
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+static bool fcSimpleExpr(FcTC* t, FcExpr* e, const char* name) {
+    FcList* tags;
+    FcList* nodes;
+    if (e == NULL) return true;
+    fcExprNodes(TC_, e, &tags, &nodes);
+    return !fcHasCallLike(tags, nodes, true) && !fcMentionsName(tags, nodes, name);
+}
+static bool SetBeforeRead(FcTC* t, FcClassDecl* decl, FcFieldDecl* fd) {
+    FcList* ctors = fcListNew(TC_);
+    int i, k;
+    if (fd->isStatic) return false;
+    if (!BaseConstructionSafe(t, decl, fd)) return false;
+    for (i = 0; i < decl->members->count; i++) if (((FcStmt*)decl->members->items[i])->kind == SK_ConstructorDecl) fcListAdd(TC_, ctors, decl->members->items[i]);
+    if (ctors->count == 0) return false;
+    for (i = 0; i < decl->members->count; i++) {
+        FcStmt* m = (FcStmt*)decl->members->items[i];
+        FcList* tags;
+        FcList* nodes;
+        if (m->kind != SK_FieldDecl || (FcFieldDecl*)m == fd || !((FcFieldDecl*)m)->initializer) continue;
+        fcExprNodes(TC_, ((FcFieldDecl*)m)->initializer, &tags, &nodes);
+        if (fcMentionsName(tags, nodes, fd->name)) return false;
+    }
+    for (i = 0; i < ctors->count; i++) {
+        FcConstructorDecl* ctor = (FcConstructorDecl*)ctors->items[i];
+        bool set = false;
+        if (ctor->baseArgs)
+            for (k = 0; k < ctor->baseArgs->count; k++) {
+                FcList* tags;
+                FcList* nodes;
+                fcExprNodes(TC_, (FcExpr*)ctor->baseArgs->items[k], &tags, &nodes);
+                if (fcMentionsName(tags, nodes, fd->name)) return false;
+            }
+        for (k = 0; k < ctor->body->statements->count; k++) {
+            FcStmt* stmt = (FcStmt*)ctor->body->statements->items[k];
+            if (stmt->kind == SK_ExprStmt && ((FcExprStmt*)stmt)->expression->kind == EK_AssignExpr) {
+                FcAssignExpr* a = (FcAssignExpr*)((FcExprStmt*)stmt)->expression;
+                bool simple = fcSimpleExpr(t, a->value, fd->name);
+                if (simple && ((a->target->kind == EK_IdentifierExpr && streq0(((FcIdentifierExpr*)a->target)->name, fd->name))
+                    || (a->target->kind == EK_MemberExpr && ((FcMemberExpr*)a->target)->target->kind == EK_ThisExpr && streq0(((FcMemberExpr*)a->target)->name, fd->name)))) { set = true; break; }
+                if (simple && (a->target->kind == EK_IdentifierExpr || (a->target->kind == EK_MemberExpr && ((FcMemberExpr*)a->target)->target->kind == EK_ThisExpr))) continue;
+            }
+            if (stmt->kind == SK_VarDeclStmt && fcSimpleExpr(t, ((FcVarDeclStmt*)stmt)->initializer, fd->name)) continue;
+            break;
+        }
+        if (!set) return false;
+    }
+    return true;
+}
+
+static bool IsFieldRef(FcTC* t, FcIdentifierExpr* id) {
+    FcResolvedRef* r = (FcResolvedRef*)fcDictGet(t->refs, id);
+    return r && (r->kind == RR_ImplicitThisMember || r->kind == RR_StaticMember) && !IsLocal(t, id->name);
+}
+static const char* ReceiverClass(FcTC* t, FcExpr* access) {
+    if (access->kind == EK_IdentifierExpr) {
+        FcResolvedRef* r = (FcResolvedRef*)fcDictGet(t->refs, access);
+        if (r && r->kind == RR_StaticMember) return r->className;
+        return t->cls ? t->cls->name : NULL;
+    }
+    if (access->kind == EK_MemberExpr) {
+        FcMemberExpr* m = (FcMemberExpr*)access;
+        const char* staticClass;
+        const FcST* type;
+        if (m->target->kind == EK_ThisExpr) return t->cls ? t->cls->name : NULL;
+        if ((staticClass = StaticClassRef(t, m->target)) != NULL) return staticClass;
+        if ((type = (const FcST*)fcDictGet(&t->exprTypes, m->target)) != NULL && type->kind == STK_Class && type->cls) return type->cls;
+    }
+    return NULL;
+}
+static FcList* FieldsOf(FcTC* t, FcExpr* access, const char* name) {
+    FcList* all;
+    const char* cls;
+    FcList* result = fcListNew(TC_);
+    int guard, i;
+    if (!t->deriveDefined || !(all = (FcList*)fcDictGet(FieldCandidates(t), name))) return result;
+    if ((cls = ReceiverClass(t, access)) == NULL) return all;
+    for (guard = 0; guard < 64 && cls; guard++) {
+        FcClassDecl* decl = (FcClassDecl*)fcDictGet(t->classes, cls);
+        FcFieldDecl* own = NULL;
+        FcTypeRef* baseRef = NULL;
+        if (!decl) break;
+        for (i = 0; i < decl->members->count && !own; i++) {
+            FcStmt* m = (FcStmt*)decl->members->items[i];
+            if (m->kind == SK_FieldDecl && streq0(((FcFieldDecl*)m)->name, name)) own = (FcFieldDecl*)m;
+        }
+        if (own) { for (i = 0; i < all->count; i++) if (all->items[i] == own) fcListAdd(TC_, result, own); return result; }
+        if (decl->baseRefs)
+            for (i = 0; i < decl->baseRefs->count && !baseRef; i++) {
+                const char* n = NameOf(t, (FcTypeRef*)decl->baseRefs->items[i]);
+                if (n && fcDictHas(t->classes, n)) baseRef = (FcTypeRef*)decl->baseRefs->items[i];
+            }
+        cls = baseRef ? NameOf(t, baseRef) : NULL;
+    }
+    return result;
+}
+static const char* FieldNeed(FcTC* t, FcExpr* access, const char* name) {
+    FcList* fields = FieldsOf(t, access, name);
+    if (fields->count != 1) return NULL;
+    if (ReceiverClass(t, access) == NULL
+        && (fcDictHas(&t->otherFieldNames, name) || ((FcList*)fcDictGet(FieldCandidates(t), name))->count != 1 || ((FcFieldDecl*)fields->items[0])->isStatic)) return NULL;
+    return fcDictHas(&t->fieldBad, fields->items[0]) ? NULL : FieldKey(t, (FcFieldDecl*)fields->items[0]);
+}
+static FcList* FieldValueNeeds(FcTC* t, FcExpr* value, const FcST* type) {
+    const char* single;
+    if (!type) type = (const FcST*)fcDictGet(&t->exprTypes, value);
+    if (type && (type->nul == NUL_Defined || type->nul == NUL_Inferred) && stIsValueKind(type)) return fcListNew(TC_);
+    if (value->kind == EK_ConditionalExpr) {
+        FcList* a = FieldValueNeeds(t, ((FcConditionalExpr*)value)->then, NULL);
+        FcList* b = a == NULL ? NULL : FieldValueNeeds(t, ((FcConditionalExpr*)value)->otherwise, NULL);
+        int i;
+        if (a == NULL || b == NULL) return NULL;
+        for (i = 0; i < b->count; i++) fcListAdd(TC_, a, b->items[i]);
+        return a;
+    }
+    if (value->kind == EK_TypeCoerceExpr) return fcListNew(TC_);
+    if ((single = NeedsOf(t, value)) != NULL) { FcList* l = fcListNew(TC_); fcListAdd(TC_, l, (void*)single); return l; }
+    return NULL;
+}
+static void NoteFieldWrite(FcTC* t, FcExpr* target, const char* name, FcExpr* value, const FcST* type) {
+    FcList* fields = FieldsOf(t, target, name);
+    FcList* needs;
+    int i, k;
+    if (fields->count == 0) return;
+    needs = FieldValueNeeds(t, value, type);
+    for (i = 0; i < fields->count; i++) {
+        FcList* all;
+        if (needs == NULL) { fcSetAdd(&t->fieldBad, fields->items[i]); continue; }
+        all = (FcList*)fcDictGet(&t->fieldNeeds, fields->items[i]);
+        if (!all) { all = fcListNew(TC_); fcDictPut(&t->fieldNeeds, fields->items[i], all); }
+        for (k = 0; k < needs->count; k++) fcListAdd(TC_, all, needs->items[k]);
+    }
+}
+static const char* fcAccessName(FcExpr* e) {
+    if (e->kind == EK_MemberExpr) return ((FcMemberExpr*)e)->name;
+    if (e->kind == EK_IdentifierExpr) return ((FcIdentifierExpr*)e)->name;
+    return NULL;
+}
+static void fcFieldBadByName(FcTC* t, const char* name) {
+    FcList* fields = (FcList*)fcDictGet(FieldCandidates(t), name);
+    int i;
+    if (!fields) return;
+    for (i = 0; i < fields->count; i++) fcSetAdd(&t->fieldBad, fields->items[i]);
+}
+static void DisqualifyFields(FcTC* t) {
+    FcAllNodes k;
+    FcDict* refMethods = fcDictNew(TC_, FC_KEY_STR);
+    FcDict* asked = fcDictNew(TC_, FC_KEY_STR);
+    bool jsonSeen = false;
+    int i, j;
+    if (fcDictCount(FieldCandidates(t)) == 0) return;
+    k.c = TC_; k.tags = fcListNew(TC_); k.nodes = fcListNew(TC_);
+    for (i = 0; i < t->program->count; i++) fcWalkStmt((FcStmt*)t->program->items[i], fcAllVisit, &k);
+    FC_DICT_EACH(t->classes, e) {
+        FcClassDecl* decl = (FcClassDecl*)e->value;
+        for (i = 0; i < decl->members->count; i++) {
+            FcStmt* m = (FcStmt*)decl->members->items[i];
+            if (m->kind != SK_MethodDecl) continue;
+            for (j = 0; j < ((FcMethodDecl*)m)->params->count; j++) if (((FcLambdaParam*)((FcMethodDecl*)m)->params->items[j])->byRef) { fcSetAdd(refMethods, ((FcMethodDecl*)m)->name); break; }
+        }
+    }
+    for (i = 0; i < k.nodes->count; i++) {
+        FcNodeTag tag = (FcNodeTag)FC_VALI(k.tags->items[i]);
+        void* node = k.nodes->items[i];
+        if (tag == FN_OTHER) {
+            /* a WithSet among the other nodes: told apart from the rest by the walk (fcWalkExpr visits the sets of a WithExpr after its source) */
+            continue;
+        }
+        if (tag != FN_EXPR) continue;
+        {
+            FcExpr* e = (FcExpr*)node;
+            const char* n;
+            switch (e->kind) {
+                case EK_UnaryExpr:
+                    if (((FcUnaryExpr*)e)->op == UOP_AddressOf && (n = fcAccessName(((FcUnaryExpr*)e)->operand)) != NULL) fcFieldBadByName(t, n);
+                    break;
+                case EK_WithExpr: {
+                    FcWithExpr* w = (FcWithExpr*)e;
+                    for (j = 0; j < w->sets->count; j++) fcFieldBadByName(t, ((FcWithSet*)w->sets->items[j])->name);
+                    break;
+                }
+                case EK_CallExpr: {
+                    FcCallExpr* call = (FcCallExpr*)e;
+                    if (!jsonSeen && call->callee->kind == EK_MemberExpr && streq0(((FcMemberExpr*)call->callee)->name, "Deserialize")
+                        && ((FcMemberExpr*)call->callee)->target->kind == EK_IdentifierExpr && streq0(((FcIdentifierExpr*)((FcMemberExpr*)call->callee)->target)->name, "Json")) {
+                        FC_DICT_EACH(FieldCandidates(t), fe) {
+                            FcList* l = (FcList*)fe->value;
+                            for (j = 0; j < l->count; j++)
+                                if (!fcInferDefinedClass((FcClassDecl*)fcDictGet(t->classes, (const char*)fcDictGet(&t->fieldOwner, l->items[j])))) fcSetAdd(&t->fieldBad, l->items[j]);
+                        }
+                        jsonSeen = true;
+                    }
+                    if ((n = fcAccessName(call->callee)) != NULL && fcDictHas(refMethods, n))
+                        for (j = 0; j < call->args->count; j++) { const char* passed = fcAccessName((FcExpr*)call->args->items[j]); if (passed) fcFieldBadByName(t, passed); }
+                    break;
+                }
+                case EK_BinaryExpr: {
+                    FcBinaryExpr* cmp = (FcBinaryExpr*)e;
+                    if (cmp->op != BOP_Eq && cmp->op != BOP_NotEq) break;
+                    if (cmp->left->kind == EK_LiteralExpr && ((FcLiteralExpr*)cmp->left)->value.kind == VK_Undefined && (n = fcAccessName(cmp->right)) != NULL) fcSetAdd(asked, n);
+                    if (cmp->right->kind == EK_LiteralExpr && ((FcLiteralExpr*)cmp->right)->value.kind == VK_Undefined && (n = fcAccessName(cmp->left)) != NULL) fcSetAdd(asked, n);
+                    break;
+                }
+                case EK_IsOfExpr: if ((n = fcAccessName(((FcIsOfExpr*)e)->operand)) != NULL) fcSetAdd(asked, n); break;
+                case EK_ConditionalAccessExpr: if ((n = fcAccessName(((FcConditionalAccessExpr*)e)->target)) != NULL) fcSetAdd(asked, n); break;
+                default: break;
+            }
+        }
+    }
+    FC_DICT_EACH(asked, e) {
+        FcList* fields = (FcList*)fcDictGet(FieldCandidates(t), e->key);
+        if (!fields) continue;
+        for (j = 0; j < fields->count; j++) if (((FcFieldDecl*)fields->items[j])->initializer == NULL) fcSetAdd(&t->fieldBad, fields->items[j]);
+    }
+}
+
+/* the methods a class of the program may override or implement for a package or the prelude */
+static FcDict* DeriveForeign(FcTC* t, FcClassDecl* decl) {
+    FcDict* keys = fcDictNew(TC_, FC_KEY_STR);
+    FcDict* seenTypes = fcDictNew(TC_, FC_KEY_STR);
+    FcList* todo = fcListNew(TC_);
+    int i;
+    if (decl->baseRefs) for (i = decl->baseRefs->count - 1; i >= 0; i--) fcListAdd(TC_, todo, decl->baseRefs->items[i]);
+    while (todo->count > 0) {
+        FcTypeRef* b = (FcTypeRef*)todo->items[--todo->count];
+        const char* nm = NameOf(t, b);
+        const char* bn = nm ? nm : PlainName(t, b->baseName);
+        FcClassDecl* bc;
+        FcInterfaceDecl* ic;
+        if (!fcSetAdd(seenTypes, bn)) continue;
+        if ((bc = (FcClassDecl*)fcDictGet(t->classes, bn)) != NULL || (bc = (FcClassDecl*)fcDictGet(t->classes, PlainName(t, b->baseName))) != NULL) {
+            if (bc->h.source < t->firstUserSource)
+                for (i = 0; i < bc->members->count; i++) {
+                    FcStmt* m = (FcStmt*)bc->members->items[i];
+                    if (m->kind == SK_MethodDecl) fcSetAdd(keys, MethodKey(t, ((FcMethodDecl*)m)->name, ((FcMethodDecl*)m)->params->count));
+                }
+            if (bc->baseRefs) for (i = bc->baseRefs->count - 1; i >= 0; i--) fcListAdd(TC_, todo, bc->baseRefs->items[i]);
+        } else if ((ic = (FcInterfaceDecl*)fcDictGet(&t->interfaces, bn)) != NULL || (ic = (FcInterfaceDecl*)fcDictGet(&t->interfaces, PlainName(t, b->baseName))) != NULL) {
+            if (ic->h.source < t->firstUserSource)
+                for (i = 0; i < ic->methods->count; i++) fcSetAdd(keys, MethodKey(t, ((FcInterfaceMethodSig*)ic->methods->items[i])->name, ((FcInterfaceMethodSig*)ic->methods->items[i])->params->count));
+            if (ic->baseRefs) for (i = ic->baseRefs->count - 1; i >= 0; i--) fcListAdd(TC_, todo, ic->baseRefs->items[i]);
+        } else fcSetAdd(keys, "*");
+    }
+    return keys;
+}
+typedef struct FcCandidate { const char* key; FcList* params; } FcCandidate;
+static FcList* DerivationCandidates(FcTC* t, const char* name, FcClassDecl* decl, FcDict* foreign) {
+    FcList* r = fcListNew(TC_);
+    int i;
+    for (i = 0; i < decl->members->count; i++) {
+        FcStmt* member = (FcStmt*)decl->members->items[i];
+        FcCandidate* cand;
+        if (member->kind == SK_MethodDecl) {
+            FcMethodDecl* m = (FcMethodDecl*)member;
+            const char* key;
+            if (fcDictHas(&t->unseenNames, m->name) || fcCalledByTheLanguage(m->name) || fcStartsWith(m->name, "operator")) continue;
+            if (!fcInferDefinedClass(decl) && (fcReflectionUsed(t) || fcDictHas(&t->stringLiterals, m->name))) continue;
+            key = MethodKey(t, m->name, m->params->count);
+            if (fcDictHas(foreign, key) || fcDictHas(foreign, "*")) continue;
+            cand = (FcCandidate*)fcAlloc(TC_, sizeof *cand); cand->key = key; cand->params = m->params;
+            fcListAdd(TC_, r, cand);
+        } else if (member->kind == SK_ConstructorDecl) {
+            if (!fcInferDefinedClass(decl) && fcReflectionUsed(t)) continue;
+            if (fcDictHas(&t->baseClasses, name) || fcDictHas(&t->baseClasses, PlainName(t, name)) || fcDictHas(&t->unseenCtors, name)) continue;
+            cand = (FcCandidate*)fcAlloc(TC_, sizeof *cand); cand->key = CtorKey(t, name, ((FcConstructorDecl*)member)->params->count); cand->params = ((FcConstructorDecl*)member)->params;
+            fcListAdd(TC_, r, cand);
+        }
+    }
+    return r;
+}
+static bool Derivable(FcLambdaParam* p) {
+    FcTypeRef* ty = p->type;
+    return !p->byRef && ty && !ty->nonNull && ty->pointerDepth == 0 && ty->arrayRank == 0 && ty->lambdaSignature == NULL && ty->typeArgs == NULL
+        && (streq0(ty->baseName, "int") || streq0(ty->baseName, "float")) && p->arrayRanks->count == 0;
+}
+static bool fcNumberReturn(FcTypeRef* r) {
+    return r && r->pointerDepth == 0 && r->arrayRank == 0 && r->lambdaSignature == NULL && r->typeArgs == NULL && (streq0(r->baseName, "int") || streq0(r->baseName, "float"));
+}
+
+static FcDict* DeriveReturns(FcTC* t) {
+    FcDict* decls = fcDictNew(TC_, FC_KEY_STR);
+    FcDict* blocked = fcDictNew(TC_, FC_KEY_STR);
+    FcDict* ok = fcDictNew(TC_, FC_KEY_STR);
+    FcDict* paramNeeds = fcDictNew(TC_, FC_KEY_STR);
+    int i, j;
+    bool changed;
+    FC_DICT_EACH(t->classes, e) {
+        FcClassDecl* decl = (FcClassDecl*)e->value;
+        FcDict* foreign;
+        if (decl->h.source < t->firstUserSource) continue;
+        foreign = DeriveForeign(t, decl);
+        for (i = 0; i < decl->members->count; i++) {
+            FcStmt* mm = (FcStmt*)decl->members->items[i];
+            FcMethodDecl* m;
+            const char* key;
+            FcList* list;
+            FcReturns* r;
+            if (mm->kind != SK_MethodDecl) continue;
+            m = (FcMethodDecl*)mm;
+            key = MethodKey(t, m->name, m->params->count);
+            if (!(list = (FcList*)fcDictGet(decls, key))) { list = fcListNew(TC_); fcDictPut(decls, key, list); }
+            fcListAdd(TC_, list, m);
+            r = (FcReturns*)fcDictGet(&t->returns, m);
+            if (!fcNumberReturn(m->returnType) || fcDictHas(foreign, key) || fcDictHas(foreign, "*") || fcDictHas(&t->unseenNames, m->name) || fcCalledByTheLanguage(m->name) || !r
+                || (!r->ends && !(m->returnType && m->returnType->nonNull)))
+                fcSetAdd(blocked, key);
+        }
+    }
+    FC_DICT_EACH(decls, e) if (!fcDictHas(blocked, e->key)) fcSetAdd(ok, TF(t, "ret:%s", (const char*)e->key));
+    FC_DICT_EACH(t->classes, e) {
+        FcClassDecl* decl = (FcClassDecl*)e->value;
+        FcList* cands;
+        if (decl->h.source < t->firstUserSource) continue;
+        cands = DerivationCandidates(t, (const char*)e->key, decl, DeriveForeign(t, decl));
+        for (i = 0; i < cands->count; i++) {
+            FcCandidate* cand = (FcCandidate*)cands->items[i];
+            FcCallInfo* seen = (FcCallInfo*)fcDictGet(&t->calls, cand->key);
+            if (!seen || seen->calls == 0 || seen->count != cand->params->count) continue;
+            for (j = 0; j < cand->params->count; j++) {
+                FcLambdaParam* p = (FcLambdaParam*)cand->params->items[j];
+                if (seen->defined[j] && Derivable(p)) {
+                    fcSetAdd(ok, ParamId(t, p));
+                    fcDictPut(paramNeeds, ParamId(t, p), seen->needs[j] ? seen->needs[j] : fcListNew(TC_));
+                }
+            }
+        }
+    }
+    FC_DICT_EACH(FieldCandidates(t), e) {
+        FcList* l = (FcList*)e->value;
+        for (i = 0; i < l->count; i++) {
+            FcFieldDecl* fd = (FcFieldDecl*)l->items[i];
+            FcList* fieldNeeds;
+            if (fcDictHas(&t->fieldBad, fd)) continue;
+            fcSetAdd(ok, FieldKey(t, fd));
+            fieldNeeds = (FcList*)fcDictGet(&t->fieldNeeds, fd);
+            fcDictPut(paramNeeds, FieldKey(t, fd), fieldNeeds ? fieldNeeds : fcListNew(TC_));
+        }
+    }
+    for (changed = true; changed;) {
+        FcList* items = fcListNew(TC_);
+        changed = false;
+        FC_DICT_EACH(ok, e) fcListAdd(TC_, items, (void*)e->key);
+        for (i = 0; i < items->count; i++) {
+            const char* item = (const char*)items->items[i];
+            bool fails = false;
+            if (fcStartsWith(item, "ret:")) {
+                FcList* ms = (FcList*)fcDictGet(decls, item + 4);
+                for (j = 0; ms && j < ms->count && !fails; j++) {
+                    FcMethodDecl* m = (FcMethodDecl*)ms->items[j];
+                    FcReturns* r;
+                    int q;
+                    if (m->returnType && m->returnType->nonNull) continue;
+                    r = (FcReturns*)fcDictGet(&t->returns, m);
+                    for (q = 0; r && q < r->notes->count; q++) {
+                        FcRetNote* n = (FcRetNote*)r->notes->items[q];
+                        if (!n->ok && (n->needs == NULL || !fcDictHas(ok, n->needs))) { fails = true; break; }
+                    }
+                }
+            } else {
+                FcList* needs = (FcList*)fcDictGet(paramNeeds, item);
+                for (j = 0; needs && j < needs->count; j++) if (!fcDictHas(ok, needs->items[j])) { fails = true; break; }
+            }
+            if (fails) { fcDictRemove(ok, item); changed = true; }
+        }
+    }
+    return ok;
+}
+
+static void Derive(FcTC* t, FcResolveResult* resolved) {
+    FcDict* ok;
+    int i, j;
+    if (!resolved->derivedDefined) resolved->derivedDefined = fcDictNew(TC_, FC_KEY_PTR);
+    if (!resolved->derivedStrings) resolved->derivedStrings = fcDictNew(TC_, FC_KEY_PTR);
+    if (!resolved->derivedReturns) resolved->derivedReturns = fcDictNew(TC_, FC_KEY_PTR);
+    if (!resolved->derivedDefinedFields) resolved->derivedDefinedFields = fcDictNew(TC_, FC_KEY_PTR);
+    FC_DICT_EACH(t->classes, e) {
+        FcClassDecl* decl = (FcClassDecl*)e->value;
+        if (!decl->baseRefs) continue;
+        for (i = 0; i < decl->baseRefs->count; i++) {
+            FcTypeRef* b = (FcTypeRef*)decl->baseRefs->items[i];
+            const char* full = NameOf(t, b);
+            fcSetAdd(&t->baseClasses, PlainName(t, b->baseName));
+            if (full) fcSetAdd(&t->baseClasses, full);
+        }
+    }
+    DisqualifyFields(t);
+    ok = DeriveReturns(t);
+    FC_DICT_EACH(FieldCandidates(t), e) {
+        FcList* fields = (FcList*)e->value;
+        for (i = 0; i < fields->count; i++) {
+            FcFieldDecl* fd = (FcFieldDecl*)fields->items[i];
+            if (fcDictHas(ok, FieldKey(t, fd)) && (fd->initializer != NULL || fcDictHas(&t->fieldNeeds, fd))) fcSetAdd(resolved->derivedDefinedFields, fd);
+        }
+    }
+    FC_DICT_EACH(t->classes, e) {
+        FcClassDecl* decl = (FcClassDecl*)e->value;
+        FcList* cands;
+        if (decl->h.source < t->firstUserSource) continue;
+        for (i = 0; i < decl->members->count; i++) {
+            FcStmt* mm = (FcStmt*)decl->members->items[i];
+            FcMethodDecl* m;
+            if (mm->kind != SK_MethodDecl) continue;
+            m = (FcMethodDecl*)mm;
+            if (m->returnType && !m->returnType->nonNull && fcDictHas(ok, TF(t, "ret:%s", MethodKey(t, m->name, m->params->count)))) fcSetAdd(resolved->derivedReturns, m->body);
+        }
+        cands = DerivationCandidates(t, (const char*)e->key, decl, DeriveForeign(t, decl));
+        for (i = 0; i < cands->count; i++) {
+            FcCandidate* cand = (FcCandidate*)cands->items[i];
+            FcCallInfo* seenCalls = (FcCallInfo*)fcDictGet(&t->calls, cand->key);
+            FcStrCalls* strings = (FcStrCalls*)fcDictGet(&t->stringCalls, cand->key);
+            if (seenCalls && seenCalls->calls > 0 && strings && strings->count == cand->params->count)
+                for (j = 0; j < cand->params->count; j++) {
+                    FcLambdaParam* p = (FcLambdaParam*)cand->params->items[j];
+                    if (strings->strings[j] && !p->byRef && p->arrayRanks->count == 0 && p->type && p->type->pointerDepth == 0 && p->type->arrayRank == 0 && p->type->lambdaSignature == NULL
+                        && streq0(p->type->baseName, "string"))
+                        fcSetAdd(resolved->derivedStrings, p);
+                }
+            for (j = 0; j < cand->params->count; j++) {
+                FcLambdaParam* p = (FcLambdaParam*)cand->params->items[j];
+                if (fcDictHas(&t->paramIds, p) && fcDictHas(ok, ParamId(t, p))) fcSetAdd(resolved->derivedDefined, p);
+            }
+        }
+    }
+}
+
+/* the types of the expressions (TypeChecker._exprTypes: what a write of a field gave, DeriveFields) */
+static void fcNoteExprType(FcTC* t, FcExpr* expr, const FcST* type) { if (t->deriveDefined) fcDictPut(&t->exprTypes, expr, (void*)type); }

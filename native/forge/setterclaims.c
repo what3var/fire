@@ -1,5 +1,5 @@
-/* native/forge/setterclaims.c - port of src/fire.Compiler/SetterClaims.cs (commit c7f13d97): the paths through a setter, which call claims `value`
- * on each - here what the type checker asks (Ambiguous, TC018); the claim sites (Sites) are for the compiler (Phase C step 4). */
+/* native/forge/setterclaims.c - port of src/fire.Compiler/SetterClaims.cs (commit 6bc618e7): the paths through a setter, which call claims `value`
+ * on each - what the type checker asks (Ambiguous, TC018) and the claim sites for the compiler (Sites). */
 
 #define SC_MaxPaths 4096
 typedef struct FcScEvent { void* node; bool isAssign; int line; } FcScEvent;
@@ -252,4 +252,72 @@ static FcList* SetterClaimsAmbiguous(FcCtx* c, FcBlockStmt* body) {
         if (!cc->always && cc->sometimes) fcListAdd(c, ambiguous, FC_IVAL(cc->line));
     }
     return ambiguous;
+}
+
+/* SetterClaims.AllEvents */
+static void scAllWalk(FcSc* s, FcStmt* st, FcList* list) {
+    int i;
+    if (!st) return;
+    switch (st->kind) {
+        case SK_BlockStmt: for (i = 0; i < ((FcBlockStmt*)st)->statements->count; i++) scAllWalk(s, (FcStmt*)((FcBlockStmt*)st)->statements->items[i], list); break;
+        case SK_ExprStmt: scEvents(s, ((FcExprStmt*)st)->expression, list); break;
+        case SK_VarDeclStmt: scEvents(s, ((FcVarDeclStmt*)st)->initializer, list); break;
+        case SK_ReturnStmt: scEvents(s, ((FcReturnStmt*)st)->value, list); break;
+        case SK_IfStmt: scEvents(s, ((FcIfStmt*)st)->condition, list); scAllWalk(s, ((FcIfStmt*)st)->then, list); scAllWalk(s, ((FcIfStmt*)st)->otherwise, list); break;
+        case SK_WhileStmt: scEvents(s, ((FcWhileStmt*)st)->condition, list); scAllWalk(s, ((FcWhileStmt*)st)->body, list); break;
+        case SK_DoWhileStmt: scAllWalk(s, ((FcDoWhileStmt*)st)->body, list); scEvents(s, ((FcDoWhileStmt*)st)->condition, list); break;
+        case SK_ForStmt: { FcForStmt* f = (FcForStmt*)st; scAllWalk(s, f->init, list); scEvents(s, f->condition, list); scAllWalk(s, f->body, list); scEvents(s, f->increment, list); break; }
+        case SK_ForeachStmt: scEvents(s, ((FcForeachStmt*)st)->iterable, list); scAllWalk(s, ((FcForeachStmt*)st)->body, list); break;
+        case SK_TryStmt: {
+            FcTryStmt* t = (FcTryStmt*)st;
+            scAllWalk(s, (FcStmt*)t->tryBlock, list);
+            for (i = 0; i < t->catches->count; i++) scAllWalk(s, (FcStmt*)((FcCatchClause*)t->catches->items[i])->body, list);
+            scAllWalk(s, (FcStmt*)t->finallyBlock, list);
+            break;
+        }
+        default: break;
+    }
+}
+/* SetterClaims.Analyze(body).Sites: the AssignExpr nodes and the `value` arguments that claim (a set by reference) */
+static FcDict* SetterClaimsSites(FcCtx* c, FcBlockStmt* body) {
+    FcSc s;
+    FcList* paths;
+    FcDict calls;
+    FcDict* sites = fcDictNew(c, FC_KEY_PTR);
+    int i, k, j;
+    s.c = c;
+    fcDictInit(c, &s.locals, FC_KEY_STR);
+    scCollectLocals(&s, (FcStmt*)body);
+    paths = scPathsOfList(&s, body->statements);
+    if (paths == NULL) {
+        FcList* all = fcListNew(c);
+        for (i = 0; i < body->statements->count; i++) scAllWalk(&s, (FcStmt*)body->statements->items[i], all);
+        for (i = 0; i < all->count; i++) if (((FcScEvent*)all->items[i])->isAssign) fcSetAdd(sites, ((FcScEvent*)all->items[i])->node);
+        return sites;
+    }
+    fcDictInit(c, &calls, FC_KEY_PTR);
+    for (i = 0; i < paths->count; i++) {
+        FcList* events = ((FcScPath*)paths->items[i])->events;
+        bool hasAssign = false;
+        FcScEvent* firstCall = NULL;
+        FcList* distinct = fcListNew(c);
+        for (k = 0; k < events->count; k++) if (((FcScEvent*)events->items[k])->isAssign) { hasAssign = true; fcSetAdd(sites, ((FcScEvent*)events->items[k])->node); }
+        if (!hasAssign) for (k = 0; k < events->count && !firstCall; k++) if (!((FcScEvent*)events->items[k])->isAssign) firstCall = (FcScEvent*)events->items[k];
+        for (k = 0; k < events->count; k++) {
+            FcScEvent* e = (FcScEvent*)events->items[k];
+            bool dup = false;
+            if (e->isAssign) continue;
+            for (j = 0; j < distinct->count && !dup; j++) if (scEventEq((FcScEvent*)distinct->items[j], e)) dup = true;
+            if (!dup) fcListAdd(c, distinct, e);
+        }
+        for (k = 0; k < distinct->count; k++) {
+            FcScEvent* e = (FcScEvent*)distinct->items[k];
+            bool claims = e == firstCall;
+            FcScCall* cc = (FcScCall*)fcDictGet(&calls, e->node);
+            if (cc) { cc->always = cc->always && claims; cc->sometimes = cc->sometimes || claims; cc->line = e->line; }
+            else { cc = (FcScCall*)fcAlloc(c, sizeof *cc); cc->always = claims; cc->sometimes = claims; cc->line = e->line; fcDictPut(&calls, e->node, cc); }
+        }
+    }
+    FC_DICT_EACH(&calls, e) if (((FcScCall*)e->value)->always) fcSetAdd(sites, e->key);
+    return sites;
 }

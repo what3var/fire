@@ -103,6 +103,23 @@ typedef struct FcTC {
     int programIntWidth, programFloatWidth, programWordWidth;
     FcDict* nativeReturns;
     bool reflectionKnown, reflectionUsed;
+    FcResolveResult* rr;          /* what the check leaves for the compiler (UnitChecks, LocalGuards, FixedCoercions, OverloadHints, ...) */
+    FcList* localTypes;           /* FcDict* name -> TypeRef* by scope (like scopes) */
+    FcDict* treeTypes;            /* ExpressionTrees.Types while a tree is checked, NULL otherwise */
+    FcDict* specializedClasses;   /* the classes with typed specializations (NoteReceiverTypeArgs), made on first use */
+    /* the derivation of `defined` (Derive) */
+    bool deriveDefined;
+    FcDict calls;                 /* key -> FcCallInfo* */
+    FcDict stringCalls;           /* key -> FcStrCalls* */
+    FcDict returns;               /* MethodDecl* -> FcReturns* */
+    FcList* retNotes;             /* FcRetNote*, NULL: not collecting */
+    FcDict* plainParams;          /* name -> LambdaParam*, NULL */
+    FcDict paramIds;              /* LambdaParam* -> "par:n" */
+    FcDict unseenNames, unseenCtors, stringLiterals, baseClasses;
+    FcDict exprTypes;             /* Expr* -> FcST* */
+    FcDict* fieldCands;           /* name -> FcList* of FieldDecl*, NULL until made */
+    FcDict fieldOwner;            /* FieldDecl* -> class name */
+    FcDict otherFieldNames, fieldBad, fieldNeeds;
 } FcTC;
 static const FcKeptAt fcNoKept = { NULL, NULL, NULL };
 
@@ -177,7 +194,8 @@ static const char* UnitText(FcTC* t, const FcU* unit) { return fcUIsUnitless(uni
 static bool CutsWide(FcTC* t, const FcST* value, const FcST* target) {
     return value->kind == STK_Int && target->kind == STK_Int && !target->raw && value->wide > target->wide && t->programIntWidth > 0 && t->programIntWidth < 64 && value->wide > t->programIntWidth;
 }
-static void CheckUnitAssignable(FcTC* t, const FcST* value, const FcST* target, int line, const char* what);
+static void CheckUnitAssignable(FcTC* t, const FcST* value, const FcST* target, int line, const char* what, FcExpr* valueExpr);
+static const char* DemandTextOf(FcTC* t, const FcU* unit);
 
 static void CheckAssignable(FcTC* t, const FcST* value, const FcST* target, int line, const char* what, const char* code, FcExpr* valueExpr) {
     if (target->nul == NUL_Defined && value->nul == NUL_MayBeUndefined) {
@@ -190,26 +208,36 @@ static void CheckAssignable(FcTC* t, const FcST* value, const FcST* target, int 
         }
     }
     if (value->kind == STK_Undefined && target->nul == NUL_Defined) return;
-    if (value->kind == STK_Class && streq0(value->cls, "LambdaExpression") && target->kind == STK_Lambda && valueExpr != NULL) return;
+    if (value->kind == STK_Class && streq0(value->cls, "LambdaExpression") && target->kind == STK_Lambda && valueExpr != NULL) { fcSetAdd(t->rr->treeToCompiled, valueExpr); return; }
     if (!Assignable(t, value, target)) { Report(t, code, TF(t, "Cannot assign a value of type '%s' to %s of type '%s'", S_(t, value), what, S_(t, target)), line); return; }
     if (Strict(t) && target->kind == STK_String && !stIsDynamic(value) && value->kind != STK_String && value->kind != STK_Undefined)
         Report(t, TC_TextConversionCode, TF(t, "A value of type '%s' goes into %s, which is a 'string': it becomes its text (ToString()) - write '.ToString()' or '\"\" + ...' where that is meant", S_(t, value), what), line);
     if (CutsWide(t, value, target))
         Report(t, TC_WideIntCode, TF(t, "An int[%d] goes into %s, a plain int of %d bits in this program: it is cut - declare int[%d], or cut it on purpose (!int)", value->wide, what, t->programIntWidth, value->wide), line);
-    CheckUnitAssignable(t, value, target, line, what);
+    CheckUnitAssignable(t, value, target, line, what, valueExpr);
 }
 
-static void CheckUnitAssignable(FcTC* t, const FcST* value, const FcST* target, int line, const char* what) {
+static void CheckUnitAssignable(FcTC* t, const FcST* value, const FcST* target, int line, const char* what, FcExpr* valueExpr) {
     const FcU* from;
     const FcU* to;
     if (value->kind == STK_Array && target->kind == STK_Array && value->element && target->element) {
-        CheckUnitAssignable(t, value->element, target->element, line, streq0(what, "an element") ? what : TF(t, "an element of %s", what));
+        CheckUnitAssignable(t, value->element, target->element, line, streq0(what, "an element") ? what : TF(t, "an element of %s", what), NULL);
         return;
     }
     if (target->raw) {
         if (stIsNumber(value) && value->unit && !fcUIsUnitless(value->unit))
             ReportError(t, TC_RawUnitCode, TF(t, "A value in '%s' cannot be stored in %s of type '%s': 'byte' and 'word' are raw data without a unit (take the number with '::unitless')", UnitText(t, value->unit), what, S_(t, target)), line);
         return;
+    }
+    if (valueExpr != NULL && target->kind == STK_Float && (stIsDynamic(value) || value->kind == STK_Int || value->kind == STK_Word))
+        fcDictPut(t->rr->unitChecks, valueExpr, (void*)"#any");
+    if (valueExpr != NULL && stIsNumber(target) && target->unit && fcUIsUnitless(target->unit) && !target->unitIsDimension
+        && (stIsDynamic(value) || (stIsNumber(value) && !(value->unit && fcUIsUnitless(value->unit)))))
+        fcDictPut(t->rr->unitChecks, valueExpr, (void*)(target->kind == STK_Float ? "#unitless" : "unitless"));
+    if (valueExpr != NULL && stIsNumber(target) && target->unit && !fcUIsUnitless(target->unit) && !target->unitIsDimension
+        && (stIsDynamic(value) || (stIsNumber(value) && !fcUEquals(target->unit, value->unit)))) {
+        const char* demand = DemandTextOf(t, target->unit);
+        if (demand) fcDictPut(t->rr->unitChecks, valueExpr, (void*)(target->kind == STK_Float ? TF(t, "#%s", demand) : demand));
     }
     if (!stIsNumber(value) || !stIsNumber(target) || !value->unit || !target->unit) return;
     from = value->unit; to = target->unit;
@@ -223,9 +251,15 @@ static void CheckUnitAssignable(FcTC* t, const FcST* value, const FcST* target, 
 }
 
 /* DemandText(Unit): the text when Unit.Parse reads the same unit back from it */
-FC_LATER static const char* DemandTextOf(FcTC* t, const FcU* unit) {
+static const char* DemandTextOf(FcTC* t, const FcU* unit) {
     const char* text = fcUText(TC_, unit);
-    return fcUEquals(fcUParse(TC_, text), unit) ? text : NULL;
+    volatile bool same = false;
+    FC_TRY(TC_) {
+        same = fcUEquals(fcUParse(TC_, text), unit);
+    } FC_CATCH(TC_) {
+        same = false;
+    } FC_END_TRY;
+    return same ? text : NULL;
 }
 
 static bool Assignable(FcTC* t, const FcST* value, const FcST* target) {
@@ -635,6 +669,7 @@ static void Push(FcTC* t) { fcListAdd(TC_, t->scopes, fcDictNew(TC_, FC_KEY_STR)
 static void Pop(FcTC* t) {
     ReportPendingVars(t, (FcDict*)t->scopes->items[t->scopes->count - 1]);
     t->scopes->count--;
+    if (t->localTypes->count > t->scopes->count) t->localTypes->count = t->scopes->count;
 }
 static void ReportUntypedVar(FcTC* t, const char* name, int line, const char* why) {
     if (Strict(t))
@@ -657,7 +692,122 @@ static void ReportPendingVars(FcTC* t, FcDict* scope) {
 }
 static const char* fcPendingKey(FcTC* t, FcDict* scope, const char* name) { return fcFmt(TC_, "%p\x01%s", (void*)scope, name); }
 
-static void Declare(FcTC* t, const char* name, const FcST* type) { fcDictPut((FcDict*)t->scopes->items[t->scopes->count - 1], name, (void*)type); }
+static void Declare(FcTC* t, const char* name, const FcST* type) {
+    fcDictPut((FcDict*)t->scopes->items[t->scopes->count - 1], name, (void*)type);
+    if (t->localTypes->count == t->scopes->count) fcDictRemove((FcDict*)t->localTypes->items[t->localTypes->count - 1], name);
+}
+
+static void NoteCallFull(FcTC* t, FcExpr* call, const char* key, FcList* parameters, FcList* argParams, FcList* args, FcList* argExprs, FcMethodDecl* target);
+static bool fcDeriveDefined(void);
+static void Derive(FcTC* t, FcResolveResult* resolved);
+static void NoteReturn(FcTC* t, FcExpr* value, const FcST* type);
+static FcDict* PlainParams(FcTC* t, FcList* parameters, FcBlockStmt* body);
+static void NoteFieldWrite(FcTC* t, FcExpr* target, const char* name, FcExpr* value, const FcST* type);
+static bool IsFieldRef(FcTC* t, FcIdentifierExpr* id);
+static const char* MethodKey(FcTC* t, const char* name, int count);
+static const char* CtorKey(FcTC* t, const char* cls, int count);
+typedef struct FcReturns FcReturns;
+static FcReturns* fcReturnsNew(FcTC* t, FcList* notes, bool ends);
+
+/* DeclareLocalType: a local declared with int/float/bool, a class, an interface or a type parameter (scope -1: the innermost) */
+static void DeclareLocalType(FcTC* t, const char* name, FcTypeRef* type, int scope) {
+    if (scope < 0) scope = t->scopes->count - 1;
+    while (t->localTypes->count <= scope) fcListAdd(TC_, t->localTypes, fcDictNew(TC_, FC_KEY_STR));
+    fcDictPut((FcDict*)t->localTypes->items[scope], name, type);
+}
+static FcTypeRef* fcTcTypeRef(FcTC* t, const char* name, int bitWidth) {
+    FcTypeRef* r = (FcTypeRef*)fcAlloc(TC_, sizeof *r);
+    r->baseName = name;
+    r->bitWidth = bitWidth;
+    return r;
+}
+/* NoteReceiverTypeArgs: a receiver of a class with typed specializations whose type arguments are plain value types or string (`List<int>`) */
+static void NoteReceiverTypeArgs(FcTC* t, FcExpr* at, const FcST* receiver) {
+    FcBuf b = {0};
+    int i, k;
+    if (receiver->kind != STK_Class || receiver->cls == NULL || !receiver->args || receiver->args->count == 0) return;
+    if (!t->specializedClasses) {
+        t->specializedClasses = fcDictNew(TC_, FC_KEY_STR);
+        FC_DICT_EACH(t->classes, e) {
+            FcClassDecl* cd = (FcClassDecl*)e->value;
+            for (k = 0; k < cd->members->count; k++) {
+                FcStmt* m = (FcStmt*)cd->members->items[k];
+                if (m->kind == SK_MethodDecl && ((FcMethodDecl*)m)->specialization != NULL) { fcSetAdd(t->specializedClasses, cd->name); break; }
+            }
+        }
+    }
+    if (!fcDictHas(t->specializedClasses, receiver->cls)) return;
+    fcBufStr(&b, "");
+    for (i = 0; i < receiver->args->count; i++) {
+        const FcST* a = (const FcST*)receiver->args->items[i];
+        bool plain = a->wide == 0 && !a->unitIsDimension && (a->unit == NULL || fcUIsUnitless(a->unit));
+        const char* text = a->kind == STK_Int && plain ? "int" : a->kind == STK_Float && plain ? "float" : a->kind == STK_Bool ? "bool" : a->kind == STK_Char ? "char"
+            : a->kind == STK_String ? "string" : NULL;
+        if (!text) { fcBufFree(&b); return; }
+        if (i) fcBufChar(&b, '|');
+        fcBufStr(&b, text);
+    }
+    fcDictPut(t->rr->receiverTypeArgs, at, (void*)fcBufDone(TC_, &b));
+}
+
+/* GuardTypeOf */
+static FcTypeRef* GuardTypeOf(FcTC* t, const FcST* type) {
+    switch (type->kind) {
+        case STK_Int: return type->raw ? NULL : fcTcTypeRef(t, "int", type->wide == 0 ? FC_NULL_INT : type->wide);
+        case STK_Float: return fcTcTypeRef(t, "float", FC_NULL_INT);
+        case STK_Bool: return fcTcTypeRef(t, "bool", FC_NULL_INT);
+        case STK_Class: {
+            FcClassDecl* decl;
+            FcInterfaceDecl* iface;
+            if (type->args != NULL || type->cls == NULL) return NULL;
+            if ((decl = (FcClassDecl*)fcDictGet(t->classes, type->cls)) != NULL) return decl->typeParams && decl->typeParams->count > 0 ? NULL : fcTcTypeRef(t, type->cls, FC_NULL_INT);
+            if ((iface = (FcInterfaceDecl*)fcDictGet(&t->interfaces, type->cls)) != NULL) return iface->typeParams && iface->typeParams->count > 0 ? NULL : fcTcTypeRef(t, type->cls, FC_NULL_INT);
+            return NULL;
+        }
+        case STK_Enum: return type->cls ? fcTcTypeRef(t, type->cls, FC_NULL_INT) : NULL;
+        default: return NULL;
+    }
+}
+/* LocalType: the declaration of a local variable, if it was declared with a type that is checked */
+static FcTypeRef* LocalType(FcTC* t, const char* name) {
+    int i;
+    for (i = t->scopes->count - 1; i >= 0; i--)
+        if (fcDictHas((FcDict*)t->scopes->items[i], name)) return i < t->localTypes->count ? (FcTypeRef*)fcDictGet((FcDict*)t->localTypes->items[i], name) : NULL;
+    return NULL;
+}
+static bool DerivesFrom(FcTC* t, const char* derived, const char* baseName);
+static bool fcGuardNeeded(FcTC* t, const FcST* value, const FcST* target) {
+    switch (target->kind) {
+        case STK_Int: return (value->kind != STK_Int && !(target->raw && value->kind == STK_Word)) || CutsWide(t, value, target);
+        case STK_Float: return value->kind != STK_Float && value->kind != STK_Int;
+        case STK_Bool: return value->kind != STK_Bool;
+        case STK_Class: return value->kind != STK_Class || !DerivesFrom(t, value->cls, target->cls);
+        case STK_Enum: return value->kind != STK_Enum || !streq0(value->cls, target->cls);
+        case STK_Dynamic: return target->typeParam != NULL && !streq0(value->typeParam, target->typeParam);
+        case STK_String: return value->kind != STK_String;
+        default: return false;
+    }
+}
+static void fcPutGuard(FcTC* t, FcExpr* valueExpr, FcTypeRef* type, const char* what) {
+    FcLocalGuard* g = (FcLocalGuard*)fcAlloc(TC_, sizeof *g);
+    g->type = type; g->what = what;
+    fcDictPut(t->rr->localGuards, valueExpr, g);
+}
+/* GuardLocalValue: a value going into a local declared `target` that its static type does not prove - checked at run time (LocalGuards) */
+static void GuardLocalValue(FcTC* t, FcExpr* valueExpr, const FcST* value, const FcST* target, FcTypeRef* type, const char* name) {
+    bool undefinedChecked = type->nonNull && value->nul != NUL_Defined;
+    if (value->kind == STK_Undefined && !undefinedChecked) return;
+    if (undefinedChecked || fcGuardNeeded(t, value, target)) fcPutGuard(t, valueExpr, type, TF(t, "Variable '%s'", name));
+}
+/* GuardValue: like GuardLocalValue, for another declared target (a return value) */
+static void GuardValue(FcTC* t, FcExpr* valueExpr, const FcST* value, const FcST* target, FcTypeRef* type, const char* what) {
+    if (value->kind == STK_Undefined) return;
+    if (fcGuardNeeded(t, value, target)) {
+        FcTypeRef* g = type;
+        if (target->kind == STK_String && type->nonNull) { g = (FcTypeRef*)fcAlloc(TC_, sizeof *g); *g = *type; g->nonNull = false; }
+        fcPutGuard(t, valueExpr, g, what);
+    }
+}
 
 static const FcST* FindMember(FcTC* t, const FcST* receiver, const char* name);
 static const FcST* Lookup(FcTC* t, const char* name) {
@@ -921,6 +1071,145 @@ static FcCand* PickOverload(FcTC* t, FcList* candidates, FcList* args) {
     }
     if (unknown || best < 0) return NULL;
     return (FcCand*)candidates->items[best];
+}
+
+/* Assumptions: what the choice assumes of each argument (Bytecode.Overloads.Holds); NULL when the choice depends on more than that.
+ * candidates: FcMethodDecl*, owners: the ClassDecl* of each */
+static FcList* Assumptions(FcTC* t, FcList* candidates, FcList* owners, FcList* args) {
+    FcList* result = fcListNew(TC_);
+    int i, c;
+    for (i = 0; i < args->count; i++) {
+        bool allLoose = true;
+        const FcST* a = (const FcST*)args->items[i];
+        const char* r = NULL;
+        for (c = 0; c < candidates->count; c++) {
+            FcMethodDecl* m = (FcMethodDecl*)candidates->items[c];
+            FcClassDecl* owner = (FcClassDecl*)owners->items[c];
+            FcLambdaParam* p;
+            int tpi;
+            if (i >= m->params->count) continue;
+            p = (FcLambdaParam*)m->params->items[i];
+            if (p->byRef || p->type == NULL || fcTrIsInferred(p->type) || streq0(p->type->baseName, "any")) continue;
+            if (owner->typeParams) { int k; for (k = 0; k < owner->typeParams->count; k++) if (streq0(((FcTypeParam*)owner->typeParams->items[k])->name, p->type->baseName)) return NULL; }
+            tpi = -1;
+            if (m->typeParams) { int k; for (k = 0; k < m->typeParams->count; k++) if (streq0(((FcTypeParam*)m->typeParams->items[k])->name, p->type->baseName)) { tpi = k; break; } }
+            if (tpi >= 0) {
+                if (((FcTypeParam*)m->typeParams->items[tpi])->constraintGroups->count > 0) return NULL;
+                continue;
+            }
+            allLoose = false;
+        }
+        switch (a->kind) {
+            case STK_Undefined: r = "u"; break;
+            case STK_Int: r = "k:int"; break;
+            case STK_Float: r = "k:float"; break;
+            case STK_Bool: r = "k:bool"; break;
+            case STK_Char: r = "k:char"; break;
+            case STK_String: r = "k:string"; break;
+            case STK_Lambda: r = "k:lambda"; break;
+            case STK_Array: r = "k:array"; break;
+            case STK_Object: r = "k:class"; break;
+            case STK_Word: r = "k:word"; break;
+            case STK_Class: if (a->cls) { r = TF(t, "%s%s", fcDictHas(&t->interfaces, a->cls) ? "i:" : "c:", a->cls); break; } /* FALLTHROUGH */
+            default: r = allLoose ? "" : NULL; break;
+        }
+        if (r == NULL) return NULL;
+        fcListAdd(TC_, result, (void*)r);
+    }
+    return result;
+}
+/* OverloadHint.Format: the parts separated by U+001F */
+static const char* fcOverloadHintFormat(FcTC* t, const char* declaringClass, const char* method, int ordinal, int paramCount, int argc, FcList* assumptions) {
+    FcBuf b = {0};
+    int i;
+    fcBufFmt(&b, "%s\x1f%s\x1f%d\x1f%d\x1f%d", declaringClass, method, ordinal, paramCount, argc);
+    for (i = 0; i < assumptions->count; i++) { fcBufChar(&b, '\x1f'); fcBufStr(&b, (const char*)assumptions->items[i]); }
+    return fcBufDone(TC_, &b);
+}
+/* DerivedKeepOverloads */
+static bool DerivedKeepOverloads(FcTC* t, const char* cls, const char* name, int argc, FcList* candidates) {
+    int k, c, i;
+    FC_DICT_EACH(t->classes, e) {
+        FcClassDecl* sub = (FcClassDecl*)e->value;
+        if (streq0((const char*)e->key, cls) || ClassDistance(t, (const char*)e->key, cls) <= 0) continue;
+        for (k = 0; k < sub->members->count; k++) {
+            FcMethodDecl* m;
+            bool any = false;
+            if (((FcStmt*)sub->members->items[k])->kind != SK_MethodDecl) continue;
+            m = (FcMethodDecl*)sub->members->items[k];
+            if (!streq0(m->name, name) || !Fits(m->params, argc)) continue;
+            for (c = 0; c < candidates->count && !any; c++) {
+                FcMethodDecl* cand = (FcMethodDecl*)candidates->items[c];
+                bool same = cand->params->count == m->params->count;
+                for (i = 0; same && i < m->params->count; i++)
+                    if (!streq0(OverloadKey((FcLambdaParam*)cand->params->items[i], cand), OverloadKey((FcLambdaParam*)m->params->items[i], m))) same = false;
+                if (same) any = true;
+            }
+            if (!any) return false;
+        }
+    }
+    return true;
+}
+/* OverloadHintFor: the hint of a call whose overload the static types decide (candidates: FcCand*) */
+static const char* OverloadHintFor(FcTC* t, FcMethodDecl* method, FcList* candidates, FcList* args, const char* receiverClass, bool virtualCall) {
+    const char* declaringKey = NULL;
+    FcClassDecl* declaring = NULL;
+    FcList* methods;
+    FcList* owners;
+    FcList* assumptions;
+    int i, ordinal = 0;
+    if (fcDictHas(&t->interfaces, receiverClass)) return NULL;
+    FC_DICT_EACH(t->classes, e) {
+        FcClassDecl* cd = (FcClassDecl*)e->value;
+        for (i = 0; i < cd->members->count && !declaring; i++) if (cd->members->items[i] == method) { declaring = cd; declaringKey = (const char*)e->key; }
+        if (declaring) break;
+    }
+    if (!declaring) return NULL;
+    methods = fcListNew(TC_);
+    owners = fcListNew(TC_);
+    for (i = 0; i < candidates->count; i++) { fcListAdd(TC_, methods, ((FcCand*)candidates->items[i])->method); fcListAdd(TC_, owners, declaring); }
+    if (virtualCall && !DerivedKeepOverloads(t, receiverClass, method->name, args->count, methods)) return NULL;
+    if (!(assumptions = Assumptions(t, methods, owners, args))) return NULL;
+    for (i = 0; i < declaring->members->count; i++) {
+        FcStmt* x = (FcStmt*)declaring->members->items[i];
+        if (x == (FcStmt*)method) break;
+        if (x->kind == SK_MethodDecl && streq0(((FcMethodDecl*)x)->name, method->name)) ordinal++;
+    }
+    return fcOverloadHintFormat(t, declaringKey, method->name, ordinal, method->params->count, args->count, assumptions);
+}
+/* ConstructorHint (asMethods: FcMethodDecl*) */
+static const char* ConstructorHint(FcTC* t, FcClassDecl* decl, const char* className, FcConstructorDecl* chosen, FcList* asMethods, FcList* args) {
+    FcList* owners = fcListNew(TC_);
+    FcList* assumptions;
+    int i, ordinal = 0;
+    for (i = 0; i < asMethods->count; i++) fcListAdd(TC_, owners, decl);
+    if (!(assumptions = Assumptions(t, asMethods, owners, args))) return NULL;
+    for (i = 0; i < decl->members->count; i++) {
+        FcStmt* k = (FcStmt*)decl->members->items[i];
+        if (k == (FcStmt*)chosen) break;
+        if (k->kind == SK_ConstructorDecl && ((FcConstructorDecl*)k)->params->count == chosen->params->count) ordinal++;
+    }
+    return fcOverloadHintFormat(t, className, "#new", ordinal, chosen->params->count, args->count, assumptions);
+}
+/* TypeArgText(StaticType) / NumberTypeArgText */
+static const char* NumberTypeArgText(FcTC* t, const char* kind, const FcST* type) {
+    const char* demand;
+    if (!type->unit) return TF(t, "%s:any", kind);
+    if (fcUIsUnitless(type->unit)) return kind;
+    if (!(demand = DemandTextOf(t, type->unit))) return TF(t, "%s:any", kind);
+    return TF(t, "%s:%s%s", kind, type->unitIsDimension ? "any " : "", demand);
+}
+static const char* TypeArgTextOfType(FcTC* t, const FcST* type) {
+    switch (type->kind) {
+        case STK_Int: return NumberTypeArgText(t, "int", type);
+        case STK_Float: return NumberTypeArgText(t, "float", type);
+        case STK_Bool: return "bool";
+        case STK_Char: return "char";
+        case STK_String: return "string";
+        case STK_Class: return type->cls ? type->cls : "";
+        case STK_Dynamic: return type->typeParam ? type->typeParam : "";
+        default: return "";
+    }
 }
 
 static bool IsFreshOrWorded(FcExpr* e) {
