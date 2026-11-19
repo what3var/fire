@@ -2,16 +2,19 @@
 
 Status: **Phase B, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-b---die-vm-in-c) (19.11.2026). Der Spike davor:
 [VM_SPIKE.md](VM_SPIKE.md). Die VM ist ein Interpreter auf `fire_rt.h` (L1): dieselben `Value`s, Objekte, Besitzlisten, Ausnahmen, Texte und
-Threads wie ein natives Programm; was nur die VM braucht, liegt in ihren Seitentabellen. Die Runtime ist **nicht** geändert (der eine Eingriff hinter
-`FIRE_VM` aus dem Spike bleibt der einzige, auch die Schritte 3 bis 5 brauchten keinen), der native Build ist damit unverändert.
+Threads wie ein natives Programm; was nur die VM braucht, liegt in ihren Seitentabellen. Die Runtime ist **nicht** geändert bis auf zwei Eingriffe hinter
+`FIRE_VM` (`exitNow` aus dem Spike; `fire_vmGrantAway` für die Sektionen, während das Hauptprogramm in einem Native ist, siehe [Natives](#natives)),
+der native Build ist damit unverändert.
 
 ```
 cc -O2 native/vm/fire.c -o fire -lm -lpthread -ldl    (gcc 13, clang 18; eine Datei, die alles einbindet)
+cc -O2 -DFIRE_INT32 native/vm/fire.c -o fire-i32 ...  (die Varianten für andere Breiten, siehe "Breiten")
 forge bytecode x.fire -o x.fbc && FIRE_PKG_PATH=<ordner von forge> ./fire x.fbc [-- args]
 tests/run-cases-vm.sh <forge> [<gruppe>...] [--fire <fire>] [--cache <ordner>] [--list]
 ```
 
-`tests/run-cases-vm.sh` übersetzt jeden Fall aus `tests/cases` mit dem C#-forge zu einer `.fbc` (`forge bytecode`, in jedem Modus aus `//# modes:`),
+`tests/run-cases-vm.sh` baut `fire` und seine Varianten (`fire-i32`, `fire-i16`, `fire-f32`, `fire-i32-f32`, `fire-i16-f32`, parallel) in den
+Cache, übersetzt jeden Fall aus `tests/cases` mit dem C#-forge zu einer `.fbc` (`forge bytecode`, in jedem Modus aus `//# modes:`),
 führt sie mit der C-VM aus und vergleicht nach denselben Regeln wie `tests/run-cases.sh` (`.expected`, `.unhandled`, `UNBEHANDELT:`, `.error`,
 `.diagnostics` = Fehlerausgabe von forge und VM zusammen). Mit `--cache` bleiben die Programmdateien liegen und werden nur neu geschrieben, wenn
 der Fall oder forge neuer ist - der zweite Lauf über den ganzen Korpus dauert dann rund 20 s (4 Kerne). Am Ende: Zählung je Ordner. Die Bibliotheken
@@ -111,6 +114,20 @@ Signatur zur Laufzeit (`vm_lib.c`).
 
 Noch offen von Punkt 1: `MsgFn` (Aktoren), `ThreadsCatch.fn` (B3).
 
+## Breiten
+
+`#intwidth 32|16`, `#floatwidth 32` und die Breite von `word` sind in der Runtime eine Konfiguration zur Übersetzungszeit (`FIRE_INT32`,
+`FIRE_INT16`, `FIRE_FLOAT32`, `FIRE_WORD_BITS`) wie in einem nativen Build - `Value`, `Real`, `FIRE_INT_CUT` und die gepackten Arrays hängen daran.
+Entschieden: **eine VM je Konfiguration aus denselben Quellen**, keine Laufzeit-Schalter in der Runtime (L1: der schnelle Pfad bleibt, wie er ist)
+und keine Varianten unter Präfixen in einem Binary (die Runtime hat Daten mit externer Bindung, jede Variante bräuchte eigene Namen für alles). Die
+Varianten heißen wie das `fire` ohne Defines mit `-i32`/`-i16`, `-f32`, `-w32` in dieser Reihenfolge (`fire-i32-f32`). `fire` liest den Kopf des
+Programms (`floatWidth`, `intWidth`, `wordWidth`); passt er nicht zu den eigenen Breiten, läuft das Programm in der Variante daneben, als Kindprozess
+mit derselben Konsole, demselben `--stats` und denselben Argumenten (`fork`/`execv`, unter Windows `_spawnv`); ihr Exit-Code ist der des Programms. Fehlt
+die Variante, sagt `fire` welche (Exit 2). Mehrere Programme in einem Aufruf (L6) dürfen verschiedene Breiten haben. Dazu in der VM: eine Deklaration
+`int` (ohne `int[64]`/`int[32]`) und `x!int` schneiden ein breites int auf die Breite des Programms (`DeclaredKind.CutsWide`, `intProgram`), was ein Native
+eines Pakets zurückgibt, behält seine 64 Bit (`IntNative`, wie `FIRE_INT_U`), Zeiger der VM in einem `Value` (der Proto eines Lambdas, die Argumente
+eines Threads) sind ints mit 64 Bit (`VM_PTRV`).
+
 ## Natives
 
 **Kern-Natives** (`natives.def`, vom Generator heute direkt gerufen): eine Tabelle Name -> Funktion (`g_vmCoreNatives`: `print`, `__StringCall`,
@@ -141,7 +158,11 @@ behält die VM und wirft sie am Aufruf des Natives, wenn er zurück ist (2, SPEC
 Von einem anderen Thread wird der Aufruf (mit kopierten Argumenten) gemerkt und am nächsten sicheren Punkt ausgeführt - jeder Aufruf eines Paket-Natives,
 jede Runde eines Wartens (`Sleep`, das Ende des Programms). **Dienste** (`request_service`): an denselben Punkten `fire_pkg_service` aller
 Bibliotheken, die es haben; **Leerlauf** (`fire_pkg_idle`) in jeder Runde eines Wartens; **Halte** (`hold`): das Ende des Programms wartet, solange
-eine Bibliothek es hält (offene Fenster), und bedient dabei, was ankommt. Fenster laufen so wie in der C#-VM: `Window.Show()` startet den Manager
+eine Bibliothek es hält (offene Fenster), und bedient dabei, was ankommt. Ein Native, der nichts aus der gemeinsamen Domäne bekommt (keine Lambdas, keine Puffer der Globals) und dessen
+Bibliothek keine Dienste/keinen Leerlauf hat, läuft ohne die GIL (wie die Threads der C#-VM ihre Natives gleichzeitig rufen); das Hauptprogramm ist
+dann "weg": ein Thread, der eine Sektion will, nimmt sie sich selbst, einer nach dem anderen (`fire_vmGrantAway`, der einzige zweite Eingriff in die
+Runtime hinter `FIRE_VM`, nur mit der GIL), und das Hauptprogramm wartet nach dem Native, bis diese Sektionen fertig sind. Ein Native, der die GIL behält
+und lange lief (2 ms), gibt danach den wartenden Strängen ihre Runde (`fire_natEnd` eines nativen Builds). Fenster laufen so wie in der C#-VM: `Window.Show()` startet den Manager
 mit seinem eigenen Thread in der Bibliothek, dessen Zyklen kommen als Dienste (mit `FIRE_DISPLAY=headless` ohne Bildschirm).
 
 **ABI v2**: die Kopfdatei ist Version 1, die Lambdas, `request_service` und `hold` sind Felder von `fire_host` (an `size` erkannt) - die VM bietet alle.
@@ -177,21 +198,35 @@ Wert, dann die Probes auf berechneten Properties, die das Mitglied lesen (`Compu
 
 ## Stand gegen den Korpus
 
-`tests/run-cases-vm.sh` mit dem C#-forge, alle Ordner, nach dem Zusammenführen der Schritte 3 (Threads) und 4/5 (Natives, JSON, Reflection)
-(der Spike: 306; nach den Schritten 1 und 2: 751; Schritte 4/5 allein 869, Schritt 3 allein 910):
+`tests/run-cases-vm.sh` mit dem C#-forge, alle Ordner, mit den Varianten der Breiten (der Spike: 306; nach den Schritten 1 und 2: 751; Schritte 4/5
+allein 869, Schritt 3 allein 910; nach dem Zusammenführen 1065):
 
 | Ordner | richtig | falsch | | Ordner | richtig | falsch |
 |---|---|---|---|---|---|---|
-| native | 450 | 53 | | vm-gl | 27 | 0 |
-| types | 270 | 5 | | vm-lq | 30 | 2 |
+| native | 501 | 2 | | vm-gl | 27 | 0 |
+| types | 275 | 0 | | vm-lq | 32 | 0 |
 | syntax | 62 | 0 | | vm-perf | 19 | 0 (1 nicht) |
 | smoke | 58 | 0 | | vm-rf | 18 | 0 |
-| diag | 38 | 0 | | vm-sc | 28 | 2 |
-| vm-arr, vm-arr-error | 9 | 0 | | vm-sc-checked | 5 | 1 |
+| diag | 38 | 0 | | vm-sc | 30 | 0 |
+| vm-arr, vm-arr-error | 9 | 0 | | vm-sc-checked | 6 | 0 |
 | vm-clone, vm-clone-error | 15 | 0 | | vm-shutdown | 6 | 0 |
 | vm-ext, vm-ext-error | 20 | 0 | | vm-life | 10 | 0 |
-| **zusammen** | **1065** | **63** | | | | |
+| **zusammen** | **1126** | **2** | | | | |
 
-Offen sind damit vor allem: `#intwidth`/`#floatwidth` (eine VM je Breite), `try take`/`Takes.Children`, `defined`-Arrays, Typargumente mit
-Einheiten, die Reihenfolge der Destruktoren nach einer Ausnahme, einige Meldungstexte, `vm-lq/0180` (ein Array-Literal an `Linq.From` in einer
-Methode ist zerstört, wenn die Abfrage läuft), `vm-sc/0060` (return im try/catch/finally verschachtelter Blöcke), `vm-sc/0070` (Zeiger auf eine Lokale).
+Mit ASan (`-fsanitize=address`, alle Varianten) über den ganzen Korpus: dieselben 1126, ohne Befund. Die Runtime ohne `FIRE_VM` ist für den Präprozessor
+dieselbe (geprüft mit `gcc -E` gegen den Stand vorher, mit GIL, ohne GIL mit Tasks, `FIRE_INT32`).
+
+Offen sind nur `native/3210` und `native/4110` (UI: Textbreiten und Zeilenhöhen). Die C#-VM gibt bei beiden dasselbe aus wie die C-VM - beide messen
+Text mit der Bibliothek `libfire_gfx` (`Prebuilt/` von forge), die `.expected` stammen vom nativen Build, der die Natives von graphics selbst übersetzt;
+die Metriken der Schrift unterscheiden sich dort, kein Fehler der VM.
+
+Was die Fälle davor fehlen ließ (zum Nachlesen in den Commits): der Scope eines catch-Blocks stirbt nach den Scopes des Wurforts (wie
+`DeferCatchRelease` des Generators); Zeiger auf Lokale halten die Slots am Leben (ein Scope mit `&x` gibt sie erst am Ende des Programms frei);
+`Takes.Children` eines `IEnumerable` (`g_enumerateItems`); `TakeCheck`; `f(try take x)` und `try take` nur für das, was der Aufrufer besitzt (auf
+oberster Ebene zählt der globale Scope); ein Feld mit typisiertem Array typisiert, was gespeichert wird, auch statische Felder und `Reflect.Set` prüfen
+Art, Typ und Array (ein Helfer `vmFieldStore`); `&obj.n` eines `defined`-Felds ist ein `K_PtrField`; catch nach einem Interface; `resume` nach einem
+gescheiterten Aufruf/Feld-Speichern; `SetIndex` übernimmt Schlüssel und Wert; `T items[]` für eine Klasse/einen String/ein Enum; `M<T>(x)` wählt eine
+generische Überladung; Typargumente mit Einheit (`DeclaredType.UnitFits`); ein `SetField` auf ein Objekt mit Probes hält die Besitzregeln (die
+Panels der UI); Kopien eingefangener Lambdas je Aufruf; ein eingebauter Methodenaufruf verbraucht ein `CopyArgs` (sonst gehörte das Array eines
+`foreach` dem nächsten Konstruktor); `Sleep` endet mit `terminate`; die Breiten (siehe oben); Natives ohne GIL und Sektionen der Threads, während das
+Hauptprogramm weg ist; `types/1880`, `1890`: die Diagnose des heutigen forge.

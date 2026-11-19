@@ -249,10 +249,13 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    `DeclaredType`, Arrays einer Klasse und nach Typargument, Records, `finally`, Einheiten des Programms mit Umrechnungsfunktionen, Zugriffsprüfung
    (nicht in Performance). Die Rückrufe ohne Kontext (VM_SPIKE Punkt 1) sind eigene Fassungen der VM bzw. ein Vorrat an Trampolinen; die Runtime ist
    unverändert (der native Build ebenso). Maß: `tests/run-cases-vm.sh <forge>` übersetzt jeden Fall mit dem C#-forge und führt ihn mit der C-VM aus -
-   **751 von 1126** richtig (Spike: 306); von den übrigen brauchen rund 320 die Schritte 3 bis 5. **Offen in Schritt 2**: `#intwidth`/`#floatwidth`
-   (eine VM-Variante je Breite), `try take`/`Takes.Children`, einige Meldungen (rund 40 Fälle; benannte Argumente, die Reihenfolge der Destruktoren
-   weitergereichter Argumente, Typargumente in Deklarationen generischer Klassen, Besitz in Property-Accessoren und Shutdown an sicheren Punkten sind
-   mit Schritt 3 erledigt).
+   **751 von 1126** richtig (Spike: 306); von den übrigen brauchten rund 320 die Schritte 3 bis 5. **Abgeschlossen** (mit den Schritten 3 bis 5
+   zusammen): **1126 von 1128**, ASan ohne Befund über den ganzen Korpus. `#intwidth`/`#floatwidth`: eine VM je Breite aus denselben Quellen
+   (`fire-i32`, `fire-f32`, `fire-i32-f32`, `fire-i16`, ...), `fire` startet für ein Programm anderer Breiten die Variante daneben
+   ([VM_C.md](spec/VM_C.md#breiten)); dazu `try take`/`Takes.Children`, `defined`-Arrays und typisierte Felder, Typargumente mit Einheiten, die
+   Reihenfolge der Destruktoren nach einer Ausnahme (Wurfort vor catch), Zeiger auf Lokale, die Meldungstexte, die UI-Fälle (Probes und Besitz), Natives
+   ohne GIL mit Sektionen der Threads, während das Hauptprogramm weg ist (zweiter Eingriff hinter `FIRE_VM`). Offen nur `native/3210`, `4110`:
+   Textmetriken von `libfire_gfx` gegen den nativen Build - die C#-VM gibt dasselbe aus wie die C-VM.
 3. Threads, Tasks, Aktoren, `sync globals`, Abbruch, `on`-Lambdas - über die Abschnitte der Runtime.
    **Umgesetzt** ([VM_C.md](spec/VM_C.md#threads-schritt-3-vm_threadsc)): das Threadmodell der Runtime mit GIL (ein Thread des Systems je fire-Thread,
    ein `Vm` je Strang, die Globals des Hauptprogramms direkt und in Sektionen), sichere Punkte wie im erzeugten Code, `leave`/`terminate` mit `finally`
