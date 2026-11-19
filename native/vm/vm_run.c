@@ -261,7 +261,6 @@ static bool vmFitsDeclared(Vm* vm, Value v, const char* text, Value self, TArgs 
     return vmHoldsAlts(vm, v, sp->alts);
 }
 /* the text of a declaration for its message ("... is a Dog, not Cat.", "... is a T (int), not String.") */
-static const char* vmDeclaredDisplay(Vm* vm, const char* text) { return text ? vmSpec(vm, text)->display : "?"; }
 static const char* vmDeclaredDisplayFor(Vm* vm, const char* text, Value self, TArgs ctargs, char* buf, size_t cap) {
     VmSpec* sp;
     const char* targ = NULL;
@@ -829,7 +828,8 @@ static void vmRun(Vm* vm, int32_t base) {
             SYNC();
             if (!vmCallNative(vm, fr, idx, argc, sp - argc, &r)) {
                 uint32_t imp = idx - VM_NNATIVES;
-                vmUnsupported("the native", idx < VM_NNATIVES ? g_vmNativeNames[idx] : imp < prog->nnativeImports ? prog->nativeImports[imp] : "?");
+                vmUnsupported(op == OP_CallTryableNative ? "the tryable native" : "the native",
+                    op == OP_CallTryableNative ? "?" : idx < VM_NNATIVES ? g_vmNativeNames[idx] : imp < prog->npackageNatives ? prog->packageNatives[imp] : "?");
             }
             sp -= argc;
             CHECK();

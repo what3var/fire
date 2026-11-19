@@ -483,7 +483,8 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
     p->mode = (uint8_t)rdU8(&r); p->floatWidth = (uint8_t)rdU8(&r); p->intWidth = (uint8_t)rdU8(&r); p->wordWidth = (uint8_t)rdU8(&r);
     rdInt(&r);                               /* firstUserSource */
     p->nativeImports = rdStrList(&r, &p->nnativeImports);
-    rdOptStrList(&r, NULL); rdOptStrList(&r, NULL); rdOptStrList(&r, NULL);   /* packageNatives, their libraries, graphicsNatives (step 4) */
+    p->packageNatives = rdOptStrList(&r, &p->npackageNatives);
+    rdOptStrList(&r, NULL); rdOptStrList(&r, NULL);   /* their libraries, graphicsNatives (step 4) */
     n = rdCount(&r);                         /* customUnits: the units a text may name besides those of fire */
     p->ncustomUnits = n;
     p->customUnits = (struct VmCustomUnit*)vmAlloc(&p->arena, (n + 1) * sizeof(struct VmCustomUnit));

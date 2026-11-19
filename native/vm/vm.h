@@ -155,6 +155,8 @@ struct VmProgram {
     FbMap classByName;      /* the program's table: name -> class */
     const char** nativeImports;
     uint32_t nnativeImports;
+    const char** packageNatives;   /* the natives behind the fixed ones (natives.def): those of the packages and libraries the program imports */
+    uint32_t npackageNatives;
     struct { const char* name; const uint8_t* data; uint32_t len; } * resources;
     uint32_t nresources;
     VmChunk* top;
