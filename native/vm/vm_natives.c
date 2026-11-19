@@ -83,12 +83,12 @@ static Value vmHostSleep(Vm* vm, VmFrame* fr, const Value* a, OwnList* list) {
         return fireError("TimeException", text);
     }
     for (lib = g_vmLibs; lib; lib = lib->next) if (!lib->failure && lib->idle) idle = true;
-    if (!idle && !g_vmPkgPosted) { sleepTicks(ticks); return Undef(); }
+    if (!idle && !g_vmPkgPosted) { sleepTicks(ticks); if (!g_unwind.active) (void)pollSignals(); return Undef(); }   /* (terminate ends the wait: the leaving starts here) */
     {
         int64_t deadline = fire_plat_nowMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS, now;
         for (;;) {
             vmPkgIdle();
-            if (g_unwind.active) return Undef();
+            if (g_unwind.active || pollSignals()) return Undef();
             now = fire_plat_nowMs();
             if (now >= deadline) return Undef();
             fire_plat_sleepMs(deadline - now < 5 ? deadline - now : 5);

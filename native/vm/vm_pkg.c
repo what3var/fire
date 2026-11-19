@@ -47,8 +47,8 @@ static VmPkgPosted* g_vmPkgPosted = NULL;
 static VmPkgPosted** g_vmPkgPostedTail = &g_vmPkgPosted;
 static fire_atomic32 g_vmPkgService;
 static fire_atomic32 g_vmPkgHolds;
-static int g_vmPkgDepth = 0;           /* the natives of packages running on the VM's thread (nested through callbacks) */
-static int g_vmPkgBarrier = 0;         /* natives up to this depth wait for no callback (a service or an idle turn runs inside them) */
+static FIRE_TLS int g_vmPkgDepth = 0;  /* the natives of packages running on this thread (nested through callbacks) */
+static FIRE_TLS int g_vmPkgBarrier = 0;   /* natives up to this depth wait for no callback (a service or an idle turn runs inside them) */
 static Value g_vmPkgDeferred;          /* the exception of a callback, kept for the native that waits for it */
 static int g_vmPkgDeferredSet = 0;
 #if defined(_WIN32)
@@ -453,6 +453,24 @@ static int vmPkgIndexOf(VmPkgLib* lib, const char* name) {
 
 static void vmPkgServe(void);
 
+/* May the strand let go of the GIL while the native runs? Only while there are fire threads, for a library that pumps nothing (no service, no idle: no
+ * callbacks into the program while it runs) and arguments without lambdas whose buffers (passed by reference) are the strand's own - not of the shared domain
+ * (fire_natArg). */
+static bool vmPkgAway(VmPkgLib* lib, int argc, const Value* args) {
+    int i;
+    if (fire_atomic_load(&g_threadsLive) == 0 || lib->service || lib->idle || g_vmPkgDepth > 1) return false;
+    for (i = 0; i < argc; i++) {
+        Value v = args[i];
+        if (v.kind == K_Lambda) return false;
+        if (v.kind == K_Buffer) {
+            Owned* o = ownedOf(v);
+            if (o == NULL || (FIRE_FLAGS_READ(o) & 64)) return false;
+            if (o->owner && (o->owner == g_domainRoot || (o->owner->holder && (FIRE_FLAGS_READ(o->owner->holder) & 64)))) return false;
+        }
+    }
+    return true;
+}
+
 /* Calls native `index` of `lib` with `argc` values; the result is owned by `list`. An exception is thrown (the unwinding state is set). */
 static Value vmPkgCall(VmPkgLib* lib, int index, const char* name, int argc, const Value* args, OwnList* list) {
     fire_val stackArgs[8];
@@ -470,7 +488,18 @@ static Value vmPkgCall(VmPkgLib* lib, int index, const char* name, int argc, con
     memset(&result, 0, sizeof result);
     if (g_vmPkgPosted || fire_atomic_load(&g_vmPkgService)) vmPkgServe();
     g_vmPkgDepth++;
-    rc = lib->call(index, fargs, argc, &result, error, (int)sizeof error);
+    if (vmPkgAway(lib, argc, args)) {
+        /* (a native that gets nothing of the shared domain and cannot call back runs beside the other strands - the C# VM's threads call natives at the
+         * same time; fire_rt.h fire_natBegin: the main program goes away for it) */
+        gilRelease();
+        rc = lib->call(index, fargs, argc, &result, error, (int)sizeof error);
+        gilAcquire();
+    } else {
+        /* (with the GIL in the hand: after a native that took long the strands that wait for the GIL get their turn at once - fire_rt.h fire_natEnd) */
+        int64_t t0 = fire_atomic_load(&g_threadsLive) ? fire_plat_nowMs() : 0;
+        rc = lib->call(index, fargs, argc, &result, error, (int)sizeof error);
+        if (t0 && fire_atomic_load(&g_gilWaiting) && fire_plat_nowMs() - t0 >= 2) gilYield();
+    }
     g_vmPkgDepth--;
     vmPkgArenaFree(&arena);
     if (g_vmPkgDeferredSet && g_vmPkgDepth <= g_vmPkgBarrier) {
