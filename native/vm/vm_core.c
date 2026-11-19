@@ -45,6 +45,7 @@ static VmScope* scNew(Vm* vm, VmScope* parent) {
     s->parent = parent;
     s->n = 0;
     s->hi = 0;
+    s->pinned = 0;
     s->own = scopeList(poolMark());
     s->temp = scopeList(0xFFFFFFFFu);
     s->temp.home = &s->own;
@@ -77,10 +78,32 @@ static void scLeave(Vm* vm, VmScope* s) {
     uint32_t i;
     leave(&s->temp);
     leave(&s->own);
+    if (FIRE_UNLIKELY(s->pinned)) {
+        /* (a pointer to one of its slots may outlive it, `&x` returned: the slots stay where they are, with their values, until the program ends) */
+        struct VmPinned* k = (struct VmPinned*)malloc(sizeof *k);
+        if (!k) outOfMemory();
+        k->slots = s->slots; k->hi = s->hi; k->next = vm->pinned; vm->pinned = k;
+        s->slots = NULL; s->cap = 0; s->pinned = 0;
+        s->n = s->hi = 0;
+        s->nextFree = vm->freeScopes;
+        vm->freeScopes = s;
+        return;
+    }
     for (i = 0; i < s->hi; i++) release(s->slots[i]);
     s->n = s->hi = 0;
     s->nextFree = vm->freeScopes;
     vm->freeScopes = s;
+}
+/* The end of the program: the slots of left scopes that pointers could reach go. */
+static void vmFreePinned(Vm* vm) {
+    while (vm->pinned) {
+        struct VmPinned* k = vm->pinned;
+        uint32_t i;
+        vm->pinned = k->next;
+        for (i = 0; i < k->hi; i++) release(k->slots[i]);
+        free(k->slots);
+        free(k);
+    }
 }
 static VmScope* scAncestor(VmScope* s, uint32_t depth) { while (depth-- && s->parent) s = s->parent; return s; }
 
@@ -417,10 +440,18 @@ static void vmApplyCopyMask(Vm* vm, VmScope* s, uint64_t mask, VmProto* p, int a
                 if ((a->kind == K_Class || a->kind == K_Array || a->kind == K_Buffer) && ownedOf(*a) && ownedOf(*a)->owner == &s->own && *nheld < 6) held[(*nheld)++] = *a;
                 break;
             case 8:
-                if (from && ownedOf(*a)) {
+                /* `f(try take x)`: only when the caller owns x (VM.CallerOwns) - a scope of its call (the global scope only for the top level), or its `this` */
+                if (from && ownedOf(*a) && ownedOf(*a)->owner && vm->nframes > 0) {
                     Owned* o = ownedOf(*a);
+                    VmFrame* cf = &vm->frames[vm->nframes - 1];
                     VmScope* sc;
-                    for (sc = from; sc; sc = sc->parent) if (o->owner == &sc->own || o->owner == &sc->temp) { takeToList(*a, &s->own); break; }
+                    bool owns = cf->self.kind == K_Class && leafAlive(cf->self) && o->owner->holder == &asObj(cf->self)->h;
+                    for (sc = from; sc && !owns; sc = sc->parent) {
+                        if (sc == vm->global && !(cf->kind == FR_TOP && !vm->isStrand)) break;
+                        if (o->owner == &sc->own || o->owner == &sc->temp || o->owner->home == &sc->own) owns = true;
+                        if (sc == vm->global) break;
+                    }
+                    if (owns) takeToList(*a, &s->own);
                 }
                 break;
             default: break;
@@ -694,6 +725,44 @@ static Value vmToString(Value self) {
     if (!m) return Undef();
     return vmCallNested(vm, m, 0, NULL, self, FR_NESTED);   /* (counted for the trip: userToString adopts it) */
 }
+/* `Takes.Children` of an object that implements IEnumerable takes its items (SPEC 2.2, the generated fire_enumerateItems, VM.EnumerateItems): its enumerator
+ * (GetEnumerator, MoveNext, GetCurrent) runs, each item goes to `sink`. False: not enumerable, or an exception ended the enumeration. */
+static Value vmCallMethod0(Vm* vm, Value self, const char* name, OwnList* list, bool* ok) {
+    VmClass* c = vmClassOfValue(vm, self);
+    VmProto* m = c ? vmFindMethod(vm, c, vmName(vm->prog, name), 0, NULL, self, NULL) : NULL;
+    Value r;
+    *ok = false;
+    if (!m) return Undef();
+    r = vmCallNested(vm, m, 0, NULL, self, FR_NESTED);
+    if (g_unwind.active) return Undef();
+    adopt(r, list);
+    *ok = true;
+    return r;
+}
+static bool vmEnumerateItems(Value obj, OwnList* list, void (*sink)(Value, void*), void* ctx) {
+    Vm* vm = g_vmCur;
+    VmClass* c = vm ? vmClassOfValue(vm, obj) : NULL;
+    VmClass* k;
+    bool enumerable = false, ok;
+    Value e;
+    for (k = c; k && !enumerable; k = k->base) {
+        uint32_t i;
+        for (i = 0; i < k->ninterfaces; i++)
+            if (k->interfaces[i] && (!strcmp(k->interfaces[i], "IEnumerable") || !strncmp(k->interfaces[i], "IEnumerable`", 12))) enumerable = true;
+    }
+    if (!enumerable) return false;
+    e = vmCallMethod0(vm, obj, "GetEnumerator", list, &ok);
+    if (!ok || e.kind != K_Class) return false;
+    for (;;) {
+        Value more = vmCallMethod0(vm, e, "MoveNext", list, &ok), cur;
+        if (!ok) return false;
+        if (!(more.kind == K_Bool && more.i)) break;
+        cur = vmCallMethod0(vm, e, "GetCurrent", list, &ok);
+        if (!ok) return false;
+        sink(cur, ctx);
+    }
+    return true;
+}
 /* A lambda of the VM that the runtime (a native) calls: the proto rides as the hidden last capture. */
 static VmProto* vmLamProto(Lam* l) { return (VmProto*)(uintptr_t)lamCaps(l)[l->ncaps - 1].i; }
 static Value vmLamThunk(Value lam, const Value* args);
@@ -849,11 +918,13 @@ static void vmRegisterClasses(Vm* vm) {
     }
     vm->descs = rows;
     g_classDescs = rows;
+    g_enumerateItems = vmEnumerateItems;
     g_classDescCount = base + n;
 }
 static void vmUnregisterClasses(Vm* vm) {
     uint32_t i;
     g_classDescCount = vm->firstId;
+    g_enumerateItems = NULL;
     if (vm->firstId == 0) g_classDescs = NULL;
     else {
         /* (the rows before belong to whoever registered them before: they stay as they were) */

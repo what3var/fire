@@ -207,6 +207,7 @@ typedef struct VmScope {
     struct VmScope* parent;
     Value* slots;
     uint32_t n, hi, cap;    /* n: the slots declared so far (DeclareLocal takes the next); hi: the slots in use (one written before its declaration) */
+    uint8_t pinned;         /* `&x` took the address of one of its slots: they outlive the scope (VM.cs ScopeSlotPointerTarget keeps the scope) */
     OwnList own;
     OwnList temp;
     struct VmScope* nextFree;
@@ -308,6 +309,7 @@ typedef struct Vm {
      * program (the classes, the interned type arguments) is the main program's (`top`). A fire thread's global scope holds its own slots: the slots
      * below `sharedCount` are the main program's globals (VM.cs _sharedCount). */
     struct Vm* top;
+    struct VmPinned { Value* slots; uint32_t hi; struct VmPinned* next; } * pinned;   /* the slots of left scopes a pointer may still reach (to the end) */
     uint32_t sharedCount;
     uint8_t isStrand;       /* not the main program */
     uint8_t awaitNext;      /* AwaitReply: the next method call on an actor gets a way back (`await a.M()`) */

@@ -27,6 +27,7 @@ static Vm* vmStrandNew(Vm* top, uint32_t sharedCount) {
     if (!vm->stack || !vm->frames) outOfMemory();
     vm->sp = 0; vm->nframes = 0;
     vm->freeScopes = NULL;
+    vm->pinned = NULL;
     vm->failed = 0; vm->quiet = 0; vm->terminated = 0; vm->exitCode = 0;
     vm->ret = Undef();
     vm->copyMask = 0;
@@ -71,6 +72,7 @@ static void vmStrandFree(Vm* vm, bool keepGlobal) {
         vm->global->n = vm->global->hi = 0;
         vm->global->nextFree = vm->freeScopes; vm->freeScopes = vm->global;
     } else scLeave(vm, vm->global);
+    vmFreePinned(vm);
     while (vm->freeScopes) { VmScope* s = vm->freeScopes; vm->freeScopes = s->nextFree; free(s->slots); free(s); }
     free(vm->stack);
     free(vm->frames);

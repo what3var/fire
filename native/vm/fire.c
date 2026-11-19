@@ -140,6 +140,7 @@ static int vmRunFile(const char* path, bool stats) {
     vm->exitJump = NULL;
     vmPkgEnd();                          /* (the libraries of packages forget the program, the lambdas they had are let go) */
     scLeave(vm, vm->global);             /* the globals and what the global scope owns (with their destructors - not after a failure) */
+    vmFreePinned(vm);
     for (i = 0; i < p->nclasses; i++) {
         uint32_t k;
         for (k = 0; k < p->classes[i]->nstatic; k++) { release(p->classes[i]->svals[k]); p->classes[i]->svals[k] = Undef(); }

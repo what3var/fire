@@ -491,6 +491,13 @@ static int vmCallLists(Vm* vm, VmFrame* fr, OwnList** lists, int cap) {
     return n;
 }
 
+/* ... for `try take` / `try x.Take...` (VM.IsCurrentCallOwner): the same, and at the top level of the main program its global scope. */
+static int vmTryLists(Vm* vm, VmFrame* fr, OwnList** lists, int cap) {
+    int n = vmCallLists(vm, fr, lists, cap - 2);
+    if (fr->kind == FR_TOP && !vm->isStrand) { lists[n++] = &vm->global->temp; lists[n++] = &vm->global->own; }
+    return n;
+}
+
 /* The finally a return or a jump goes through: the innermost registered handler of this frame with a finally (it is unregistered). */
 static VmHandlerRec* vmFinallyOf(Vm* vm) {
     Handler* h = g_handlers;
@@ -854,7 +861,7 @@ static void vmRun(Vm* vm, int32_t base) {
             SYNC();
             if (op == OP_TryTakeToScope) {
                 OwnList* lists[128];
-                int n = vmCallLists(vm, fr, lists, 128);
+                int n = vmTryLists(vm, fr, lists, 128);
                 bool took = tryTakeOwned(v, lists, n, fr->self, NULL);
                 if (took) takeToList(v, list);
                 vm->ret = Bool(took);
@@ -870,7 +877,7 @@ static void vmRun(Vm* vm, int32_t base) {
             if (!arr && h.kind != K_Class) takeHolderError(h);
             else if (tr) {
                 OwnList* lists[128];
-                int n = vmCallLists(vm, fr, lists, 128);
+                int n = vmTryLists(vm, fr, lists, 128);
                 bool took = tryTakeOwned(v, lists, n, fr->self, NULL);
                 if (took) takeToHolder(h, v);
                 vm->ret = Bool(took);
@@ -878,7 +885,7 @@ static void vmRun(Vm* vm, int32_t base) {
             CHECK();
             break;
         }
-        case OP_TakeCheck: break;
+        case OP_TakeCheck: SYNC(); takeAlive(sp[-1]); CHECK(); break;   /* (`f(take x)`: a dead x is the DestroyedException before the call) */
         case OP_TookResult: PUSH(vm->ret.kind == K_Bool ? vm->ret : Bool(false)); break;
         case OP_OwnValue: {
             OwnList* lists[128];
@@ -1141,7 +1148,7 @@ static void vmRun(Vm* vm, int32_t base) {
                         int baseArgs = ownId == OM_TakeTo ? 1 : 0;
                         if (name != nm) {
                             OwnList* lists[128];
-                            int n = vmCallLists(vm, fr, lists, 128);
+                            int n = vmTryLists(vm, fr, lists, 128);
                             r = Bool(ownMethodTry(ownId, recv, targetArg, (int)argc > baseArgs ? a[baseArgs] : Undef(), &fr->scope->own, lists, n, fr->self, NULL));
                         } else if ((int)argc == baseArgs) ownMethod(ownId, recv, targetArg, &fr->scope->own);
                         else { OwnList* lists[128]; int n = vmCallLists(vm, fr, lists, 128); ownMethodT(ownId, recv, targetArg, a[baseArgs], &fr->scope->own, lists, n); }
@@ -1209,7 +1216,7 @@ static void vmRun(Vm* vm, int32_t base) {
                     int baseArgs = ownId == OM_TakeTo ? 1 : 0;
                     if (name != nm) {
                         OwnList* lists[128];
-                        int n = vmCallLists(vm, fr, lists, 128);
+                        int n = vmTryLists(vm, fr, lists, 128);
                         r = Bool(ownMethodTry(ownId, recv, targetArg, (int)argc > baseArgs ? a[baseArgs] : Undef(), &fr->scope->own, lists, n, fr->self, NULL));
                     } else if ((int)argc == baseArgs || (ownId == OM_TakeGlobal && argc == 1 && a[0].kind == K_Bool)) ownMethod(ownId, recv, argc == 1 && ownId == OM_TakeGlobal ? a[0] : targetArg, &fr->scope->own);   /* (`x.TakeGlobal(true)`: the flag) */
                     else { OwnList* lists[128]; int n = vmCallLists(vm, fr, lists, 128); ownMethodT(ownId, recv, targetArg, a[baseArgs], &fr->scope->own, lists, n); }
@@ -1839,7 +1846,15 @@ static void vmRun(Vm* vm, int32_t base) {
         }
 
         /* ---- pointers ---- */
-        case OP_AddressOfLocal: { VmScope* s = scAncestor(fr->scope, U16(ip)); uint32_t slot = U16(ip + 2); ip += 4; PUSH(PtrV(scSlot(s, slot))); break; }
+        case OP_AddressOfLocal: {
+            VmScope* s = scAncestor(fr->scope, U16(ip));
+            uint32_t slot = U16(ip + 2);
+            ip += 4;
+            /* (the slots stay put from now on: room for the scope's locals that follow - growing would move them) */
+            if (!s->pinned) { s->pinned = 1; scReserve(s, (slot + 1 > s->hi ? slot + 1 : s->hi) + 32); }
+            PUSH(PtrV(scSlot(s, slot)));
+            break;
+        }
         case OP_AddressOfGlobal: { uint32_t slot = U16(ip); ip += 2; PUSH(PtrV(scSlot(vmGlobalsOf(vm, slot), slot))); break; }
         case OP_AddressOfField: {
             const char* name = KNAME(U16(ip));
