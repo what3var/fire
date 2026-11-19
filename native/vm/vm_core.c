@@ -22,7 +22,8 @@ static const char* const g_vmNativeNames[] = {
 
 /* The VM whose program runs (the runtime's callbacks - destructors, catch blocks, the exceptions it makes - have no context of their own; with fire threads,
  * phase B step 3, one per thread). */
-static Vm* g_vmCur = NULL;
+static FIRE_TLS Vm* g_vmCur = NULL;   /* (the strand's: a fire thread has a Vm of its own - vm_threads.c) */
+static const uint8_t g_vmUnwindStub[1] = { 255 };   /* the code of a frame whose entry (a safe point) started an unwinding: it goes at once (vm_run.c) */
 
 static void vmRun(Vm* vm, int32_t base);
 static int vmUnwind(Vm* vm, int32_t base);
@@ -465,6 +466,9 @@ static void vmPushCall(Vm* vm, VmProto* p, int argc, int drop, Value self, uint8
         s->hi = s->n;
         if (d) { Owned* o = ownedOf(v); if (o && !o->owner) ownLink(&s->own, o); }
     }
+    /* the safe point at a function's entry (CppGenerator: pollSignals - the GIL now and then, leave/terminate): an unwinding it starts takes the new
+     * frame with it at once */
+    if (FIRE_UNLIKELY(pollSignals())) f->ip = g_vmUnwindStub;
 }
 
 /* The handlers of the frame that are still registered (a `return` in a `try`) go. */
@@ -936,7 +940,7 @@ static Value vmAdaptUnit(Vm* vm, Value v, const char* text) {
  * checks with its own functions - VM_SPIKE point 1: no context-less callbacks) ---- */
 static const TArg* vmTArgNamed(Vm* vm, const char* text) {
     VmTArg* t;
-    for (t = vm->targs; t; t = t->next) if (t->text == text) return &t->ta;
+    for (t = vm->top->targs; t; t = t->next) if (t->text == text) return &t->ta;
     t = (VmTArg*)vmAlloc(&vm->prog->arena, sizeof(VmTArg));
     t->text = text;
     t->ta.display = text;
@@ -944,8 +948,8 @@ static const TArg* vmTArgNamed(Vm* vm, const char* text) {
     t->ta.kind = !strcmp(text, "int") ? K_Int : !strcmp(text, "float") ? K_Float : !strcmp(text, "bool") ? K_Bool : !strcmp(text, "string") ? K_String
         : !strcmp(text, "char") ? K_Char : K_Undefined;
     t->cls = vmClassNamed(vm->prog, text);
-    t->next = vm->targs;
-    vm->targs = t;
+    t->next = vm->top->targs;
+    vm->top->targs = t;
     return &t->ta;
 }
 static TArgs vmTArgsOf(Vm* vm, VmFrame* fr, const char* text) {
@@ -971,15 +975,15 @@ static TArgs vmTArgsOf(Vm* vm, VmFrame* fr, const char* text) {
     {
         TArgs r = internTArgsN(items, n);
         struct VmTArgsLen* l;
-        for (l = vm->targsLen; l; l = l->next) if (l->ta == r) return r;
+        for (l = vm->top->targsLen; l; l = l->next) if (l->ta == r) return r;
         l = (struct VmTArgsLen*)vmAlloc(&vm->prog->arena, sizeof *l);
-        l->ta = r; l->n = n; l->next = vm->targsLen; vm->targsLen = l;
+        l->ta = r; l->n = n; l->next = vm->top->targsLen; vm->top->targsLen = l;
         return r;
     }
 }
 static uint32_t vmTArgsLen(Vm* vm, TArgs ta) {
     struct VmTArgsLen* l;
-    for (l = vm->targsLen; l; l = l->next) if (l->ta == ta) return l->n;
+    for (l = vm->top->targsLen; l; l = l->next) if (l->ta == ta) return l->n;
     return 0;
 }
 /* Is the type `name` (a type argument's text) `target` or one that derives from it or implements it (VM.TypeNameIsOf)? */

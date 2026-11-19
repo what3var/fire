@@ -266,6 +266,14 @@ typedef struct Vm {
     struct VmTArg* targs;
     struct VmTArgsLen { TArgs ta; uint32_t n; struct VmTArgsLen* next; } * targsLen;
     int argc; char** argv;
+    /* threads (phase B step 3, vm_threads.c): every strand that runs code of the program - the main program, a fire thread, a lambda that the runtime
+     * runs on a thread of its own (a task of `await [...]`) - has a Vm of its own (its stack, frames, scopes, finally records); what belongs to the
+     * program (the classes, the interned type arguments) is the main program's (`top`). A fire thread's global scope holds its own slots: the slots
+     * below `sharedCount` are the main program's globals (VM.cs _sharedCount). */
+    struct Vm* top;
+    uint32_t sharedCount;
+    uint8_t isStrand;       /* not the main program */
+    uint8_t awaitNext;      /* AwaitReply: the next method call on an actor gets a way back (`await a.M()`) */
 } Vm;
 
 /* A type argument of the VM: the runtime's TArg (its `display` is the text, `holds`/`adapt` stay NULL - the VM checks with its own fitsTArg, VM_SPIKE

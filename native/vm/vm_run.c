@@ -19,7 +19,10 @@
 #define KNAME(i) (fr->chunk->kname[(i)])
 #define PERF (prog->mode == 2)
 
-enum { FIN_K_NORMAL = 0, FIN_K_THROW = 1, FIN_K_RETURN = 2, FIN_K_JUMP = 3 };
+enum { FIN_K_NORMAL = 0, FIN_K_THROW = 1, FIN_K_RETURN = 2, FIN_K_JUMP = 3, FIN_K_LEAVE = 4 };
+/* A safe point (CppGenerator: a jump back is one with threads - pollLoop): the other threads get the GIL now and then, the main program serves its queue,
+ * leave/terminate start here. `len`: the size of the jump instruction (its address is ip - len). */
+#define VM_LOOP_POINT(to, len) do { if ((to) <= (uint32_t)(ip - (len) - fr->chunk->code)) { SYNC(); if (FIRE_UNLIKELY(pollLoop())) goto unwind; } } while (0)
 
 static void* vmIc(VmChunk* c, const uint8_t* at, uint32_t cls, VmProgram* p, bool* hit) {
     uint32_t off = (uint32_t)(at - c->code);
@@ -491,12 +494,18 @@ static void vmRun(Vm* vm, int32_t base) {
             if (op == OP_StoreLocalPop) sp--;
             break;
         }
-        case OP_LoadGlobal: { uint32_t slot = U16(ip); Value v; ip += 2; v = slot < vm->global->hi ? vm->global->slots[slot] : Undef(); if (FIRE_UNLIKELY(isRef(v))) holdTemp(v, &fr->scope->temp); PUSH(v); break; }
+        case OP_LoadGlobal: { uint32_t slot = U16(ip); Value v; VmScope* g = vmGlobalsOf(vm, slot); ip += 2; v = slot < g->hi ? g->slots[slot] : Undef(); if (FIRE_UNLIKELY(isRef(v))) holdTemp(v, &fr->scope->temp); PUSH(v); break; }
         case OP_StoreGlobal: case OP_StoreGlobalPop: {
             uint32_t slot = U16(ip);
             Value v = sp[-1], old;
             Value* x;
             ip += 2;
+            if (FIRE_UNLIKELY(slot < vm->sharedCount)) {   /* (a fire thread writes a global of the main program: a section, rule 10) */
+                SYNC();
+                if (!vmStoreShared(vm, vm->top->global, slot, v, "A global variable")) goto unwind;
+                if (op == OP_StoreGlobalPop) sp--;
+                break;
+            }
             x = scSlot(vm->global, slot);
             old = *x;
             retain(v);
@@ -604,7 +613,7 @@ static void vmRun(Vm* vm, int32_t base) {
             else if (FIRE_LIKELY(a.kind == K_Int && b.kind == K_Int && a.unit == b.unit))
                 r = op == OP_JumpIfNotLt ? a.i < b.i : op == OP_JumpIfNotLtEq ? a.i <= b.i : op == OP_JumpIfNotGt ? a.i > b.i : a.i >= b.i;
             else { SYNC(); r = op == OP_JumpIfNotLt ? lt(a, b) : op == OP_JumpIfNotLtEq ? le(a, b) : op == OP_JumpIfNotGt ? gt(a, b) : ge(a, b); CHECK(); }
-            if (!r) ip = fr->chunk->code + to;
+            if (!r) { VM_LOOP_POINT(to, 3); ip = fr->chunk->code + to; }
             break;
         }
         case OP_ArithLocalConstPop: case OP_ArithGlobalConstPop: {
@@ -614,7 +623,7 @@ static void vmRun(Vm* vm, int32_t base) {
             uint32_t mode;
             Value* x;
             if (op == OP_ArithLocalConstPop) { s = scAncestor(fr->scope, U16(ip)); slot = U16(ip + 2); k = fr->chunk->k[U16(ip + 4)]; mode = ip[6]; ip += 7; }
-            else { s = vm->global; slot = U16(ip); k = fr->chunk->k[U16(ip + 2)]; mode = ip[4]; ip += 5; }
+            else { slot = U16(ip); s = vmGlobalsOf(vm, slot); k = fr->chunk->k[U16(ip + 2)]; mode = ip[4]; ip += 5; }
             x = scSlot(s, slot);
             if (FIRE_LIKELY(x->kind == K_Int && k.kind == K_Int && x->unit == k.unit))
                 *x = IntOp((int64_t)((mode & 1) ? (uint64_t)x->i - (uint64_t)k.i : (uint64_t)x->i + (uint64_t)k.i), x->unit, *x, k);
@@ -669,6 +678,7 @@ static void vmRun(Vm* vm, int32_t base) {
         case OP_Jump: {
             uint32_t to = U16(ip);
             ip += 2;
+            VM_LOOP_POINT(to, 3);
             if (FIRE_UNLIKELY(fr->catchEnded & 1)) {   /* (the jump behind the try: the catch is left - what it pushed for a finally goes along) */
                 VmHandlerRec* rec = fr->rec;
                 uint32_t n = (uint32_t)(sp - st) - fr->spBase, i;
@@ -688,7 +698,7 @@ static void vmRun(Vm* vm, int32_t base) {
             ip += 2;
             if (FIRE_LIKELY(c.kind == K_Bool)) t = c.i != 0;
             else { SYNC(); t = truthy(c); CHECK(); }
-            if (t == (op == OP_JumpIfTruePeek)) ip = fr->chunk->code + to;
+            if (t == (op == OP_JumpIfTruePeek)) { VM_LOOP_POINT(to, 3); ip = fr->chunk->code + to; }
             break;
         }
 
@@ -826,7 +836,7 @@ static void vmRun(Vm* vm, int32_t base) {
             Value r;
             ip += 3;
             SYNC();
-            if (!vmCallNative(vm, fr, idx, argc, sp - argc, &r)) {
+            if (!vmCallNative(vm, fr, idx, argc, sp - argc, &r) && !vmThreadNative(vm, fr, idx, argc, sp - argc, &r)) {
                 uint32_t imp = idx - VM_NNATIVES;
                 vmUnsupported(op == OP_CallTryableNative ? "the tryable native" : "the native",
                     op == OP_CallTryableNative ? "?" : idx < VM_NNATIVES ? g_vmNativeNames[idx] : imp < prog->npackageNatives ? prog->packageNatives[imp] : "?");
@@ -1083,6 +1093,11 @@ static void vmRun(Vm* vm, int32_t base) {
                 goto unwind;
             }
             vm->pendingArgNames = NULL;
+            if (FIRE_UNLIKELY((asObj(recv)->h.flags & 8) || g_isThread || vm->awaitNext)) {
+                int tc = vmThreadCall(vm, m, recv, argc, name);
+                if (tc < 0) goto unwind;
+                if (tc > 0) { RELOAD(); break; }
+            }
             vmPushCall(vm, m, (int)argc, 1, recv, FR_CALL);
             if (g_unwind.active) goto unwind;
             RELOAD();
@@ -1153,6 +1168,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 owner = objOwned(asObj(h));
             }
             o = newObject(c->id, c->nlayout, owner);   /* unclaimed: the statement temporaries (SPEC 2.1) */
+            if (FIRE_UNLIKELY(c->flags & VC_ACTOR)) markActor(o);   /* (an actor: its calls are messages from now on) */
             if (vm->pendingTArgsFor == 0 && vm->pendingTArgs) {
                 objSetTArgs(asObj(o), vm->pendingTArgs);
                 vm->pendingTArgs = NULL;
@@ -1322,10 +1338,22 @@ static void vmRun(Vm* vm, int32_t base) {
                     if (!checks) vmIcSet(fr->chunk, at, asObj(v)->cls, (void*)(intptr_t)idx);
                 }
             }
-            old = objFields(asObj(v))[idx];
-            objFields(asObj(v))[idx] = x;
-            retain(x);
-            release(old);
+            if (FIRE_UNLIKELY(g_isThread) && g_domainOn) {   /* (a change of an object of the shared domain is one section, rule 10) */
+                char what[240];
+                bool ss = sectionScopeEnterV(v);
+                snprintf(what, sizeof what, "The field '%s' of an object of the globals", name);
+                if (sharedValue(v) && !toMainHolder(v, &x, what)) { sectionScopeExit(ss); goto unwind; }
+                old = objFields(asObj(v))[idx];
+                objFields(asObj(v))[idx] = x;
+                retain(x);
+                release(old);
+                sectionScopeExit(ss);
+            } else {
+                old = objFields(asObj(v))[idx];
+                objFields(asObj(v))[idx] = x;
+                retain(x);
+                release(old);
+            }
             if ((op == OP_SetFieldClaim || op == OP_SetFieldAccessor) && !(flags & 2)) claimToHolder(v, x, &fr->scope->temp);
             if (op != OP_SetFieldOnThis) PUSH(x);
             break;
@@ -1391,6 +1419,17 @@ static void vmRun(Vm* vm, int32_t base) {
                 if (op == OP_SetStaticField) {
                     const VmFieldInfo* fi = vmFieldInfo(c, name, NULL);
                     if (fi && fi->requiredUnit) { x = vmAdaptUnit(vm, x, fi->requiredUnit); CHECK(); sp[-1] = x; }
+                }
+                if (FIRE_UNLIKELY(g_isThread)) {   /* (a static field of the main program from a fire thread: a section, rule 10) */
+                    bool ss = sectionScopeEnter(true);
+                    if (isRef(x) && x.kind != K_String && !toMainGlobals(&x, NULL, "A static field")) { sectionScopeExit(ss); goto unwind; }
+                    old = c->svals[i];
+                    retain(x);
+                    c->svals[i] = x;
+                    release(old);
+                    sectionScopeExit(ss);
+                    if (op == OP_SetStaticField) sp[-1] = x;
+                    break;
                 }
                 retain(x);
                 c->svals[i] = x;
@@ -1617,7 +1656,12 @@ static void vmRun(Vm* vm, int32_t base) {
                 break;
             }
             SYNC();
-            sp[-3] = arraySet(a, i, v);
+            if (FIRE_UNLIKELY(g_isThread) && g_domainOn) {
+                bool ss = sectionScopeEnterV(a);
+                if (sharedValue(a) && !toMainHolder(a, &v, "An element of an array of the globals")) { sectionScopeExit(ss); goto unwind; }
+                sp[-3] = arraySet(a, i, v);
+                sectionScopeExit(ss);
+            } else sp[-3] = arraySet(a, i, v);
             sp -= 2;
             CHECK();
             break;
@@ -1641,7 +1685,7 @@ static void vmRun(Vm* vm, int32_t base) {
 
         /* ---- pointers ---- */
         case OP_AddressOfLocal: { VmScope* s = scAncestor(fr->scope, U16(ip)); uint32_t slot = U16(ip + 2); ip += 4; PUSH(PtrV(scSlot(s, slot))); break; }
-        case OP_AddressOfGlobal: { uint32_t slot = U16(ip); ip += 2; PUSH(PtrV(scSlot(vm->global, slot))); break; }
+        case OP_AddressOfGlobal: { uint32_t slot = U16(ip); ip += 2; PUSH(PtrV(scSlot(vmGlobalsOf(vm, slot), slot))); break; }
         case OP_AddressOfField: {
             const char* name = KNAME(U16(ip));
             Value v = sp[-1];
@@ -1699,6 +1743,7 @@ static void vmRun(Vm* vm, int32_t base) {
             switch ((int)kind.i) {
                 case FIN_K_THROW: throwValue(payload, false); CHECK(); break;
                 case FIN_K_JUMP: ip = fr->chunk->code + payload.i; break;
+                case FIN_K_LEAVE: startLeave(); goto unwind;   /* (leave/terminate passed through: it goes on after the finally) */
                 case FIN_K_RETURN: {
                     VmHandlerRec* fin = vmFinallyOf(vm);
                     if (fin) {
@@ -1724,23 +1769,64 @@ static void vmRun(Vm* vm, int32_t base) {
             break;
         }
 
-        /* ---- the program and its end; threads and tasks (phase B step 3): without threads these do what a program without them does ---- */
-        case OP_SetAutoSync: ip += 1; break;
-        case OP_SetEndWait: sp--; break;
+        /* ---- threads, tasks, actors, the end of the program (phase B step 3, vm_threads.c) ---- */
+        case OP_SetAutoSync: { uint32_t m = *ip++; if (m != GJ_SAFEPOINTS) { g_globalJobs = (uint8_t)m; g_attnMask &= ~(uint32_t)ATTN_SECT; } break; }
+        case OP_SetEndWait: { Value t = POP(); SYNC(); fire_setEndWait(t); CHECK(); break; }
         case OP_SetTimeout: { Value t = POP(); SYNC(); setDefaultTimeout(t); CHECK(); break; }
-        case OP_SyncGlobals: PUSH(Int(0)); break;   /* (the jobs it ran: none without threads) */
-        case OP_SectionEnter: case OP_SectionExit: break;
-        case OP_Dedicate: case OP_Undedicate: break;
-        case OP_AwaitReply: break;
-        case OP_Terminate: {
-            Value code = POP();
+        case OP_SyncGlobals: { int64_t n; SYNC(); n = syncGlobals(); RELOAD(); CHECK(); PUSH(Int(n)); break; }
+        case OP_SectionEnter: SYNC(); sectionEnterOp(); break;
+        case OP_SectionExit: SYNC(); sectionExitOp(); break;
+        case OP_Dedicate: case OP_Undedicate: break;   /* (a fire thread of the VM is a system thread already) */
+        case OP_AwaitReply: vm->awaitNext = 1; break;
+        case OP_CancelPush: {
+            uint32_t f = *ip++, n = f & 0x7F, i;
+            Value lv[128];
+            for (i = 0; i < n; i++) lv[i] = sp[-(int)n + (int)i];
+            if (n == 0) lv[0] = Undef();
+            sp -= n;
             SYNC();
-            vm->terminated = 1;
-            vm->exitCode = code.kind == K_Int ? (int)code.i : 0;
-            if (!vm->quiet) { vm->quiet = 1; g_zombies.quiet++; }
-            exitJump(&vm->bottom, 0);
-            goto unwind;
+            fire_untilPush(lv, n, (f & 0x80) != 0);
+            CHECK();
+            break;
         }
+        case OP_CancelPop: SYNC(); fire_untilPop(); CHECK(); break;
+        case OP_Fire: {
+            VmProto* body = fr->chunk->fn[U16(ip)];
+            uint32_t gs = U16(ip + 2), taking = ip[4], flags = ip[5], handover = ip[6];
+            uint32_t with = (flags & 1) == 0 ? 0 : ((flags >> 2) > 1 ? (flags >> 2) : 1);
+            bool ok;
+            ip += 7;
+            SYNC();
+            ok = vmFire(vm, fr, body, gs, taking, flags, handover);
+            RELOAD();
+            sp -= taking + with;
+            if (!ok) { SYNC(); goto unwind; }
+            break;
+        }
+        case OP_Sync: { uint32_t f = *ip++; SYNC(); sp[-1] = syncValue(sp[-1], (f & 2) != 0); CHECK(); break; }
+        case OP_Process: { Value v = POP(); SYNC(); processMsg(v, true, &fr->scope->temp); RELOAD(); CHECK(); break; }
+        case OP_TryProcess: { Value v = sp[-1]; int n; SYNC(); n = processMsg(v, false, &fr->scope->temp); RELOAD(); CHECK(); sp[-1] = Bool(n > 0); break; }
+        case OP_Leave: SYNC(); leaveNow(); goto unwind;
+        case OP_Terminate: { Value code = POP(); SYNC(); terminateNow(code); goto unwind; }
+        case OP_RegisterThreadsCatch: case OP_RegisterTerminateCatch: {
+            VmProto* h = fr->chunk->fn[U16(ip)];
+            bool threads = op == OP_RegisterThreadsCatch;
+            const char* type = threads && ip[2] ? KNAME(U16(ip + 3)) : NULL;
+            ip += threads ? 5 : 2;
+            vmRegisterCatch(vm, h, threads, type);
+            break;
+        }
+        case OP_PostGlobal: {
+            uint32_t f = ip[0], with = ip[1];
+            bool ok;
+            ip += 2;
+            SYNC();
+            ok = vmPostGlobal(vm, f, with);
+            RELOAD();
+            if (!ok) goto unwind;
+            break;
+        }
+        case 255: SYNC(); goto unwind;   /* (g_vmUnwindStub: the safe point at a function's entry started an unwinding) */
 
         default:
             SYNC();
@@ -1756,7 +1842,7 @@ static void vmRun(Vm* vm, int32_t base) {
             SYNC();
             t = truthy(c);
             CHECK();
-            if (!t) ip = fr->chunk->code + fr->opJump;
+            if (!t) { VM_LOOP_POINT(fr->opJump, 0); ip = fr->chunk->code + fr->opJump; }
         }
         continue;
     unwind:
@@ -1816,6 +1902,26 @@ static int vmUnwind(Vm* vm, int32_t base) {
                         return more ? 1 : 0;
                     }
                 default: fatal("internal error of the VM: an unwinding of an unknown kind.");
+            }
+        }
+        /* leave/terminate (or the end of a thread by an exception nothing caught) pass through: the finally blocks run (completion 4 - EndFinally
+         * starts the leaving again), no catch block matches (CppGenerator Landing: UW_LEAVE) */
+        if (g_unwind.kind == UW_LEAVE && f->kind != FR_CATCH) {
+            while (g_handlers && g_handlers->fn == vmCatchFn && ((VmHandlerRec*)g_handlers)->frame == vm->nframes - 1) {
+                VmHandlerRec* r = (VmHandlerRec*)g_handlers;
+                popHandler();
+                if (r->t->finallyAddr >= 0 && !r->inCatch) {
+                    vm->sp = r->sp;
+                    vmLeaveTo(vm, f, r->scope);
+                    clearUnwind();
+                    vm->stack[vm->sp++] = Undef();
+                    vm->stack[vm->sp++] = Int(FIN_K_LEAVE);
+                    f->ip = f->chunk->code + r->t->finallyAddr;
+                    free(r);
+                    vmFreeDead(vm);
+                    return 1;
+                }
+                free(r);
             }
         }
         /* a frame above the target: it goes */
