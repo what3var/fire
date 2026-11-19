@@ -112,6 +112,7 @@ static void vmThreadBody(const Value* args) {
     {
         int quiet = vm->quiet;
         vmStrandFree(vm, g_threadFailed != 0);
+        if (g_pool.top) poolRelease(0);   /* (what the thread still had in its temporary pool: threadEntry frees the pool as it is) */
         if (quiet) g_zombies.quiet--;
     }
     g_vmCur = NULL;

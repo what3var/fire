@@ -87,7 +87,7 @@ static VmScope* scAncestor(VmScope* s, uint32_t depth) { while (depth-- && s->pa
 /* ---- classes as the runtime sees them ---- */
 static VmClass* vmClassNamed(VmProgram* p, const char* name) { return name ? (VmClass*)fbMapGet(&p->classByName, name) : NULL; }
 static VmClass* vmClassOf(Vm* vm, uint32_t cls) { return cls >= vm->firstId && cls - vm->firstId < vm->nids ? vm->byId[cls - vm->firstId] : NULL; }
-static VmClass* vmClassOfValue(Vm* vm, Value v) { return v.kind == K_Class ? vmClassOf(vm, asObj(v)->cls) : NULL; }
+static VmClass* vmClassOfValue(Vm* vm, Value v) { return v.kind == K_Class && leafAlive(v) ? vmClassOf(vm, asObj(v)->cls) : NULL; }   /* (a destroyed one: its memory may be gone - a thread sees what the main program destroyed) */
 static const char* vmPlainName(const char* name, char* buf, size_t cap) {
     const char* tick = strchr(name, '`');
     size_t n = tick ? (size_t)(tick - name) : strlen(name);

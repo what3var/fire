@@ -39,7 +39,14 @@ void fbOutOfMemory(void) { outOfMemory(); }
 
 void fire_vmExit(int code) {
     Vm* vm = g_vmCur;
-    if (vm && vm->exitJump) { vm->exitCode = code; longjmp(*vm->exitJump, 1); }
+    if (vm && vm->exitJump) {
+        /* (the handlers go now, while they are still there: some live on the stack of the runtime's functions the jump leaves - a job's, a reply's) */
+        Handler* h = g_handlers;
+        while (h) { Handler* p = h->prev; if (h->fn == vmCatchFn) free(h); h = p; }
+        g_handlers = NULL;
+        vm->exitCode = code;
+        longjmp(*vm->exitJump, 1);
+    }
     fire_plat_exit(code);
 }
 
@@ -98,6 +105,7 @@ static int vmRunFile(const char* path, bool stats) {
     } else {
         /* the runtime wanted to end the process (fatal, terminate): only the script ends - what was half done in the runtime is given up */
         if (!vm->terminated) vm->failed = 2;
+        g_jobDepth = 0; g_noSyncDepth = 0; g_secDepth = 0;   /* (the jump may have left a job, a section of the runtime) */
         if (!vm->quiet) { vm->quiet = 1; g_zombies.quiet++; }
         g_zombies.depth = 0;
     }
