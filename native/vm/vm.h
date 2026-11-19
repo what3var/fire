@@ -153,7 +153,10 @@ struct VmClass {
     bool hasDtor;           /* it or a base has a destructor */
     bool layoutDone;
     VmMeta* meta;           /* reflection (NULL: none) */
+    struct VmThisReads { const char* key; const char** reads; uint32_t n; } * thisReads;   /* (NULL: none) */
+    uint32_t nthisReads;
 };
+typedef struct VmThisReads VmThisReads;
 
 typedef struct VmUnitDecl { const char* converter; const char* ulconverter; } VmUnitDecl;
 

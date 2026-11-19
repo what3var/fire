@@ -1264,6 +1264,11 @@ static void vmRun(Vm* vm, int32_t base) {
             SYNC();
             if (FIRE_UNLIKELY(v.kind != K_Class)) { notObjectAssign(v); goto unwind; }
             if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); goto unwind; }
+            if (FIRE_UNLIKELY(asObj(v)->h.flags & 2)) {   /* (an object with probes: they hear of it, vm_reflect.c) */
+                if (!vmProbedSet(vm, fr->chunk, v, name, x)) goto unwind;
+                if (op != OP_SetFieldOnThis) PUSH(x);
+                break;
+            }
             c = vmClassOf(vm, asObj(v)->cls);
             idx = (int32_t)(intptr_t)vmIc(fr->chunk, at, asObj(v)->cls, prog, &hit);
             if (!hit) {
@@ -1658,8 +1663,25 @@ static void vmRun(Vm* vm, int32_t base) {
         case OP_PtrWrite: { Value v = POP(); SYNC(); ptrWrite(sp[-1], v); CHECK(); sp[-1] = v; break; }
 
         /* ---- probes (reflection, phase B step 5) ---- */
-        case OP_Probe: case OP_SilenceMember: vmUnsupported("probes", NULL);
-        case OP_SilenceValue: vmUnsupported("probes", NULL);
+        case OP_Probe: {   /* (stack: target, handler -> the handle) */
+            const char* member = KNAME(U16(ip));
+            uint32_t flags = ip[2];
+            Value handler = POP(), r;
+            ip += 3;
+            SYNC();
+            if (!vmOpProbe(vm, sp[-1], member, flags, handler, &r)) goto unwind;
+            sp[-1] = r;
+            break;
+        }
+        case OP_SilenceMember: {
+            const char* member = ip[2] ? NULL : KNAME(U16(ip));
+            Value target = POP();
+            ip += 3;
+            SYNC();
+            if (!vmOpSilenceMember(target, member)) goto unwind;
+            break;
+        }
+        case OP_SilenceValue: { Value v = POP(); SYNC(); if (!vmOpSilenceValue(v)) goto unwind; break; }
 
         /* ---- exceptions ---- */
         case OP_RegisterHandler: {

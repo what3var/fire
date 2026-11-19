@@ -386,8 +386,13 @@ static VmClass* rdClass(VmReader* r) {
     c->xctors = (VmProto**)vmAlloc(a, (n + 1) * sizeof(VmProto*));
     for (i = 0; i < n; i++) { if (!(c->xctors[i] = rdProto(r))) rdFail(r, "a constructor is missing"); c->xctors[i]->declaring = c; }
     c->dtor = rdProto(r);
-    n = rdCount(r);   /* thisReads (the native backend) */
-    if (n) { n--; while (n--) { rdName(r); rdStrList(r, NULL); } }
+    n = rdCount(r);   /* thisReads: per getter and method the members of `this` it reads (a probe on a computed property, RuntimeClass.ComputedSources) */
+    if (n) {
+        n--;
+        c->nthisReads = n;
+        c->thisReads = (VmThisReads*)vmAlloc(a, (n + 1) * sizeof(VmThisReads));
+        for (i = 0; i < n; i++) { c->thisReads[i].key = rdName(r); c->thisReads[i].reads = rdStrList(r, &c->thisReads[i].n); }
+    }
     /* (Chunk.OwnerClass: the code of the class knows it - CompiledProgram.RelinkProtoOwner) */
     for (i = 0; i < c->nfields; i++) vmRelinkOwner(c->fields[i].init, c, 0);
     for (i = 0; i < c->nstatic; i++) vmRelinkOwner(c->sinit[i], c, 0);

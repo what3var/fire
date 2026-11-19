@@ -201,6 +201,11 @@ static Value vmCallImported(Vm* vm, VmFrame* fr, VmNative* e, uint32_t argc, Val
 }
 
 static Value vmJsonCall(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list);
+/* (vm_reflect.c: probes - the opcodes and a write to an object that has them) */
+static bool vmProbedSet(Vm* vm, VmChunk* caller, Value obj, const char* name, Value value);
+static bool vmOpProbe(Vm* vm, Value target, const char* member, uint32_t flags, Value handler, Value* result);
+static bool vmOpSilenceMember(Value target, const char* member);
+static bool vmOpSilenceValue(Value v);
 
 /* CallNative `idx` with the top `argc` values of the stack as its arguments: the result replaces them. False: the native is not one of the VM's. */
 static bool vmCallNative(Vm* vm, VmFrame* fr, uint32_t idx, uint32_t argc, Value* a, Value* result) {
