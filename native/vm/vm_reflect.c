@@ -446,7 +446,10 @@ static bool vmProbedSet(Vm* vm, VmChunk* caller, Value obj, const char* name, Va
     snapshot = (ProbeEntry*)malloc((n + 1) * sizeof(ProbeEntry));
     if (!snapshot) outOfMemory();
     memcpy(snapshot, node->entries, n * sizeof(ProbeEntry));
-    for (i = 0; i < n; i++) retain(snapshot[i].handler);
+    for (i = 0; i < n; i++) {
+        retain(snapshot[i].handler);
+        if (snapshot[i].member) snapshot[i].member = (char*)vmName(vm->prog, snapshot[i].member);   /* (a handler that silences a probe frees its text) */
+    }
     for (i = 0; i < n && !g_unwind.active; i++) {
         Value verdict;
         if (!snapshot[i].changing || (snapshot[i].member && strcmp(snapshot[i].member, name) != 0)) continue;
