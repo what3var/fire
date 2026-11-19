@@ -26,6 +26,9 @@ if (args.Length == 2 && args[0] == "tables")
     return 0;
 }
 
+// `tokens <file>` / `ast <file>`: the tokens / the syntax tree of a source as text with the diagnostics - the measure of the frontend in C (FrontendDump, docs/spec/FORGE_C.md).
+if (args.Length >= 2 && (args[0] == "tokens" || args[0] == "ast")) return FrontendDump.Run(args);
+
 // `falstad <circuit.txt> [-o <file.biscuit>]`: a circuit of Falstad's simulator (File > Export As Text) as a schematic (docs/circuits/README.md); without -o to the output.
 if (args.Length >= 2 && args[0] == "falstad")
 {
