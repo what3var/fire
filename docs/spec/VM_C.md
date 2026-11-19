@@ -1,13 +1,15 @@
 # Die VM in C (`native/vm`)
 
-Status: **Phase B, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-b---die-vm-in-c) (19.11.2026). Der Spike davor:
+Status: **Phase B, Schritte 1 bis 6** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-b---die-vm-in-c) (19.11.2026). Der Spike davor:
 [VM_SPIKE.md](VM_SPIKE.md). Die VM ist ein Interpreter auf `fire_rt.h` (L1): dieselben `Value`s, Objekte, Besitzlisten, Ausnahmen, Texte und
 Threads wie ein natives Programm; was nur die VM braucht, liegt in ihren Seitentabellen. Die Runtime ist **nicht** geändert (der eine Eingriff hinter
-`FIRE_VM` aus dem Spike bleibt der einzige, auch die Schritte 3 bis 5 brauchten keinen), der native Build ist damit unverändert.
+`FIRE_VM` aus dem Spike - und für den Debugger `"engine": "vm"` im `hello` - sind die einzigen, auch die Schritte 3 bis 6 brauchten keine), der native
+Build ist damit unverändert.
 
 ```
 cc -O2 native/vm/fire.c -o fire -lm -lpthread -ldl    (gcc 13, clang 18; eine Datei, die alles einbindet)
 forge bytecode x.fire -o x.fbc && FIRE_PKG_PATH=<ordner von forge> ./fire x.fbc [-- args]
+./fire --debug 'tcp:127.0.0.1:PORT;token=T' x.fbc        (oder FIRE_DEBUG=...; der Debugger, siehe "Debugger")
 tests/run-cases-vm.sh <forge> [<gruppe>...] [--fire <fire>] [--cache <ordner>] [--list]
 ```
 
@@ -32,6 +34,7 @@ der Paket-Natives sucht die VM im Ordner von forge (der Runner setzt `FIRE_PKG_P
 | `vm_json.c` | JSON: die Engine des nativen Builds (`fire_json.h`) auf Tabellen, die die VM aus dem Programm baut | `JsonMethods`, `VM.Json.cs` (`CppGenerator.Json.cs` für die Tabellen) |
 | `vm_threads.c` | Threads, Tasks, Aktoren, Sektionen, Jobs, `catch threads`/`catch terminate`, die Natives der Threads (Kanäle, `Completion`, Abbruch, `await [...]`, `handover`, `Sleep`), Anfang und Ende des Programms mit Threads | `FireRuntime`, `GlobalsBroker`, `VM.Tasks`, `Channels`, `Completions`, `Cancellation` |
 | `vm_run.c` | die Schleife (ein `switch` über `opcodes.def`), `DeclaredType`, Arrays einer Klasse, `finally`, Abwicklung | `VM.Execute`, `DeclaredType`, `VM.ThrowException` |
+| `vm_debug.c` | der Debugger: das Protokoll nativer Programme über den Agenten der Runtime (`fire_debug.h`), die Halte vor jeder Instruktion, die Frames für den Agenten | `VM.StepLine`/`StepInto`/`StepOut`/`RunUntilBreakpoint`, `DebugScopeChain`, `DebugGlobals`, `PauseOnUnhandled` |
 | `fire.c` | das Programm `fire`: Programme nacheinander in einem Prozess, Abbau nach jedem (L6) | `fire.Runtime/Program.cs` |
 
 ## Lader
@@ -46,8 +49,9 @@ Destruktor; Funktionen mit Defaults, Zugriff, Masken (`refMask`, `captureCopyMas
 Typparametern und Spezialisierungen (`specArgs`, `specParamKinds`), der Selektor-Pfad eines Lambdas (`c => c.radius`); Chunks mit Code, Konstanten,
 Einheiten, Funktionen, Handlern, Zeilentabellen.
 Nach dem Lesen bekommt jede Funktion einer Klasse ihren `OwnerClass` (rekursiv: Lambdas, Defaults, Spezialisierungen).
-Übersprungen: `receiverTypeArgs`, `keptMembers` (Stripping des nativen Backends), `graphicsNatives` (die VM hat ihre Reihenfolge selbst), Namen der Locals
-(Debugger, B6).
+Übersprungen: `receiverTypeArgs`, `keptMembers` (Stripping des nativen Backends), `graphicsNatives` (die VM hat ihre Reihenfolge selbst). Für den
+Debugger behalten: die Namen der Locals (`DebugLocalNames`: Tiefe -1 nach dem Offset des `DeclareLocal`, Tiefe 0 die Parameter), `firstUserSource`,
+die Quellen (Bit 1 der Datei, [BYTECODE.md](BYTECODE.md#48-das-dateiformat-fbc)), die Liste aller Chunks (die Zeilen mit Code).
 
 ## Interpreter
 
@@ -174,6 +178,43 @@ Probes: die Runtime hält sie (`FIRE_REFLECTION` in der VM: `ProbeNode` je Objek
 Objekt mit Flag 2 geht durch `vmProbedSet` - `changing`-Handler (einer, der `false` gibt, bricht ab), das Schreiben, `changed`-Handler bei einem anderen
 Wert, dann die Probes auf berechneten Properties, die das Mitglied lesen (`ComputedSources` aus `thisReads`). Die Opcodes `Probe`, `SilenceMember`,
 `SilenceValue` und `Reflect.Probe`/`Silence` mit den Fehlern der C#-VM.
+
+## Debugger (Schritt 6, `vm_debug.c`)
+
+`fire x.fbc` mit `FIRE_DEBUG` (oder `fire --debug <spec> x.fbc`, dasselbe) spricht das [Debug-Protokoll nativer Programme](NATIVE_DEBUG_PROTOCOL.md):
+`NativeDebugTarget` in spark debuggt ein Programm der VM wie ein natives (L4). Das Protokoll selbst ist **der Agent der Runtime** (`fire_debug.h`,
+`FIRE_DEBUG`/`FIRE_DEBUG_AGENT` im Build von `fire`): Transporte tcp und stdio (gerahmt, mit der Eingabe des Programms), sein Thread, alle Befehle
+(`breakpoints`, `continue`, `step`, `pause`, `threads`, `trace`, `scopes`, `globals`, `this`, `expand`, `set`, `resume`, `terminate`, `profile`, `detach`),
+die Werte (V, `ref`-Pfade), `set` (durch den angehaltenen Thread selbst, ein Feld über `vmReflWrite` mit Einheit, Art, Typ, Record, Probes), der Profiler,
+die Threads (`thread`/`threadExited` über `threadEntry` der Runtime). Was ein natives Programm dafür erzeugt, liefert die VM: das `DbgProgram` (Quellen aus
+der Datei, `firstUserSource`, Einstieg, Zeilen mit Code, die Globals), `fire_dbgClass` (die Felder nach `layout`) und `fire_dbgSetField`. `hello` sagt
+`"engine": "vm"` (der einzige Eingriff in `fire_debug.h`, hinter `FIRE_VM`). Ohne `FIRE_DEBUG` kostet der Debugger eine Abfrage von `g_dbgArmed` je Instruktion.
+
+**Halte**: ein Haken vor jeder Instruktion (`vmRun`, nur mit angeschlossenem Debugger) entscheidet wie die Schrittschleifen der C#-VM nach jeder
+Instruktion: Position = `Chunk.GetLocation` der Instruktion (mit dem Bereich der Zeile gemerkt), Tiefe = die Frames der C#-VM; Haltepunkt beim Betreten
+einer Zeile, `step line`/`into`/`out`, `pause`. **Verschachtelt** (unsichtbar wie in der C#-VM) ist ein Frame, den keine Aufruf-Instruktion des Frames
+darunter gemacht hat (`Call`, `CallMethod`, `CallBaseMethod`, `CallStaticMethod`, `CallProtoWithThis`, `NewObject*`, `ConstructBase`) oder der
+verschachtelt läuft (`FR_NESTED`): Getter, Setter, Operatoren, `GetIndex`/`SetIndex`, Destruktoren, `ToString`, Standardwerte, Lambdas eines Natives, die
+Ausnahme, die die Runtime macht. Ein `catch`-Block (`FR_CATCH`, auf der Wurfstelle) ist der Frame seiner Funktion; die Frames der Wurfstelle darunter sind
+für den Debugger weg. **Unbehandelt**: ein `throw`, den kein `catch` nähme (der Boden des Skripts zählt nicht, ein `finally` dazwischen auch nicht), hält
+vor dem Wurf an; `resume` macht den `throw` zu `undefined`. Eine Ausnahme der Runtime (Index, Division, ...) hält im Hauptprogramm am Boden des Skripts an
+(`vmUnhandledFn`, auf der Wurfstelle), in einem fire-Thread im Agenten der Runtime (`fire_dbgUnhandled`, mit den Frames, die `vmMakeException` vorher
+festhält).
+
+**Frames für den Agenten**: der Agent liest den Schattenstapel eines nativen Debug-Builds (`DbgFrame`). Die VM baut ihn, wenn ein Thread anhält: die
+logischen Frames (innerster zuerst, Name wie `CppGenerator.DebugFunctionName`: `<main>`, `<fire>`, `<lambda>`, `Klasse.Methode`, `Klasse.construct`; ein
+Aufrufer auf der Zeile des Aufrufs), die Scope-Kette des innersten als Ebenen (je Scope eine, `functionTop`, wo der Scope darüber der globale ist), ein
+fire-Thread mit der Ebene seiner eigenen Globals (`T:`), `this`. Die Namen der Slots schreibt der Haken beim `DeclareLocal` in den Scope
+(`VmScope.names`, wie `Scope.SetDebugName`), sonst die Parameter des Chunks, sonst `(local N)` bzw. `(global N)` - wie `VM.DebugScopeChain`/`DebugGlobals`.
+
+**Tests**: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER=VM-Debugger` (`NativeDebugTests.Vm.cs`): `fire` aus `native/vm/fire.c` gebaut, jeder Fall des nativen
+Debuggers als `.fbc` (Modus Debug), über TCP gegen die C#-VM verglichen - Halte, Tiefen, Aufrufstapel, Scopes, `this`, Globals an jedem Halt, jeder
+Step Into/Over bis zum Ende (auch durch den Prelude) -, dazu die Protokoll-Prüfungen der nativen Builds, die nicht das C betreffen (expand/set, gepackte
+Felder, hello mit Quellen und SHA-256, detach, Profiler, pause/terminate, Threads), und ein Fall über stdio. Stand: VMDBG_STAND.
+
+**Offen**: die Eingabe des Programms über den gerahmten Transport erreicht nur, was `fire_dbgStdinRead` liest (die Natives der Pakete lesen stdin
+selbst); fire-Plugins (`sources`) lädt die VM noch nicht; Aufgaben mit `await [...]` auf eigenen Threads melden sich als fire-Threads; ein Frame, der an
+derselben Stelle des Stapels mit derselben Funktion und demselben (wiederverwendeten) Scope einen verschachtelten ersetzt, behält dessen Einordnung.
 
 ## Stand gegen den Korpus
 

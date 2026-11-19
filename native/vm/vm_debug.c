@@ -21,6 +21,7 @@ typedef struct VmDbg {
     uint16_t* opAt;          /* per frame index: the instruction it runs (seen at its last hook) - what made the frame above it */
     const void** keyProto;   /* per frame index: the frame the marks are for (its function and its scope: a frame that replaced it is looked at anew) */
     const void** keyBase;
+    uint8_t* keyKind;
     VmScope* declScope;      /* a DeclareLocal ran: the scope, the slot it made, its name (written into the scope at the next instruction) */
     uint32_t declSlot;
     const char* declName;
@@ -73,7 +74,8 @@ static VmDbg* vmDbgOf(Vm* vm) {
     d->opAt = (uint16_t*)calloc(VM_FRAMES, sizeof(uint16_t));
     d->keyProto = (const void**)calloc(VM_FRAMES, sizeof(void*));
     d->keyBase = (const void**)calloc(VM_FRAMES, sizeof(void*));
-    if (!d->hidden || !d->opAt || !d->keyProto || !d->keyBase) outOfMemory();
+    d->keyKind = (uint8_t*)calloc(VM_FRAMES, 1);
+    if (!d->hidden || !d->opAt || !d->keyProto || !d->keyBase || !d->keyKind) outOfMemory();
     d->chainN = -1;
     d->cur.lv = -1;
     vm->dbg = d;
@@ -84,7 +86,7 @@ static void vmDbgFree(Vm* vm) {
     VmDbg* d = vm->dbg;
     if (!d) return;
     if (g_dbgTop == &d->cur || (d->frames && g_dbgTop >= d->frames && g_dbgTop < d->frames + d->capFrames)) g_dbgTop = NULL;
-    free(d->hidden); free(d->opAt); free(d->keyProto); free(d->keyBase); free(d->frames); free(d->fns); free(d->levels); free(d->vars); free(d->slots);
+    free(d->hidden); free(d->opAt); free(d->keyProto); free(d->keyBase); free(d->keyKind); free(d->frames); free(d->fns); free(d->levels); free(d->vars); free(d->slots);
     free(d);
     vm->dbg = NULL;
 }
@@ -95,7 +97,9 @@ static uint8_t vmDbgHiddenFrame(const VmFrame* f, uint32_t lastOp) {
     if (f->kind == FR_TOP || f->kind == FR_CATCH) return 0;
     if (f->kind == FR_NESTED) return VM_DBG_HIDDEN;
     switch (lastOp) {
-        case OP_Call: case OP_CallProtoWithThis: case OP_CallMethod: case OP_CallBaseMethod: case OP_CallStaticMethod:
+        case OP_CallMethod:
+            return f->kind == FR_CTOR ? VM_DBG_HIDDEN : 0;   /* (GetEnumerator of an array, a buffer, a string: the ListEnumerator the C# VM makes itself) */
+        case OP_Call: case OP_CallProtoWithThis: case OP_CallBaseMethod: case OP_CallStaticMethod:
         case OP_NewObject: case OP_NewObjectOwned: case OP_ConstructBase:
             return 0;
         default: return VM_DBG_HIDDEN;
@@ -356,8 +360,8 @@ static FIRE_COLD void vmDbgStep(Vm* vm) {
     /* the frames that are new (from the top down to the first one already seen): run nested unless a call of the frame under them made them */
     for (k = vm->nframes - 1; k >= 0; k--) {
         VmFrame* f = &vm->frames[k];
-        if (d->keyProto[k] == (const void*)f->proto && d->keyBase[k] == (const void*)f->base) break;
-        d->keyProto[k] = f->proto; d->keyBase[k] = f->base;
+        if (d->keyProto[k] == (const void*)f->proto && d->keyBase[k] == (const void*)f->base && d->keyKind[k] == f->kind) break;
+        d->keyProto[k] = f->proto; d->keyBase[k] = f->base; d->keyKind[k] = f->kind;
         d->hidden[k] = vmDbgHiddenFrame(f, k > 0 ? d->opAt[k - 1] : 0xFFFFu);
         d->chainN = -1;
     }

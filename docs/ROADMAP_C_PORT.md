@@ -280,6 +280,11 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    Besitz aus Schritt 2). Offen: Fire-Plugins und Module (das Laden der Klassen eines zweiten Programms in ein laufendes; kein Fall des Korpus).
    Maß: **869 von 1128** (vorher 751); was fehlt, ist Schritt 3 (rund 185) und Schritt 2 (rund 75).
 6. Debug-Agent (L4): Haltepunkte, Schritte, Variablen über die Scope-Ebenen, `set`, Pause, Zeilenprofil.
+   **Umgesetzt** ([VM_C.md](spec/VM_C.md#debugger-schritt-6-vm_debugc)): `fire x.fbc` mit `FIRE_DEBUG`/`--debug` spricht das Protokoll nativer Programme über
+   den Agenten der Runtime (tcp, stdio), `NativeDebugTarget` debuggt die VM wie ein natives Programm; die Halte entscheidet ein Haken vor jeder Instruktion
+   wie die Schrittschleifen der C#-VM (verschachtelte Frames unsichtbar), die Frames und Scopes baut die VM für den Agenten, wenn ein Thread anhält.
+   Die `.fbc` eines Debug-Programms trägt seine Quellen (Datei, SHA-256). Tests: `FIRE_TESTS_FILTER=VM-Debugger` - die Fälle des nativen Debuggers gegen
+   die C#-VM und seine Protokoll-Prüfungen. Offen: Eingabe über den gerahmten Transport für Paket-Natives, Plugins.
 7. Programm `fire` (`fire run x.fbc`); der Korpus, vom C#-Compiler übersetzt, läuft mit den erwarteten Ausgaben; Benchmarks gegen die C#-VM.
 8. `forge build --engine vm` bleibt: die C-VM mit angehängtem `.fbc` (und den Bibliotheken der Packages) statt der .NET-Einzeldatei.
 9. **spark auf die C-VM** (L4): Ausführen als Kindprozess, Debuggen über `NativeDebugTarget`, `LiveSession` und `UiPreview` über Kindprozess und
