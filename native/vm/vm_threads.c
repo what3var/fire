@@ -426,8 +426,27 @@ static void vmThreadsFinish(Vm* vm) {
     if (vm->failed && !terminateRequested()) terminateRequest(Int(1));   /* (an exception nothing caught ends the program: its threads leave) */
     mainFinish();
 }
+static bool vmNoThreads(void* ctx) { (void)ctx; return fire_atomic_load(&g_threadsLive) == 0; }
 static void vmThreadsEnd(void) {
     uint32_t i;
+    /* (threads still there - the end of the main program jumped out of mainFinish, a fatal error: they leave like at terminate, then they are joined) */
+    if (fire_atomic_load(&g_threadsLive) > 0) {
+        if (!terminateRequested()) terminateRequest(Int(1));
+        clearUnwind();
+        (void)blockUntil(vmNoThreads, NULL, false, steadyMs() + 10000);
+    }
+    {
+        PtrVec list;
+        fire_mutex_lock(&g_thrM);
+        list = g_threadList;
+        g_threadList.items = NULL; g_threadList.count = 0; g_threadList.cap = 0;
+        fire_mutex_unlock(&g_thrM);
+        gilRelease();   /* (a thread that ends gives the GIL back last: the join waits for it without it) */
+        for (i = 0; i < list.count; i++) fire_thread_join((fire_thread*)list.items[i]);
+        gilAcquire();
+        free(list.items);
+    }
+    { Value e; while (pendingExcPop(&e)) { (void)e; } }   /* (what no `catch threads` took: it lives in the graveyard, which goes now) */
     /* (the graveyard: what threads that failed left - their exceptions went to the main program) */
     for (i = 0; i < g_graveyard.count; i++) { OwnList* l = (OwnList*)g_graveyard.items[i]; destroyList(l); free(l); }
     free(g_graveyard.items); g_graveyard.items = NULL; g_graveyard.count = g_graveyard.cap = 0;
