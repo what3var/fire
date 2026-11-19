@@ -1,6 +1,6 @@
 /* fire - the VM in C (docs/ROADMAP_C_PORT.md phase B; its structure: docs/spec/VM_C.md).
  *
- *   cc -O2 native/vm/fire.c -o fire -lm         (gcc, clang; one file that includes everything - no build system)
+ *   cc -O2 native/vm/fire.c -o fire -lm -lpthread   (gcc, clang; one file that includes everything - no build system)
  *   fire [--stats] a.fbc [b.fbc ...] [-- args]   runs the programs (written by `forge bytecode`) one after the other in this process
  *
  * Every program is loaded, its classes are registered with the runtime, it runs, and then everything it had is gone again - its objects, strings, scopes,

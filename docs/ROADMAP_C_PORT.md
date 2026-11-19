@@ -250,9 +250,18 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    (nicht in Performance). Die Rückrufe ohne Kontext (VM_SPIKE Punkt 1) sind eigene Fassungen der VM bzw. ein Vorrat an Trampolinen; die Runtime ist
    unverändert (der native Build ebenso). Maß: `tests/run-cases-vm.sh <forge>` übersetzt jeden Fall mit dem C#-forge und führt ihn mit der C-VM aus -
    **751 von 1126** richtig (Spike: 306); von den übrigen brauchen rund 320 die Schritte 3 bis 5. **Offen in Schritt 2**: `#intwidth`/`#floatwidth`
-   (eine VM-Variante je Breite), benannte Argumente, die Reihenfolge der Destruktoren weitergereichter Argumente, Typargumente in Deklarationen
-   generischer Klassen, Besitz in Property-Accessoren, Shutdown an sicheren Punkten (kommt mit den Threads, Schritt 3).
+   (eine VM-Variante je Breite), `try take`/`Takes.Children`, einige Meldungen (rund 40 Fälle; benannte Argumente, die Reihenfolge der Destruktoren
+   weitergereichter Argumente, Typargumente in Deklarationen generischer Klassen, Besitz in Property-Accessoren und Shutdown an sicheren Punkten sind
+   mit Schritt 3 erledigt).
 3. Threads, Tasks, Aktoren, `sync globals`, Abbruch, `on`-Lambdas - über die Abschnitte der Runtime.
+   **Umgesetzt** ([VM_C.md](spec/VM_C.md#threads-schritt-3-vm_threadsc)): das Threadmodell der Runtime mit GIL (ein Thread des Systems je fire-Thread,
+   ein `Vm` je Strang, die Globals des Hauptprogramms direkt und in Sektionen), sichere Punkte wie im erzeugten Code, `leave`/`terminate` mit `finally`
+   und Destruktoren der Globals, `sync globals`, `#globaljobs`, `fire global`/`await on`, Aktoren (`process`, `await a.M()`), Regel 10, `catch threads`/
+   `catch terminate`, Kanäle, `Completion`, Abbruch, `await [...]` (nacheinander), `handover`, Lambdas mit einem Ziel in einem anderen Thread, `Sleep`.
+   Rückrufe ohne Kontext: die Funktion steht in den Argumenten (Thread, Nachricht), `catch`-Handler über Trampoline. Die Runtime ist unverändert.
+   Maß: **910 von 1128** (vorher 751); `vm-gl`, `vm-shutdown`, `vm-life` ganz, die Thread-Fälle von `native` bis auf die, die Natives der Schritte 4/5
+   brauchen; unter ASan/TSan ohne Befund. **Offen**: Tasks (`FIRE_TASKS` gibt es nur ohne GIL - dafür bräuchte die VM Sperren um ihre Tabellen und
+   ihren Zustand am Task, ein Eingriff in die Runtime); `await [...]` läuft deshalb nacheinander.
 4. Natives: eine Tabelle Name -> Funktion für die Kern-Natives (in der Runtime vorhanden, heute vom Generator direkt aufgerufen); Paket-Natives
    zunächst unverändert als Shared Library über die [C-ABI v1](../native/abi/fire_pkg_abi.h), den Host (`fire_host`: IO-/Netz-Regeln, Lambdas, Dienste) in C.
 5. Reflection, JSON, Probes, Module und Plugins in der VM.
