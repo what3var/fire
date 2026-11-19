@@ -1,8 +1,9 @@
 /// The base class of all exceptions (SPEC 7.1): it carries a `message`. Own exception classes derive from it (`class NotFound : Exception { }`);
 /// `catch (Exception e)` catches every thrown value. A program that declares a class `Exception` itself replaces this one.
 /// `from..to` (RangeExpr): the whole numbers from `from` to `to`, both included, counting down when `to` is smaller; in the unit of `from`.
+/// (`any[]`: a return type `int[]` would be checked like `int a[]`, which takes no element with a unit - `1cm..3cm` would throw)
 class __Range {
-    static int[] Of(int first : any, int last : any) {
+    static any[] Of(int first : any, int last : any) {
         int n = 0
         var v = first
         if (first <= last) { while (v <= last) { n++; v++ } } else { while (v >= last) { n++; v-- } }
