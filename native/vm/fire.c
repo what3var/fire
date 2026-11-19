@@ -81,6 +81,46 @@ static uint32_t vmLiveHandles(void) { return g_slots.count - g_slots.nfree; }
 #define VM_FLOAT_WIDTH 64
 #endif
 
+#if defined(_WIN32)
+#include <direct.h>
+#include <process.h>
+#define vmMkdir(p) _mkdir(p)
+#define vmGetPid() _getpid()
+#define VM_SEP '\\'
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#define vmMkdir(p) mkdir(p, 0700)
+#define vmGetPid() getpid()
+#define VM_SEP '/'
+#endif
+/* `fire run x.fbc` or `fire x.fbc` (one program, not packed): a program of other widths is run by the variant of its widths next to this executable - this
+ * process becomes it (Windows: waits for it and ends with its code). Returns when there is none. */
+static const char* g_vmSelf = NULL;
+static char** g_vmArgv = NULL;
+static void vmExecVariant(const char* variant) {
+    char path[4200];
+    const char* slash;
+    FILE* probe;
+    if (!g_vmSelf || !g_vmArgv) return;
+    slash = strrchr(g_vmSelf, '/');
+#if defined(_WIN32)
+    { const char* back = strrchr(g_vmSelf, '\\'); if (back && (!slash || back > slash)) slash = back; }
+    snprintf(path, sizeof path, "%.*s%s.exe", slash ? (int)(slash - g_vmSelf + 1) : 0, g_vmSelf, variant);
+#else
+    snprintf(path, sizeof path, "%.*s%s", slash ? (int)(slash - g_vmSelf + 1) : 0, g_vmSelf, variant);
+#endif
+    if (strcmp(path, g_vmSelf) == 0 || !(probe = fopen(path, "rb"))) return;
+    fclose(probe);
+    fflush(stdout); fflush(stderr);
+    g_vmArgv[0] = path;
+#if defined(_WIN32)
+    { intptr_t code = _spawnv(_P_WAIT, path, (const char* const*)g_vmArgv); if (code >= 0) exit((int)code); }
+#else
+    execv(path, g_vmArgv);
+#endif
+}
+
 /* Runs one program (`bytes`, malloc'd - freed here; `path` names it in the messages; the libraries of its packages are looked up next to `pkgPath`); 0 when it
  * ended normally, 1 with an exception nothing caught or an error of the runtime (or the code of `terminate`), 2 when it could not be loaded. */
 static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, size_t len, bool stats) {
@@ -94,9 +134,12 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     p = vmLoad(bytes, len, error, sizeof error);
     if (!p) { free(bytes); fprintf(stderr, "fire: %s: %s\n", path, error); return 2; }
     if (p->intWidth != VM_INT_WIDTH || p->floatWidth != VM_FLOAT_WIDTH) {
+        char variant[80];
+        snprintf(variant, sizeof variant, "fire%s%s", p->intWidth == 64 ? "" : p->intWidth == 32 ? "-i32" : "-i16", p->floatWidth == 64 ? "" : "-f32");
+        vmExecVariant(variant);   /* (one program on the command line: the variant next to this fire runs it, with the same arguments) */
         fprintf(stderr, "fire: %s: the program is built for int %u and float %u (#intwidth, #floatwidth), this VM for int %d and float %d: it runs in the VM of "
-            "its widths (fire%s%s)\n", path, (unsigned)p->intWidth, (unsigned)p->floatWidth, VM_INT_WIDTH, VM_FLOAT_WIDTH,
-            p->intWidth == 64 ? "" : p->intWidth == 32 ? "-i32" : "-i16", p->floatWidth == 64 ? "" : "-f32");
+            "its widths, '%s' next to fire (forge build-vm <folder> --variant %s builds it)\n", path, (unsigned)p->intWidth, (unsigned)p->floatWidth, VM_INT_WIDTH,
+            VM_FLOAT_WIDTH, variant, variant + 4 + (variant[4] == '-'));
         vmUnload(p);
         free(bytes);
         return 2;
@@ -227,20 +270,6 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
 #define VM_PAY_MAGIC "FIREVMP1"
 #define VM_PAY_FOOTER 24
 #define VM_FNV_START 14695981039346656037ull
-
-#if defined(_WIN32)
-#include <direct.h>
-#include <process.h>
-#define vmMkdir(p) _mkdir(p)
-#define vmGetPid() _getpid()
-#define VM_SEP '\\'
-#else
-#include <sys/stat.h>
-#include <unistd.h>
-#define vmMkdir(p) mkdir(p, 0700)
-#define vmGetPid() getpid()
-#define VM_SEP '/'
-#endif
 
 typedef struct VmPayEntry { uint8_t kind; char name[256]; uint64_t offset, length, hash; } VmPayEntry;
 
@@ -508,6 +537,7 @@ int main(int argc, char** argv) {
     if (packed > 0) { code = vmRunPacked(self, entries, nentries, argc, argv); free(entries); return code; }
 
     vmAddSelfToPkgPath(self);
+    g_vmSelf = self;
     if (argc >= 2 && (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "-?") == 0)) { vmUsage(stdout); return 0; }
     if (argc >= 2 && (strcmp(argv[1], "version") == 0 || strcmp(argv[1], "--version") == 0)) {
         printf("fire %s (the VM in C, docs/spec/VM_C.md): program files of format 1, int %d, float %d, %s\n", FIRE_VM_VERSION, VM_INT_WIDTH, VM_FLOAT_WIDTH, vmPkgRid());
@@ -531,12 +561,16 @@ int main(int argc, char** argv) {
         for (i = rest; i < argc; i++) args[1 + i - rest] = argv[i];
         args[1 + argc - rest] = NULL;
         fire_setArgs(1 + argc - rest, args);
+        g_vmArgv = argv;
         code = vmRunFile(argv[at], stats);
         free(args);
         return code;
     }
     for (i = 1; i < argc; i++) if (strcmp(argv[i], "--") == 0) { last = i; break; }
     fire_setArgs(argc - (last < argc ? last : argc - 1), argv + (last < argc ? last : argc - 1));   /* (Environment.Args: what follows `--`) */
+    for (i = 1; i < last; i++) if (argv[i][0] != '-') files++; else if (strcmp(argv[i], "--debug") == 0) i++;
+    if (files == 1) g_vmArgv = argv;   /* (one program: a variant of other widths may run it) */
+    files = 0;
     for (i = 1; i < last; i++) {
         int r, o = vmOption(last, argv, &i, &stats);
         if (o < 0) return 2;

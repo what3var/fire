@@ -151,12 +151,12 @@ namespace fire.Runtime
         }
 
         /// <summary>Reads the program from a packed file (for tests/tools; the runtime itself uses the
-        /// PayloadLoader). Requires that fire.dll can be loaded.</summary>
+        /// PayloadLoader) - packed with the .NET runtime or with the VM in C (CVmPayload). Requires that fire.dll can be loaded.</summary>
         public static LinkedProgram? UnpackProgram(string fileName)
         {
             var reader = PayloadFile.Open(fileName);
             var entry = reader?.Find(PayloadKind.Program, "program");
-            var bin = entry == null ? null : reader!.Read(entry);
+            var bin = entry == null ? CVmPayload.ReadProgram(fileName) : reader!.Read(entry);
             return bin == null ? null : Deserialize(bin);
         }
 
