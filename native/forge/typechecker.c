@@ -9,7 +9,6 @@
  * MemberLog, VarLog, FIRE_TYPECHECK_SUGGEST. A StaticType is an immutable FcST from the arena; `with` copies it. */
 
 #include <limits.h>
-#include "unitv.c"
 
 /* (one translation unit with the parser and the resolver: the names of the C# methods they share get a prefix here) */
 #define Check tcCheck

@@ -269,17 +269,5 @@ static void fcUnitParse(FcCtx* c, const char* symbol, FcUnit* out) {
     fcUnitParseWith(c, fcCaretExponents(c, symbol), out);
 }
 
-/* the text of Unit.Parse(suffix).ToString() for the unit suffix of a number literal (letters, or letters, `^` and a power): NULL for unitless */
-static const char* fcLiteralUnitText(FcCtx* c, const char* suffix) {
-    const char* caret;
-    FcCustomUnit* own;
-    if (!suffix || !suffix[0] || strcmp(suffix, "unitless") == 0) return NULL;
-    caret = strchr(suffix, '^');
-    if (caret) {
-        /* (ParseCombined names it by its terms: `m^1` is `m`) */
-        if (strcmp(caret, "^1") == 0) return fcStrN(c, suffix, (size_t)(caret - suffix));
-        return suffix;
-    }
-    if (!fcNamed(suffix) && c->customUnits->count > 0 && (own = fcCustomFind(c, suffix)) != NULL) return own->symbol;
-    return suffix;
-}
+/* the text of Unit.Parse(suffix).ToString() for the unit suffix of a number literal (NULL for unitless): fcLiteralUnitText in unitv.c */
+static const char* fcLiteralUnitText(FcCtx* c, const char* suffix);

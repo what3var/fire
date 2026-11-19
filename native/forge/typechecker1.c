@@ -599,7 +599,7 @@ static bool IsConstantValue(FcExpr* e) {
     }
 }
 /* the unit of a literal (Value.Unit: the text the parser kept, NULL: unitless) */
-static const FcU* fcLiteralUnit(FcTC* t, const FcValue* v) { return v->unit ? fcUParse(TC_, v->unit) : FC_UNITLESS; }
+static const FcU* fcLiteralUnit(FcTC* t, const FcValue* v) { (void)t; return v->unitv ? v->unitv : FC_UNITLESS; }
 static const FcST* LiteralType(FcTC* t, FcExpr* e) {
     if (e->kind == EK_LiteralExpr && ((FcLiteralExpr*)e)->value.kind == VK_Int) return stWithUnit(TC_, ST_INT, fcLiteralUnit(t, &((FcLiteralExpr*)e)->value), false);
     if (e->kind == EK_LiteralExpr && ((FcLiteralExpr*)e)->value.kind == VK_Float) return stWithUnit(TC_, ST_FLOAT, fcLiteralUnit(t, &((FcLiteralExpr*)e)->value), false);

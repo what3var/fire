@@ -3866,8 +3866,8 @@ static FcValue LiteralValue(FcParser* p, FcToken* tok) {
     FcValue v;
     memset(&v, 0, sizeof v);
     switch (tok->type) {
-        case TT_IntLiteral: v.kind = VK_Int; v.i = tok->intValue; v.unit = fcLiteralUnitText(p->ctx, tok->unitSuffix); break;
-        case TT_FloatLiteral: v.kind = VK_Float; v.f = tok->floatValue; v.unit = fcLiteralUnitText(p->ctx, tok->unitSuffix); break;
+        case TT_IntLiteral: v.kind = VK_Int; v.i = tok->intValue; v.unit = fcLiteralUnitText(p->ctx, tok->unitSuffix); v.unitv = fcUParse(p->ctx, tok->unitSuffix); break;
+        case TT_FloatLiteral: v.kind = VK_Float; v.f = tok->floatValue; v.unit = fcLiteralUnitText(p->ctx, tok->unitSuffix); v.unitv = fcUParse(p->ctx, tok->unitSuffix); break;
         case TT_StringLiteral: v.kind = VK_String; v.s = tok->stringValue; break;
         case TT_CharLiteral: v.kind = VK_Char; v.s = tok->stringValue; break;
         case TT_True: v.kind = VK_Bool; v.b = true; break;

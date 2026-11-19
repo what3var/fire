@@ -396,3 +396,9 @@ static const char* fcUnitDemandText(FcCtx* c, const char* unitText) {
         u->u.unitlessConverter ? u->u.unitlessConverter : "");
     return fcBufDone(c, &b);
 }
+
+/* the text of Unit.Parse(suffix).ToString() for the unit suffix of a number literal: NULL for unitless (the parser keeps a literal's unit as its text) */
+static const char* fcLiteralUnitText(FcCtx* c, const char* suffix) {
+    const FcU* u = fcUParse(c, suffix);
+    return fcUIsUnitless(u) ? NULL : fcUText(c, u);
+}
