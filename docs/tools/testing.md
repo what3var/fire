@@ -230,7 +230,8 @@ text, the program file, the C) to compare two compilers.
 
 **With the VM in C:** `tests/run-cases-vm.sh <forge> [<group>...] [--cache <dir>] [--fire <fire>]` compiles every case with the forge to a program file
 (`forge bytecode`, in each mode of the case) and runs it with the VM in C (`native/vm`, built with `cc` unless `--fire` names one), by the same rules -
-the measure of phase B of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md); `--cache` keeps the program files between runs ([VM_C.md](../spec/VM_C.md)).
+the measure of phase B of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md); `--cache` keeps the program files between runs ([VM_C.md](../spec/VM_C.md)). The
+libraries of the packages' natives come from the folder of the forge (its `Packages/` and `Prebuilt/`: `FIRE_PKG_PATH`).
 
 **Cases that master adds.** As long as master holds these cases as text in `Program.cs`, `tests/tools/merge-master.sh` merges it: the cases master added
 or changed go into the files (`tests/tools/cases.py`: a new case gets a number between its neighbours, a changed one loses its expected output, a case

@@ -255,7 +255,21 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
 3. Threads, Tasks, Aktoren, `sync globals`, Abbruch, `on`-Lambdas - über die Abschnitte der Runtime.
 4. Natives: eine Tabelle Name -> Funktion für die Kern-Natives (in der Runtime vorhanden, heute vom Generator direkt aufgerufen); Paket-Natives
    zunächst unverändert als Shared Library über die [C-ABI v1](../native/abi/fire_pkg_abi.h), den Host (`fire_host`: IO-/Netz-Regeln, Lambdas, Dienste) in C.
+   **Umgesetzt** ([VM_C.md](spec/VM_C.md#natives)): die Kern-Natives als Tabelle nach Namen; die Natives der Importe nach Index (graphics, windows,
+   reflection: `native/tables/bridges.def`, von `forge tables`; dann die der Pakete), beim Laden nach Namen gebunden - an eine Funktion der VM (was ein
+   Paket seinem Host lässt: `Sleep`, `__time_unit_ticks`, die Wartefunktionen der Geräte) oder an ihre Bibliothek: dieselben Shared Libraries, die
+   `PackageLibrary` für die C#-VM baut, auch `libfire_gfx` für Fenster (`FIRE_DISPLAY=headless` ohne Bildschirm), gesucht in `FIRE_PKG_PATH` und neben
+   der Programmdatei (`Packages/`, `Prebuilt/` eines forge). `fire_host` in C mit allem, was die Kopfdatei hat (Konsole, IO-/Netz-Regeln - alles
+   erlaubt wie in der gepackten C#-Runtime -, Lambdas mit dem Aufschub ihrer Ausnahmen bis zum Ende des Natives, Aufrufe von anderen Threads am
+   nächsten sicheren Punkt, Dienste, Leerlauf, Halte auf dem Ende des Programms). Dazu `Library` und `extern` über einen Aufruf nach der Signatur zur
+   Laufzeit (System V x86-64, AArch64). Offen: Regeln eines Hosts und seine Geräte (spark, Schritt 9), `inline c`, `Library`/`extern` unter Windows x64.
 5. Reflection, JSON, Probes, Module und Plugins in der VM.
+   **Zum größten Teil umgesetzt** ([VM_C.md](spec/VM_C.md#reflection-und-probes)): Reflection auf den Meta-Daten der Datei, die der Lader jetzt
+   behält (`vm-rf` 18 von 18), Lesen/Schreiben/Aufrufen/Erzeugen nach Namen auf den Wegen des Interpreters; JSON mit der Engine des nativen Builds
+   (`fire_json.h`) auf Tabellen, die die VM aus dem Programm baut (`$id`/`$ref`, Einheiten, Enums, Generics); Probes mit dem Probe-Speicher der Runtime
+   (`FIRE_REFLECTION` in der VM) und einer eigenen Fassung von `probedSet` nach Namen statt der Rückrufe ohne Kontext; `linq` (bis auf einen Fall von
+   Besitz aus Schritt 2). Offen: Fire-Plugins und Module (das Laden der Klassen eines zweiten Programms in ein laufendes; kein Fall des Korpus).
+   Maß: **869 von 1128** (vorher 751); was fehlt, ist Schritt 3 (rund 185) und Schritt 2 (rund 75).
 6. Debug-Agent (L4): Haltepunkte, Schritte, Variablen über die Scope-Ebenen, `set`, Pause, Zeilenprofil.
 7. Programm `fire` (`fire run x.fbc`); der Korpus, vom C#-Compiler übersetzt, läuft mit den erwarteten Ausgaben; Benchmarks gegen die C#-VM.
 8. `forge build --engine vm` bleibt: die C-VM mit angehängtem `.fbc` (und den Bibliotheken der Packages) statt der .NET-Einzeldatei.

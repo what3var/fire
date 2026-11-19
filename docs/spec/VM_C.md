@@ -1,20 +1,22 @@
 # Die VM in C (`native/vm`)
 
-Status: **Phase B, Schritte 1 und 2** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-b---die-vm-in-c) (19.11.2026). Der Spike davor:
+Status: **Phase B, Schritte 1 und 2, 4 und 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-b---die-vm-in-c) (19.11.2026; Schritt 3, die Threads,
+läuft daneben). Der Spike davor:
 [VM_SPIKE.md](VM_SPIKE.md). Die VM ist ein Interpreter auf `fire_rt.h` (L1): dieselben `Value`s, Objekte, Besitzlisten, Ausnahmen und Texte wie ein
 natives Programm; was nur die VM braucht, liegt in ihren Seitentabellen. Die Runtime ist **nicht** geändert (der eine Eingriff hinter `FIRE_VM` aus
 dem Spike bleibt der einzige), der native Build ist damit unverändert.
 
 ```
-cc -O2 native/vm/fire.c -o fire -lm                    (gcc 13, clang 18; eine Datei, die alles einbindet)
-forge bytecode x.fire -o x.fbc && ./fire x.fbc [-- args]
+cc -O2 native/vm/fire.c -o fire -lm -lpthread -ldl    (gcc 13, clang 18; eine Datei, die alles einbindet)
+forge bytecode x.fire -o x.fbc && FIRE_PKG_PATH=<ordner von forge> ./fire x.fbc [-- args]
 tests/run-cases-vm.sh <forge> [<gruppe>...] [--fire <fire>] [--cache <ordner>] [--list]
 ```
 
 `tests/run-cases-vm.sh` übersetzt jeden Fall aus `tests/cases` mit dem C#-forge zu einer `.fbc` (`forge bytecode`, in jedem Modus aus `//# modes:`),
 führt sie mit der C-VM aus und vergleicht nach denselben Regeln wie `tests/run-cases.sh` (`.expected`, `.unhandled`, `UNBEHANDELT:`, `.error`,
 `.diagnostics` = Fehlerausgabe von forge und VM zusammen). Mit `--cache` bleiben die Programmdateien liegen und werden nur neu geschrieben, wenn
-der Fall oder forge neuer ist - der zweite Lauf über den ganzen Korpus dauert dann rund 20 s (4 Kerne). Am Ende: Zählung je Ordner.
+der Fall oder forge neuer ist - der zweite Lauf über den ganzen Korpus dauert dann rund 20 s (4 Kerne). Am Ende: Zählung je Ordner. Die Bibliotheken
+der Paket-Natives sucht die VM im Ordner von forge (der Runner setzt `FIRE_PKG_PATH`), siehe [Natives](#natives).
 
 ## Dateien
 
@@ -24,7 +26,11 @@ der Fall oder forge neuer ist - der zweite Lauf über den ganzen Korpus dauert d
 | `vm.h` | Programm (`VmProgram`, `VmClass`, `VmProto`, `VmChunk`), Interpreter (`Vm`, `VmFrame`, `VmScope`, `VmHandlerRec`) | `RuntimeClass`, `FunctionProto`, `Chunk`, `VM` |
 | `vm_load.c` | der Lader: das ganze `.fbc`-Format in der Reihenfolge von `ProgramFile.Read`, behalten wird alles, was die Ausführung braucht | `ProgramFile.Read`, `CompiledProgram` (OwnerClass) |
 | `vm_core.c` | Scopes, Klassen bei der Runtime registrieren, Layout/Felder/Statics, Wahl der Methode (`Candidates`, `Overloads.Select`), Zugriff, Aufrufe, Spezialisierungen, Rückrufe der Runtime, Einheiten, Typargumente | `RuntimeClass`, `Overloads`, `VM.EnterCall`, `VM.IsMemberAccessAllowed` |
-| `vm_natives.c` | die Natives jedes Programms (`natives.def`) auf den Funktionen der Runtime | `NativeRegistry.CreateDefault`, `StringMethods` ... |
+| `vm_natives.c` | die Kern-Natives (`natives.def`) als Tabelle nach Namen auf den Funktionen der Runtime; die Natives der Importe nach Index (graphics, windows, reflection, Pakete - `bridges.def`), gebunden beim Start; die Natives, die ein Paket dem Host lässt (`Sleep`, `__time_unit_ticks`, die Wartefunktionen der Geräte) | `NativeRegistry.CreateDefault`, `StringMethods`, `HostNatives`, `TimeNatives`, `DeviceHostNatives` |
+| `vm_pkg.c` | die Natives der Pakete als Shared Library über die C-ABI v1 (`native/abi/fire_pkg_abi.h`), der Host `fire_host` in C (Konsole, IO-/Netz-Regeln, Lambdas, Dienste, Halte), auch die Bibliothek von graphics und windows (`libfire_gfx`) | `PackageNativeBinding`, `PackageHost` |
+| `vm_lib.c` | `Library` (`__LibCall`) und `extern`: Aufrufe nach einer C-Signatur, die erst zur Laufzeit feststeht | `VM.Library.cs`, `VM.ResolveDynamicExtern` |
+| `vm_reflect.c` | Reflection (`__refl_*`) und Probes (`probe`, `silence`, `Reflect.Probe`) | `ReflectionNatives`, `VM.Reflection.cs`, `VM.Probe.cs` |
+| `vm_json.c` | JSON: die Engine des nativen Builds (`fire_json.h`) auf Tabellen, die die VM aus dem Programm baut | `JsonMethods`, `VM.Json.cs` (`CppGenerator.Json.cs` für die Tabellen) |
 | `vm_run.c` | die Schleife (ein `switch` über `opcodes.def`), `DeclaredType`, Arrays einer Klasse, `finally`, Abwicklung | `VM.Execute`, `DeclaredType`, `VM.ThrowException` |
 | `fire.c` | das Programm `fire`: Programme nacheinander in einem Prozess, Abbau nach jedem (L6) | `fire.Runtime/Program.cs` |
 
@@ -32,12 +38,16 @@ der Fall oder forge neuer ist - der zweite Lauf über den ganzen Korpus dauert d
 
 Gelesen wird alles, behalten: Namen (interniert: ein Name vergleicht sich über den Zeiger), Einheiten (die Tabelle der Datei wird beim Start die
 Tabelle der Runtime, `unitsInit`; Zeile 0 ist "ohne Einheit"), Enums (`g_enums`), die eigenen Einheiten (`customUnits`: Texte, die eine Einheit
-nennen, `g_textUnits`), Ressourcen (`g_resources`), die Namen der Package-Natives (für Meldungen), Klassen mit Feldern, `fieldInfo` (Einheit, Art,
-Klasse, typisiertes Array, `arrayOfParam`, Zugriff), Statics, Methoden, Konstruktoren nach Arität und die zusätzlichen der Überladung nach Typ,
+nennen, `g_textUnits`), Ressourcen (`g_resources`), die Package-Natives mit den Dateinamen ihrer Bibliotheken, die Externs (als C-Signatur),
+Klassen mit Feldern, `fieldInfo` (Einheit, Art, Klasse, typisiertes Array, `arrayOfParam`, Zugriff, Attribute), die Meta-Daten der Reflection (`ClassMeta`:
+Mitglieder mit Art, Typ, Zugriff, Parametern und Attributen; Basisnamen, Attribute und eigene Interfaces der Klasse), `thisReads` (was ein Getter von
+`this` liest: Probes auf berechneten Properties), Statics, Methoden, Konstruktoren nach Arität und die zusätzlichen der Überladung nach Typ,
 Destruktor; Funktionen mit Defaults, Zugriff, Masken (`refMask`, `captureCopyMask`), Überladungs-Deskriptoren (`paramTypes`), `paramNames`,
-Typparametern und Spezialisierungen (`specArgs`, `specParamKinds`); Chunks mit Code, Konstanten, Einheiten, Funktionen, Handlern, Zeilentabellen.
+Typparametern und Spezialisierungen (`specArgs`, `specParamKinds`), der Selektor-Pfad eines Lambdas (`c => c.radius`); Chunks mit Code, Konstanten,
+Einheiten, Funktionen, Handlern, Zeilentabellen.
 Nach dem Lesen bekommt jede Funktion einer Klasse ihren `OwnerClass` (rekursiv: Lambdas, Defaults, Spezialisierungen).
-Übersprungen: Meta-Daten der Klassen (Reflection, B5), Externs, `receiverTypeArgs`, Namen der Locals (Debugger, B6).
+Übersprungen: `receiverTypeArgs`, `keptMembers` (Stripping des nativen Backends), `graphicsNatives` (die VM hat ihre Reihenfolge selbst), Namen der Locals
+(Debugger, B6).
 
 ## Interpreter
 
@@ -93,32 +103,106 @@ Gelöst mit den beiden Wegen, die der Spike vorschlug:
   `ArrClass.fits/zero` (64 Paare, je mit dem `DeclaredType`-Text des Arrays). Reicht der Vorrat nicht, lehnt der Lader das Programm ab bzw. bleibt das
   Array ungetypt.
 
-Noch offen von Punkt 1: `MsgFn` (Aktoren), `ThreadsCatch.fn` (B3), `ProbeRawSet/Get`, `RfClass.make`, `RfMember.attrs` (B5).
+Aus Schritt 5 dazu: `ProbeRawSet/Get` (die Probes) haben eine **eigene Fassung der VM** - `vmProbedSet` schreibt und liest das Mitglied über seinen
+Namen statt über die Rückrufe, die der Generator je Feld erzeugt; die Einträge (`ProbeNode`, `ProbeEntry`) und `probeRun` sind die der Runtime.
+`RfClass`/`RfMember` (mit `make` und `attrs`) braucht die VM gar nicht: ihre Reflection beschreibt die Klassen aus den Meta-Daten der Datei
+(`vm_reflect.c`), nicht aus den Tabellen eines nativen Builds. `FireLibThunk` (eine Funktion je Signatur, `Library.Get`) ersetzt ein Aufruf nach der
+Signatur zur Laufzeit (`vm_lib.c`).
+
+Noch offen von Punkt 1: `MsgFn` (Aktoren), `ThreadsCatch.fn` (B3).
+
+## Natives
+
+**Kern-Natives** (`natives.def`, vom Generator heute direkt gerufen): eine Tabelle Name -> Funktion (`g_vmCoreNatives`: `print`, `__StringCall`,
+`__CharCall`, `__ResourceCall`, `__MathCall`, `__JsonCall`, `__EnvCall`, `__LibCall`, `__BitsCall`, `__array_copy`, `__type_arg`, `__SbCall`), beim Start
+an die Indizes von `natives.def` gebunden; dieselben Funktionen der Runtime wie im erzeugten C (`stringCall`, `mathCall`, `envCall`, ...). Die Natives der
+Threads, Tasks, Kanäle und Completions kommen mit Schritt 3 in dieselbe Tabelle.
+
+**Natives der Importe**: hinter `natives.def` in der Reihenfolge, in der der Compiler sie registriert (`ImportedPreludes.Insert`): die von `graphics`,
+dann `windows`, dann `reflection` (die Datei nennt sie nicht - ein Aufruf adressiert sie über den Index: `native/tables/bridges.def`, geschrieben von
+`forge tables` aus `GraphicsBridge.RegisterStubs`, `WindowsBridge.RegisterStubs` und `ReflectionNatives.Register`), dann die Natives der Pakete, die die
+Datei mit ihren Bibliotheken nennt (`packageNatives`, `packageNativeLibraries`). Jeder wird beim Laden nach Namen gebunden: an eine Funktion der VM
+(`g_vmHostNatives`: die Reflection und was ein Paket seinem Host lässt, `"host": true` - `Sleep`, `__time_unit_ticks`, `__DEVWaitFor`,
+`__DEVWaitForString`) oder an seine Bibliothek, die beim ersten Aufruf geladen wird.
+
+**Pakete über die C-ABI v1** (`vm_pkg.c`): wie die C#-VM - dieselben Bibliotheken, die `PackageLibrary` baut (`libfire_pkg_<paket>_<import>.so`, für
+graphics und windows `libfire_gfx.so`). Gesucht werden sie in den Ordnern von `FIRE_PKG_PATH` (`:`, unter Windows `;`), dann neben der Programmdatei:
+im Ordner selbst, in `Packages/<paket>/lib/<rid>/` (der Paketspeicher eines forge, dort baut `forge run` sie) und in `Prebuilt/<paket>/<rid>/` (was ein
+Build von forge mitbringt). Eine Bibliothek bleibt für die folgenden Programme geladen; am Ende jedes Programms `fire_pkg_reset`. Werte gehen als
+Daten hinüber (Zahlen, Text, Arrays kopiert - ein Text ohne Kopie, die UTF-16 der Runtime sind die der ABI -, Byte- und Wortpuffer per Referenz),
+ein Objekt oder Zeiger ist die `ArgumentException` der C#-VM. Ein Fehler der Bibliothek (1) beendet das Programm mit dem Text, eine Ausnahme (2)
+wird mit `fireError` geworfen (die Klasse des Programms, sonst das Ende mit ihrem Text).
+
+**Der Host** (`fire_host`): Konsole = die des Prozesses (`std_write` geht durch `stdout` der Runtime: die Reihenfolge mit `print` bleibt), Pfade und
+Hosts sind alle erlaubt (wie die gepackte Runtime der C#-VM: sie hat keinen anderen Host), Geräte des Hosts keine (das devices-Paket nimmt seine
+eigenen Treiber), `win_attach`/`win_detach` gehen an `libfire_gfx`. **Lambdas** (`FIRE_LAMBDA`): ein Handle je Lambda, das bis zum Ende des Programms
+lebt; `call_lambda` auf dem Thread der VM läuft sofort, verschachtelt (`fire_cbCall`) - eine Ausnahme darin, während das Programm auf den Native wartet,
+behält die VM und wirft sie am Aufruf des Natives, wenn er zurück ist (2, SPEC 8.1.4); wo niemand wartet (ein Dienst, ein Leerlauf), meldet sie sie.
+Von einem anderen Thread wird der Aufruf (mit kopierten Argumenten) gemerkt und am nächsten sicheren Punkt ausgeführt - jeder Aufruf eines Paket-Natives,
+jede Runde eines Wartens (`Sleep`, das Ende des Programms). **Dienste** (`request_service`): an denselben Punkten `fire_pkg_service` aller
+Bibliotheken, die es haben; **Leerlauf** (`fire_pkg_idle`) in jeder Runde eines Wartens; **Halte** (`hold`): das Ende des Programms wartet, solange
+eine Bibliothek es hält (offene Fenster), und bedient dabei, was ankommt. Fenster laufen so wie in der C#-VM: `Window.Show()` startet den Manager
+mit seinem eigenen Thread in der Bibliothek, dessen Zyklen kommen als Dienste (mit `FIRE_DISPLAY=headless` ohne Bildschirm).
+
+**ABI v2**: die Kopfdatei ist Version 1, die Lambdas, `request_service` und `hold` sind Felder von `fire_host` (an `size` erkannt) - die VM bietet alle.
+Eine ABI, in der die Bibliothek die `Value`s der VM direkt benutzt (Roadmap: "später"), gibt es noch nicht; die Pakete benutzen sie also nicht.
+
+**Library und extern** (`vm_lib.c`): ein natives Programm erzeugt einen Thunk je Signatur, die VM ruft nach der Signatur, die sie zur Laufzeit liest:
+ganze Zahlen (Zeiger, bool, char, int jeder Breite - auf 64 Bit erweitert) und Floats (ein `float[32]` als die Bits eines float in der unteren Hälfte des
+Registers) werden getrennt gezählt, die Funktion wird als eine mit 8 ganzzahligen und 8 Float-Parametern gerufen. Das gilt für die Aufrufkonventionen,
+in denen beide eigene Register der Reihe nach haben (System V x86-64, AArch64) - unter Windows x64 ist eine Signatur "nicht bekannt" (Get sagt es).
+`extern` mit `#extern "lib"` geht denselben Weg (CallExtern); `inline c` braucht einen C-Compiler zur Laufzeit und fehlt. Fire-Plugins
+(`.fireplugin`, `__LibCall(5)`) lädt die VM noch nicht: `Library.Load` sagt, dass das Programm keine laden kann.
+
+## JSON
+
+`#import "json"`: die Engine des nativen Builds (`fire_json.h`, dieselben Texte und Fehler wie `JsonMethods`) auf Tabellen, die die VM beim ersten
+Aufruf aus dem Programm baut, so wie `CppGenerator.Json.cs` sie schreibt: je Klasse ihre Felder, wie JSON sie sieht (`JsonFieldsOf`: Basisklasse zuerst,
+`[NonSerialized]` weggelassen, `[JsonName]`), dahinter die `defined`-Felder, die nicht nach JSON gehen (ein gelesenes Objekt hat ihre Nullen), Einheit,
+typisiertes Array, Klasse der Elemente; die Flags (Aktor, `OnDeserialized`, `List`, `JsonObject`, nicht serialisierbar); die Plätze von `List` und
+`JsonObject`; die Texte der Typargumente (die der VM sind Texte). Jede Klasse steht in der Tabelle (`"$type"` kann jede nennen). `$id`/`$ref`, Zyklen,
+Einheiten, Enums, generische Klassen kommen damit von selbst.
+
+## Reflection und Probes
+
+`#import "reflection"` (`vm_reflect.c`): die Beschreibungen (`Type`, `Member`, Attribute) aus den Meta-Daten der Datei; Lesen, Schreiben, Aufrufen und
+Erzeugen nach Namen auf den Wegen des Interpreters - Felder mit ihren Prüfungen (Zugriff, Einheit, Art, Typ, Record), Properties und Methoden als
+verschachtelte Aufrufe (Überladung nach den Werten, Defaults, Spezialisierungen), `Reflect.New` mit dem Konstruktor (ein Record gilt währenddessen als im
+Bau). Die Zugriffsprüfung sieht den Code, der die Bibliothek gerufen hat (der erste Frame, dessen Klasse keine der Bibliothek ist, `VC_REFLHELPER`).
+
+Probes: die Runtime hält sie (`FIRE_REFLECTION` in der VM: `ProbeNode` je Objekt, Flag 2 am Objekt, freigegeben mit dem Objekt); ein `SetField` auf ein
+Objekt mit Flag 2 geht durch `vmProbedSet` - `changing`-Handler (einer, der `false` gibt, bricht ab), das Schreiben, `changed`-Handler bei einem anderen
+Wert, dann die Probes auf berechneten Properties, die das Mitglied lesen (`ComputedSources` aus `thisReads`). Die Opcodes `Probe`, `SilenceMember`,
+`SilenceValue` und `Reflect.Probe`/`Silence` mit den Fehlern der C#-VM.
 
 ## Stand gegen den Korpus
 
-`tests/run-cases-vm.sh` mit dem C#-forge, alle Ordner (der Spike vorher: 306):
+`tests/run-cases-vm.sh` mit dem C#-forge, alle Ordner (der Spike: 306; nach den Schritten 1 und 2: 751 von 1128 - der Korpus hat seitdem zwei Fälle mehr):
 
-| Ordner | richtig | falsch | | Ordner | richtig | falsch |
-|---|---|---|---|---|---|---|
-| native | 216 | 285 | | vm-gl | 8 | 19 |
-| types | 261 | 14 | | vm-lq | 23 | 9 |
-| syntax | 56 | 6 | | vm-perf | 19 | 0 (1 nicht) |
-| smoke | 52 | 6 | | vm-rf | 1 | 17 |
-| diag | 35 | 3 | | vm-sc | 28 | 2 |
-| vm-arr, vm-arr-error | 9 | 0 | | vm-sc-checked | 4 | 2 |
-| vm-clone, vm-clone-error | 13 | 2 | | vm-shutdown | 0 | 6 |
-| vm-ext, vm-ext-error | 19 | 1 | | vm-life | 7 | 3 |
-| **zusammen** | **751** | **375** | | | | |
+| Ordner | richtig | falsch | vorher | | Ordner | richtig | falsch | vorher |
+|---|---|---|---|---|---|---|---|---|
+| native | 306 | 197 | 216 | | vm-gl | 8 | 19 | 8 |
+| types | 263 | 12 | 261 | | vm-lq | 28 | 4 | 23 |
+| syntax | 56 | 6 | 56 | | vm-perf | 19 | 0 (1 nicht) | 19 |
+| smoke | 52 | 6 | 52 | | vm-rf | 18 | 0 | 1 |
+| diag | 38 | 0 | 35 | | vm-sc | 28 | 2 | 28 |
+| vm-arr, vm-arr-error | 9 | 0 | 9 | | vm-sc-checked | 4 | 2 | 4 |
+| vm-clone, vm-clone-error | 13 | 2 | 13 | | vm-shutdown | 0 | 6 | 0 |
+| vm-ext, vm-ext-error | 20 | 0 | 19 | | vm-life | 7 | 3 | 7 |
+| **zusammen** | **869** | **259** | **751** | | | | | |
 
-Von den 375 brauchen rund 320 etwas aus den späteren Schritten von Phase B, die VM meldet es als Laufzeitfehler ("does not support ... yet"):
+Von den 259 brauchen rund 185 **Schritt 3** (die VM meldet es als Laufzeitfehler "does not support ... yet"): `Fire` (126 Fälle), `PostGlobal`,
+`Process`/`TryProcess`, `Leave`, `RegisterThreadsCatch`/`RegisterTerminateCatch`, Kanäle (`__chan_*`), `Completion`, Abbruch, `await`, `handover`,
+`__fd_wait`; dazu `vm-shutdown` und der größte Teil von `vm-gl`. Aus den Schritten 4 und 5 meldet kein Fall mehr etwas.
 
-* **Schritt 3** (rund 150): Threads, Tasks, Aktoren - `Fire`, `PostGlobal`, `Process`/`TryProcess`, `Leave`, `RegisterThreadsCatch`, Kanäle,
-  `Completion`, Abbruch, `await`, `handover`; dazu `vm-shutdown` und der größte Teil von `vm-gl`.
-* **Schritt 4** (rund 70): Natives der Packages (`io`, `net`, `time`, `data`, `hash`, `circuits`, `s3d`, `gpio`, ...).
-* **Schritt 5** (rund 85): JSON (`__JsonCall`), Reflection (`vm-rf`, die Natives `__refl_*`), Probes, `linq`.
+Der Rest (rund 75, falsche Ausgabe oder eine Ausnahme, die nicht sein soll) ist Arbeit an Schritt 2: `#intwidth 32|16` und `#floatwidth 32` (VM_SPIKE
+Punkt 2), benannte Argumente (`ArgNames`: auch die UI-Fälle `Parameter 'window' is a Window, not Bool`), die Reihenfolge der Destruktoren
+weitergereichter Argumente, Typargumente von Deklarationen generischer Klassen (DECISIONS D10), Besitz in Property-Accessoren und bei `try take` -
+darunter `vm-lq/0180` (ein Array-Literal, das in einer Methode an `Linq.From` geht, ist zerstört, wenn die Abfrage läuft), drei UI-Fälle (ein Element,
+das ein Klick neu macht) und `native/3370` (circuits: ein Array-Literal in `foreach`).
 
-Der Rest (rund 55, falsche Ausgabe) ist Arbeit an Schritt 2: `#intwidth 32|16` und `#floatwidth 32` (VM_SPIKE Punkt 2, eine Variante der VM je
-Breite - rund 10 Fälle), benannte Argumente (`ArgNames`), die Reihenfolge der Destruktoren weitergereichter Argumente (die C#-VM gibt sie dem Scope
-des Aufgerufenen, der Generator einer Argumentliste), Typargumente von Deklarationen generischer Klassen (`List<Dog>` gegen `List<Animal>`,
-DECISIONS D10), Besitz in Property-Accessoren (`SetFieldAccessor` ohne `PullBackAdopted`), einige Meldungen.
+**Offen in den Schritten 4 und 5**: Fire-Plugins und Module (`Library.Load` einer `.fireplugin`, `__LibCall(5)`: das Laden der Klassen eines zweiten
+Programms in ein laufendes, VM.Plugins.cs - kein Fall des Korpus), `inline c` (ein C-Compiler zur Laufzeit), `Library`/`extern` unter Windows x64,
+Regeln für Pfade und Hosts (die VM erlaubt alles, wie die gepackte Runtime der C#-VM; ein Host mit Regeln - spark - kommt mit Schritt 9), die Geräte
+des Hosts (`dev_*` von `fire_host`: ebenfalls spark), Typargumente eines aus JSON gelesenen Objekts (die VM kennt ihre Anzahl nur für die, die sie
+selbst macht).
