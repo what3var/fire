@@ -130,6 +130,7 @@ static int vmRunFile(const char* path, bool stats) {
     g_vmCur = NULL;
     g_vmDemands = NULL;
     g_vmSpecs = NULL;
+    g_vmArrCount = 0; g_arrClasses = NULL;
     g_textUnits = NULL; g_textUnitCount = 0;
     free(g_vmTextUnits); g_vmTextUnits = NULL;
     vmUnload(p);

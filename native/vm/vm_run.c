@@ -174,6 +174,8 @@ static VmSpec* vmSpec(Vm* vm, const char* text) {
     }
     {   /* (the alternatives, without the type arguments behind \x05) */
         const char* ta = strchr(t, '\x05');
+        const char* ek = strchr(t, '\x02');   /* (an enum's key behind its name: ArrayOfTypeArg) */
+        if (ek && (!ta || ek < ta)) ta = ek;
         sp->alts = ta ? vmIntern(vm->prog, t, (size_t)(ta - t)) : t;
     }
     sp->next = g_vmSpecs;
@@ -313,6 +315,57 @@ static bool vmGuardType(Vm* vm, Value* v, const char* text, Value self, TArgs ct
     }
     guardClassFailed(*v, vmDeclaredDisplayFor(vm, text, self, ctargs, db, sizeof db), what ? what : "A value");
     return true;
+}
+
+/* Arrays of a class, a string or an enum (ArrayElem.Class, ROADMAP 19): the runtime's g_arrClasses, whose `fits`/`zero` have no context - the VM
+ * keeps a fixed pool of trampolines, one per DeclaredType text of the program (VM_SPIKE point 1). */
+#define VM_ARRCLASSES 64
+static ArrClass g_vmArrClasses[VM_ARRCLASSES];
+static const char* g_vmArrTexts[VM_ARRCLASSES];
+static const char** g_vmArrIsA[VM_ARRCLASSES];
+static Value g_vmArrZero[VM_ARRCLASSES];
+static uint32_t g_vmArrCount;
+static bool vmArrFits(uint32_t k, Value v) { return vmFitsDeclared(g_vmCur, v, g_vmArrTexts[k], Undef(), NULL); }
+static Value vmArrZero(uint32_t k) { return g_vmArrZero[k]; }
+#define VM_AC(k) static bool vmAcf##k(Value v) { return vmArrFits(k, v); } static Value vmAcz##k(void) { return vmArrZero(k); }
+#define VM_AC8(k) VM_AC(k##0) VM_AC(k##1) VM_AC(k##2) VM_AC(k##3) VM_AC(k##4) VM_AC(k##5) VM_AC(k##6) VM_AC(k##7)
+VM_AC(0) VM_AC(1) VM_AC(2) VM_AC(3) VM_AC(4) VM_AC(5) VM_AC(6) VM_AC(7) VM_AC8(1) VM_AC8(2) VM_AC8(3) VM_AC8(4) VM_AC8(5) VM_AC8(6) VM_AC8(7)
+#define VM_ACR(k) { vmAcf##k, vmAcz##k }
+#define VM_ACR8(k) VM_ACR(k##0), VM_ACR(k##1), VM_ACR(k##2), VM_ACR(k##3), VM_ACR(k##4), VM_ACR(k##5), VM_ACR(k##6), VM_ACR(k##7)
+static const struct { bool (*fits)(Value); Value (*zero)(void); } g_vmAcFns[VM_ARRCLASSES] = {
+    VM_ACR(0), VM_ACR(1), VM_ACR(2), VM_ACR(3), VM_ACR(4), VM_ACR(5), VM_ACR(6), VM_ACR(7), VM_ACR8(1), VM_ACR8(2), VM_ACR8(3), VM_ACR8(4), VM_ACR8(5), VM_ACR8(6), VM_ACR8(7) };
+/* the 1-based entry of a DeclaredType text in g_arrClasses (0: no room) */
+static uint32_t vmArrClassOf(Vm* vm, const char* text) {
+    uint32_t k;
+    VmSpec* sp;
+    for (k = 0; k < g_vmArrCount; k++) if (g_vmArrTexts[k] == text) return k + 1;
+    if (g_vmArrCount >= VM_ARRCLASSES) return 0;
+    k = g_vmArrCount++;
+    sp = vmSpec(vm, text);
+    g_vmArrTexts[k] = text;
+    g_vmArrClasses[k].fits = g_vmAcFns[k].fits;
+    g_vmArrClasses[k].zero = g_vmAcFns[k].zero;
+    g_vmArrClasses[k].display = sp->display;
+    g_vmArrZero[k] = Undef();
+    if (!strcmp(sp->display, "string")) g_vmArrZero[k] = vmConstStrUtf8(vm->prog, "");
+    else {
+        uint32_t e;
+        for (e = 0; e < vm->prog->nenums; e++)
+            if (!strcmp(vm->prog->enums[e].name, sp->display) && vm->prog->enums[e].count) { g_vmArrZero[k] = EnumV(vm->prog->enums[e].members[0].value, (uint16_t)(e + 1)); break; }
+    }
+    {   /* (isA: the classes and interfaces of the chain - an array of a derived class goes where one of its base is declared) */
+        VmClass* c = vmClassNamed(vm->prog, vmName(vm->prog, sp->alts));
+        uint32_t n = 0, i;
+        VmClass* q;
+        for (q = c; q; q = q->base) n += 1 + q->ninterfaces;
+        g_vmArrIsA[k] = (const char**)vmAlloc(&vm->prog->arena, (n + 2) * sizeof(char*));
+        n = 0;
+        for (q = c; q; q = q->base) { char pn[160]; g_vmArrIsA[k][n++] = vmName(vm->prog, vmPlainName(q->name, pn, sizeof pn)); for (i = 0; i < q->ninterfaces; i++) g_vmArrIsA[k][n++] = q->interfaces[i]; }
+        g_vmArrIsA[k][n] = NULL;
+        g_vmArrClasses[k].isA = c ? g_vmArrIsA[k] : NULL;
+    }
+    g_arrClasses = g_vmArrClasses;
+    return k + 1;
 }
 
 /* `T items[]`, `new T[n]` (OpCode.TypeArrayOfParam, FieldInfo.ArrayOfParam): the array is typed by the type argument when that is int, float, bool or char
@@ -1475,7 +1528,12 @@ static void vmRun(Vm* vm, int32_t base) {
             if (code & 0x80) { if (v.kind != K_Buffer) arrMarkOpen(v, (uint8_t)elem, (int)rank, 1); break; }
             if (elem == 11) { sp[-1] = typeBuffer(v, (int)rank, &fr->scope->temp); CHECK(); break; }
             if (elem == 12) { sp[-1] = typeWordBuffer(v, (int)rank, &fr->scope->temp); CHECK(); break; }
-            if (elem == 13) break;   /* (an array of a class: g_arrClasses of the VM - not yet) */
+            if (elem == 13) {   /* an array of a class, a string or an enum: its entry of g_arrClasses */
+                const char* t = unitIdx != 0xFFFF && unitIdx < fr->chunk->nk ? fr->chunk->kname[unitIdx] : NULL;
+                uint32_t ac = t ? vmArrClassOf(vm, t) : 0;
+                if (ac) { typeArray(v, 13, (int)rank, ac, (uint8_t)(16 | ((code & 0x40) ? 8 : 0)), vmConstStrUtf8(prog, g_vmArrClasses[ac - 1].display), 1); CHECK(); }
+                break;
+            }
             {
                 uint32_t unit = 0;
                 Value unitText = vmConstStrUtf8(prog, "(no unit)");
