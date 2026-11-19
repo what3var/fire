@@ -1153,6 +1153,21 @@ kann ein großes Programm in mehrere Übersetzungseinheiten geteilt werden, die 
 nimmt es nicht); das Programm läuft aber langsamer: eine Schleife mit Rekursion, List, Strings und Objekten 0,30 s mit gcc -O2, 2,6 s mit TinyCC, 3,3 s als
 Debug-Build mit gcc (-O0 -g), 7,5 s als Debug-Build mit TinyCC; 117 KB mit gcc, 181 KB mit TinyCC; die Ausgabe ist überall die der VM.
 
+#### Das C in mehreren Einheiten (`"split"`, [NATIVE_SPLIT.md](NATIVE_SPLIT.md))
+
+Ein großes Programm wird nicht als eine Datei übersetzt, sondern als mehrere Übersetzungseinheiten, die der Compiler nebeneinander übersetzt
+(`FIRE_BUILD_JOBS`, sonst ein Compiler je Kern), dann gebunden: `fire_program.h` (Kopf: Schalter, `fire_rt.h`, Deklarationen), `fire_program.c` (der Zustand der
+Runtime, die Daten, `fire_init`, `main`), `fire_program_hN.c` (die Helfer), `fire_program_N.c` (die fire-Funktionen, nach Modul, Quelle und Klasse gruppiert,
+nach geschätzten Kosten geschnitten) und `fire_natives_<import>.c` (die Natives in C eines Imports, der für sich steht). Was eine andere Einheit braucht, ist
+`FIRE_PS` (`hidden`) statt `static`, alles andere bleibt `static`; Strings, Typargumente und Tabellen haben eine Definition.
+
+* `"split": "auto"` (Standard): geteilt mit gcc, clang (MinGW) und Emscripten ab 2 MB C; TinyCC, Open Watcom, `custom`, kleine Programme und **Publish**
+  bleiben eine Datei. `"on"` teilt, wo die Toolchain es kann, `"off"` nie; `--split auto|on|off`, `FIRE_SPLIT=1/0` (Tests) vor allem.
+* Die eine Datei ist Byte für Byte die von vorher; geteilt wird erst nach dem Generator, aus dessen Text (`ProgramSplit`).
+* Der Assistent (gcc, 4 Kerne, mit Last): -O2 274 s -> 114 s, -O0 72 s -> 19 s für den Compiler; das Programm wird größer (-O2 10,3 -> 14,4 MB), weil jede
+  Einheit die Runtime-Funktionen und Feld-Helfer, die sie nicht einbettet, selbst hat. Docking: -O2 126 s -> 70 s, -O0 34 s -> 14 s. Zahlen, Entscheidungen
+  und was offen ist (Größe: LTO): NATIVE_SPLIT.md, Abschnitt 7.
+
 #### Ziel `esp32`: Run und Debug auf dem Board (ROADMAP 8.6)
 
 Mit dem Ziel `esp32` (Build-Leiste bzw. `settings.target`) machen F5/F10/F11 aus dem Programm ein **ESP-IDF-Projekt** in `bin/esp32-<modus>` (die Komponente, die
