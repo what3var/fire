@@ -229,6 +229,11 @@ static class CVmRunTests
                 $"engine {target.Engine}, sources {string.Join(", ", target.SourceFiles)}, src {src}");
             if (src < 0) return;
             var main = target.MainThread;
+            // (spark's panels ask at once, at the entry: the main thread waited there with the GIL, the agent for it - forever)
+            bool entryRead;
+            try { entryRead = main.Scopes() != null && main.Globals() != null && main.CurrentTrace().Count >= 1; }
+            catch (NativeDebugException ex) { entryRead = false; Console.WriteLine("    " + ex.Message); }
+            Check("Debuggen: Scopes, Globals und Aufrufstapel schon am Einstieg", entryRead);
             // (the program reads its input first: the pipe, as in spark's Output panel)
             Check("Debuggen: Eingabe ueber die Pipe", target.Process is { } process && CVmLaunch.WriteInput(process, "dbg"));
             bool paused = main.RunUntilBreakpoint(new HashSet<(int, int)> { (src, 6) }, () => false);

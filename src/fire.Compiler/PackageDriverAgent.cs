@@ -382,7 +382,9 @@ namespace fire.Compiler
             failedPlugins = new();
             lock (_lock) _pluginFailures.Clear();
             var ready = new ManualResetEventSlim();
-            var session = new LiveSession();
+            // (in the C# VM of this process, also with the VM in C as spark's engine: the drivers come as fire plugins, which the VM in C cannot load yet, and the devices
+            // they make are shared with the programs spark runs in its VM - docs/ROADMAP_C_PORT.md, phase B step 9, "Geräte")
+            var session = new LiveSession { InProcessOnly = true };
             session.Message += line =>
             {
                 if (_session != session) return;

@@ -100,8 +100,11 @@ namespace fire.Compiler
 
         public bool IsRunning => _child != null ? ChildRunning() : _thread is { IsAlive: true };
 
-        /// <summary>The program runs in `fire` (not in the C# VM of this process).</summary>
+        /// <summary>The program runs in the C# VM of this process (not in `fire`).</summary>
         public bool InProcess => _child == null;
+
+        /// <summary>Always in the C# VM of this process (the driver agent of spark: fire plugins, devices shared with spark's VM), also when the VM in C is the engine.</summary>
+        public bool InProcessOnly { get; init; }
 
         // ---- the program in a process of its own (the VM in C) ----
         private System.Diagnostics.Process? _child;
@@ -118,7 +121,7 @@ namespace fire.Compiler
         /// <summary>Compiles and starts the program (`basePath`: where its `#include`s are looked for). Compile errors are thrown here.</summary>
         public void Start(string script, string? basePath = null)
         {
-            if (!fire.Debugging.CVmLaunch.UseDotnet && LocateFire() is { } vm)
+            if (!InProcessOnly && !fire.Debugging.CVmLaunch.UseDotnet && LocateFire() is { } vm)
             {
                 StartChild(script, basePath, vm);
                 return;

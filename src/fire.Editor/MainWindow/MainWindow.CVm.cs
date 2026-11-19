@@ -98,9 +98,9 @@ namespace fire.Editor
                     _nativeRunIsVm = true;
                     _output.InputTarget = line =>
                     {
-                        if (!CVmLaunch.WriteInput(run, line)) return false;
-                        OnScriptOutput(line);   // (like a terminal shows what was typed)
-                        return true;
+                        if (run.HasExited) return false;
+                        OnScriptOutput(line);   // (like a terminal shows what was typed - before what the program answers)
+                        return CVmLaunch.WriteInput(run, line);
                     };
                     _nativePlainRunning = true;   // (it runs without the debugger: Start and the steps are grey until it ends)
                     _isBusy = false;
@@ -125,9 +125,9 @@ namespace fire.Editor
                 if (!debugTarget.CarriesConsole && debugTarget.Process is { } process)
                     _output.InputTarget = line =>
                     {
-                        if (!CVmLaunch.WriteInput(process, line)) return false;
+                        if (process.HasExited) return false;
                         OnScriptOutput(line);
-                        return true;
+                        return CVmLaunch.WriteInput(process, line);
                     };
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
