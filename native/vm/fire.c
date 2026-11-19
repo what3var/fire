@@ -121,6 +121,8 @@ static void vmExecVariant(const char* variant) {
 #endif
 }
 
+static bool g_vmTime = false;   /* --time */
+
 /* Runs one program (`bytes`, malloc'd - freed here; `path` names it in the messages; the libraries of its packages are looked up next to `pkgPath`); 0 when it
  * ended normally, 1 with an exception nothing caught or an error of the runtime (or the code of `terminate`), 2 when it could not be loaded. */
 static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, size_t len, bool stats) {
@@ -131,6 +133,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     uint32_t i;
     int result;
     ResEntry* res = NULL;
+    int64_t t0 = fire_plat_unixMicros(), t1, t2;
     p = vmLoad(bytes, len, error, sizeof error);
     if (!p) { free(bytes); fprintf(stderr, "fire: %s: %s\n", path, error); return 2; }
     if (p->intWidth != VM_INT_WIDTH || p->floatWidth != VM_FLOAT_WIDTH) {
@@ -145,6 +148,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
         return 2;
     }
 
+    t1 = fire_plat_unixMicros();
     vm = (Vm*)calloc(1, sizeof(Vm));
     vm->prog = p;
     vm->stack = (Value*)malloc(VM_STACK * sizeof(Value));
@@ -197,6 +201,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
         if (!vm->quiet) { vm->quiet = 1; g_zombies.quiet++; }
         g_zombies.depth = 0;
     }
+    t2 = fire_plat_unixMicros();
     if (terminateRequested() && !vm->failed) { vm->terminated = 1; vm->exitCode = mainExitCode(); }
 
     /* ---- the end of the script: everything it had goes ---- */
@@ -242,6 +247,9 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     vmUnload(p);
     free(bytes);
     fflush(stdout);
+    if (g_vmTime)   /* (--time: what the benchmarks compare - loading, running, taking down) */
+        fprintf(stderr, "[fire vm] %s: loaded in %.2f ms, ran in %.2f ms, taken down in %.2f ms\n", path, (double)(t1 - t0) / 1000.0, (double)(t2 - t1) / 1000.0,
+            (double)(fire_plat_unixMicros() - t2) / 1000.0);
     if (stats)
         fprintf(stderr, "[fire vm] %s: %s; alive afterwards: %u handles (objects, arrays), %d strings, %u in the temporary pool, %u classes\n", path,
             result == 0 ? "ended" : "failed", vmLiveHandles(),
@@ -471,6 +479,7 @@ static void vmUsage(FILE* to) {
           "options:\n"
           "  --debug <spec>   waits for the debugger: tcp:HOST:PORT;token=T or stdio[;token=T][;wait=MS] (as FIRE_DEBUG)\n"
           "  --stats          prints after each program what is still alive in the runtime\n"
+          "  --time           prints after each program how long it took to load, run and take down\n"
           "\n"
           "exit code: 0, 1 for an exception nothing caught or an error of the runtime, the code of terminate(code), 2 when a program cannot be loaded\n"
           "the libraries of packages: FIRE_PKG_PATH, then next to the program, then next to fire (Packages/, Prebuilt/ of a forge)\n", to);
@@ -509,9 +518,10 @@ static int vmRunFile(const char* path, bool stats) {
     return vmRunProgram(path, path, bytes, len, stats);
 }
 
-/* --stats, --debug <spec> at argv[*i]: 1 when it was one (taken), 0 when not, -1 when it is wrong. */
+/* --stats, --time, --debug <spec> at argv[*i]: 1 when it was one (taken), 0 when not, -1 when it is wrong. */
 static int vmOption(int argc, char** argv, int* i, bool* stats) {
     if (strcmp(argv[*i], "--stats") == 0) { *stats = true; return 1; }
+    if (strcmp(argv[*i], "--time") == 0) { g_vmTime = true; return 1; }
     if (strcmp(argv[*i], "--debug") == 0) {
         /* the debugger (docs/spec/NATIVE_DEBUG_PROTOCOL.md): tcp:HOST:PORT;token=T or stdio[;token=T][;wait=MS], like FIRE_DEBUG */
         if (*i + 1 >= argc) { fputs("fire: --debug needs the transport (tcp:HOST:PORT;token=T or stdio)\n", stderr); return -1; }
