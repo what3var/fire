@@ -1126,7 +1126,7 @@ static void vmRun(Vm* vm, int32_t base) {
                     }
                     if (!strcmp(nm, "TakeLocal")) ownId = OM_TakeLocal; else if (!strcmp(nm, "TakeUpwards")) ownId = OM_TakeUpwards;
                     else if (!strcmp(nm, "TakeGlobal")) ownId = OM_TakeGlobal; else if (!strcmp(nm, "TakeTo")) ownId = OM_TakeTo;
-                    if (ownId >= 0 && ownedOf(recv)) {
+                    if (ownId >= 0 && (ownedOf(recv) || recv.kind == K_Array || recv.kind == K_Buffer)) {   /* (a destroyed one: the runtime says so) */
                         Value targetArg = ownId == OM_TakeTo ? (argc > 0 ? a[0] : Undef()) : Undef();
                         int baseArgs = ownId == OM_TakeTo ? 1 : 0;
                         if (name != nm) {
@@ -1174,9 +1174,12 @@ static void vmRun(Vm* vm, int32_t base) {
                 const char* nm = !strncmp(name, "try", 3) ? name + 3 : name;
                 if (strcmp(nm, "TakeLocal") && strcmp(nm, "TakeUpwards") && strcmp(nm, "TakeGlobal") && strcmp(nm, "TakeTo")) { destroyedError(recv); goto unwind; }
             }
-            c = vmClassOf(vm, asObj(recv)->cls);
-            if (!c) { missingMethod(recv, name, (int)argc); goto unwind; }
-            m = (VmProto*)vmIc(fr->chunk, at, asObj(recv)->cls, prog, &hit);
+            if (FIRE_UNLIKELY(!leafAlive(recv))) { c = NULL; m = NULL; hit = true; }   /* (a destroyed one's Take...: its memory may be gone - the runtime says so) */
+            else {
+                c = vmClassOf(vm, asObj(recv)->cls);
+                if (!c) { missingMethod(recv, name, (int)argc); goto unwind; }
+                m = (VmProto*)vmIc(fr->chunk, at, asObj(recv)->cls, prog, &hit);
+            }
             if (!hit) {
                 VmCands* cs = vmCandidates(prog, c, name, (int)argc);
                 m = vmFindMethod(vm, c, name, (int)argc, sp - argc, recv, &declaring);
