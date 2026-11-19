@@ -1194,6 +1194,7 @@ static void vmRun(Vm* vm, int32_t base) {
                     RELOAD();
                     break;
                 }
+                vm->copyMask = 0;   /* (a built-in method has no call scope: a CopyArgs before it - `e.HasFlag(Owns.Values)` - is not for the next call) */
                 if (!strcmp(name, "GetEnumerator") && argc == 0 && (recv.kind == K_Array || recv.kind == K_Buffer || recv.kind == K_String)) {
                     VmClass* le = vmClassNamed(prog, vmName(prog, "ListEnumerator"));
                     VmProto* ctor = le ? vmFindCtor(vm, le, 2, NULL) : NULL;
@@ -1292,7 +1293,9 @@ static void vmRun(Vm* vm, int32_t base) {
             if (FIRE_UNLIKELY(!m)) {
                 /* the built-in ownership methods of every object, ToString() of every object (DECISIONS D14) */
                 const char* nm = !strncmp(name, "try", 3) ? name + 3 : name;
-                int ownId = !strcmp(nm, "TakeLocal") ? OM_TakeLocal : !strcmp(nm, "TakeUpwards") ? OM_TakeUpwards : !strcmp(nm, "TakeGlobal") ? OM_TakeGlobal : !strcmp(nm, "TakeTo") ? OM_TakeTo : -1;
+                int ownId;
+                vm->copyMask = 0;   /* (built-in: see above) */
+                ownId = !strcmp(nm, "TakeLocal") ? OM_TakeLocal : !strcmp(nm, "TakeUpwards") ? OM_TakeUpwards : !strcmp(nm, "TakeGlobal") ? OM_TakeGlobal : !strcmp(nm, "TakeTo") ? OM_TakeTo : -1;
                 Value* a = sp - argc;
                 if (ownId >= 0) {
                     Value r = Undef();
