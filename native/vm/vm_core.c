@@ -762,6 +762,29 @@ static void vmResolveHandler(Vm* vm, VmHandlerT* t) {
     t->resolved = true;
 }
 
+/* The conversion functions of the units (UnitConvFn has no context): a fixed pool of trampolines, each with its index into the program's classes of
+ * conversion functions (VM_SPIKE point 1, "ein fester Vorrat an Trampolinen"). */
+static Value vmUnitConv(uint32_t index, bool to, Value v) {
+    Vm* vm = g_vmCur;
+    VmClass* c;
+    VmProto* m;
+    Value r;
+    if (!vm || index >= vm->prog->nconv || !(c = vmClassNamed(vm->prog, vm->prog->convClasses[index]))) return v;
+    m = vmFindMethod(vm, c, vmName(vm->prog, to ? "To" : "From"), 1, &v, Undef(), NULL);
+    if (!m) return v;
+    r = vmCallNested(vm, m, 1, &v, Undef(), FR_NESTED);
+    if (g_unwind.active) return Undef();
+    adopt(r, &vm->frames[vm->nframes - 1].scope->temp);
+    return r;
+}
+#define VM_CONV(i) static Value vmUnitTo##i(Value v) { return vmUnitConv(i, true, v); } static Value vmUnitFrom##i(Value v) { return vmUnitConv(i, false, v); }
+VM_CONV(0) VM_CONV(1) VM_CONV(2) VM_CONV(3) VM_CONV(4) VM_CONV(5) VM_CONV(6) VM_CONV(7)
+VM_CONV(8) VM_CONV(9) VM_CONV(10) VM_CONV(11) VM_CONV(12) VM_CONV(13) VM_CONV(14) VM_CONV(15)
+static const UnitConvFn g_vmUnitTo[16] = { vmUnitTo0, vmUnitTo1, vmUnitTo2, vmUnitTo3, vmUnitTo4, vmUnitTo5, vmUnitTo6, vmUnitTo7,
+    vmUnitTo8, vmUnitTo9, vmUnitTo10, vmUnitTo11, vmUnitTo12, vmUnitTo13, vmUnitTo14, vmUnitTo15 };
+static const UnitConvFn g_vmUnitFrom[16] = { vmUnitFrom0, vmUnitFrom1, vmUnitFrom2, vmUnitFrom3, vmUnitFrom4, vmUnitFrom5, vmUnitFrom6, vmUnitFrom7,
+    vmUnitFrom8, vmUnitFrom9, vmUnitFrom10, vmUnitFrom11, vmUnitFrom12, vmUnitFrom13, vmUnitFrom14, vmUnitFrom15 };
+
 /* ---- the units of the program: its table becomes the runtime's (unitsInit), its symbols the ones a text may name (g_textUnits) ---- */
 static TextUnit* g_vmTextUnits;
 static void vmInstallUnits(Vm* vm) {
@@ -773,7 +796,7 @@ static void vmInstallUnits(Vm* vm) {
     static const bool prefixable[] = { true, true, true, true, true, true, false, false, false };
     uint32_t i, rows = p->unitRows, nt = 0;
     for (i = 0; i < FIRE_NDIMS; i++) g_dimNames[i] = i < p->ndims ? p->dimNames[i] : "";
-    unitsInit(p->unitInit, rows, NULL, NULL);
+    unitsInit(p->unitInit, rows, g_vmUnitTo, g_vmUnitFrom);
     g_vmTextUnits = (TextUnit*)calloc(16, sizeof(TextUnit));
     for (i = 0; i < 9; i++) {
         int32_t dims[FIRE_NDIMS];
@@ -795,7 +818,9 @@ static void vmInstallUnits(Vm* vm) {
         g_vmTextUnits = more;
         for (k = 0; k < p->ncustomUnits; k++) {
             struct VmCustomUnit* cu = &p->customUnits[k];
-            uint32_t u = cu->offset != 0.0 ? unitAppend(cu->dims, cu->scale, cu->symbol, cu->offset, -1, -1) : unitIntern(cu->dims, cu->scale, cu->symbol);
+            uint32_t u = 0, r;
+            for (r = 1; r < rows && !u; r++) if (p->unitInit[r].display && !strcmp(p->unitInit[r].display, cu->symbol)) u = r;   /* (the row of the file: with its offset and conversion functions) */
+            if (!u) u = cu->offset != 0.0 ? unitAppend(cu->dims, cu->scale, cu->symbol, cu->offset, -1, -1) : unitIntern(cu->dims, cu->scale, cu->symbol);
             g_vmTextUnits[nt].symbol = cu->symbol; g_vmTextUnits[nt].unit = u; g_vmTextUnits[nt].prefixable = cu->prefixed; nt++;
             if (strcmp(cu->name, cu->symbol) != 0) { g_vmTextUnits[nt].symbol = cu->name; g_vmTextUnits[nt].unit = u; g_vmTextUnits[nt].prefixable = false; nt++; }
         }
@@ -840,7 +865,25 @@ static uint32_t vmUnitOfName(Vm* vm, const char* text) {
                 if (!comma) break;
                 e = comma + 1;
             }
-            return unitIntern(dims, atof(parts[2]), vmName(vm->prog, parts[0]));
+            {   /* (with an offset or conversion functions: the row of that unit - the file's when it has one) */
+                const char* sym = vmName(vm->prog, parts[0]);
+                double scale = atof(parts[2]), offset = np > 3 ? atof(parts[3]) : 0.0;
+                int32_t conv[2] = { -1, -1 };
+                int q;
+                uint32_t r;
+                for (q = 0; q < 2; q++) {
+                    const char* cn = np > 4 + q && parts[4 + q][0] ? vmName(vm->prog, parts[4 + q]) : NULL;
+                    uint32_t c;
+                    if (!cn) continue;
+                    for (c = 0; c < vm->prog->nconv && vm->prog->convClasses[c] != cn; c++) { }
+                    if (c == vm->prog->nconv && c < 16) vm->prog->convClasses[vm->prog->nconv++] = cn;
+                    if (c < 16) conv[q] = (int32_t)c;
+                }
+                if (offset == 0.0 && conv[0] < 0 && conv[1] < 0) return unitIntern(dims, scale, sym);
+                for (r = 1; r < g_udCount; r++)
+                    if (g_ud[r].display && !strcmp(g_ud[r].display, sym) && g_ud[r].offset == offset && g_ud[r].scale == scale) return r;
+                return unitAppend(dims, scale, sym, offset, conv[0], conv[1]);
+            }
         }
         return 0;
     }

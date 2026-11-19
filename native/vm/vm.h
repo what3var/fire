@@ -142,6 +142,8 @@ struct VmProgram {
     uint32_t nunits;
     UnitInit* unitInit;     /* (the table given to the runtime: unitRows rows) */
     uint32_t unitRows;
+    const char* convClasses[16];   /* the classes of the conversion functions of units (`coerce`): To/From, by the index the runtime's unit rows name */
+    uint32_t nconv;
     const char* dimNames[FIRE_NDIMS];
     uint32_t ndims;
     struct VmCustomUnit { const char* name; const char* symbol; bool prefixed; int32_t dims[FIRE_NDIMS]; double scale, offset; } * customUnits;

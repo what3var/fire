@@ -409,9 +409,23 @@ static void rdUnits(VmReader* r) {
             u->scale = rdF64(r);
             u->display = rdStr(r);
             u->offset = rdF64(r);
-            u->conv = rdStr(r) ? -1 : -1;     /* (converter functions: a unit with `coerce` - not yet in the VM) */
-            u->ulconv = rdStr(r) ? -1 : -1;
-            plain = u->scale == 1.0 && !u->display && u->offset == 0.0;
+            {   /* the conversion functions (the static To/From of a hidden class): their index in the VM's trampolines (vm_core.c, VM_SPIKE point 1) */
+                const char* cv = rdStr(r);
+                const char* ucv = rdStr(r);
+                const char* names[2];
+                int32_t* outs[2];
+                int q;
+                names[0] = cv; names[1] = ucv; outs[0] = &u->conv; outs[1] = &u->ulconv;
+                for (q = 0; q < 2; q++) {
+                    uint32_t c;
+                    *outs[q] = -1;
+                    if (!names[q]) continue;
+                    for (c = 0; c < p->nconv && p->convClasses[c] != names[q]; c++) { }
+                    if (c == p->nconv) { if (p->nconv >= 16) rdFail(r, "too many units with conversion functions for this VM"); p->convClasses[p->nconv++] = names[q]; }
+                    *outs[q] = (int32_t)c;
+                }
+            }
+            plain = u->scale == 1.0 && !u->display && u->offset == 0.0 && u->conv < 0 && u->ulconv < 0;
             for (k = 0; plain && k < FIRE_NDIMS; k++) if (u->dims[k]) plain = false;
             if (plain) { p->unitIds[i] = 0; memset(u, 0, sizeof *u); continue; }
             p->unitIds[i] = rows++;
