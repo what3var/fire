@@ -31,6 +31,8 @@
     <Compile Include="..\fire.Editor\Debugging\DebugThreadContext.cs" Link="Editor\DebugThreadContext.cs" />
     <!-- the log of a build as spark keeps it (into the build log panel, mirrored by the build window) -->
     <Compile Include="..\fire.Editor\Debugging\BuildLogFeed.cs" Link="Editor\BuildLogFeed.cs" />
+    <!-- spark builds through forge: the runner of `forge build` with its report and the overlays of the editor's text (ForgeReportTests) -->
+    <Compile Include="..\fire.Editor\Build\ForgeProcess.cs" Link="Editor\ForgeProcess.cs" />
     <!-- spark's setup wizard without its windows: the catalog of ai.models, the pages and the plan, the progress of a run, the download of a model (SetupWizardTests) -->
     <Compile Include="..\fire.Editor\Setup\*.cs" LinkBase="Editor\Setup" />
     <!-- the native build of the assistant that spark starts (SetupWizardTests: "Assistent nativ") -->

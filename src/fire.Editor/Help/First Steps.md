@@ -450,6 +450,8 @@ Every build spark starts - `F5` when the VM compiles the program, a native build
 
 Every line of the build window's log is written into the **Build log** as it comes (the window only mirrors it), so it can be read and copied after the window has closed; a failed build also says so in the **Output**. When the build succeeds the window closes by itself (the log stays in the **Build log**). When it fails, the window stays open with the error under the log; **Close** (or `Escape`) closes it. Only one build runs at a time: while one runs, `F5` and the build commands say so in the status bar. Closing spark during a build cancels it first.
 
+spark does not build in its own process: every build except the compile for a run in the VM is `forge` (the command line) as a child process, and what the window, the log and the error list show is what forge reports. The text of the editor is built as it is - spark does not save before a build, changed documents go to forge as they are in the editor. **Cancel** asks forge to stop (it ends its compilers and deletes what it had begun); a forge that has not stopped after ten seconds is ended with everything it started.
+
 ## Talking to devices
 
 Scripts reach hardware through the `devices` library:

@@ -192,33 +192,18 @@ namespace fire.Editor
             {
                 UpdateStatus($"Building {input.What} natively for {target.Name} ({modeName})...");
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-                var result = await Task.Run(() => NativeBuilder.BuildSafe(input.Sources, config, target, buildToolchain, output, mode, null, false, input.BaseDirectory, null, input.Plan, job.Monitor));
-                AppendBuildResultLog(job, result.Log);
-                if (result.Cancelled)
-                {
-                    _isBusy = false;
-                    EndBuildJob(job, BuildOutcome.Cancelled);
-                    return;
-                }
-                FinishBuild("Native build", result.Ok, result.Diagnostics ?? Array.Empty<Diagnostic>(), defaultFile, defaultPath);
-                if (!result.Ok)
-                {
-                    _isBusy = false;
-                    EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
-                    UpdateStatus("The native build failed (see the build log).");
-                    RevealTool("buildlog");
-                    return;
-                }
+                // forge builds it (Debug: --debug-info, the toolchain without optimisation and with debug information), with the text of the editor
+                var built = await BuildForRunAsync(job, input, config, target, buildToolchain, output, mode, debug, defaultFile, defaultPath);
+                if (built == null) { _isBusy = false; return; }
                 EndBuildJob(job, BuildOutcome.Succeeded);
-                CopyContentNextTo(input.Plan, result.Output);
 
                 var arguments = RunArguments(input);
-                string workingDirectory = input.Project?.Directory ?? input.BaseDirectory ?? Path.GetDirectoryName(result.Output)!;
+                string workingDirectory = input.Project?.Directory ?? input.BaseDirectory ?? Path.GetDirectoryName(built)!;
                 if (!debug)
                 {
                     // a plain run: the output into the Output panel, the end in the status bar
                     var started = DateTime.Now;
-                    _nativeRun = NativeLaunch.Start(result.Output, arguments, workingDirectory, OnScriptOutput, code => Dispatcher.UIThread.Post(() =>
+                    _nativeRun = NativeLaunch.Start(built, arguments, workingDirectory, OnScriptOutput, code => Dispatcher.UIThread.Post(() =>
                     {
                         FlushPendingOutput();
                         UpdateStatus($"Native program finished (exit code {code}, {(DateTime.Now - started).TotalSeconds:0.0} s).");
@@ -229,14 +214,14 @@ namespace fire.Editor
                     _nativePlainRunning = true;   // (it runs without the debugger: Start and the steps are grey until it ends)
                     _isBusy = false;
                     UpdateRunButtons();
-                    UpdateStatus($"Running {Path.GetFileName(result.Output)} natively ({modeName}) - Stop (Shift+F5) ends it.");
+                    UpdateStatus($"Running {Path.GetFileName(built)} natively ({modeName}) - Stop (Shift+F5) ends it.");
                     RevealTool("output");
                     return;
                 }
 
-                UpdateStatus($"Starting {Path.GetFileName(result.Output)} under the debugger...");
+                UpdateStatus($"Starting {Path.GetFileName(built)} under the debugger...");
                 NativeDebugTarget debugTarget;
-                try { debugTarget = await Task.Run(() => NativeLaunch.LaunchDebug(result.Output, arguments, workingDirectory, TimeSpan.FromSeconds(30))); }
+                try { debugTarget = await Task.Run(() => NativeLaunch.LaunchDebug(built, arguments, workingDirectory, TimeSpan.FromSeconds(30))); }
                 catch (Exception ex) when (ex is NativeDebugException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
                 {
                     _isBusy = false;
@@ -259,14 +244,36 @@ namespace fire.Editor
             }
         }
 
-        /// <summary>The errors of a failed native build for its window: the errors of the compiler, else the end of the log (what the C compiler said last).</summary>
-        private static string BuildErrorText(NativeBuildResult result)
+        /// <summary>The build of a native run through forge (`forge build ... --engine native -t target -m mode -o output [--debug-info | --toolchain esp-idf]`): the errors into
+        /// the build log and the error list, the job ended when it failed or was cancelled (null then); else the program (or the folder of the files), the job still running
+        /// for the caller to end. <paramref name="toolchainName"/>: a toolchain named for forge (the component of ESP-IDF), else forge takes the one spark resolved too.</summary>
+        private async Task<string?> BuildForRunAsync(BuildJob job, RunInput input, fire.Native.NativeConfig config, fire.Runtime.TargetProfile target, fire.Native.ToolchainDef toolchain,
+            string output, Runtime.VmExecutionMode mode, bool debug, string? defaultFile, string? defaultPath, string? toolchainName = null)
         {
-            var errors = (result.Diagnostics ?? Array.Empty<Diagnostic>()).Where(d => d.IsError).Select(d => d.ToLogLine()).Take(6).ToList();
-            var lines = result.Log.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            var tail = lines.Where(l => l.Contains("error", StringComparison.OrdinalIgnoreCase)).Take(4).ToList();
-            if (tail.Count == 0) tail = lines.TakeLast(4).ToList();
-            return string.Join(Environment.NewLine, errors.Concat(tail).Distinct());
+            var overlays = OverlaysOfOpenDocuments();
+            var args = new List<string> { "build" };
+            args.AddRange(input.Project != null ? ForgeProjectArgs(input.Project) : new List<string> { ForgeScriptSource(input.Document!, overlays) });
+            args.AddRange(new[] { "--engine", "native", "-t", target.Name, "-m", ForgeMode(mode), "-o", output });
+            if (config.Path != null) args.AddRange(new[] { "--config", config.Path });
+            if (toolchainName != null) args.AddRange(new[] { "--toolchain", toolchainName });
+            if (debug && toolchainName == null) args.Add("--debug-info");
+            await EnsureToolchainAsync(toolchain);
+            var result = await RunForgeAsync(job, args, overlays);
+            job.Feed.Drain();
+            if (result.Cancelled)
+            {
+                EndBuildJob(job, BuildOutcome.Cancelled);
+                return null;
+            }
+            FinishBuild("Native build", result.Ok, ForgeDiagnostics(result, overlays), defaultFile, defaultPath);
+            if (!result.Ok || result.Output("program", "folder") is not { } built)
+            {
+                EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
+                UpdateStatus("The native build failed (see the build log).");
+                RevealTool("buildlog");
+                return null;
+            }
+            return built;
         }
         /// <summary>A native program under the debugger, connected and at its entry: the session takes it, then the first action.</summary>
         private void AttachNativeDebugTarget(NativeDebugTarget debugTarget, RunInput input, NativeFirstAction first)
@@ -327,21 +334,10 @@ namespace fire.Editor
             {
                 UpdateStatus($"Building {input.What} for the ESP32 ({modeName})...");
                 var toolchain = fire.Native.ToolchainDef.BuiltIn["esp-idf"];   // (the component; spark runs idf.py itself)
-                var result = await Task.Run(() => NativeBuilder.BuildSafe(input.Sources, config, target, toolchain, Path.Combine(projectDir, "main"), mode, null, false, input.BaseDirectory, null, input.Plan, job.Monitor));
-                AppendBuildResultLog(job, result.Log);
-                if (result.Cancelled)
+                Directory.CreateDirectory(projectDir);
+                if (await BuildForRunAsync(job, input, config, target, toolchain, Path.Combine(projectDir, "main"), mode, debug, defaultFile, defaultPath, toolchainName: "esp-idf") == null)
                 {
                     _isBusy = false;
-                    EndBuildJob(job, BuildOutcome.Cancelled);
-                    return;
-                }
-                FinishBuild("Native build", result.Ok, result.Diagnostics ?? Array.Empty<Diagnostic>(), defaultFile, defaultPath);
-                if (!result.Ok)
-                {
-                    _isBusy = false;
-                    EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
-                    UpdateStatus("The native build failed (see the build log).");
-                    RevealTool("buildlog");
                     return;
                 }
                 Esp32Launch.WriteProject(projectDir, Path.GetFileName(programPath));

@@ -208,7 +208,16 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    Stände vergleicht `diff -r`. Der Stand des C#-Compilers: 460 Programme ohne Fehler, rund 1 GB, auf 4 Kernen eine halbe Stunde (nicht eingecheckt -
    er ändert sich mit jedem Commit am Compiler). Größe und Geschwindigkeit nativer Programme misst `tests/native-baseline.py`
    ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)), die Diagnosen stehen bei den Fällen (`.diagnostics`). **Offen:** der AST als Text.
-5. **spark baut nur noch über die Befehlszeile von forge** (statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4, noch ganz in C#.
+5. ~~**spark baut nur noch über die Befehlszeile von forge**~~ (umgesetzt; statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4,
+   noch ganz in C#. Build, Build virtual, Build Solution (`forge build <sln> --all`), der Build eines nativen Laufs und Debuggens (`--debug-info`, auch
+   ESP32), Publish, Pack Library und Install laufen als `forge build|publish ... --report json` im Kindprozess (`ForgeProcess` in spark): der
+   [Bericht](tools/forge.md#the-report-for-tools) - eine JSON-Zeile je Ereignis: Phasen, Hintergrundarbeit, Log, Diagnosen mit Datei/Zeile/Spalte/Code,
+   Ausgaben, Projekte, Ende - geht in Build-Log, Build-Fenster, Statusleiste und Fehlerliste. Abbrechen: `cancel` auf stdin (überall) bzw. SIGTERM,
+   forge beendet seine Werkzeuge und löscht seine temporären Ordner, nach zehn Sekunden tötet spark den Prozessbaum. **Ungespeicherter Text:** spark
+   speichert nicht vor dem Bauen, sondern gibt geänderte Dokumente als `--overlay <datei>=<kopie>` mit (wie bisher baut spark, was der Editor zeigt).
+   Was spark selbst entscheidet (Ziel der Werkzeugleiste, Modus, Ausgabeort, Statistik), geht als `-t`/`-m`/`-o`/`--stats` mit; die Frage nach einem
+   fehlenden Compiler stellt spark vor dem Start von forge. Im eigenen Prozess bleiben: das Übersetzen für einen Lauf in der VM (die VM läuft noch in
+   spark, Phase B 9), die Sprachdienste (Phase C 6), Clean (baut nichts), der Test einer Toolchain im Dialog. Prüfung: `FIRE_TESTS_ONLY=forgereport`.
 6. ~~Tabellen, die beide Seiten brauchen, aus **einer** Quelle~~ (umgesetzt): `native/tables` hält `opcodes.def` (Name, Nummer, Operandengrößen),
    `errors.def` (Code, Bereich, Text), `natives.def` (die Natives jedes Programms mit ihrem Index) und `prelude.fire` (das Prelude als ein Text).
    Die Quelle bleibt der C#-Code, solange er lebt: `forge tables native/tables` schreibt die Dateien, die Tests (`FIRE_TESTS_ONLY=tables`) schlagen

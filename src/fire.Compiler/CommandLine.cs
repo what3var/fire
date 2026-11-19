@@ -65,6 +65,16 @@ namespace fire.Compiler
         public fire.Runtime.GlobalJobsMode? GlobalJobs { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
         public string? ProjectName { get; init; }
+        /// <summary>`--report json`: build and publish write their report as JSON lines on stdout instead of the text for people (ForgeReport, docs/tools/forge.md "Report").</summary>
+        public string? Report { get; init; }
+        /// <summary>`--overlay <path>=<file>` (repeatable): the text of the source `path` is read from `file` - an editor's unsaved buffer (the full paths).</summary>
+        public IReadOnlyDictionary<string, string> Overlays { get; init; } = new Dictionary<string, string>();
+        /// <summary>`--debug-info`: a native build for the debugger (without optimisation, with debug information, not stripped: NativeLaunch.DebugToolchain).</summary>
+        public bool DebugInfo { get; init; }
+        /// <summary>`--check`: a library project is only compiled (for the target of -t), not packed.</summary>
+        public bool CheckOnly { get; init; }
+        /// <summary>`--all`: build every project of the solution in the order of its references (spark's Build Solution).</summary>
+        public bool All { get; init; }
         /// <summary>Set if the command line is invalid (message for the user).</summary>
         public string? Error { get; init; }
     }
@@ -94,6 +104,7 @@ namespace fire.Compiler
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--global-jobs safepoints|sleep|sync] [-- <arguments of the program>...]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--linkage source|static|shared|plugin] [--host <program>] [--global-jobs safepoints|sleep|sync]
               fire.Compiler publish <solution.firesln>|<project.fireproj> [-p <project>] [--toolchain <name>]
+              fire.Compiler build|publish ... [--report json] [--overlay <source>=<file>]... [--debug-info] [--check] [--all]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--global-jobs safepoints|sleep|sync]
               fire.Compiler bytecode <file>... | <project.fireproj> [-o <out.fbc>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
               fire.Compiler dump  <file>... | <project.fireproj> | <program.fbc> [-o <file>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
@@ -143,6 +154,12 @@ namespace fire.Compiler
                     safepoints (the default: at a loop's jump back, Sleep and the wait functions), sleep (only at Sleep and the wait functions) or sync (only at `sync globals`);
                     `sync globals` and the end of the program always do. Goes before the project's globalJobs, #globaljobs / #nosync in the source and "globalJobs" in
                     fire.native.json (docs/spec/THREADING_DESIGN.md section 7). The VM and a native build behave the same.
+            --report json  build and publish write a report for tools instead of the text: one JSON object per line on stdout (progress, log, errors and warnings with
+                    file, line and column, what was written, the end) - what spark reads (docs/tools/forge.md). The line "cancel" on the input (or SIGTERM) cancels the build.
+            --overlay <source>=<file>  The text of the source file is read from <file> (an editor's unsaved text); repeatable.
+            --debug-info  A native build for the debugger: without optimisation, with debug information, not stripped.
+            --check  A library project is only compiled (for the target of -t), not packed.
+            --all   Builds every project of the solution in the order of its references (a library is compiled, a program built; spark's Build Solution).
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
             bytecode  compiles the files into one program and writes it as a program file (default: out.fbc; the format: docs/spec/BYTECODE.md, "Das Dateiformat .fbc").
@@ -189,7 +206,9 @@ namespace fire.Compiler
             fire.Runtime.GlobalJobsMode? globalJobs = null;
             TargetProfile? target = null;
             string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
-            bool keep = false, keepAll = false, stats = false;
+            bool keep = false, keepAll = false, stats = false, debugInfo = false, checkOnly = false, all = false;
+            string? report = null;
+            var overlays = new Dictionary<string, string>(fire.Projects.ProjectFiles.PathComparer);
             fire.Native.StrippingLevel? stripping = null;
             fire.Runtime.OptimizeFor? optimize = null;
             string? linkage = null;
@@ -294,6 +313,37 @@ namespace fire.Compiler
                     if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--keep-all is only available with build, native and test.");
                     keepAll = true;
                 }
+                else if (TryOption(arg, "--report", "--report", out var reportInline))
+                {
+                    if (command is not (CommandKind.Build or CommandKind.Publish)) return Fail(command, "--report is only available with build and publish.");
+                    string? value = reportInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (value == null || Unquote(value).ToLowerInvariant() != "json") return Fail(command, "--report must be followed by json.");
+                    report = "json";
+                }
+                else if (TryOption(arg, "--overlay", "--overlay", out var overlayInline))
+                {
+                    if (command is not (CommandKind.Build or CommandKind.Publish)) return Fail(command, "--overlay is only available with build and publish.");
+                    string? value = overlayInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    int eq = value == null ? -1 : Unquote(value).LastIndexOf('=');
+                    if (value == null || eq <= 0 || eq == Unquote(value).Length - 1) return Fail(command, "--overlay must be followed by <source>=<file with its text>.");
+                    string text = Unquote(value);
+                    overlays[Path.GetFullPath(text.Substring(0, eq))] = Path.GetFullPath(text.Substring(eq + 1));
+                }
+                else if (string.Equals(arg, "--debug-info", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command != CommandKind.Build) return Fail(command, "--debug-info is only available with build.");
+                    debugInfo = true;
+                }
+                else if (string.Equals(arg, "--check", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command != CommandKind.Build) return Fail(command, "--check is only available with build.");
+                    checkOnly = true;
+                }
+                else if (string.Equals(arg, "--all", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command != CommandKind.Build) return Fail(command, "--all is only available with build.");
+                    all = true;
+                }
                 else if (string.Equals(arg, "--stats", StringComparison.OrdinalIgnoreCase))
                 {
                     if (command != CommandKind.Build) return Fail(command, "--stats is only available with build.");
@@ -383,6 +433,11 @@ namespace fire.Compiler
                 Stripping = stripping,
                 Optimize = optimize,
                 Linkage = linkage,
+                Report = report,
+                Overlays = overlays,
+                DebugInfo = debugInfo,
+                CheckOnly = checkOnly,
+                All = all,
                 Host = host,
                 ProjectName = projectName,
                 OutputGiven = output != null,
@@ -434,7 +489,7 @@ namespace fire.Compiler
     }
 
     /// <summary>Executes the commands of the command line (see <see cref="CommandLineParser"/>).</summary>
-    public static class CommandLineRunner
+    public static partial class CommandLineRunner
     {
         public const int ExitOk = 0;
         /// <summary>Compile or runtime error of the script.</summary>
@@ -464,6 +519,9 @@ namespace fire.Compiler
                 return ExitOk;
             }
 
+            // the report for tools (spark) and Build Solution (--all): ForgeReport
+            if (options.Report == "json" || options.All) return RunReported(options, stdout, stderr);
+
             // the warnings of the code (`warn 123: "text"`) are printed to stderr while the program is compiled; they do not stop anything
             var collector = new DiagnosticCollector { OnReport = d => { if (d.IsWarning) stderr.WriteLine(d.ToLogLine()); } };
             using var collecting = collector.Begin();
@@ -476,12 +534,12 @@ namespace fire.Compiler
             var sources = new List<string>();
             foreach (var file in options.Files)
             {
-                if (!File.Exists(file))
+                if (ReadSource(options, file) is not { } text)
                 {
                     stderr.WriteLine($"File not found: {file}");
                     return ExitUsage;
                 }
-                sources.Add(File.ReadAllText(file));
+                sources.Add(text);
             }
 
             return options.Command switch
@@ -559,7 +617,7 @@ namespace fire.Compiler
             try
             {
                 var target = config.ResolveTarget(options.TargetName);
-                var toolchain = config.ResolveToolchain(target, options.ToolchainName, fire.Native.ToolchainPurpose.Build);
+                var toolchain = ToolchainFor(options, config, target, null);
                 string output = options.OutputGiven ? options.OutputFile : NativeBuilder.DefaultOutput(target);
                 var result = NativeBuilder.Build(sources, config, target, toolchain, output, options.Mode, options.FloatWidth, options.KeepSources, basePath: BaseDirectory(options), defines: options.Defines, sourcePaths: SourceFiles(options));
                 stdout.Write(result.Log);
@@ -767,7 +825,7 @@ namespace fire.Compiler
             {
                 var workspace = fire.Projects.Workspace.Open(file);
                 var project = ProjectBuilder.SelectProject(workspace, options.ProjectName);
-                plan = ProjectBuilder.PlanOrThrow(workspace, project);
+                plan = ProjectBuilder.PlanOrThrow(workspace, project, TextOf(options));
             }
             catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
 
@@ -828,6 +886,14 @@ namespace fire.Compiler
         {
             try
             {
+                if (plan.Type == fire.Projects.OutputType.Library && options.CheckOnly)
+                {
+                    var checkConfig = KeepAll(options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(plan.Project.FilePath), options);
+                    var checkTarget = options.TargetName != null || plan.Settings.Target != null ? checkConfig.ResolveTarget(options.TargetName ?? plan.Settings.Target) : null;
+                    ProjectBuilder.Check(plan, checkTarget);
+                    stdout.WriteLine($"{plan.Name}: compiled{(checkTarget != null ? $" for {checkTarget.Name}" : "")} (a library: its code goes into the programs that import it).");
+                    return ExitOk;
+                }
                 if (plan.Type == fire.Projects.OutputType.Library)
                 {
                     string package = ProjectBuilder.PackLibrary(plan, options.OutputGiven ? options.OutputFile : null);
@@ -841,7 +907,7 @@ namespace fire.Compiler
                 if (engine == "native")
                 {
                     var target = config.ResolveTarget(options.TargetName ?? plan.Settings.Target);
-                    var toolchain = config.ResolveToolchain(target, options.ToolchainName ?? plan.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
+                    var toolchain = ToolchainFor(options, config, target, plan);
                     if (options.Linkage == null && plan.Settings.Linkage != null) config.Linkage = plan.Settings.Linkage;   // (the command line, then the project, then fire.native.json)
                     // without -o and `output`: <project>/bin/<target>-<mode>/<name> (the mode the program gets: -m, the project, the tags of its files)
                     string out2 = output ?? (toolchain.EffectiveKind == "files"
@@ -896,7 +962,7 @@ namespace fire.Compiler
             catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
             var monitor = new fire.Native.BuildMonitor(log: line => stdout.WriteLine(line));
             // (a project named on the command line, or the project file itself, is published even when its publishing is off)
-            var result = ProjectPublisher.Publish(workspace, projects, new PublishOptions { Monitor = monitor, IncludeDisabled = projects != null, Toolchain = options.ToolchainName });
+            var result = ProjectPublisher.Publish(workspace, projects, new PublishOptions { Monitor = monitor, IncludeDisabled = projects != null, Toolchain = options.ToolchainName, TextOf = TextOf(options) });
             foreach (var d in result.Diagnostics) stderr.WriteLine(d.ToLogLine());
             return result.Ok ? ExitOk : ExitScriptError;
         }
