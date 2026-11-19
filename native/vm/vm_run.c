@@ -486,8 +486,56 @@ static void vmTypeArrayOfParam(Vm* vm, Value arr, const char* text, Value self, 
     else if (ctargs && ctargs[k]) targ = ctargs[k]->display;
     if (!targ) return;
     elem = !strcmp(targ, "int") ? 4 : !strcmp(targ, "float") ? 8 : !strcmp(targ, "bool") ? 9 : !strcmp(targ, "char") ? 10 : 0;
-    if (!elem) return;
+    if (!elem) {
+        /* a class, an interface, an enum or string (DeclaredType.ArrayOfTypeArg): an array of it - not a number with a unit, `in cm`, word */
+        char text[400], plain[200];
+        uint32_t ac;
+        if (targ[0] == '$' || !strncmp(targ, "in:", 3) || !strncmp(targ, "int", 3) || !strncmp(targ, "float", 5) || !strcmp(targ, "word") || strchr(targ, ':')) return;
+        snprintf(text, sizeof text, "%s\x01%s", vmPlainName(targ, plain, sizeof plain), targ);
+        {   /* (an enum: its declaration behind the name, like `Color cs[]` - EnumType.Key) */
+            uint32_t e, m;
+            for (e = 0; e < vm->prog->nenums; e++)
+                if (!strcmp(vm->prog->enums[e].name, targ)) {
+                    const FireEnum* en = &vm->prog->enums[e];
+                    size_t n = strlen(text);
+                    n += (size_t)snprintf(text + n, sizeof text - n, "\x02%s%s{", (en->flags & 1) ? "flag " : "", en->name);
+                    for (m = 0; m < en->count && n < sizeof text; m++)
+                        n += (size_t)snprintf(text + n, sizeof text - n, "%s%s=%lld", m ? "," : "", en->members[m].name, (long long)en->members[m].value);
+                    if (n < sizeof text) snprintf(text + n, sizeof text - n, "}");
+                    break;
+                }
+        }
+        ac = vmArrClassOf(vm, vmName(vm->prog, text));
+        if (ac) typeArray(arr, 13, 1, ac, 16, vmConstStrUtf8(vm->prog, g_vmArrClasses[ac - 1].display), 1);
+        return;
+    }
     typeArray(arr, elem, 1, 0, 0, vmConstStrUtf8(vm->prog, "(no unit)"), 1);
+}
+
+/* The checks of a store into a field (VM.SetField, SetStaticField, Reflect.Set): its unit, kind, type, typed array (FieldInfo); `byName` (Reflect.Set):
+ * `byte data[]` / `word w[]` turn an array into the buffer a compiled store makes, which belongs to the object (VM.ConvertFieldBuffer). False: the
+ * exception is set. */
+static bool vmFieldStore(Vm* vm, Value* x, const VmFieldInfo* fi, const char* name, Value obj, OwnList* temp, bool byName) {
+    char what[300];
+    if (!fi) return true;
+    if (fi->flags & 1) snprintf(what, sizeof what, "Field '%s' (derived as never undefined: nothing in the program stores undefined in it)", name);
+    else snprintf(what, sizeof what, "Field '%s'", name);
+    if (fi->requiredUnit) { *x = vmAdaptUnit(vm, *x, fi->requiredUnit); if (g_unwind.active) return false; }
+    if (fi->requiredKind && vmGuard(x, fi->requiredKind, what, false)) return false;
+    if (fi->requiredType && vmGuardType(vm, x, fi->requiredType, obj, NULL, what, false)) return false;
+    if (fi->requiredArray) {
+        vmTypeArrayCode(vm, x, fi->requiredArray & 0xFF, fi->requiredArray >> 8, fi->requiredArrayType ? fi->requiredArrayType : fi->requiredUnit, temp);
+        if (g_unwind.active) return false;
+    } else if (fi->arrayOfParam && x->kind == K_Array) {
+        vmTypeArrayOfParam(vm, *x, fi->arrayOfParam, obj, NULL);
+        if (g_unwind.active) return false;
+    } else if (byName && !(fi->flags & 2) && fi->typeText && (!strcmp(fi->typeText, "byte[]") || !strcmp(fi->typeText, "uint8[]") || !strcmp(fi->typeText, "word[]"))) {
+        bool words = fi->typeText[0] == 'w', wasArray = x->kind == K_Array;
+        *x = words ? typeWordBuffer(*x, 1, temp) : typeBuffer(*x, 1, temp);
+        if (g_unwind.active) return false;
+        if (wasArray && x->kind == K_Buffer && obj.kind == K_Class && ownedOf(*x)) takeToObject(ownedOf(*x), asObj(obj));
+    }
+    return true;
 }
 
 /* `return r` that leaves a catch block (r has the count of its trip): the value leaves the catch's scopes, the owner of the try returns (exitReturn). */
@@ -510,19 +558,12 @@ static bool vmOwnedByCallScope(VmFrame* fr, Owned* o) {
 /* The lists of the scopes of the running call (innermost first: temporaries, then the scope's own) - what `try take`, `is from local` look at. */
 static int vmCallLists(Vm* vm, VmFrame* fr, OwnList** lists, int cap) {
     VmScope* s;
-    VmScope* stop = fr->kind == FR_TOP && vm->isStrand ? NULL : vmStopOf(vm, fr);   /* (a fire thread: its global scope is the scope of its body) */
+    VmScope* stop = fr->kind == FR_TOP ? NULL : vmStopOf(vm, fr);   /* (the top level: its global scope counts - VM.IsCurrentCallOwner; a fire thread's is the scope of its body) */
     int n = 0;
     for (s = fr->scope; s && s != stop && n + 2 <= cap; s = s->parent) {
         lists[n++] = &s->temp; lists[n++] = &s->own;
         if (fr->kind == FR_TOP && s == vm->global) break;
     }
-    return n;
-}
-
-/* ... for `try take` / `try x.Take...` (VM.IsCurrentCallOwner): the same, and at the top level of the main program its global scope. */
-static int vmTryLists(Vm* vm, VmFrame* fr, OwnList** lists, int cap) {
-    int n = vmCallLists(vm, fr, lists, cap - 2);
-    if (fr->kind == FR_TOP && !vm->isStrand) { lists[n++] = &vm->global->temp; lists[n++] = &vm->global->own; }
     return n;
 }
 
@@ -889,7 +930,7 @@ static void vmRun(Vm* vm, int32_t base) {
             SYNC();
             if (op == OP_TryTakeToScope) {
                 OwnList* lists[128];
-                int n = vmTryLists(vm, fr, lists, 128);
+                int n = vmCallLists(vm, fr, lists, 128);
                 bool took = tryTakeOwned(v, lists, n, fr->self, NULL);
                 if (took) takeToList(v, list);
                 vm->ret = Bool(took);
@@ -905,7 +946,7 @@ static void vmRun(Vm* vm, int32_t base) {
             if (!arr && h.kind != K_Class) takeHolderError(h);
             else if (tr) {
                 OwnList* lists[128];
-                int n = vmTryLists(vm, fr, lists, 128);
+                int n = vmCallLists(vm, fr, lists, 128);
                 bool took = tryTakeOwned(v, lists, n, fr->self, NULL);
                 if (took) takeToHolder(h, v);
                 vm->ret = Bool(took);
@@ -1027,9 +1068,13 @@ static void vmRun(Vm* vm, int32_t base) {
             SYNC();
             if (FIRE_UNLIKELY(callee.kind != K_Lambda)) {
                 char text[200];
-                snprintf(text, sizeof text, "Call of a value of type %s, which is not a lambda.", kindName(callee));
-                fireError("ArgumentException", text);
-                goto unwind;
+                Value r;
+                snprintf(text, sizeof text, "Call of a value of type %s which is not a lambda.", kindName(callee));
+                r = fireError("ArgumentException", text);
+                if (g_unwind.active) goto unwind;
+                sp -= argc + 1;   /* (resumed: the call gives the value of resume()) */
+                PUSH(r);
+                break;
             }
             l = lamOf(callee);
             if (FIRE_UNLIKELY(l->o.flags & 1)) { destroyedError(callee); goto unwind; }
@@ -1176,7 +1221,7 @@ static void vmRun(Vm* vm, int32_t base) {
                         int baseArgs = ownId == OM_TakeTo ? 1 : 0;
                         if (name != nm) {
                             OwnList* lists[128];
-                            int n = vmTryLists(vm, fr, lists, 128);
+                            int n = vmCallLists(vm, fr, lists, 128);
                             r = Bool(ownMethodTry(ownId, recv, targetArg, (int)argc > baseArgs ? a[baseArgs] : Undef(), &fr->scope->own, lists, n, fr->self, NULL));
                         } else if ((int)argc == baseArgs) ownMethod(ownId, recv, targetArg, &fr->scope->own);
                         else { OwnList* lists[128]; int n = vmCallLists(vm, fr, lists, 128); ownMethodT(ownId, recv, targetArg, a[baseArgs], &fr->scope->own, lists, n); }
@@ -1244,7 +1289,7 @@ static void vmRun(Vm* vm, int32_t base) {
                     int baseArgs = ownId == OM_TakeTo ? 1 : 0;
                     if (name != nm) {
                         OwnList* lists[128];
-                        int n = vmTryLists(vm, fr, lists, 128);
+                        int n = vmCallLists(vm, fr, lists, 128);
                         r = Bool(ownMethodTry(ownId, recv, targetArg, (int)argc > baseArgs ? a[baseArgs] : Undef(), &fr->scope->own, lists, n, fr->self, NULL));
                     } else if ((int)argc == baseArgs || (ownId == OM_TakeGlobal && argc == 1 && a[0].kind == K_Bool)) ownMethod(ownId, recv, argc == 1 && ownId == OM_TakeGlobal ? a[0] : targetArg, &fr->scope->own);   /* (`x.TakeGlobal(true)`: the flag) */
                     else { OwnList* lists[128]; int n = vmCallLists(vm, fr, lists, 128); ownMethodT(ownId, recv, targetArg, a[baseArgs], &fr->scope->own, lists, n); }
@@ -1446,8 +1491,8 @@ static void vmRun(Vm* vm, int32_t base) {
             bool hit;
             ip += (op == OP_SetFieldClaim || op == OP_SetFieldAccessor) ? 3 : 2;
             SYNC();
-            if (FIRE_UNLIKELY(v.kind != K_Class)) { notObjectAssign(v); goto unwind; }
-            if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); goto unwind; }
+            if (FIRE_UNLIKELY(v.kind != K_Class)) { notObjectAssign(v); goto setFailed; }
+            if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); goto setFailed; }
             if (FIRE_UNLIKELY(asObj(v)->h.flags & 2)) {   /* (an object with probes: they hear of it, vm_reflect.c) */
                 if (!vmProbedSet(vm, fr->chunk, v, name, x)) goto unwind;
                 if (op != OP_SetFieldOnThis) PUSH(x);
@@ -1469,7 +1514,7 @@ static void vmRun(Vm* vm, int32_t base) {
                         snprintf(gname, sizeof gname, "get_%s", name);
                         if (c && vmFindMethod(vm, c, vmName(prog, gname), 0, NULL, v, NULL)) noSetterError(v, name);
                         else missingFieldSet(v, name);
-                        goto unwind;
+                        goto setFailed;
                     }
                     if (!PERF && !vmAccessAllowed(fr->chunk, declaring, vmProtoAccess(s))) {
                         char text[300];
@@ -1500,21 +1545,9 @@ static void vmRun(Vm* vm, int32_t base) {
                 {
                     VmClass* declaring = NULL;
                     const VmFieldInfo* fi = vmFieldInfo(c, name, &declaring);
-                    bool checks = fi && (fi->requiredUnit || fi->requiredKind || fi->requiredType || fi->requiredArray || (c->flags & VC_RECORD));
+                    bool checks = fi && (fi->requiredUnit || fi->requiredKind || fi->requiredType || fi->requiredArray || fi->arrayOfParam || (c->flags & VC_RECORD));
                     if (!PERF && fi && fi->access && !vmAccessAllowed(fr->chunk, declaring, fi->access)) { vmAccessDenied("Field", name, declaring, fi->access, "accessed"); goto unwind; }
-                    if (fi && fi->requiredUnit) { x = vmAdaptUnit(vm, x, fi->requiredUnit); CHECK(); }
-                    if (fi && fi->requiredKind) {
-                        char what[200];
-                        snprintf(what, sizeof what, "Field '%s'", name);
-                        if (vmGuard(&x, fi->requiredKind, what, false)) goto unwind;
-                    }
-                    if (fi && fi->requiredType) {
-                        char what[200];
-                        snprintf(what, sizeof what, "Field '%s'", name);
-                        if (vmGuardType(vm, &x, fi->requiredType, v, NULL, what, false)) goto unwind;
-                    }
-                    if (fi && fi->requiredArray) { vmTypeArrayCode(vm, &x, fi->requiredArray & 0xFF, fi->requiredArray >> 8, fi->requiredArrayType ? fi->requiredArrayType : fi->requiredUnit, &fr->scope->temp); CHECK(); }   /* (VM.GuardFieldArray) */
-                    else if (fi && fi->arrayOfParam && x.kind == K_Array) { vmTypeArrayOfParam(vm, x, fi->arrayOfParam, v, NULL); CHECK(); }
+                    if (!vmFieldStore(vm, &x, fi, name, v, &fr->scope->temp, false)) goto unwind;
                     if ((c->flags & VC_RECORD) && !recInit(asObj(v)) && !vm->initNext) { recordWriteError(asObj(v), name); goto unwind; }
                     vm->initNext = false;
                     if (!checks) vmIcSet(fr->chunk, at, asObj(v)->cls, (void*)(intptr_t)idx);
@@ -1548,6 +1581,10 @@ static void vmRun(Vm* vm, int32_t base) {
                 if (o && vmOwnedByCallScope(fr, o) && leafAlive(v) && o != &asObj(v)->h) takeToObject(o, asObj(v));
             }
             if (op != OP_SetFieldOnThis) PUSH(x);
+            break;
+        setFailed:
+            if (g_unwind.active) goto unwind;
+            if (op != OP_SetFieldOnThis) PUSH(x);   /* (resumed: the assignment that failed is skipped) */
             break;
         }
         case OP_HasMember: {
@@ -1609,13 +1646,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 Value x = op == OP_SetStaticField ? sp[-1] : POP();
                 Value old = c->svals[i];
                 {   /* (the checks of the declaration: VM SetStaticField / SetStaticFieldOnInit - the unit, the kind, the type, a typed array) */
-                    const VmFieldInfo* fi = vmFieldInfo(c, name, NULL);
-                    char what[200];
-                    snprintf(what, sizeof what, "Field '%s'", name);
-                    if (fi && fi->requiredUnit) { x = vmAdaptUnit(vm, x, fi->requiredUnit); CHECK(); }
-                    if (fi && fi->requiredKind && vmGuard(&x, fi->requiredKind, what, false)) goto unwind;
-                    if (fi && fi->requiredType && vmGuardType(vm, &x, fi->requiredType, Undef(), NULL, what, false)) goto unwind;
-                    if (fi && fi->requiredArray) { vmTypeArrayCode(vm, &x, fi->requiredArray & 0xFF, fi->requiredArray >> 8, fi->requiredArrayType ? fi->requiredArrayType : fi->requiredUnit, &fr->scope->temp); CHECK(); }
+                    if (!vmFieldStore(vm, &x, vmFieldInfo(c, name, NULL), name, Undef(), &fr->scope->temp, false)) goto unwind;
                     if (op == OP_SetStaticField) sp[-1] = x;
                 }
                 if (FIRE_UNLIKELY(g_isThread)) {   /* (a static field of the main program from a fire thread: a section, rule 10) */
@@ -1825,6 +1856,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 if (!leafAlive(a)) { destroyedError(a); goto unwind; }
                 s = c ? vmFindMethod(vm, c, vmName(prog, "SetIndex"), 2, &sp[-2], a, NULL) : NULL;
                 if (!s) { char text[300]; snprintf(text, sizeof text, "Index assignment ('[]=') on an instance of '%s', which has no 'SetIndex' method.", c ? c->name : "?"); fireError("ArgumentException", text); goto unwind; }
+                vm->copyMask = 4u | (4u << 4);   /* (the key and the value are slots of the container: an unclaimed one belongs to the call - VM adoptUnclaimed, SPEC 2.1) */
                 vmPushCall(vm, s, 2, 1, a, FR_CALL);
                 if (g_unwind.active) goto unwind;
                 vm->frames[vm->nframes - 1].retMode = RM_VALUE;
@@ -1882,7 +1914,26 @@ static void vmRun(Vm* vm, int32_t base) {
             if (!leafAlive(v)) { destroyedError(v); goto unwind; }
             idx = vmFieldIndex(c, name);
             if (idx < 0) { missingField(v, name); goto unwind; }
-            sp[-1] = PtrV(&objFields(asObj(v))[idx]);
+            {   /* (a field declared `defined`: a K_PtrField - what goes through it is checked like an assignment to the field, CppGenerator FieldPtrExpr) */
+                VmFieldInfo* fi = (VmFieldInfo*)vmFieldInfo(c, name, NULL);
+                FireFieldPtr* d = fi ? (FireFieldPtr*)fi->fieldPtr : NULL;
+                static const uint8_t kinds[] = { K_Bool, K_Int, K_Float, K_Char, K_String, K_Word };
+                uint32_t tag = fi ? fi->requiredKind & 0x1F : 0;
+                if (!d && fi && !(fi->flags & 2) && (fi->requiredKind & 0x20) && tag >= 1 && tag <= 6 && kinds[tag - 1] != K_String) {
+                    d = (FireFieldPtr*)vmAlloc(&prog->arena, sizeof(FireFieldPtr));
+                    memset(d, 0, sizeof *d);
+                    d->name = fi->name;
+                    d->declared = kinds[tag - 1];
+                    d->unitless = (fi->requiredKind & 0x80) ? 1 : 0;
+                    d->text = vmConstStrUtf8(prog, "unitless");
+                    if (fi->requiredUnit && strncmp(fi->requiredUnit, "any", 3) != 0) {
+                        VmDemand* dm = vmDemand(vm, fi->requiredUnit);
+                        if (!dm->any) { d->hasUnit = dm->unit != 0; d->unit = dm->unit; d->text = dm->display; }
+                    }
+                    fi->fieldPtr = d;
+                }
+                sp[-1] = d ? fieldPtrV(&objFields(asObj(v))[idx], d) : PtrV(&objFields(asObj(v))[idx]);
+            }
             break;
         }
         case OP_AddressOfIndex: { Value i = POP(); SYNC(); sp[-1] = addressOfIndex(sp[-1], i); CHECK(); break; }

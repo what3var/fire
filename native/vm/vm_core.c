@@ -880,6 +880,24 @@ static bool vmRecCheck(Value a) {
     return true;
 }
 
+/* The catch type of an interface (`catch (IBase e)`): its index in the VM's table of the interfaces of the program's classes. */
+#define VM_IFACE_TYPE 0x40000000
+static uint32_t vmIfaceIndex(Vm* vm, const char* name) {
+    uint32_t i;
+    for (i = 0; i < vm->nifaces; i++) if (!strcmp(vm->ifaces[i], name)) return i;
+    if ((vm->nifaces & 15) == 0) {
+        vm->ifaces = (const char**)realloc((void*)vm->ifaces, (vm->nifaces + 16) * sizeof(char*));
+        if (!vm->ifaces) outOfMemory();
+    }
+    vm->ifaces[vm->nifaces] = name;
+    return vm->nifaces++;
+}
+static int32_t vmIfaceFind(Vm* vm, const char* name) {
+    uint32_t i;
+    for (i = 0; i < vm->nifaces; i++) if (!strcmp(vm->ifaces[i], name)) return (int32_t)i;
+    return -1;
+}
+
 /* ---- the class descriptors: the program's classes registered at run time (like fireRegisterPlugin does for the classes of a plugin) ---- */
 static void vmRegisterClasses(Vm* vm) {
     VmProgram* p = vm->prog;
@@ -913,9 +931,15 @@ static void vmRegisterClasses(Vm* vm) {
         d->toString = vmHasMethodNamed(c, toString) ? vmToString : NULL;
         /* the catch types an object of the class is: every class of its chain (the catch type of class k is its id + 1; FIRE_EXC_ANY is 0) */
         {   /* (any object can be thrown and caught by its class)  */
-            int32_t* types = (int32_t*)malloc((depth + 1) * sizeof(int32_t));
+            uint32_t ni = 0, j;
+            int32_t* types;
+            for (k = c; k; k = k->base) ni += k->ninterfaces;
+            types = (int32_t*)malloc((depth + ni + 1) * sizeof(int32_t));
             if (!types) outOfMemory();
             for (k = c; k; k = k->base) types[t++] = (int32_t)k->id + 1;
+            /* (`catch (IBase e)`: an interface of the chain - its own catch type) */
+            for (k = c; k; k = k->base)
+                for (j = 0; j < k->ninterfaces; j++) if (k->interfaces[j]) types[t++] = VM_IFACE_TYPE + (int32_t)vmIfaceIndex(vm, k->interfaces[j]);
             types[t] = -1;
             vm->excTypes[i] = types;
             d->excTypes = types;
@@ -944,6 +968,8 @@ static void vmUnregisterClasses(Vm* vm) {
     for (i = 0; i < vm->nids; i++) free(vm->excTypes[i]);
     free(vm->excTypes);
     free(vm->byId);
+    free((void*)vm->ifaces);
+    vm->ifaces = NULL; vm->nifaces = 0;
     free(vm->descs);
     vm->descs = NULL; vm->excTypes = NULL; vm->byId = NULL; vm->nids = 0;
 }
@@ -953,7 +979,8 @@ static void vmResolveHandler(Vm* vm, VmHandlerT* t) {
     const char* exception = vmName(vm->prog, "Exception");
     for (i = 0; i < t->ncatch; i++) {
         VmClass* c = t->types[i] ? vmClassNamed(vm->prog, t->types[i]) : NULL;
-        t->typeIds[i] = !t->types[i] || t->types[i] == exception ? FIRE_EXC_ANY : c ? (int32_t)c->id + 1 : 0x7FFFFFFF;
+        int32_t k = c || !t->types[i] ? -1 : vmIfaceFind(vm, t->types[i]);
+        t->typeIds[i] = !t->types[i] || t->types[i] == exception ? FIRE_EXC_ANY : c ? (int32_t)c->id + 1 : k >= 0 ? VM_IFACE_TYPE + k : 0x7FFFFFFF;
     }
     t->info.ncatch = t->ncatch;
     t->info.types = t->typeIds;

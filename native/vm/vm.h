@@ -110,6 +110,7 @@ typedef struct VmFieldInfo {
     const char* typeText;
     VmAttr* attrs;             /* its attributes (NULL: none) */
     uint32_t nattrs;
+    void* fieldPtr;            /* `&obj.n` of a field declared `defined`: its FireFieldPtr (made on first use) */
 } VmFieldInfo;
 typedef struct VmMethod { const char* name; VmProto** ov; uint32_t nov; } VmMethod;
 typedef struct VmCtor { int32_t arity; VmProto* p; } VmCtor;
@@ -297,6 +298,8 @@ typedef struct Vm {
     int32_t** excTypes;
     VmClass** byId;
     uint32_t nids;
+    const char** ifaces;    /* the interfaces a catch clause can name: catch type VM_IFACE_TYPE + index (excTypes of a class: its chain's, then its interfaces') */
+    uint32_t nifaces;
     uint32_t firstId;
     /* the previous state of the runtime's tables this program replaced (units, enums) */
     const FireEnum* savedEnums;

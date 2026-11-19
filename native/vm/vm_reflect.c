@@ -320,14 +320,9 @@ static bool vmReflWriteRaw(Vm* vm, VmChunk* caller, Value obj, const char* name,
     }
     {
         const VmFieldInfo* fi = vmFieldInfo(c, name, &declaring);
-        char what[300];
         Value old;
-        snprintf(what, sizeof what, "Field '%s'", name);
         if (caller && !vmPerf(vm) && fi && fi->access && !vmAccessAllowed(caller, declaring, fi->access)) { vmAccessDenied("Field", name, declaring, fi->access, "accessed"); return false; }
-        if (fi && fi->requiredUnit) { x = vmAdaptUnit(vm, x, fi->requiredUnit); if (g_unwind.active) return false; }
-        if (fi && fi->requiredKind && vmGuard(&x, fi->requiredKind, what, false)) return false;
-        if (fi && fi->requiredType && vmGuardType(vm, &x, fi->requiredType, obj, NULL, what, false)) return false;
-        if (fi && fi->arrayOfParam && x.kind == K_Array) { vmTypeArrayOfParam(vm, x, fi->arrayOfParam, obj, NULL); if (g_unwind.active) return false; }
+        if (!vmFieldStore(vm, &x, fi, name, obj, &vm->frames[vm->nframes - 1].scope->temp, true)) return false;
         if ((c->flags & VC_RECORD) && !recInit(asObj(obj))) { recordWriteError(asObj(obj), name); return false; }
         old = objFields(asObj(obj))[idx];
         objFields(asObj(obj))[idx] = x;
