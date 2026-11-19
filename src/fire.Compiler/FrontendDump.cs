@@ -48,6 +48,7 @@ namespace fire.Compiler
 
         private static int Dump(string command, string path, Stream output)
         {
+            if (command == "diagnostics") return DumpDiagnostics(path, output);
             var o = new StringBuilder();
             int result = 0;
             try
@@ -80,6 +81,48 @@ namespace fire.Compiler
             {
                 foreach (var d in CompileDiagnostics.Of(ex)) o.Append(d.ToLogLine()).Append('\n');
                 result = 1;
+            }
+            var bytes = new UTF8Encoding(false).GetBytes(o.ToString());
+            output.Write(bytes, 0, bytes.Length);
+            output.Flush();
+            return result;
+        }
+
+        /// <summary>`forge diagnostics <file>` (Phase C 3): what `forge run <file>` writes to the error output while it compiles - the warnings as they come, then the
+        /// errors of a failed compile - up to and with the type check (Linker.FrontendOnly: the bytecode compiler does not run). A `//# types: strict` among the last
+        /// 12 lines runs it with `--types strict`, as tests/run-cases.sh does. An exception that is no compile error: `internal: <type>: <message>`.</summary>
+        private static int DumpDiagnostics(string path, Stream output)
+        {
+            var o = new StringBuilder();
+            int result = 0;
+            var lines = File.Exists(path) ? File.ReadAllLines(path) : Array.Empty<string>();
+            bool strict = lines.Skip(Math.Max(0, lines.Length - 12)).Any(l => l.Trim() == "//# types: strict");
+            var collector = new DiagnosticCollector { OnReport = d => { if (d.IsWarning) o.Append(d.ToLogLine()).Append('\n'); } };
+            var before = Linker.ProcessDefaultTypeChecking;
+            Linker.ProcessDefaultTypeChecking = strict ? TypeCheckMode.Strict : null;
+            Linker.FrontendOnly = true;
+            try
+            {
+                using (collector.Begin())
+                {
+                    string text = File.ReadAllText(path);
+                    new Linker { BasePath = Path.GetDirectoryName(Path.GetFullPath(path)), SourcePaths = new string?[] { Path.GetFullPath(path) } }.CompileAndLink(new[] { text });
+                }
+            }
+            catch (Exception ex) when (CommandLineRunner.IsCompileError(ex))
+            {
+                o.Append(CommandLineRunner.DescribeErrors(ex).Replace("\r\n", "\n")).Append('\n');
+                result = 1;
+            }
+            catch (Exception ex)
+            {
+                o.Append("internal: ").Append(ex.GetType().Name).Append(": ").Append(ex.Message.Replace("\r\n", "\n")).Append('\n');
+                result = 1;
+            }
+            finally
+            {
+                Linker.FrontendOnly = false;
+                Linker.ProcessDefaultTypeChecking = before;
             }
             var bytes = new UTF8Encoding(false).GetBytes(o.ToString());
             output.Write(bytes, 0, bytes.Length);

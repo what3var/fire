@@ -307,6 +307,9 @@ namespace fire.Compiler
         /// statements at the top level of the program's files are left out and the driver is the last source.</summary>
         [ThreadStatic] public static Func<IReadOnlyList<Ast.Stmt>, int, string>? TestDriver;
 
+        /// <summary>`forge diagnostics` (FrontendDump, docs/spec/FORGE_C.md): CompileAndLink stops after the type check and gives null - the diagnostics of the frontend only.</summary>
+        [ThreadStatic] public static bool FrontendOnly;
+
         /// <summary>A library has no entry point: declarations only (classes, interfaces, enums, functions, namespaces, extensions), nothing that runs at the top level.</summary>
         private void CheckLibraryHasNoEntryPoint(IReadOnlyList<Ast.Stmt> program, int firstUserSource)
         {
@@ -630,6 +633,7 @@ namespace fire.Compiler
             if (ClassMeta || OwnImports is { Count: > 0 }) TypeChecker.DeriveDefinedOverride = false;
             try { TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource, TypeCheckLibraries ? 0 : firstUserSource); }
             finally { TypeChecker.DeriveDefinedOverride = deriveBefore; }
+            if (FrontendOnly) return null!;
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
             fire.Native.BuildTimes.Lap("fire: checking types");
             var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);
