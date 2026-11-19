@@ -109,14 +109,14 @@ static class TestResumeTests
             string dir = Path.Combine(Path.GetTempPath(), "fire-resume-test-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             string[] mine = { "case7.bin", "case7.c", "case7.o", "case7_natives.o", "case7_natives.cpp", "case7_fire_unit1.o" };
-            string[] others = { "case70.bin", "case70.o", "fire_rt.h", "case8.bin" };
+            string[] others = { "case70.bin", "case70.o", "case7_w.o", "case7_w_natives.o", "fire_rt.h", "case8.bin" };
             foreach (var f in mine.Concat(others)) File.WriteAllText(Path.Combine(dir, f), "x");
             Directory.CreateDirectory(Path.Combine(dir, "case7.split"));
             NativeTestBuild.Clean(dir, "case7", Path.Combine(dir, "case7.bin"));
             var left = Directory.EnumerateFileSystemEntries(dir).Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal).ToList();
             Directory.Delete(dir, true);
             var want = NativeTestBuild.Keep ? mine.Concat(others).Append("case7.split").OrderBy(f => f, StringComparer.Ordinal).ToList() : others.OrderBy(f => f, StringComparer.Ordinal).ToList();
-            Check("Aufraeumen: Clean loescht Programm, Objekte und Quellen eines Builds - nicht die eines anderen (case70) und nichts mit FIRE_TESTS_KEEP=1",
+            Check("Aufraeumen: Clean loescht Programm, Objekte und Quellen eines Builds - nicht die eines anderen (case70, case7_w) und nichts mit FIRE_TESTS_KEEP=1",
                 left.SequenceEqual(want), string.Join(" ", left));
         }
         Check("Platz: der freie Platz des temporaeren Ordners ist bekannt", TestDisk.Free(Path.GetTempPath()) > 0, TestDisk.Free(Path.GetTempPath()).ToString());

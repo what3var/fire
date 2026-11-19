@@ -90,8 +90,9 @@ static class NativeTestBuild
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
         if (!string.IsNullOrEmpty(exe)) Delete(exe);
-        foreach (string suffix in new[] { ".bin", ".c", "_natives.cpp", ".o", "_natives.o", ".split" }) Delete(Path.Combine(dir, name + suffix));
-        try { foreach (string obj in Directory.EnumerateFiles(dir, name + "_*.o").ToList()) Delete(obj); }
+        foreach (string suffix in new[] { ".bin", ".exe", ".c", "_natives.cpp", ".o", "_natives.o", ".split", ".sh", ".out", ".xdg" }) Delete(Path.Combine(dir, name + suffix));
+        // (the objects of a split program's units: name_fire_*.o - not name_*.o, which would take those of another build "name_w")
+        try { foreach (string obj in Directory.EnumerateFiles(dir, name + "_fire_*.o").ToList()) Delete(obj); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         List<string>? content;
         lock (_users)
@@ -210,26 +211,27 @@ static class NativeTestBuild
 
     /// <summary>Runs the commands of <see cref="Commands"/> with <paramref name="run"/> (tool, arguments -> output, exit code); the output of all, the exit code of the first that failed.
     /// (each command as one of the compiler processes that <see cref="TestJobs.Compiler"/> allows at a time)</summary>
+    static readonly System.Text.RegularExpressions.Regex ObjectOutput = new("-o \"([^\"]+\\.o)\"");
+
     public static string Build(Func<string, string, (string Output, int Exit)> run, string cxx, fire.Native.NativeSources sources, string dir, string name, string flags, string exe, out int exit, string tail = "")
     {
         var output = new System.Text.StringBuilder();
         exit = 0;
         // (a full disk makes every build after it fail - wait for space first: TestDisk)
         TestDisk.WaitForSpace(dir);
-        foreach (var (tool, arguments) in Commands(cxx, sources, dir, name, flags, exe, tail))
+        var commands = Commands(cxx, sources, dir, name, flags, exe, tail);
+        foreach (var (tool, arguments) in commands)
         {
             var (text, code) = TestJobs.Compiler(() => run(tool, arguments));
             output.Append(text);
             if ((exit = code) != 0) break;
         }
-        // (the object files go once the program is linked - hundreds of cases with sanitizers would fill the disk; FIRE_TESTS_KEEP=1 keeps them)
+        // (the object files of this build go once it ran - hundreds of cases with sanitizers would fill the disk; FIRE_TESTS_KEEP=1 keeps them. Only the
+        // objects its own commands wrote, "-o x.o": no pattern that could take those of another build whose name starts the same)
         if (!Keep)
-        {
-            foreach (var obj in Directory.EnumerateFiles(dir, name + "_*.o").ToList())
-                try { File.Delete(obj); } catch (IOException) { }
-            foreach (var obj in new[] { name + ".o", name + "_natives.o" })
-                try { File.Delete(Path.Combine(dir, obj)); } catch (IOException) { }
-        }
+            foreach (var (_, arguments) in commands)
+                foreach (System.Text.RegularExpressions.Match m in ObjectOutput.Matches(arguments))
+                    try { File.Delete(m.Groups[1].Value); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         return output.ToString();
     }
 
