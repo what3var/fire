@@ -570,6 +570,8 @@ static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expec
     const FcST* previousReturn;
     FcTypeRef* previousReturnRef;
     FcList* previousCollected;
+    FcList* previousNotes;
+    FcDict* previousPlain;
     FcList* returns;
     FcDict* outerCopies;
     FcResolvedRef* lamRef;
@@ -595,6 +597,10 @@ static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expec
     previousReturnRef = t->returnTypeRef;
     t->returnTypeRef = NULL;
     previousCollected = t->collectedReturns;
+    previousNotes = t->retNotes;
+    previousPlain = t->plainParams;
+    t->retNotes = NULL;
+    t->plainParams = NULL;
     t->returnType = expectedReturn;
     returns = fcListNew(TC_);
     t->collectedReturns = returns;
@@ -622,6 +628,8 @@ static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expec
     t->returnType = previousReturn;
     t->returnTypeRef = previousReturnRef;
     t->collectedReturns = previousCollected;
+    t->retNotes = previousNotes;
+    t->plainParams = previousPlain;
     values = fcListNew(TC_);
     for (i = 0; i < returns->count; i++) if (((const FcST*)returns->items[i])->kind != STK_Undefined) fcListAdd(TC_, values, returns->items[i]);
     if (expectedReturn) returned = expectedReturn;
@@ -753,7 +761,12 @@ static const FcST* ExtensionCallType(FcTC* t, const FcST* target, const char* na
 }
 
 static const FcST* InferCallCore(FcTC* t, FcCallExpr* c);
-static const FcST* InferCall(FcTC* t, FcCallExpr* c) { return InferCallCore(t, c); }
+static const FcST* InferCall(FcTC* t, FcCallExpr* c) {
+    const FcST* type = InferCallCore(t, c);
+    const char* name = c->callee->kind == EK_MemberExpr ? ((FcMemberExpr*)c->callee)->name : c->callee->kind == EK_IdentifierExpr ? ((FcIdentifierExpr*)c->callee)->name : NULL;
+    if (!fcDictHas(&t->notedCalls, c) && name) fcSetAdd(&t->unseenNames, name);
+    return type;
+}
 
 /* NativeTypeRef: the type of a native's `returns` and its array ranks; false for `any` and what cannot be read */
 static bool NativeTypeRef(FcTC* t, const char* text, FcTypeRef** out, int* ranksOut) {
@@ -887,10 +900,6 @@ static FcList* TreeOverloads(FcTC* t, FcCallExpr* c, FcList* candidates) {
     return candidates;
 }
 
-static void NoteCall(FcTC* t, FcExpr* call, FcMethodDecl* target) {
-    fcSetAdd(&t->notedCalls, call);
-    if (target != NULL) fcDictPut(&t->callTargets, call, target);
-}
 static void CheckStoredArguments(FcTC* t, FcMethodDecl* method, FcList* argParams, FcList* args);
 static void CheckStoredTemporaries(FcTC* t, FcConstructorDecl* ctor, FcList* argParams, FcList* args, const char* className);
 static FcList* fcTakeParams(FcTC* t, FcList* params, int n) {
@@ -938,7 +947,7 @@ static const FcST* InferOverloadedCall(FcTC* t, FcCallExpr* c, FcList* candidate
         }
     }
     CheckArguments(t, method->params, args, c->args, method->name, map);
-    NoteCall(t, (FcExpr*)c, method);
+    NoteCallFull(t, (FcExpr*)c, MethodKey(t, method->name, method->params->count), method->params, fcTakeParams(t, method->params, args->count), args, c->args, method);
     CheckStoredArguments(t, method, fcTakeParams(t, method->params, args->count), c->args);
     return ResultOf(t, method, map);
 }
@@ -1110,13 +1119,19 @@ static const FcST* InferCallCore(FcTC* t, FcCallExpr* c) {
         return ST_DYNAMIC;
     }
     CheckArguments(t, argParams, args, c->args, method->name, map);
-    NoteCall(t, (FcExpr*)c, method);
+    NoteCallFull(t, (FcExpr*)c, MethodKey(t, method->name, method->params->count), method->params, argParams, args, c->args, method);
     CheckStoredArguments(t, method, argParams, c->args);
     return ResultOf(t, method, map);
 }
 
 /* ---- new ---- */
+static const FcST* InferNewCore(FcTC* t, FcNewExpr* n);
 static const FcST* InferNew(FcTC* t, FcNewExpr* n) {
+    const FcST* type = InferNewCore(t, n);
+    if (!fcDictHas(&t->notedCalls, n) && type->kind == STK_Class && type->cls) fcSetAdd(&t->unseenCtors, type->cls);
+    return type;
+}
+static const FcST* InferNewCore(FcTC* t, FcNewExpr* n) {
     FcList* typeArgs = NULL;
     const char* plain;
     FcClassDecl* decl;
@@ -1179,7 +1194,7 @@ static const FcST* InferNew(FcTC* t, FcNewExpr* n) {
             fcListAdd(TC_, namedArgs, (void*)r);
         }
         CheckArguments(t, named, namedArgs, n->args, callee, map);
-        NoteCall(t, (FcExpr*)n, NULL);
+        NoteCallFull(t, (FcExpr*)n, CtorKey(t, plain, ((FcConstructorDecl*)ctors->items[0])->params->count), ((FcConstructorDecl*)ctors->items[0])->params, named, namedArgs, n->args, NULL);
         CheckStoredTemporaries(t, (FcConstructorDecl*)ctors->items[0], named, n->args, plain);
         return stClassOf(TC_, plain, typeArgs);
     }
@@ -1207,7 +1222,7 @@ static const FcST* InferNew(FcTC* t, FcNewExpr* n) {
             FcConstructorDecl* chosen = NULL;
             for (i = 0; i < asMethods->count; i++) if (((FcCand*)asMethods->items[i])->method == picked->method) { chosen = (FcConstructorDecl*)ordered->items[i]; break; }
             CheckArguments(t, chosen->params, ctorArgs, n->args, TF(t, "new %s", PlainName(t, plain)), map);
-            NoteCall(t, (FcExpr*)n, NULL);
+            NoteCallFull(t, (FcExpr*)n, CtorKey(t, plain, chosen->params->count), chosen->params, fcTakeParams(t, chosen->params, ctorArgs->count), ctorArgs, n->args, NULL);
             CheckStoredTemporaries(t, chosen, fcTakeParams(t, chosen->params, ctorArgs->count), n->args, plain);
             {
                 FcList* methods = fcListNew(TC_);
@@ -1231,7 +1246,7 @@ static const FcST* InferNew(FcTC* t, FcNewExpr* n) {
     }
     if (ctor) {
         CheckArguments(t, ctor->params, args, n->args, TF(t, "new %s", PlainName(t, plain)), map);
-        NoteCall(t, (FcExpr*)n, NULL);
+        NoteCallFull(t, (FcExpr*)n, CtorKey(t, plain, ctor->params->count), ctor->params, fcTakeParams(t, ctor->params, args->count), args, n->args, NULL);
         CheckStoredTemporaries(t, ctor, fcTakeParams(t, ctor->params, args->count), n->args, plain);
     }
     return stClassOf(TC_, plain, typeArgs);

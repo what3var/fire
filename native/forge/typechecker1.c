@@ -107,6 +107,19 @@ typedef struct FcTC {
     FcList* localTypes;           /* FcDict* name -> TypeRef* by scope (like scopes) */
     FcDict* treeTypes;            /* ExpressionTrees.Types while a tree is checked, NULL otherwise */
     FcDict* specializedClasses;   /* the classes with typed specializations (NoteReceiverTypeArgs), made on first use */
+    /* the derivation of `defined` (Derive) */
+    bool deriveDefined;
+    FcDict calls;                 /* key -> FcCallInfo* */
+    FcDict stringCalls;           /* key -> FcStrCalls* */
+    FcDict returns;               /* MethodDecl* -> FcReturns* */
+    FcList* retNotes;             /* FcRetNote*, NULL: not collecting */
+    FcDict* plainParams;          /* name -> LambdaParam*, NULL */
+    FcDict paramIds;              /* LambdaParam* -> "par:n" */
+    FcDict unseenNames, unseenCtors, stringLiterals, baseClasses;
+    FcDict exprTypes;             /* Expr* -> FcST* */
+    FcDict* fieldCands;           /* name -> FcList* of FieldDecl*, NULL until made */
+    FcDict fieldOwner;            /* FieldDecl* -> class name */
+    FcDict otherFieldNames, fieldBad, fieldNeeds;
 } FcTC;
 static const FcKeptAt fcNoKept = { NULL, NULL, NULL };
 
@@ -683,6 +696,18 @@ static void Declare(FcTC* t, const char* name, const FcST* type) {
     fcDictPut((FcDict*)t->scopes->items[t->scopes->count - 1], name, (void*)type);
     if (t->localTypes->count == t->scopes->count) fcDictRemove((FcDict*)t->localTypes->items[t->localTypes->count - 1], name);
 }
+
+static void NoteCallFull(FcTC* t, FcExpr* call, const char* key, FcList* parameters, FcList* argParams, FcList* args, FcList* argExprs, FcMethodDecl* target);
+static bool fcDeriveDefined(void);
+static void Derive(FcTC* t, FcResolveResult* resolved);
+static void NoteReturn(FcTC* t, FcExpr* value, const FcST* type);
+static FcDict* PlainParams(FcTC* t, FcList* parameters, FcBlockStmt* body);
+static void NoteFieldWrite(FcTC* t, FcExpr* target, const char* name, FcExpr* value, const FcST* type);
+static bool IsFieldRef(FcTC* t, FcIdentifierExpr* id);
+static const char* MethodKey(FcTC* t, const char* name, int count);
+static const char* CtorKey(FcTC* t, const char* cls, int count);
+typedef struct FcReturns FcReturns;
+static FcReturns* fcReturnsNew(FcTC* t, FcList* notes, bool ends);
 
 /* DeclareLocalType: a local declared with int/float/bool, a class, an interface or a type parameter (scope -1: the innermost) */
 static void DeclareLocalType(FcTC* t, const char* name, FcTypeRef* type, int scope) {

@@ -61,12 +61,13 @@ static void Check(FcTC* t, FcStmt* stmt) {
             FcReturnStmt* r = (FcReturnStmt*)stmt;
             if (r->value) {
                 const FcST* type = InferExpected(t, r->value, t->returnType);
+                NoteReturn(t, r->value, type);
                 if (t->collectedReturns) fcListAdd(TC_, t->collectedReturns, (void*)type);
                 if (t->returnType) {
                     CheckAssignable(t, type, t->returnType, r->h.line, "the return value", TC_ReturnCode, r->value);
                     if (t->returnTypeRef) GuardValue(t, r->value, type, t->returnType, t->returnTypeRef, t->returnWhat);
                 }
-            } else if (t->collectedReturns) fcListAdd(TC_, t->collectedReturns, (void*)ST_UNDEFINED);
+            } else { NoteReturn(t, NULL, NULL); if (t->collectedReturns) fcListAdd(TC_, t->collectedReturns, (void*)ST_UNDEFINED); }
             break;
         }
         case SK_ThrowStmt: Infer(t, ((FcThrowStmt*)stmt)->value); break;
@@ -467,7 +468,18 @@ static void CheckMembers(FcTC* t, FcList* members, const char* ownerName) {
                 if (untyped && !isOperator) ReportNoReturnType(t, m->name, m->h.line);
                 t->collectedReturns = NULL;
                 t->bodyTypeParams = m->typeParams;
-                CheckBody(t, m->params, m->body, untyped ? NULL : Declared(t, m->returnType, 0, NULL), untyped ? NULL : m->returnType, TF(t, "Return value of '%s'", m->name));
+                {
+                    FcList* outerNotes = t->retNotes;
+                    FcDict* outerParams = t->plainParams;
+                    FcStmt* last;
+                    t->retNotes = fcListNew(TC_);
+                    t->plainParams = PlainParams(t, m->params, m->body);
+                    CheckBody(t, m->params, m->body, untyped ? NULL : Declared(t, m->returnType, 0, NULL), untyped ? NULL : m->returnType, TF(t, "Return value of '%s'", m->name));
+                    last = m->body->statements->count > 0 ? (FcStmt*)m->body->statements->items[m->body->statements->count - 1] : NULL;
+                    fcDictPut(&t->returns, m, fcReturnsNew(t, t->retNotes, last && ((last->kind == SK_ReturnStmt && ((FcReturnStmt*)last)->value) || last->kind == SK_ThrowStmt)));
+                    t->retNotes = outerNotes;
+                    t->plainParams = outerParams;
+                }
                 t->bodyTypeParams = previousTypeParams;
                 t->collectedReturns = previousCollected;
                 break;
@@ -480,7 +492,12 @@ static void CheckMembers(FcTC* t, FcList* members, const char* ownerName) {
                 if ((baseOfCtor = BaseClassName(t)) != NULL) CheckConstructorAccess(t, baseOfCtor, c->baseArgs ? c->baseArgs->count : 0, c->h.line);
                 wasCtor = t->inConstructor;
                 t->inConstructor = true;
-                CheckBody(t, c->params, c->body, NULL, NULL, "");
+                {
+                    FcDict* ctorOuterParams = t->plainParams;
+                    t->plainParams = PlainParams(t, c->params, c->body);
+                    CheckBody(t, c->params, c->body, NULL, NULL, "");
+                    t->plainParams = ctorOuterParams;
+                }
                 t->inConstructor = wasCtor;
                 break;
             }
@@ -772,12 +789,13 @@ static const FcST* InferCore(FcTC* t, FcExpr* expr) {
                 case VK_Int: return stWithUnit(TC_, ST_INT, fcLiteralUnit(t, v), false);
                 case VK_Float: return stWithUnit(TC_, ST_FLOAT, fcLiteralUnit(t, v), false);
                 case VK_Char: return ST_CHAR;
-                case VK_String: return ST_STRING;
+                case VK_String: { int n = fc8Units(v->s); if (n > 0 && n < 128) fcSetAdd(&t->stringLiterals, v->s); return ST_STRING; }
                 case VK_Undefined: return ST_UNDEFINED;
             }
             return ST_DYNAMIC;
         }
         case EK_IdentifierExpr:
+            fcSetAdd(&t->unseenNames, ((FcIdentifierExpr*)expr)->name);
             CheckImplicitThisAccess(t, (FcIdentifierExpr*)expr, MU_Read);
             return Lookup(t, ((FcIdentifierExpr*)expr)->name);
         case EK_ThisExpr: return t->thisType ? t->thisType : (t->cls ? ThisClass(t) : ST_DYNAMIC);
@@ -1078,6 +1096,8 @@ static const FcST* InferAssign(FcTC* t, FcAssignExpr* a) {
     }
     value = InferExpected(t, a->value, target);
     if (a->target->kind == EK_IdentifierExpr && fcDictCount(&t->pendingVars) > 0) TypePendingVar(t, (FcIdentifierExpr*)a->target, value);
+    if (t->deriveDefined && (a->target->kind == EK_MemberExpr || (a->target->kind == EK_IdentifierExpr && IsFieldRef(t, (FcIdentifierExpr*)a->target))))
+        NoteFieldWrite(t, a->target, a->target->kind == EK_MemberExpr ? ((FcMemberExpr*)a->target)->name : ((FcIdentifierExpr*)a->target)->name, a->value, value);
     what = a->target->kind == EK_IdentifierExpr ? TF(t, "'%s'", ((FcIdentifierExpr*)a->target)->name) : a->target->kind == EK_MemberExpr ? TF(t, "'%s'", ((FcMemberExpr*)a->target)->name)
         : a->target->kind == EK_IndexExpr ? "an element" : "the target";
     CheckAssignable(t, value, target, a->h.line, what, TC_AssignCode, a->value);
