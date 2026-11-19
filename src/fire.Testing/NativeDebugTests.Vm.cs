@@ -50,7 +50,7 @@ static partial class NativeDebugTests
 
     static void RunVmEngine(Action<string, bool, string?> check, string cxx, string workDir, string sanitize)
     {
-        var selected = Cases.Where(c => TestSelectedName("VM-Debugger: " + c.Name)).ToList();
+        var selected = Cases.Where(c => TestSelectedName("VM-Debugger: " + c.Name) && TestResume.Pending("VM-Debugger: " + c.Name, CaseKey(c, "vm"))).ToList();
         bool protocol = TestSelectedName("VM-Debugger: Protokoll");
         if (selected.Count == 0 && !TestSelectedName("VM-Debugger: expand") && !protocol) return;
         string? fire = VmFire(cxx, workDir, sanitize, out string fireError);
@@ -78,7 +78,7 @@ static partial class NativeDebugTests
             }
             catch (Exception ex) { results.Add(($"VM-Debugger: {c.Name}", false, ex.ToString())); }
             return results;
-        }, (_, results) => { foreach (var (title, ok, detail) in results) check(title, ok, detail); });
+        }, (index, results) => TestResume.Run("VM-Debugger: " + selected[index].Name, CaseKey(selected[index], "vm"), () => { foreach (var (title, ok, detail) in results) check(title, ok, detail); }));
 
         // the checks of the protocol that are not about the C of a native build
         RunProtocol(check, cxx, workDir, sanitize, fire);

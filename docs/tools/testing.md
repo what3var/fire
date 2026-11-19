@@ -156,6 +156,11 @@ quickly:
 | `FIRE_TEST_JOBS=<n>` | how many native builds and test programs at a time (default: the cores of the machine); `1` builds and runs one case after the other |
 | `FIRE_TEST_SANITIZE=0` | the native cases without AddressSanitizer/UBSan (by default they run under them when the compiler has them): the paths the runtime keeps for the sanitizers' own checks then run - the pool of small objects (fire_rt.h objMemAlloc) instead of malloc per object |
 | `FIRE_TEST_OPT=<flags>` | the optimization of the native test builds (default `-O1`; e.g. `-O2` for a run that looks for the warnings only `-O2` finds) |
+| `FIRE_TESTS_RESUME=<dir>` | record every check as it finishes and skip what passed before with the same key: see [Resume and shards](#resume-and-shards) (`1`: `~/.cache/fire-tests/resume`) |
+| `FIRE_TESTS_SHARD=<i>/<n>` | only part i of n of the units (cases, debugger cases, window cases, groups): see [Resume and shards](#resume-and-shards) |
+| `FIRE_TESTS_KEEP=1` | the native group keeps the programs, objects and sources of every case in its temporary folder (by default those of a passed case are deleted as soon as it passed, a failed one keeps them) |
+| `FIRE_TESTS_MIN_FREE_MB=<n>` | before a native build, the free space of the temporary folder's disk is checked (default 1024 MB, `0`: no check): below it the builds wait (`[ disk ]` lines) for up to `FIRE_TESTS_DISK_WAIT` seconds (default 600) for space, then go on with a warning instead of failing one after the other |
+| `FIRE_TESTS_ONLY=resume` | the checks of the key and the records of resume and shards (a second, nothing built) |
 
 The window cases of the native group (filter `Fenster`) run every window program with fire's own display without a screen (`FIRE_DISPLAY=headless`) and on Wayland (`weston`); the
 clipboard of X11 needs `xvfb-run` (one program, two programs, the VM as the other one), the Windows cases MinGW and Wine; the VM's Windows clipboard a `dotnet publish -r win-x64` (the runtime
@@ -245,3 +250,51 @@ server of the machine) stay in `Program.cs` (`natCases`), next to the place that
 `OK: [123/530] Native == VM: ...`, `FEHLER: [124/530] ...` (`?` on the first run; the counts are kept in `~/.cache/fire-tests/totals.json`). The status word stays first,
 so `grep '^OK:'`, `grep -c FEHLER` and the like keep working. Every line is written at once (a log of a run in the background grows line by line), and while a long
 phase prints no check, a line `[ .. ] native Faelle gebaut und gelaufen 37/212 (120 s)` appears every 10 seconds.
+
+### Resume and shards
+
+A full run of the native group takes hours on a small machine. Two switches let it be stopped and continued, and split:
+
+**`FIRE_TESTS_RESUME=<dir>`** (or `1` for `~/.cache/fire-tests/resume`) records every check line in `<dir>/<time>-<pid>.jsonl` the moment it is printed -
+one JSON object per line, flushed per line: the title, OK or FEHLER (with the lines after it), the **unit** the check belongs to and the unit's **key**.
+When a unit has printed all its checks, a line marks it finished (synced to the disk). A run that is killed (a restart of the session, a full disk) keeps
+everything finished so far. The next run with the same folder skips every unit whose last finished run with the same key had only OK checks and prints
+its checks again as `OK (fortgesetzt): [n/total] title` (counted like `OK:`; `grep '^OK'` finds both); a unit that failed, did not finish or whose key
+changed runs again. At the end: `[ resume ] 412 Einheit(en) fortgesetzt (830 Pruefung(en) 'OK (fortgesetzt)'), 17 gelaufen`.
+
+The units are where the work is, not every single check:
+
+| Unit | Key (besides the build, below) |
+|---|---|
+| a case "native == VM" (`Native == VM: <title>`, with its `VM: <title>: die erwartete Ausgabe`) | its source, `.expected`, `.unhandled`, `output: varies`, the sanitizer flags |
+| a debugger case (`Native-Debugger: <case>`, `VM-Debugger: <case>`), a check of the protocol | the script, breakpoints and plan; the title |
+| a window case (`Fenster: <title>`, also Wayland), a device case (`Geraete nativ: <title>`), FreeRTOS and green threads per case | what is built and run, the expected lines (for FreeRTOS: what the VM printed) |
+| the checks of the native group that stand under a title of their own (ThreadSanitizer, TinyCC, Teilen, Weglassen, console, the clipboard under Xvfb/Wayland/Wine, UI nativ == VM, ESP32) | the title |
+| a group of a test class (`ProjectTests`, `TypeTests`, ... - in the full run and with `FIRE_TESTS_ONLY`) | the files of `tests/cases` |
+
+The key of every unit also holds a hash of **the build**: the MVID of `fire.Testing.dll` and the contents of the files next to it (the fire assemblies,
+forge, the standard packages as `Source/` - not the .NET runtime), the files of `native/` and `packages/` of the repository, the variables `FIRE_TESTS_ONLY`,
+`FIRE_SPLIT`, `FIRE_SPLIT_UNIT_KB`, `FIRE_MODULES`, `FIRE_TEST_OPT`, `FIRE_TEST_SANITIZE`, `FIRE_TEST_NO_NATIVE`, `FIRE_TEST_GIL`, `FIRE_S3D_GPU`, `FIRE_GFX_GPU`,
+`FIRE_TEST_WIN_FORGE`, `IDF_PATH`, `CC`, `CXX`, and the compilers on the PATH (gcc, g++, clang, tcc, MinGW, wine, ccache: the file each resolves to, its size
+and time). So a rebuilt test program or compiler runs everything again, while a changed `.expected` reruns only its case. `FIRE_TESTS_FILTER` is not part
+of the key: a run with a filter continues a full one and the other way round; `FIRE_TESTS_ONLY` is, so `FIRE_TESTS_ONLY=native` does not continue a full run.
+The checks that stand alone in `Program.cs` (no unit) always run - their work is done before the check line is printed, so there is nothing to skip; they
+are recorded (unit `""`, for the reader of the file) but never resumed. With a narrow filter they are most of the time of a resumed run (about a minute). `FIRE_TESTS_UPDATE=1` ignores the records.
+
+**`FIRE_TESTS_SHARD=<i>/<n>`** runs only the units whose title hash (SHA-256 of the title, modulo n) is part i: `1/2` and `2/2` together run every unit
+once, on two machines or in two sessions (the parts are as big as the hash makes them, not balanced by time); the checks outside units run in every part. A unit inside a unit (a group) is not split again. Combined with
+resume, every part records into the same folder (each run its own file) and a later run without a shard continues from all of them. At the end:
+`[ shard ] Teil 1/2: 214 Einheit(en) hier, 209 in den anderen Teilen (Einheiten je Teil - 1/2: 214, 2/2: 209)`.
+
+```
+FIRE_TESTS_ONLY=native FIRE_TESTS_RESUME=1 dotnet fire.Testing.dll                          # stop it any time, start it again: it goes on
+FIRE_TESTS_ONLY=native FIRE_TESTS_RESUME=1 FIRE_TESTS_SHARD=1/2 dotnet fire.Testing.dll     # session A
+FIRE_TESTS_ONLY=native FIRE_TESTS_RESUME=1 FIRE_TESTS_SHARD=2/2 dotnet fire.Testing.dll     # session B
+```
+
+The folder is never cleaned by the test program: delete it (or a file of an old run) to start from zero. The VM part of the "native == VM" cases runs for
+every case even when its unit is skipped - the sections after it take their expected outputs from there; it is the cheap part.
+
+**Disk.** The native group deletes the program, objects and sources of a case as soon as it passed (unless `FIRE_TESTS_KEEP=1`), and the object files of
+every build once it ran (only the ones its own commands wrote); a failed case keeps its files in `/tmp/fire-native-test-*` for a look. Before a build it checks the free space
+(`FIRE_TESTS_MIN_FREE_MB`, `FIRE_TESTS_DISK_WAIT`) and waits for space rather than letting every build fail.

@@ -60,6 +60,50 @@ static class NativeTestBuild
         return "p" + Convert.ToHexString(hash, 0, 10).ToLowerInvariant();
     }
 
+    /// <summary>FIRE_TESTS_KEEP=1: <see cref="Clean"/> deletes nothing (the programs and objects of every case stay in the temporary folder).</summary>
+    public static readonly bool Keep = Environment.GetEnvironmentVariable("FIRE_TESTS_KEEP") == "1";
+
+    // the files named after their content (shared by builds of the same program) with the builds that use them, and how many builds use each
+    static readonly Dictionary<string, List<string>> _contentOf = new();
+    static readonly Dictionary<string, int> _users = new();
+
+    static void Use(string dir, string name, string path)
+    {
+        lock (_users)
+        {
+            string build = Path.Combine(dir, name);
+            if (!_contentOf.TryGetValue(build, out var list)) _contentOf[build] = list = new();
+            if (list.Contains(path)) return;
+            list.Add(path);
+            _users[path] = _users.GetValueOrDefault(path) + 1;
+        }
+    }
+
+    /// <summary>Deletes what a build of <see cref="Commands"/> left in <paramref name="dir"/>: the program, its objects and sources (a file named after its content
+    /// only when no other build uses it) - for a case that passed: hundreds of programs with the sanitizers fill the disk. Nothing with FIRE_TESTS_KEEP=1.</summary>
+    public static void Clean(string dir, string name, string? exe = null)
+    {
+        if (Keep) return;
+        void Delete(string path)
+        {
+            try { if (Directory.Exists(path)) Directory.Delete(path, true); else File.Delete(path); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        if (!string.IsNullOrEmpty(exe)) Delete(exe);
+        foreach (string suffix in new[] { ".bin", ".exe", ".c", "_natives.cpp", ".o", "_natives.o", ".split", ".sh", ".out", ".xdg" }) Delete(Path.Combine(dir, name + suffix));
+        // (the objects of a split program's units: name_fire_*.o - not name_*.o, which would take those of another build "name_w")
+        try { foreach (string obj in Directory.EnumerateFiles(dir, name + "_fire_*.o").ToList()) Delete(obj); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        List<string>? content;
+        lock (_users)
+        {
+            if (!_contentOf.Remove(Path.Combine(dir, name), out content)) return;
+            content = content.Where(path => (_users[path] = _users[path] - 1) == 0).ToList();
+            foreach (string path in content) _users.Remove(path);
+        }
+        foreach (string path in content) Delete(path);
+    }
+
     /// <summary>(writes a file atomically: two cases with the same program write the same file at the same time)</summary>
     static void WriteAtomically(string path, string text)
     {
@@ -79,6 +123,7 @@ static class NativeTestBuild
             // a split program (FIRE_SPLIT=1, docs/spec/NATIVE_SPLIT.md): its units in a folder of their own (each includes fire_program.h next to it), every unit to an
             // object file (through ccache when it is there), then linked - by the C++ compiler when there are natives in C++
             string unitDir = Path.Combine(dir, ContentName(string.Concat(sources.Units.Select(u => u.Name + "\n" + u.Text)), cc + " " + flags));
+            Use(dir, name, unitDir);
             Directory.CreateDirectory(unitDir);
             var objects = new List<string>();
             foreach (var unit in sources.Units)
@@ -102,6 +147,7 @@ static class NativeTestBuild
             // with the cache: every unit compiled on its own (-c, through ccache), then linked
             string cName = ContentName(sources.Program, cc + " " + flags);
             string cFile = Path.Combine(dir, cName + ".c");
+            Use(dir, name, cFile);
             WriteAtomically(cFile, sources.Program);
             string cObj = Path.Combine(dir, name + ".o");
             commands.Add((Ccache, $"{cc} -std=c11 {flags} -c \"{cFile}\" -I\"{dir}\" -o \"{cObj}\""));
@@ -112,6 +158,7 @@ static class NativeTestBuild
             }
             string nName = ContentName(sources.Natives, cxx + " " + flags);
             string nFile = Path.Combine(dir, nName + "_natives.cpp");
+            Use(dir, name, nFile);
             WriteAtomically(nFile, sources.Natives);
             string nObj = Path.Combine(dir, name + "_natives.o");
             commands.Add((Ccache, $"{cxx} -std=c++17 {flags} -c \"{nFile}\" -I\"{dir}\" -o \"{nObj}\""));
@@ -164,20 +211,27 @@ static class NativeTestBuild
 
     /// <summary>Runs the commands of <see cref="Commands"/> with <paramref name="run"/> (tool, arguments -> output, exit code); the output of all, the exit code of the first that failed.
     /// (each command as one of the compiler processes that <see cref="TestJobs.Compiler"/> allows at a time)</summary>
+    static readonly System.Text.RegularExpressions.Regex ObjectOutput = new("-o \"([^\"]+\\.o)\"");
+
     public static string Build(Func<string, string, (string Output, int Exit)> run, string cxx, fire.Native.NativeSources sources, string dir, string name, string flags, string exe, out int exit, string tail = "")
     {
         var output = new System.Text.StringBuilder();
         exit = 0;
-        foreach (var (tool, arguments) in Commands(cxx, sources, dir, name, flags, exe, tail))
+        // (a full disk makes every build after it fail - wait for space first: TestDisk)
+        TestDisk.WaitForSpace(dir);
+        var commands = Commands(cxx, sources, dir, name, flags, exe, tail);
+        foreach (var (tool, arguments) in commands)
         {
             var (text, code) = TestJobs.Compiler(() => run(tool, arguments));
             output.Append(text);
             if ((exit = code) != 0) break;
         }
-        // (a split program: the object files of its units go - hundreds of cases with sanitizers would fill the disk)
-        if (sources.Units != null)
-            foreach (var obj in Directory.EnumerateFiles(dir, name + "_fire_*.o").ToList())
-                try { File.Delete(obj); } catch (IOException) { }
+        // (the object files of this build go once it ran - hundreds of cases with sanitizers would fill the disk; FIRE_TESTS_KEEP=1 keeps them. Only the
+        // objects its own commands wrote, "-o x.o": no pattern that could take those of another build whose name starts the same)
+        if (!Keep)
+            foreach (var (_, arguments) in commands)
+                foreach (System.Text.RegularExpressions.Match m in ObjectOutput.Matches(arguments))
+                    try { File.Delete(m.Groups[1].Value); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         return output.ToString();
     }
 
@@ -191,6 +245,60 @@ static class NativeTestBuild
         p.WaitForExit();
         return (output + err.Result, p.ExitCode);
     };
+}
+
+/// <summary>The free space of the disk the builds write to: below FIRE_TESTS_MIN_FREE_MB (default 1024) a build waits - up to FIRE_TESTS_DISK_WAIT seconds
+/// (default 600) with a line every minute - for the space to come back (another run that cleans up, a person who deletes something), instead of failing with
+/// "No space left on device" and every build after it. After the wait it goes on anyway (the builds that need more fail) and warns only once a minute
+/// until there is space again.</summary>
+static class TestDisk
+{
+    public static readonly long MinFree = (long.TryParse(Environment.GetEnvironmentVariable("FIRE_TESTS_MIN_FREE_MB"), out long mb) && mb >= 0 ? mb : 1024) << 20;
+    static readonly int MaxWait = int.TryParse(Environment.GetEnvironmentVariable("FIRE_TESTS_DISK_WAIT"), out int s) && s >= 0 ? s : 600;
+    static readonly object _gate = new();
+    static DateTime _lastCheck = DateTime.MinValue, _lastWarning = DateTime.MinValue;
+    static bool _gaveUp;
+
+    /// <summary>The free bytes for <paramref name="dir"/> (statvfs of its file system); -1: unknown.</summary>
+    public static long Free(string dir)
+    {
+        try { return new DriveInfo(Directory.Exists(dir) ? dir : Path.GetTempPath()).AvailableFreeSpace; }
+        catch (Exception) { return -1; }
+    }
+
+    public static void WaitForSpace(string dir)
+    {
+        if (MinFree == 0) return;
+        lock (_gate)
+        {
+            // (once every few seconds is enough: the builds of a run start every second)
+            if (DateTime.UtcNow - _lastCheck < TimeSpan.FromSeconds(5)) return;
+            long free = Free(dir);
+            _lastCheck = DateTime.UtcNow;
+            if (free < 0 || free >= MinFree) { _gaveUp = false; return; }
+            if (_gaveUp)
+            {
+                if (DateTime.UtcNow - _lastWarning > TimeSpan.FromMinutes(1)) { _lastWarning = DateTime.UtcNow; TestProgress.Note($"[ disk ] nur {free >> 20} MB frei fuer {dir} - die Builds laufen trotzdem weiter"); }
+                return;
+            }
+            var started = DateTime.UtcNow;
+            TestProgress.Note($"[ disk ] nur {free >> 20} MB frei fuer {dir} (weniger als FIRE_TESTS_MIN_FREE_MB={MinFree >> 20}): die Builds warten bis zu {MaxWait} s auf Platz");
+            while ((free = Free(dir)) >= 0 && free < MinFree)
+            {
+                double waited = (DateTime.UtcNow - started).TotalSeconds;
+                if (waited >= MaxWait)
+                {
+                    _gaveUp = true;
+                    _lastWarning = DateTime.UtcNow;
+                    TestProgress.Note($"[ disk ] nach {MaxWait} s noch immer nur {free >> 20} MB frei - es geht weiter (Builds koennen fehlschlagen)");
+                    return;
+                }
+                Thread.Sleep(TimeSpan.FromSeconds(Math.Min(15, Math.Max(1, MaxWait - waited))));
+                if ((int)(DateTime.UtcNow - started).TotalSeconds % 60 < 15) TestProgress.Note($"[ disk ] wartet auf Platz: {free >> 20} MB frei ({(int)(DateTime.UtcNow - started).TotalSeconds} s)");
+            }
+            TestProgress.Note($"[ disk ] wieder {free >> 20} MB frei - weiter");
+        }
+    }
 }
 
 /// <summary>Runs a program of a test and waits for it: its output, its errors and its exit code. Variables for the program go in <paramref name="environment"/>
@@ -441,9 +549,12 @@ static class TestProgress
             + (Environment.GetEnvironmentVariable("FIRE_TEST_NO_NATIVE") == "1" ? "|no-native" : "");
         if (ReadTotals().TryGetValue(_key, out int known) && known > 0) _total = known.ToString();
         Console.SetOut(new ProgressWriter(Console.Out));
+        // (FIRE_TESTS_RESUME, FIRE_TESTS_SHARD: TestResume.cs)
+        TestResume.Announce();
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             Console.Out.Flush();
+            foreach (string line in TestResume.Summary()) _out.Write(line + "\n");
             _out.Flush();
             if (Count == 0) return;
             try
@@ -471,6 +582,7 @@ static class TestProgress
     {
         string status;
         if (line.StartsWith("OK: ", StringComparison.Ordinal)) status = "OK: ";
+        else if (line.StartsWith(TestResume.ResumedPrefix, StringComparison.Ordinal)) status = TestResume.ResumedPrefix;
         else if (line.StartsWith("FEHLER: ", StringComparison.Ordinal)) status = "FEHLER: ";
         else return null;
         if (status == "FEHLER: " && line.Length > 8 && char.IsDigit(line[8]) && line.EndsWith("fehlgeschlagen.", StringComparison.Ordinal)) return null;
@@ -545,6 +657,7 @@ static class TestProgress
             if (c != '\n') { line.Append(c); return; }
             string text = line.ToString();
             line.Clear();
+            TestResume.Observe(text);
             Emit(section, text);
         }
     }
