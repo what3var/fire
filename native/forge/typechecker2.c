@@ -964,11 +964,11 @@ static void InferOperands(FcTC* t, FcBinaryExpr* b, const FcST** left, const FcS
         const FcST* anchor = Infer(t, b->left);
         const FcST* operand = InferCoercionOperand(t, &rightInfo, b->right->line);
         *left = anchor;
-        *right = AutoCoercionResult(t, b->right, &rightInfo, operand, anchor, false, true);
+        *right = AutoCoercionResult(t, b->right, &rightInfo, operand, anchor, false, (b->op != BOP_Eq && b->op != BOP_NotEq) || anchor->nul == NUL_Defined);
     } else {
         const FcST* operand = InferCoercionOperand(t, &leftInfo, b->left->line);
         const FcST* anchor = Infer(t, b->right);
-        *left = AutoCoercionResult(t, b->left, &leftInfo, operand, anchor, false, true);
+        *left = AutoCoercionResult(t, b->left, &leftInfo, operand, anchor, false, (b->op != BOP_Eq && b->op != BOP_NotEq) || anchor->nul == NUL_Defined);
         *right = anchor;
     }
 }

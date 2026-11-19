@@ -123,7 +123,9 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
         /* `fbc <mode>`: the program file `forge bytecode <file> -m <mode>` writes */
         const char* m = job->command + 4;
         int mode = strcmp(m, "debug") == 0 ? 0 : strcmp(m, "release") == 0 ? 1 : strcmp(m, "performance") == 0 ? 2 : -1;
-        FcLinked* linked = fcLinkFile(c, job->path, job->prelude, job->store, fcStrictTag(job->path), mode);
+        FcLinked* linked;
+        c->collecting = true;   /* (the warnings: `forge-c bytecode` prints them as forge does) */
+        linked = fcLinkFile(c, job->path, job->prelude, job->store, fcStrictTag(job->path), mode);
         fcProgramFileWrite(c, linked, true, job->out);
         return;
     }
@@ -246,14 +248,20 @@ int main(int argc, char** argv) {
             FC_TRY(&ctx) {
                 fcDumpRun(&ctx, &job);
             } FC_CATCH(&ctx) {
-                FcList* diags = fcDiagnosticsOf(&ctx, &ctx.err, NULL);
-                FcBuf e = {0};
-                fcBufStr(&e, "");
-                for (i = 0; i < diags->count; i++) fcDiagLogLine(&e, (const FcDiagnostic*)diags->items[i]);
-                fwrite(e.p, 1, e.len, stderr);
-                fcBufFree(&e);
                 result = 1;
             } FC_END_TRY;
+            {
+                /* the warnings as they came, then the errors of a failed compile (what `forge bytecode` writes to stderr) */
+                FcBuf e = {0};
+                fcBufStr(&e, "");
+                for (i = 0; i < ctx.diags->count; i++) fcDiagLogLine(&e, (const FcDiagnostic*)ctx.diags->items[i]);
+                if (result) {
+                    FcList* diags = fcDiagnosticsOf(&ctx, &ctx.err, NULL);
+                    for (i = 0; i < diags->count; i++) fcDiagLogLine(&e, (const FcDiagnostic*)diags->items[i]);
+                }
+                fwrite(e.p, 1, e.len, stderr);
+                fcBufFree(&e);
+            }
             if (result == 0) {
                 f = fopen(out, "wb");
                 if (!f) { fprintf(stderr, "forge-c: cannot write %s\n", out); result = 1; }
