@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); noch nichts umgesetzt. Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -251,8 +251,8 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    unverändert (der native Build ebenso). Maß: `tests/run-cases-vm.sh <forge>` übersetzt jeden Fall mit dem C#-forge und führt ihn mit der C-VM aus -
    **751 von 1126** richtig (Spike: 306); von den übrigen brauchten rund 320 die Schritte 3 bis 5. **Abgeschlossen** (mit den Schritten 3 bis 5
    zusammen): **1126 von 1128**, ASan ohne Befund über den ganzen Korpus. `#intwidth`/`#floatwidth`: eine VM je Breite aus denselben Quellen
-   (`fire-i32`, `fire-f32`, `fire-i32-f32`, `fire-i16`, ...), `fire` startet für ein Programm anderer Breiten die Variante daneben
-   ([VM_C.md](spec/VM_C.md#breiten)); dazu `try take`/`Takes.Children`, `defined`-Arrays und typisierte Felder, Typargumente mit Einheiten, die
+   (`fire-i32`, `fire-f32`, `fire-i32-f32`, `fire-i16`, ...; der Mechanismus von Schritt 7, [VM_C.md](spec/VM_C.md#breiten)), die VM rechnet in ihnen
+   richtig (Deklarationen `int` schneiden breite ints, ints aus Natives behalten 64 Bit, Zeiger der VM als 64-Bit-ints); dazu `try take`/`Takes.Children`, `defined`-Arrays und typisierte Felder, Typargumente mit Einheiten, die
    Reihenfolge der Destruktoren nach einer Ausnahme (Wurfort vor catch), Zeiger auf Lokale, die Meldungstexte, die UI-Fälle (Probes und Besitz), Natives
    ohne GIL mit Sektionen der Threads, während das Hauptprogramm weg ist (zweiter Eingriff hinter `FIRE_VM`). Offen nur `native/3210`, `4110`:
    Textmetriken von `libfire_gfx` gegen den nativen Build - die C#-VM gibt dasselbe aus wie die C-VM.
@@ -289,7 +289,17 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    Die `.fbc` eines Debug-Programms trägt seine Quellen (Datei, SHA-256). Tests: `FIRE_TESTS_FILTER=VM-Debugger` - die Fälle des nativen Debuggers gegen
    die C#-VM und seine Protokoll-Prüfungen. Offen: Eingabe über den gerahmten Transport für Paket-Natives, Plugins.
 7. Programm `fire` (`fire run x.fbc`); der Korpus, vom C#-Compiler übersetzt, läuft mit den erwarteten Ausgaben; Benchmarks gegen die C#-VM.
+   **Umgesetzt** ([VM_C.md](spec/VM_C.md#das-programm-fire-schritt-7)): `fire run x.fbc [--] args`, `fire a.fbc b.fbc -- args`, `help`, `version`,
+   `--debug`, `--stats`, `--time`; Exitcodes 0, 1 (unbehandelt), der von `terminate`, 2 (nicht ladbar, Befehlszeile). Eine VM je Paar von Breiten
+   (`fire-i32`, `fire-i32-f32`, ...: dieselben Quellen mit `FIRE_INT32`/`FIRE_FLOAT32`); `fire` startet für ein Programm anderer Breiten die Variante neben
+   sich. Gebaut mit forge: `forge build-vm` nach jedem Build von forge/spark/Tests (`src/FireVm.targets`) neben forge, ein Publish nimmt es mit
+   (`setup.iss`); entschieden: auf der Maschine gebaut (forge trägt die Quellen), nicht vorgebaut je RID. Maß: **1073 von 1128** (mit den Varianten der Breiten; vorher 1065), mit den Korrekturen von Schritt 2 zusammen **1126 von 1128**; Benchmarks (`tests/bench`, Performance): die C-VM 1,7- bis 9-mal so schnell wie die C#-VM (zusammen 255 ms gegen 697 ms), 13,7 MB RSS gegen 77-129 MB des C#-Prozesses.
 8. `forge build --engine vm` bleibt: die C-VM mit angehängtem `.fbc` (und den Bibliotheken der Packages) statt der .NET-Einzeldatei.
+   **Umgesetzt** ([VM_C.md](spec/VM_C.md#gepackte-programme-schritt-8)): eine Datei - `fire` der Breiten des Programms, dahinter die `.fbc` und die
+   Bibliotheken der Pakete (Payload `FIREVMP1`); die Bibliotheken werden beim ersten Start in den Cache des Benutzers ausgepackt (ein Ordner je
+   Prüfsumme; entschieden: ausgepackt statt aus dem Speicher, wegen Windows). `fire` neben forge, sonst mit dem C-Compiler der Maschine in den Cache
+   gebaut. Die .NET-Einzeldatei bleibt bis M1 wählbar: `FIRE_VM_ENGINE=dotnet`. hello world: 748 KB (die .NET-Einzeldatei 729 KB plus das installierte
+   .NET). Windows (MinGW) übersetzt, nicht gelaufen. Tests: `FIRE_TESTS_ONLY=packer`.
 9. **spark auf die C-VM** (L4): Ausführen als Kindprozess, Debuggen über `NativeDebugTarget`, `LiveSession` und `UiPreview` über Kindprozess und
    gemeinsamen Speicher, Treiber-Agent und Geräte.
 

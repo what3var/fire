@@ -7,6 +7,9 @@ if (args.Length >= 3 && args[0] == "prebuild-standard")
     foreach (var file in StandardSources.Prebuild(args[1], args[2], Console.Error.WriteLine)) Console.WriteLine(file);
     return 0;
 }
+// `build-vm <folder> [--variant v]... [--all] [--rid r]`: the VM in C (the program fire, native/vm) for this machine next to forge - for the build of the solution
+// (src/FireVm.targets); `forge build --engine vm` packs programs with it (CVm, docs/spec/VM_C.md).
+if (args.Length >= 2 && args[0] == "build-vm") return CVm.BuildCommand(args.Skip(1).ToList(), Console.Out, Console.Error);
 // `install-standard`: packs and installs the standard packages from Source next to the program (what every start does; ember asks for it).
 if (args.Length >= 1 && args[0] == "install-standard")
 {

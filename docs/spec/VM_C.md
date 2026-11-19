@@ -1,15 +1,15 @@
 # Die VM in C (`native/vm`)
 
-Status: **Phase B, Schritte 1 bis 6** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-b---die-vm-in-c) (19.11.2026). Der Spike davor:
+Status: **Phase B, Schritte 1 bis 8** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-b---die-vm-in-c) (19.11.2026). Der Spike davor:
 [VM_SPIKE.md](VM_SPIKE.md). Die VM ist ein Interpreter auf `fire_rt.h` (L1): dieselben `Value`s, Objekte, Besitzlisten, Ausnahmen, Texte und
 Threads wie ein natives Programm; was nur die VM braucht, liegt in ihren Seitentabellen. Die Runtime ist **nicht** geändert bis auf Eingriffe hinter
 `FIRE_VM`: `exitNow` aus dem Spike, für den Debugger `"engine": "vm"` im `hello`, und `fire_vmGrantAway` für die Sektionen, während das Hauptprogramm
 in einem Native ist (siehe [Natives](#natives)); der native Build ist damit unverändert.
 
 ```
-cc -O2 native/vm/fire.c -o fire -lm -lpthread -ldl    (gcc 13, clang 18; eine Datei, die alles einbindet)
-cc -O2 -DFIRE_INT32 native/vm/fire.c -o fire-i32 ...  (die Varianten für andere Breiten, siehe "Breiten")
-forge bytecode x.fire -o x.fbc && FIRE_PKG_PATH=<ordner von forge> ./fire x.fbc [-- args]
+cc -O2 native/vm/fire.c -o fire -lm -lpthread -ldl    (gcc 13, clang 18, tcc; MinGW: -lws2_32; eine Datei, die alles einbindet)
+forge bytecode x.fire -o x.fbc && ./fire run x.fbc [args]   (fire neben forge findet dessen Bibliotheken; sonst FIRE_PKG_PATH=<ordner von forge>)
+forge build x.fire -o x && ./x [args]                     (die VM mit dem Programm dahinter, siehe "Gepackte Programme")
 ./fire --debug 'tcp:127.0.0.1:PORT;token=T' x.fbc        (oder FIRE_DEBUG=...; der Debugger, siehe "Debugger")
 tests/run-cases-vm.sh <forge> [<gruppe>...] [--fire <fire>] [--cache <ordner>] [--list]
 ```
@@ -37,7 +37,95 @@ der Paket-Natives sucht die VM im Ordner von forge (der Runner setzt `FIRE_PKG_P
 | `vm_threads.c` | Threads, Tasks, Aktoren, Sektionen, Jobs, `catch threads`/`catch terminate`, die Natives der Threads (Kanäle, `Completion`, Abbruch, `await [...]`, `handover`, `Sleep`), Anfang und Ende des Programms mit Threads | `FireRuntime`, `GlobalsBroker`, `VM.Tasks`, `Channels`, `Completions`, `Cancellation` |
 | `vm_run.c` | die Schleife (ein `switch` über `opcodes.def`), `DeclaredType`, Arrays einer Klasse, `finally`, Abwicklung | `VM.Execute`, `DeclaredType`, `VM.ThrowException` |
 | `vm_debug.c` | der Debugger: das Protokoll nativer Programme über den Agenten der Runtime (`fire_debug.h`), die Halte vor jeder Instruktion, die Frames für den Agenten | `VM.StepLine`/`StepInto`/`StepOut`/`RunUntilBreakpoint`, `DebugScopeChain`, `DebugGlobals`, `PauseOnUnhandled` |
-| `fire.c` | das Programm `fire`: Programme nacheinander in einem Prozess, Abbau nach jedem (L6) | `fire.Runtime/Program.cs` |
+| `fire.c` | das Programm `fire`: Befehlszeile, Programme nacheinander in einem Prozess, Abbau nach jedem (L6), die Varianten der Breiten, das Payload eines gepackten Programms | `fire.Runtime/Program.cs`, `Runtime.cs`, `PayloadLoader` |
+| `src/fire.Compiler/CVm.cs`, `src/fire.Runtime/CVmPayload.cs` | `forge build --engine vm`: `fire` finden oder bauen, das Programm dahinter packen; das Format des Payloads in C# | `Packer`, `PayloadFile` |
+
+## Das Programm fire (Schritt 7)
+
+```
+fire run [--stats] [--time] [--debug <spec>] <programm.fbc> [--] [<argumente>]   ein Programm; was ihm folgt, ist Environment.Args
+fire [--stats] [--time] [--debug <spec>] a.fbc [b.fbc ...] [-- <argumente>]      Programme nacheinander in einem Prozess
+fire help | fire version
+```
+
+* **Exitcode**: 0; 1 für eine Ausnahme, die niemand fängt, oder einen Fehler der Runtime (L6); der Code von `terminate(code)`; 2, wenn ein Programm
+  nicht gelesen oder geladen werden kann oder die Befehlszeile falsch ist (eine unbekannte Option, `--debug` ohne Transport, kein Programm). Mehrere
+  Programme: der Code des letzten, das scheiterte.
+* `--debug <spec>` ist `FIRE_DEBUG` ([Debugger](#debugger-schritt-6-vm_debugc)), `--stats` die Bilanz nach jedem Programm, `--time` die Zeiten von Laden,
+  Lauf und Abbau (für die Benchmarks, siehe unten).
+* **Bibliotheken der Pakete**: `FIRE_PKG_PATH`, neben dem Programm, dann der Ordner von `fire` selbst (main hängt ihn an `FIRE_PKG_PATH`): `fire`
+  neben forge findet dessen `Packages/` und `Prebuilt/`.
+* **Breiten** (`#intwidth`/`#floatwidth`): eine VM je Paar von Breiten - dieselben Quellen mit `FIRE_INT32`/`FIRE_INT16`/`FIRE_FLOAT32` (fire_rt.h),
+  `fire-i32`, `fire-f32`, `fire-i32-f32`, `fire-i16`, `fire-i16-f32`. Die VM prüft die Breiten der Datei; ein Programm anderer Breiten startet bei
+  einem Programm auf der Befehlszeile die Variante neben `fire` mit denselben Argumenten (`execv`; Windows: `_spawnv` und ihr Code), sonst sagt sie,
+  welche sie braucht (Code 2). `forge build-vm <ordner> --variant i32-f32` (oder `--all`) baut sie. Alle Fälle mit `#intwidth`/`#floatwidth`
+  laufen in ihrer Variante richtig (siehe [Breiten](#breiten)).
+* **Gebaut und ausgeliefert** mit forge: nach jedem Build von fire.Compiler, fire.Editor und fire.Testing kompiliert `forge build-vm` (`src/FireVm.targets`)
+  `fire` mit dem optimierenden C-Compiler der Maschine (wie die Bibliotheken der Pakete: `PackageLibrary.OptimizingToolchain`, gcc vor TinyCC) neben
+  forge, nur wenn seine Quellen sich geändert haben (`fire.key`: SHA-256 der Quellen der VM und der Runtime samt Plattform-Paket). Ein Publish nimmt
+  `fire` in seinen Ordner mit (spark: `FolderProfile`, den `setup.iss` packt); einer für eine andere Maschine (`-r`) baut nichts. Entschieden: **gebaut
+  auf der Maschine, nicht vorgebaut je RID** - forge trägt die Quellen (eingebettet: `native/vm`, `native/base`, `native/tables`, die Runtime aus
+  fire.Native) und baut `fire` sonst beim ersten Packen eines Programms in den Cache des Benutzers (siehe unten); ein vorgebautes `fire` je RID wie
+  `Prebuilt/` wäre nur für Maschinen ohne C-Compiler nötig, die ohnehin keine Paket-Natives bauen können (spark bietet dort TinyCC an).
+* Übersetzt mit gcc 13, clang 18, tcc und MinGW-w64 (x86_64, `-lws2_32`); unter Windows ungeprüft gelaufen (das Wine hier startet keine Programme).
+  **Offen**: unter Windows liest die Runtime `Environment.Args` aus der ganzen Befehlszeile (`fire_plat_eachArg` nimmt `GetCommandLineW`) - `fire run x.fbc a`
+  gibt dort `run x.fbc a` statt `a` (ein gepacktes Programm nicht: alle Argumente sind seine).
+
+### Benchmarks gegen die C#-VM
+
+Die 9 Programme aus `tests/bench` (die von `fire.Benchmarks`), Modus Performance, Linux x64, gcc -O2, 4 Kerne unter Last (load ~8, andere Builds
+liefen mit): **C-VM** `fire --time x.fbc` - der Lauf (ohne Laden und Abbau; das Minimum aus 5 nach einem Aufwärmlauf), der ganze Prozess, max RSS;
+**C#-VM** `fire.Benchmarks --filter x --runs 5` - `VM.Run()` (Minimum aus 5 nach dem Aufwärmen des JIT), max RSS des Prozesses (darin auch der
+Compiler und der JIT: die C#-VM allein hat keinen eigenen Prozess). Die Ausgaben sind gleich.
+
+| Programm | C-VM Lauf | C-VM Prozess | C-VM RSS | C#-VM Lauf | C#-Prozess RSS | C# / C |
+|---|---:|---:|---:|---:|---:|---:|
+| alloc | 13,9 ms | 15,9 ms | 13,7 MB | 47,3 ms | 101,0 MB | 3,4 |
+| array | 68,7 ms | 72,1 ms | 13,7 MB | 122,6 ms | 83,3 MB | 1,8 |
+| fib | 10,8 ms | 14,1 ms | 13,7 MB | 18,0 ms | 76,9 MB | 1,7 |
+| float | 27,4 ms | 32,4 ms | 13,7 MB | 93,6 ms | 77,5 MB | 3,4 |
+| lambda | 16,1 ms | 18,3 ms | 13,7 MB | 48,6 ms | 77,1 MB | 3,0 |
+| list | 23,7 ms | 27,6 ms | 13,7 MB | 71,8 ms | 86,8 MB | 3,0 |
+| loop | 50,7 ms | 52,8 ms | 13,7 MB | 139,5 ms | 77,4 MB | 2,8 |
+| method | 35,4 ms | 43,0 ms | 13,7 MB | 80,2 ms | 77,8 MB | 2,3 |
+| string | 8,4 ms | 13,8 ms | 13,7 MB | 75,5 ms | 129,0 MB | 9,0 |
+| **Summe** | **255,1 ms** | **290,0 ms** | | **697,1 ms** | | **2,7** |
+
+Die C-VM ist 1,7- bis 9-mal so schnell (zusammen 2,7-mal); ein ganzer Prozess der C-VM (Laden der `.fbc` mit dem Prelude ~0,7 ms, Lauf, Abbau)
+ist kürzer als der Lauf allein in der C#-VM. Der Speicher der C-VM ist bei allen derselbe (13,7 MB, die Tabellen der Runtime und des Programms).
+
+## Gepackte Programme (Schritt 8)
+
+`forge build --engine vm` (der Standard von `build`) schreibt **eine ausführbare Datei**: `fire` mit dem Programm dahinter
+(`CVm.Pack`, `src/fire.Compiler/CVm.cs`; die .NET-Einzeldatei mit `fire.Runtime` bleibt bis M1 wählbar: `FIRE_VM_ENGINE=dotnet`):
+
+```
+[fire] [Eintrag 0] [Eintrag 1] ... [Index] [Fuß]
+Fuß (24 Bytes): uint64 Offset des Index, uint32 seine Länge, uint32 Version des Formats (1), "FIREVMP1"
+Index: uint32 Anzahl; je Eintrag: uint8 Art (0 die Programmdatei, 1 eine Bibliothek), uint16 Länge des Namens, der Name (UTF-8, ein Dateiname),
+       uint64 Offset, uint64 Länge, uint64 FNV-1a (64 Bit) der Bytes
+```
+
+Alles little-endian, nichts komprimiert (die VM hat keinen Entpacker; das Programm ist die `.fbc` ohne Zeilentabellen wie beim .NET-Packer). Beim Start
+liest `fire` den Fuß seiner eigenen Datei (`fire_plat_programPath`): ist ein Payload da, gehört jedes Argument dem Programm.
+
+* **Bibliotheken der Pakete** (`LinkedProgram.PackageLibraryFiles`: `libfire_pkg_*`, für graphics/windows `libfire_gfx`, das die C-VM immer braucht):
+  entschieden - **ausgepackt in den Cache des Benutzers**, nicht aus dem Speicher geladen (Windows kann keine DLL aus dem Speicher laden; ein Weg für alle
+  Systeme). Ordner: `FIRE_VM_CACHE`, sonst `$XDG_CACHE_HOME/fire/native`, `~/.cache/fire/native`, `%LOCALAPPDATA%\fire\native` (ohne Heimatordner
+  `$TMPDIR/fire-native-<uid>`), darin ein Ordner je Satz von Bibliotheken (FNV ihrer Namen und Prüfsummen). Eine Datei dort gilt, wenn Länge und
+  Prüfsumme stimmen, sonst wird sie neu geschrieben (daneben, dann umbenannt: zwei Starts zugleich sehen nie eine halbe). Die VM sucht sie dort wie
+  neben einer Programmdatei; `FIRE_PKG_PATH` geht vor. Nicht im gemeinsamen `/tmp` (eine fremde Bibliothek dort würde geladen).
+* **Breiten**: gepackt wird die VM der Breiten des Programms (`CVm.Locate(intWidth, floatWidth)`).
+* **Woher `fire` kommt**: `FIRE_VM_EXE` (eine Datei; ihre Varianten daneben), sonst neben forge, wenn sein Stempel `fire.key` die Quellen dieses forge
+  nennt (ein veraltetes aus einem älteren Build gilt nicht), sonst gebaut mit dem C-Compiler der Maschine nach `<LocalApplicationData>/fire/vm/<rid>/<schlüssel>/`
+  (gibt es keinen: die Meldung nennt den Compiler, `FIRE_VM_ENGINE=dotnet` und `--engine native`).
+* **Windows**: `#noconsole` (Subsystem), Icon und Versionsinfo gehen in die Kopie von `fire.exe`, bevor das Payload dahinter kommt (wie beim Apphost).
+* **Größe** (Linux x64, gcc -O2, gestrippt): `fire` 642 KB; hello world gepackt 748 KB (die `.fbc` 107 KB, fast ganz das Prelude); mit io und time
+  936 KB; mit graphics (libfire_gfx) 1,29 MB. Die .NET-Einzeldatei von hello world: 729 KB, dazu das installierte .NET (rund 70 MB).
+* **Tests**: `FIRE_TESTS_ONLY=packer` (Abschnitt "die VM in C"): das Format (Rundlauf, beschädigter Eintrag, fremde Namen), hello world allein in einem
+  anderen Ordner, die Argumente und `terminate`, eine unbehandelte Ausnahme, io/time aus den Bibliotheken der Datei, der Cache (zweiter Start schreibt
+  nichts, eine beschädigte Bibliothek wird ersetzt), `#intwidth 32` mit `fire-i32`, `fire run`/`help`/`version`/Exitcodes der Befehlszeile,
+  `FIRE_VM_ENGINE=dotnet`; die Prüfungen der .NET-Einzeldatei laufen mit `FIRE_VM_ENGINE=dotnet`.
 
 ## Lader
 
@@ -123,10 +211,9 @@ Noch offen von Punkt 1: `MsgFn` (Aktoren), `ThreadsCatch.fn` (B3).
 `FIRE_INT16`, `FIRE_FLOAT32`, `FIRE_WORD_BITS`) wie in einem nativen Build - `Value`, `Real`, `FIRE_INT_CUT` und die gepackten Arrays hängen daran.
 Entschieden: **eine VM je Konfiguration aus denselben Quellen**, keine Laufzeit-Schalter in der Runtime (L1: der schnelle Pfad bleibt, wie er ist)
 und keine Varianten unter Präfixen in einem Binary (die Runtime hat Daten mit externer Bindung, jede Variante bräuchte eigene Namen für alles). Die
-Varianten heißen wie das `fire` ohne Defines mit `-i32`/`-i16`, `-f32`, `-w32` in dieser Reihenfolge (`fire-i32-f32`). `fire` liest den Kopf des
-Programms (`floatWidth`, `intWidth`, `wordWidth`); passt er nicht zu den eigenen Breiten, läuft das Programm in der Variante daneben, als Kindprozess
-mit derselben Konsole, demselben `--stats` und denselben Argumenten (`fork`/`execv`, unter Windows `_spawnv`); ihr Exit-Code ist der des Programms. Fehlt
-die Variante, sagt `fire` welche (Exit 2). Mehrere Programme in einem Aufruf (L6) dürfen verschiedene Breiten haben. Dazu in der VM: eine Deklaration
+Varianten heißen `fire-i32`, `fire-i16`, `fire-f32`, `fire-i32-f32`, `fire-i16-f32`; `fire` liest den Kopf des Programms und startet bei einem
+Programm anderer Breiten die Variante neben sich (siehe [Das Programm fire](#das-programm-fire-schritt-7); `forge build-vm --variant`/`--all` baut sie,
+`tests/run-cases-vm.sh` baut alle in seinen Cache). Die Breite von `word` (`FIRE_WORD_BITS`) folgt dem Ziel und ist für die VM die eines Zeigers. Dazu in der VM: eine Deklaration
 `int` (ohne `int[64]`/`int[32]`) und `x!int` schneiden ein breites int auf die Breite des Programms (`DeclaredKind.CutsWide`, `intProgram`), was ein Native
 eines Pakets zurückgibt, behält seine 64 Bit (`IntNative`, wie `FIRE_INT_U`), Zeiger der VM in einem `Value` (der Proto eines Lambdas, die Argumente
 eines Threads) sind ints mit 64 Bit (`VM_PTRV`).
@@ -239,7 +326,7 @@ derselben Stelle des Stapels mit derselben Funktion und demselben (wiederverwend
 ## Stand gegen den Korpus
 
 `tests/run-cases-vm.sh` mit dem C#-forge, alle Ordner, mit den Varianten der Breiten (der Spike: 306; nach den Schritten 1 und 2: 751; Schritte 4/5
-allein 869, Schritt 3 allein 910; nach dem Zusammenführen 1065):
+allein 869, Schritt 3 allein 910; nach dem Zusammenführen 1065; Schritt 7 allein 1073):
 
 | Ordner | richtig | falsch | | Ordner | richtig | falsch |
 |---|---|---|---|---|---|---|
