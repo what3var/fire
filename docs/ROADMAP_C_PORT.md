@@ -290,7 +290,7 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    `--debug`, `--stats`, `--time`; Exitcodes 0, 1 (unbehandelt), der von `terminate`, 2 (nicht ladbar, Befehlszeile). Eine VM je Paar von Breiten
    (`fire-i32`, `fire-i32-f32`, ...: dieselben Quellen mit `FIRE_INT32`/`FIRE_FLOAT32`); `fire` startet für ein Programm anderer Breiten die Variante neben
    sich. Gebaut mit forge: `forge build-vm` nach jedem Build von forge/spark/Tests (`src/FireVm.targets`) neben forge, ein Publish nimmt es mit
-   (`setup.iss`); entschieden: auf der Maschine gebaut (forge trägt die Quellen), nicht vorgebaut je RID. Maß: KORPUS; Benchmarks: BENCH.
+   (`setup.iss`); entschieden: auf der Maschine gebaut (forge trägt die Quellen), nicht vorgebaut je RID. Maß: **1073 von 1128** (mit den Varianten der Breiten; vorher 1065); Benchmarks: BENCH.
 8. `forge build --engine vm` bleibt: die C-VM mit angehängtem `.fbc` (und den Bibliotheken der Packages) statt der .NET-Einzeldatei.
    **Umgesetzt** ([VM_C.md](spec/VM_C.md#gepackte-programme-schritt-8)): eine Datei - `fire` der Breiten des Programms, dahinter die `.fbc` und die
    Bibliotheken der Pakete (Payload `FIREVMP1`); die Bibliotheken werden beim ersten Start in den Cache des Benutzers ausgepackt (ein Ordner je

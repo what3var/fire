@@ -57,8 +57,9 @@ fire help | fire version
 * **Breiten** (`#intwidth`/`#floatwidth`): eine VM je Paar von Breiten - dieselben Quellen mit `FIRE_INT32`/`FIRE_INT16`/`FIRE_FLOAT32` (fire_rt.h),
   `fire-i32`, `fire-f32`, `fire-i32-f32`, `fire-i16`, `fire-i16-f32`. Die VM prüft die Breiten der Datei; ein Programm anderer Breiten startet bei
   einem Programm auf der Befehlszeile die Variante neben `fire` mit denselben Argumenten (`execv`; Windows: `_spawnv` und ihr Code), sonst sagt sie,
-  welche sie braucht (Code 2). `forge build-vm <ordner> --variant i32-f32` (oder `--all`) baut sie. Die Fälle mit `#intwidth 32` und
-  `#floatwidth 32` laufen in ihrer Variante bis auf die, die breite Literale (`int[64]`) oder Paket-Natives der Breite brauchen.
+  welche sie braucht (Code 2). `forge build-vm <ordner> --variant i32-f32` (oder `--all`) baut sie. Von den 17 Fällen mit `#intwidth`/`#floatwidth`
+  laufen 14 in ihrer Variante (offen: `types/0420` - breite Literale `int[64]` -, `native/1670` und `native/2940` in `fire-i32-f32`); vorher liefen 7
+  davon zufällig richtig in der VM für 64 Bit.
 * **Gebaut und ausgeliefert** mit forge: nach jedem Build von fire.Compiler, fire.Editor und fire.Testing kompiliert `forge build-vm` (`src/FireVm.targets`)
   `fire` mit dem optimierenden C-Compiler der Maschine (wie die Bibliotheken der Pakete: `PackageLibrary.OptimizingToolchain`, gcc vor TinyCC) neben
   forge, nur wenn seine Quellen sich geändert haben (`fire.key`: SHA-256 der Quellen der VM und der Runtime samt Plattform-Paket). Ein Publish nimmt
@@ -283,6 +284,11 @@ selbst); fire-Plugins (`sources`) lädt die VM noch nicht; Aufgaben mit `await [
 derselben Stelle des Stapels mit derselben Funktion und demselben (wiederverwendeten) Scope einen verschachtelten ersetzt, behält dessen Einordnung.
 
 ## Stand gegen den Korpus
+
+**Schritt 7** (19.11.2026, `tests/run-cases-vm.sh` mit dem C#-forge dieses Stands, `fire` mit `--fire` neben den Varianten der Breiten, die
+Bibliotheken der Pakete aus `Prebuilt/` eines forge über `FIRE_PKG_PATH`): **1073 von 1128** richtig (native 458/503); ohne die Varianten 1058 (die VM
+lehnt ein Programm anderer Breiten jetzt ab, statt es falsch zu rechnen); mit dem `fire` vor Schritt 7 1065. Die Tabelle unten ist der Stand davor.
+Ein zweiter Lauf mit `--cache` dauert rund 45 s (4 Kerne, unter Last); der erste übersetzt jeden Fall mit forge (hier 13 min).
 
 `tests/run-cases-vm.sh` mit dem C#-forge, alle Ordner, nach dem Zusammenführen der Schritte 3 (Threads) und 4/5 (Natives, JSON, Reflection)
 (der Spike: 306; nach den Schritten 1 und 2: 751; Schritte 4/5 allein 869, Schritt 3 allein 910):
