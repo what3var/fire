@@ -205,6 +205,8 @@ struct VmHandlerRec {
     uint32_t extraExits;    /* a catch that leaves more scopes after its own (break/continue out of a catch) */
     uint64_t token;         /* while its catch block runs: the throw it handles (the runtime's Pending.token) */
     bool inCatch;           /* its catch block runs (a finally of the try still runs after it) */
+    uint32_t ncarry;        /* the values the catch block pushed after its end (the completion of a finally: EnterFinallyNormal, PushJump) */
+    Value carry[4];
     VmHandlerRec* nextDead; /* given up (its catch block ended with another exception): freed at the next landing */
 };
 

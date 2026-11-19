@@ -359,7 +359,7 @@ static void vmRun(Vm* vm, int32_t base) {
             if (op == OP_StoreLocalPop) sp--;
             break;
         }
-        case OP_LoadGlobal: { uint32_t slot = U16(ip); ip += 2; PUSH(slot < vm->global->n ? vm->global->slots[slot] : Undef()); break; }
+        case OP_LoadGlobal: { uint32_t slot = U16(ip); Value v; ip += 2; v = slot < vm->global->n ? vm->global->slots[slot] : Undef(); if (FIRE_UNLIKELY(isRef(v))) holdTemp(v, &fr->scope->temp); PUSH(v); break; }
         case OP_StoreGlobal: case OP_StoreGlobalPop: {
             uint32_t slot = U16(ip);
             Value v = sp[-1], old;
@@ -537,7 +537,15 @@ static void vmRun(Vm* vm, int32_t base) {
         case OP_Jump: {
             uint32_t to = U16(ip);
             ip += 2;
-            if (FIRE_UNLIKELY(fr->catchEnded & 1)) { SYNC(); exitJump(&fr->rec->h, to); goto unwind; }   /* (the jump behind the try: the catch is left) */
+            if (FIRE_UNLIKELY(fr->catchEnded & 1)) {   /* (the jump behind the try: the catch is left - what it pushed for a finally goes along) */
+                VmHandlerRec* rec = fr->rec;
+                uint32_t n = (uint32_t)(sp - st) - fr->spBase, i;
+                rec->ncarry = n > 4 ? 4 : n;
+                for (i = 0; i < rec->ncarry; i++) rec->carry[i] = st[fr->spBase + i];
+                SYNC();
+                exitJump(&rec->h, to);
+                goto unwind;
+            }
             ip = fr->chunk->code + to;
             break;
         }
@@ -566,7 +574,7 @@ static void vmRun(Vm* vm, int32_t base) {
         }
         case OP_ReleaseTemps: {
             OwnList* t = &fr->scope->temp;
-            if (FIRE_UNLIKELY(t->head != NULL || g_pool.top > fr->scope->own.mark)) { SYNC(); leave(t); }
+            if (FIRE_UNLIKELY(t->head != NULL)) { SYNC(); leave(t); }
             break;
         }
         case OP_ClaimToScope: {
@@ -750,7 +758,17 @@ static void vmRun(Vm* vm, int32_t base) {
             Value r = POP();
             VmHandlerRec* fin;
             SYNC();
-            if (FIRE_UNLIKELY(fr->kind == FR_CATCH)) { exitReturn(&fr->rec->h, r); goto unwind; }   /* (`return` in a catch: the owner returns) */
+            if (FIRE_UNLIKELY(fr->kind == FR_CATCH)) {
+                /* `return` in a catch: the owner returns - the value leaves the catch's scopes with a count for the trip (the landing hands it on) */
+                OwnList* lists[64];
+                int n = 0;
+                VmScope* s;
+                for (s = fr->scope; s && s != fr->rec->scope && n < 62; s = s->parent) { lists[n++] = &s->temp; lists[n++] = &s->own; }
+                if (n) transferTree(r, lists, n);
+                retain(r);
+                exitReturn(&fr->rec->h, r);
+                goto unwind;
+            }
             if (FIRE_UNLIKELY((fin = vmFinallyOf(vm)) != NULL)) {
                 /* a `return` in a try with a finally: the finally runs first, its EndFinally returns (DoReturn) */
                 OwnList* lists[64];
@@ -1052,7 +1070,7 @@ static void vmRun(Vm* vm, int32_t base) {
             }
             if (FIRE_UNLIKELY(!leafAlive(v))) { SYNC(); destroyedError(v); goto unwind; }
             idx = (int32_t)(intptr_t)vmIc(fr->chunk, at, asObj(v)->cls, prog, &hit);
-            if (FIRE_LIKELY(hit)) { sp[-1] = objFields(asObj(v))[idx]; break; }
+            if (FIRE_LIKELY(hit)) { Value x = objFields(asObj(v))[idx]; if (FIRE_UNLIKELY(isRef(x))) holdTemp(x, &fr->scope->temp); sp[-1] = x; break; }
             SYNC();
             c = vmClassOf(vm, asObj(v)->cls);
             idx = c ? vmFieldIndex(c, name) : -1;
@@ -1062,6 +1080,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 if (!PERF && fi && fi->access && !vmAccessAllowed(fr->chunk, declaring, fi->access)) { vmAccessDenied("Field", name, declaring, fi->access, "accessed"); goto unwind; }
                 vmIcSet(fr->chunk, at, asObj(v)->cls, (void*)(intptr_t)idx);
                 sp[-1] = objFields(asObj(v))[idx];
+                if (isRef(sp[-1])) holdTemp(sp[-1], &fr->scope->temp);
                 break;
             }
             {   /* a property: its getter (`get_` + name) */
@@ -1213,7 +1232,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 const VmFieldInfo* fi = vmFieldInfo(c, name, &declaring);
                 if (fi && fi->access && !vmAccessAllowed(fr->chunk, declaring, fi->access)) { vmAccessDenied("Static field", name, declaring, fi->access, "accessed"); goto unwind; }
             }
-            if (op == OP_GetStaticField) PUSH(c->svals[i]);
+            if (op == OP_GetStaticField) { if (isRef(c->svals[i])) holdTemp(c->svals[i], &fr->scope->temp); PUSH(c->svals[i]); }
             else {
                 Value x = op == OP_SetStaticField ? sp[-1] : POP();
                 Value old = c->svals[i];
@@ -1319,7 +1338,8 @@ static void vmRun(Vm* vm, int32_t base) {
             CHECK();
             break;
         }
-        case OP_MakeArrayLiteral: case OP_MakeBuffer: {
+        case OP_MakeBuffer: { SYNC(); sp[-1] = newBuffer(sp[-1], &fr->scope->temp); CHECK(); break; }
+        case OP_MakeArrayLiteral: {
             uint32_t count = U16(ip), i;
             Arr* a;
             ip += 2;
@@ -1398,6 +1418,7 @@ static void vmRun(Vm* vm, int32_t base) {
             sp[-2] = arrayGet(a, i);
             sp--;
             CHECK();
+            if (isRef(sp[-1])) holdTemp(sp[-1], &fr->scope->temp);
             break;
         }
         case OP_ArraySet: {
@@ -1471,7 +1492,7 @@ static void vmRun(Vm* vm, int32_t base) {
             ip += 2;
             if (!r) outOfMemory();
             if (!t->resolved) vmResolveHandler(vm, t);
-            r->vm = vm; r->t = t; r->frame = vm->nframes - 1; r->scope = fr->scope; r->sp = (uint32_t)(sp - st); r->extraExits = 0; r->inCatch = false;
+            r->vm = vm; r->t = t; r->frame = vm->nframes - 1; r->scope = fr->scope; r->sp = (uint32_t)(sp - st); r->extraExits = 0; r->inCatch = false; r->ncarry = 0;
             r->h.fn = vmCatchFn; r->h.ctx = r; r->h.info = &t->info;
             pushHandler(&r->h);
             break;
@@ -1511,8 +1532,11 @@ static void vmRun(Vm* vm, int32_t base) {
                         free(fin);
                         break;
                     }
-                    release(payload);   /* (the count it carried through the finally: vmReturn counts it again) */
-                    if (!vmReturn(vm, payload, base)) return;
+                    {   /* (the count it carried through the finally goes once vmReturn counted it for its trip) */
+                        bool more = vmReturn(vm, payload, base);
+                        release(payload);
+                        if (!more) return;
+                    }
                     RELOAD();
                     goto afterReturn;
                 }
@@ -1576,9 +1600,11 @@ static int vmUnwind(Vm* vm, int32_t base) {
             /* the frame that owns the try: leave the scopes inside it, land */
             uint8_t kind = g_unwind.kind;
             Value v = g_unwind.value;
-            uint32_t label = g_unwind.label, extra = rec->extraExits;
+            uint32_t label = g_unwind.label, extra = rec->extraExits, ncarry = rec->ncarry, ci;
+            Value carry[4];
             int32_t fin = rec->t->finallyAddr;
             bool wasInCatch = rec->inCatch;
+            for (ci = 0; ci < ncarry; ci++) carry[ci] = rec->carry[ci];
             vm->sp = rec->sp;
             vmLeaveTo(vm, f, rec->scope);
             while (extra--) { VmScope* s = f->scope; if (s == f->base || s == vm->global) break; f->scope = s->parent; scLeave(vm, s); }
@@ -1586,7 +1612,7 @@ static int vmUnwind(Vm* vm, int32_t base) {
             free(rec);
             vmFreeDead(vm);
             switch (kind) {
-                case UW_JUMP: f->ip = f->chunk->code + label; return 1;
+                case UW_JUMP: for (ci = 0; ci < ncarry; ci++) vm->stack[vm->sp++] = carry[ci]; f->ip = f->chunk->code + label; return 1;
                 case UW_RETHROW:
                     if (fin >= 0) {   /* the exception passes this try: its finally runs, EndFinally throws it again */
                         vm->stack[vm->sp++] = v;
@@ -1599,14 +1625,16 @@ static int vmUnwind(Vm* vm, int32_t base) {
                     continue;
                 case UW_RETURN:
                     if (fin >= 0 && wasInCatch) {
-                        retain(v);
-                        vm->stack[vm->sp++] = v;
+                        vm->stack[vm->sp++] = v;   /* (with the count of its trip: EndFinally lets go of it) */
                         vm->stack[vm->sp++] = Int(FIN_K_RETURN);
                         f->ip = f->chunk->code + fin;
                         return 1;
                     }
-                    if (!vmReturn(vm, v, base)) return 0;
-                    return 1;
+                    {
+                        bool more = vmReturn(vm, v, base);
+                        release(v);   /* (the count of the trip out of the catch) */
+                        return more ? 1 : 0;
+                    }
                 default: fatal("internal error of the VM: an unwinding of an unknown kind.");
             }
         }

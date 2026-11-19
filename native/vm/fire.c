@@ -9,6 +9,7 @@
  * that failed (1 for an exception nothing caught, the code of `terminate(code)`), else 0. */
 #define FIRE_VM 1
 #define FIRE_EXCEPTIONS 1
+#define FIRE_PTRBOUNDS 1          /* (a pointer into an array or a buffer is checked when it is used, like a native build that is not #performance) */
 #define FIRE_NDIMS 16              /* (a program's dimensions are a constant of the generated code; the VM takes room for 16) */
 #ifdef FIRE_VM_STATS
 #define FIRE_HEAP_STATS 1          /* (-DFIRE_VM_STATS: counts the strings that live - the check that a script leaves nothing behind) */
