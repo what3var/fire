@@ -1,0 +1,81 @@
+// the ways out of a try: a catch that does not match (rethrow), destructors while unwinding, return in a catch, resume across calls,
+// an exception from a catch block, break out of a catch
+class A : Exception { construct(string m) { this.message = m } }
+class B : Exception { construct(string m) { this.message = m } }
+class Guard {
+    string name
+    construct(string n) { this.name = n }
+    destruct() { print("  guard " + this.name + " goes") }
+}
+class T {
+    static int Inner(int n) {
+        var g = new Guard("inner " + n)
+        if (n == 0) { throw new B("from inner") }
+        return T.Inner(n - 1) + 1
+    }
+    static int Middle() {
+        try {
+            return T.Inner(2)
+        } catch (A e) {
+            print("wrong catch")
+            return -1
+        }
+    }
+    static int ReturnInCatch() {
+        try {
+            throw new A("x")
+        } catch (A e) {
+            return 7
+        }
+        return 0
+    }
+    static int Ask(int n) {
+        if (n == 0) {
+            int v = throw new A("ask")
+            return v
+        }
+        return T.Ask(n - 1) * 2
+    }
+}
+try {
+    print(T.Middle())
+} catch (B e) {
+    print("outer caught " + e.message)
+}
+print(T.ReturnInCatch())
+try {
+    print("asked: " + T.Ask(3))
+} catch (A e) {
+    e.resume(5)
+}
+try {
+    try {
+        throw new A("first")
+    } catch (A e) {
+        print("caught " + e.message + ", throwing another")
+        throw new B("second")
+    }
+} catch (B e) {
+    print("then caught " + e.message)
+}
+var i = 0
+while (i < 5) {
+    try {
+        if (i == 2) { throw new A("stop") }
+        print("round " + i)
+    } catch (A e) {
+        print("break at " + i)
+        break
+    }
+    i = i + 1
+}
+print("end " + i)
+class U {
+    static int Deep(int n) {
+        var g = new Guard("deep " + n)
+        if (n == 0) { throw new A("direct") }
+        return U.Deep(n - 1)
+    }
+}
+try { U.Deep(1) } catch (A e) { print("caught " + e.message) }
+print("after direct")

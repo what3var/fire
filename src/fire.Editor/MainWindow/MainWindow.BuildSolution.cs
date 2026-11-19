@@ -32,89 +32,22 @@ namespace fire.Editor
             if (order.Count == 0) { UpdateStatus("The solution has no project to build."); return; }
             string name = _workspace.Name;
             string modeName = RunModeName;
-            var mode = _session.ExecutionMode;
             string what = $"Solution {name} ({order.Count} project{(order.Count == 1 ? "" : "s")}, native, {modeName})";
+            string? file = _workspace.FilePath ?? order[0].FilePath;
             UpdateStatus($"Building {what}...");
             BeginBuildLog(what);
             RevealTool("buildlog");
             var job = BeginBuildJob(what);
-            var diagnostics = new List<Diagnostic>();
-            var failed = new HashSet<LoadedProject>();
-            int succeeded = 0, skipped = 0;
-            bool cancelled = false;
-            string? firstError = null;
-            void Fail(LoadedProject project, string message)
-            {
-                failed.Add(project);
-                firstError ??= $"{project.Name}: {message}";
-                _buildLog.AppendLine($"{project.Name}: error: {message.TrimEnd()}");
-            }
+            // forge builds them all, one after the other (`forge build <solution> --all`: the order, the skipped projects, a library compiled for the target)
+            var overlays = OverlaysOfOpenDocuments();
+            var args = new List<string> { "build", file, "--all", "--engine", "native", "-m", ForgeMode(_session.ExecutionMode) };
+            if (_nativeTargetChoice != null) args.AddRange(new[] { "-t", _nativeTargetChoice });   // (the tool strip goes before the settings of each project)
+            if (_settings.BuildStats) args.Add("--stats");
+            ForgeOutcome result;
             try
             {
-                for (int i = 0; i < order.Count; i++)
-                {
-                    var project = order[i];
-                    if (job.Cancelling) { cancelled = true; break; }
-                    _buildLog.AppendLine($"------ {i + 1}/{order.Count} {project.Name} ({(project.Project.Type == OutputType.Library ? "library" : "program")}) ------");
-                    if (_workspace.ReferencedProjects(project).FirstOrDefault(failed.Contains) is { } broken)
-                    {
-                        failed.Add(project);
-                        skipped++;
-                        _buildLog.AppendLine($"{project.Name}: skipped - the library {broken.Name} it references did not build.");
-                        continue;
-                    }
-                    BuildPlan plan;
-                    try { plan = CreatePlan(project); }
-                    catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { Fail(project, ex.Message); continue; }
-                    if (!plan.IsValid) { Fail(project, string.Join(Environment.NewLine, plan.Errors)); continue; }
-
-                    fire.Native.NativeConfig config;
-                    fire.Runtime.TargetProfile target;
-                    fire.Native.ToolchainDef toolchain;
-                    try
-                    {
-                        config = LoadNativeConfig(out _, project);
-                        target = config.ResolveTarget(_nativeTargetChoice ?? plan.Settings.Target);
-                        toolchain = config.ResolveToolchain(target, plan.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
-                    }
-                    catch (fire.Native.NativeConfigException ex) { Fail(project, ex.Message); continue; }
-
-                    if (project.Project.Type == OutputType.Library)
-                    {
-                        // a library has no program of its own: it is compiled for the target (what a program that imports it gets)
-                        IReadOnlyList<Diagnostic>? errors = null;
-                        await Task.Run(() =>
-                        {
-                            try { ProjectBuilder.Check(plan, target); }
-                            catch (Exception ex) when (ex is ProjectException or fire.Package.Manager.PackageException or fire.Native.NativeConfigException || CommandLineRunner.IsCompileErrorForEditor(ex))
-                            { errors = CompileDiagnostics.Of(ex); }
-                        });
-                        if (errors != null)
-                        {
-                            diagnostics.AddRange(errors);
-                            Fail(project, errors.FirstOrDefault()?.Message ?? "it does not compile");
-                        }
-                        else { succeeded++; _buildLog.AppendLine($"{project.Name}: compiled for {target.Name} (a library: its code goes into the programs that import it)."); }
-                        continue;
-                    }
-
-                    string output;
-                    if (plan.Settings.Output is { } fixedOutput && toolchain.EffectiveKind != "files") output = fixedOutput;
-                    else
-                    {
-                        string folder = ProjectOutput.Folder(project.Directory, target.Name, modeName);
-                        Directory.CreateDirectory(folder);
-                        output = toolchain.EffectiveKind == "files" ? folder : ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, modeName, target.ProgramExtension);
-                    }
-                    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-                    config.Stats = _settings.BuildStats;
-                    var result = await Task.Run(() => NativeBuilder.BuildSafe(plan.SourceTexts, config, target, toolchain, output, mode, null, false, null, null, plan, job.Monitor));
-                    AppendBuildResultLog(job, result.Log);
-                    if (result.Cancelled || job.Cancelling) { cancelled = true; break; }
-                    diagnostics.AddRange(result.Diagnostics ?? Array.Empty<Diagnostic>());
-                    if (result.Ok) { succeeded++; _buildLog.AppendLine($"{project.Name}: built {result.Output} ({target.Name})."); CopyContentNextTo(plan, result.Output); }
-                    else Fail(project, BuildErrorText(result));
-                }
+                foreach (var toolchain in SolutionToolchains(order)) await EnsureToolchainAsync(toolchain);
+                result = await RunForgeAsync(job, args, overlays);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
@@ -122,22 +55,41 @@ namespace fire.Editor
                 UpdateStatus("Build Solution failed: " + ex.Message);
                 return;
             }
-            if (cancelled)
+            job.Feed.Drain();
+            if (result.Cancelled)
             {
                 EndBuildJob(job, BuildOutcome.Cancelled);
                 return;
             }
-            int failedBuilds = failed.Count - skipped;
-            _buildLog.AppendLine($"Projects: {succeeded} succeeded, {failedBuilds} failed, {skipped} skipped.");
-            FinishBuild("Build Solution", failed.Count == 0, diagnostics, null, null);
-            if (failed.Count == 0)
+            int succeeded = result.Projects.Count(p => p.Ok), skipped = result.Projects.Count(p => p.Skipped), failedBuilds = result.Projects.Count(p => !p.Ok && !p.Skipped);
+            if (result.Summary != null) _buildLog.AppendLine(result.Summary);
+            FinishBuild("Build Solution", result.Ok, ForgeDiagnostics(result, overlays), null, null);
+            if (result.Ok)
             {
                 EndBuildJob(job, BuildOutcome.Succeeded);
                 UpdateStatus($"Built the solution {name}: {succeeded} project{(succeeded == 1 ? "" : "s")}.");
                 return;
             }
-            EndBuildJob(job, BuildOutcome.Failed, firstError);
+            EndBuildJob(job, BuildOutcome.Failed, result.Error ?? BuildErrorText(result));
             UpdateStatus($"Build Solution: {failedBuilds} project{(failedBuilds == 1 ? "" : "s")} failed{(skipped > 0 ? $", {skipped} skipped" : "")} (see the build log and the error list).");
+        }
+
+        /// <summary>The toolchains the programs of a Build Solution use (each asked for when it is missing, before forge runs).</summary>
+        private IEnumerable<fire.Native.ToolchainDef> SolutionToolchains(IEnumerable<LoadedProject> projects)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var project in projects.Where(p => p.Project.Type != OutputType.Library))
+            {
+                fire.Native.ToolchainDef? toolchain = null;
+                try
+                {
+                    var settings = ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings);
+                    var config = LoadNativeConfig(out _, project);
+                    toolchain = config.ResolveToolchain(config.ResolveTarget(_nativeTargetChoice ?? settings.Target), settings.Toolchain, fire.Native.ToolchainPurpose.Build);
+                }
+                catch (fire.Native.NativeConfigException) { }   // (forge reports it)
+                if (toolchain != null && seen.Add(toolchain.EffectiveKind + "|" + toolchain.EffectiveCompiler)) yield return toolchain;
+            }
         }
 
         /// <summary>Clean: the build folders of the project of the active document (else the start project).</summary>

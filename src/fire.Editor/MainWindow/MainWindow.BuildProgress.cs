@@ -12,7 +12,9 @@ namespace fire.Editor
     // The build window (docs: the help page of spark, "Builds"): every build spark starts - Run with the VM when it compiles, a native build, a native run or debug session,
     // the ESP32 (build and flash), Build, packing a library - is a build job. When it takes longer than half a second its window appears: the phase with its progress, the
     // log as it runs, Hide and Cancel. Hidden, the status bar shows the progress; a click there brings the window back. Cancel ends the compilers with their process trees
-    // (BuildProcess), the in-process parts stop at their next checkpoint (BuildMonitor), what was half written is deleted; "Build cancelled" goes into the Output.
+    // (BuildProcess), the in-process parts stop at their next checkpoint (BuildMonitor), what was half written is deleted; "Build cancelled" goes into the Output. The builds
+    // themselves run in forge (MainWindow.Forge.cs, ForgeProcess): its report feeds the job, Cancel asks forge to stop and kills it after a grace; only the compile for a run
+    // in the VM is still done here.
     public partial class MainWindow
     {
         /// <summary>A build that runs: its monitor (progress, log, cancellation) and its window.</summary>
@@ -186,14 +188,6 @@ namespace fire.Editor
             }
             window.CloseForGood();
             job.Window = null;
-        }
-
-        /// <summary>The whole log of a build's result (written when it is done) into the build log - only the lines that have not come in while it ran.</summary>
-        private void AppendBuildResultLog(BuildJob job, string? log)
-        {
-            if (string.IsNullOrWhiteSpace(log)) return;
-            job.Feed.Drain();
-            foreach (string line in job.Feed.Missing(log)) _buildLog.AppendLine(line);
         }
 
         /// <summary>Is the build window of a failed build showing its error (then no second message box is needed)?</summary>

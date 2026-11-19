@@ -1,0 +1,36 @@
+// try/catch, a class of exceptions, resume, an error of the runtime as an exception
+class MyError : Exception {
+    int code
+    construct(string m, int c) { this.message = m; this.code = c }
+}
+var g = func (int x) => {
+    if (x > 2) { throw new MyError("too big", x) }
+    return x
+}
+try {
+    print(g(1))
+    print(g(5))
+    print("not reached")
+} catch (MyError e) {
+    print("caught " + e.message + " " + e.code)
+}
+var r = 0
+try {
+    int v = throw new MyError("ask", 1)
+    print("resumed with " + v)
+    r = v + 1
+} catch (MyError e) {
+    e.resume(41)
+}
+print(r)
+try {
+    var z = 0
+    print(10 / z)
+} catch (Exception e) {
+    print("runtime: " + e.message)
+}
+class D {
+    static int Depth(int n) { if (n == 0) { throw new MyError("deep", 0) } return D.Depth(n - 1) + 1 }
+}
+try { print(D.Depth(5)) } catch (Exception e) { print("deep caught " + e.message) }
+print("end")

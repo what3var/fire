@@ -1,0 +1,33 @@
+// a class with fields, a constructor, methods and a destructor; ownership by scopes and objects
+class Point {
+    int x
+    int y
+    construct(int x, int y) { this.x = x; this.y = y }
+    int Sum() { return this.x + this.y }
+    destruct() { print("destroy Point " + this.x) }
+}
+class Line {
+    Point a
+    Point b
+    construct() { this.a = new Point(1, 2); this.b = new Point(3, 4) }
+    int Length() { return this.b.Sum() - this.a.Sum() }
+    destruct() { print("destroy Line") }
+}
+var p = new Point(10, 20)
+print(p.Sum())
+p.x = 5
+print(p.x)
+{
+    var q = new Point(100, 1)
+    print("inner " + q.Sum())
+}
+print("after block")
+var f = func () => { var l = new Line(); return l.Length() }
+print(f())
+Point held = undefined
+for (var i = 0; i < 2; i = i + 1) {
+    var t = new Point(70 + i, 7)
+    if (i == 1) { held = t }
+}
+print("held " + held.x)
+print("end")

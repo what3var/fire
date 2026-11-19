@@ -16,6 +16,8 @@ TestProgress.Install();
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "startproject") { Environment.ExitCode = StartProjectTests.Run() == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=publish: build actions (Ignore, Copy) and Publish of projects and solutions (PublishTests.cs; seconds, the native part only with a C compiler; nothing installed)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "publish") { Environment.ExitCode = PublishTests.Run() == 0 ? 0 : 1; return; }
+// FIRE_TESTS_ONLY=forgereport: spark builds through forge - the report of `forge build --report json` written and read, spark's runner against a fake forge (cancel included), the real forge on a library (ForgeReportTests.cs; seconds)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "forgereport") { Environment.ExitCode = ForgeReportTests.Run() == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=explorer: the filter, Sync and Show All Files of spark's solution explorer (ExplorerTests.cs; seconds, nothing installed)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "explorer") { Environment.ExitCode = ExplorerTests.Run() == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=editorchecks: how spark checks the documents in the background while typing - debounce, cancellation, stale results, the gate of the analyses (BackgroundCheckTests.cs; seconds)

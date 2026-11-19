@@ -59,7 +59,8 @@ gemeinsame Domäne der Globals.
 * Wo das nicht reicht, verliert die VM: sie nimmt den langsameren Weg oder eine eigene Fassung der Funktion, die Runtime bleibt.
 
 Risiko: `fire_rt.h` ist auf erzeugten Code zugeschnitten (statische Tabellen, `fatal` beendet den Prozess). Darum beginnt Phase B mit einem
-Spike, der genau das - unter diesen Regeln - prüft, bevor irgendetwas anderes portiert wird.
+Spike, der genau das - unter diesen Regeln - prüft, bevor irgendetwas anderes portiert wird. **Geprüft** ([VM_SPIKE.md](spec/VM_SPIKE.md)): L1 trägt, mit einem
+Eingriff hinter `FIRE_VM` (`exitNow` kehrt zur VM zurück); der native Build ist byte-gleich.
 
 ### L2. Die Naht ist das Bytecode-Format, die Reihenfolge VM -> Frontend -> Backend
 
@@ -210,7 +211,16 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    Stände vergleicht `diff -r`. Der Stand des C#-Compilers: 460 Programme ohne Fehler, rund 1 GB, auf 4 Kernen eine halbe Stunde (nicht eingecheckt -
    er ändert sich mit jedem Commit am Compiler). Größe und Geschwindigkeit nativer Programme misst `tests/native-baseline.py`
    ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)), die Diagnosen stehen bei den Fällen (`.diagnostics`). **Offen:** der AST als Text.
-5. **spark baut nur noch über die Befehlszeile von forge** (statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4, noch ganz in C#.
+5. ~~**spark baut nur noch über die Befehlszeile von forge**~~ (umgesetzt; statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4,
+   noch ganz in C#. Build, Build virtual, Build Solution (`forge build <sln> --all`), der Build eines nativen Laufs und Debuggens (`--debug-info`, auch
+   ESP32), Publish, Pack Library und Install laufen als `forge build|publish ... --report json` im Kindprozess (`ForgeProcess` in spark): der
+   [Bericht](tools/forge.md#the-report-for-tools) - eine JSON-Zeile je Ereignis: Phasen, Hintergrundarbeit, Log, Diagnosen mit Datei/Zeile/Spalte/Code,
+   Ausgaben, Projekte, Ende - geht in Build-Log, Build-Fenster, Statusleiste und Fehlerliste. Abbrechen: `cancel` auf stdin (überall) bzw. SIGTERM,
+   forge beendet seine Werkzeuge und löscht seine temporären Ordner, nach zehn Sekunden tötet spark den Prozessbaum. **Ungespeicherter Text:** spark
+   speichert nicht vor dem Bauen, sondern gibt geänderte Dokumente als `--overlay <datei>=<kopie>` mit (wie bisher baut spark, was der Editor zeigt).
+   Was spark selbst entscheidet (Ziel der Werkzeugleiste, Modus, Ausgabeort, Statistik), geht als `-t`/`-m`/`-o`/`--stats` mit; die Frage nach einem
+   fehlenden Compiler stellt spark vor dem Start von forge. Im eigenen Prozess bleiben: das Übersetzen für einen Lauf in der VM (die VM läuft noch in
+   spark, Phase B 9), die Sprachdienste (Phase C 6), Clean (baut nichts), der Test einer Toolchain im Dialog. Prüfung: `FIRE_TESTS_ONLY=forgereport`.
 6. ~~Tabellen, die beide Seiten brauchen, aus **einer** Quelle~~ (umgesetzt): `native/tables` hält `opcodes.def` (Name, Nummer, Operandengrößen),
    `errors.def` (Code, Bereich, Text), `natives.def` (die Natives jedes Programms mit ihrem Index) und `prelude.fire` (das Prelude als ein Text).
    Die Quelle bleibt der C#-Code, solange er lebt: `forge tables native/tables` schreibt die Dateien, die Tests (`FIRE_TESTS_ONLY=tables`) schlagen
@@ -230,13 +240,54 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
 0. **Spike** (entscheidet L1): Interpreter für rund 30 Opcodes auf `fire_rt.h` - Rechnen, Locals/Scopes, Aufrufe, eine Klasse mit Feldern und
    Destruktor, `try`/`catch`/`resume`, eine Klasse zur Laufzeit registriert, zwei Skripte nacheinander in einem Prozess (L6). Ergebnis: geht es
    ohne Eingriffe in die Runtime, mit Eingriffen hinter `FIRE_VM`, oder gar nicht - gemessen an den Prüfungen für den nativen Build.
-1. `native/base` und der Lader.
+   **Umgesetzt** (`native/vm`, [VM_SPIKE.md](spec/VM_SPIKE.md)): Lader für das ganze `.fbc`-Format, Interpreter mit 69 Opcodes auf den Funktionen der
+   Runtime (Scopes als `OwnList`-Paare, Ausnahmen über ihren Handler-Stapel, Klassen-Deskriptoren und Catch-Typen beim Laden registriert), gebaut mit
+   `cc -O2 native/vm/fire.c -o fire -lm` (gcc, clang). Die Skripte in `native/vm/tests` geben dasselbe aus wie `forge run`; 16 Programme nacheinander in
+   einem Prozess, darunter zwei mit unbehandelter Ausnahme bzw. `fatal`, lassen jeweils nichts zurück. **Ergebnis: mit Eingriffen hinter `FIRE_VM` - genau
+   einem** (`exitNow` ruft `fire_vmExit`, 8 Zeilen); ohne den Schalter ist `fire_rt.h` für den Präprozessor dasselbe, `fire_program.c` und die
+   Executables sind byte-gleich, `native-baseline.py compare`: nichts größer oder langsamer. Die C-VM ist dabei 2,4- bis 6-mal so schnell wie die
+   C#-VM. Was in Phase B einen eigenen Weg der VM braucht (Rückrufe ohne Kontext wie `TArg.holds`, die feste Konfiguration der Runtime für
+   `#intwidth`/`#floatwidth`, Klassen-Ids bei gleichzeitigen Programmen), steht dort unter "Was nicht passt".
+1. `native/base` und der Lader. **Umgesetzt** ([VM_C.md](spec/VM_C.md)): `native/base/fire_base.h` (Arena, internierte Namen, geordnete Map,
+   Dateien - ohne globalen Zustand); der Lader behält das ganze Programm bis auf Reflection-Meta, Externs und Debug-Namen, die Einheiten und Enums
+   der Datei werden beim Start die Tabellen der Runtime.
 2. Interpreter vollständig: alle Opcodes, die drei Modi (Debug/Release/Performance), Lambdas und Captures, Properties, Überladungen, Generics,
    typisierte Arrays, Zeiger, Records, Besitz (`take`, `TakeTo`, Kopien), Shutdown an sicheren Punkten.
+   **Zum größten Teil umgesetzt** ([VM_C.md](spec/VM_C.md)): alle Opcodes außer denen der Threads/Aktoren (Schritt 3) und der Probes (Schritt 5);
+   Überladung nach Typ, Properties, Operatoren, Erweiterungen der Basistypen, Generics mit Typargumenten je Objekt und Aufruf, Spezialisierungen,
+   `DeclaredType`, Arrays einer Klasse und nach Typargument, Records, `finally`, Einheiten des Programms mit Umrechnungsfunktionen, Zugriffsprüfung
+   (nicht in Performance). Die Rückrufe ohne Kontext (VM_SPIKE Punkt 1) sind eigene Fassungen der VM bzw. ein Vorrat an Trampolinen; die Runtime ist
+   unverändert (der native Build ebenso). Maß: `tests/run-cases-vm.sh <forge>` übersetzt jeden Fall mit dem C#-forge und führt ihn mit der C-VM aus -
+   **751 von 1126** richtig (Spike: 306); von den übrigen brauchen rund 320 die Schritte 3 bis 5. **Offen in Schritt 2**: `#intwidth`/`#floatwidth`
+   (eine VM-Variante je Breite), `try take`/`Takes.Children`, einige Meldungen (rund 40 Fälle; benannte Argumente, die Reihenfolge der Destruktoren
+   weitergereichter Argumente, Typargumente in Deklarationen generischer Klassen, Besitz in Property-Accessoren und Shutdown an sicheren Punkten sind
+   mit Schritt 3 erledigt).
 3. Threads, Tasks, Aktoren, `sync globals`, Abbruch, `on`-Lambdas - über die Abschnitte der Runtime.
+   **Umgesetzt** ([VM_C.md](spec/VM_C.md#threads-schritt-3-vm_threadsc)): das Threadmodell der Runtime mit GIL (ein Thread des Systems je fire-Thread,
+   ein `Vm` je Strang, die Globals des Hauptprogramms direkt und in Sektionen), sichere Punkte wie im erzeugten Code, `leave`/`terminate` mit `finally`
+   und Destruktoren der Globals, `sync globals`, `#globaljobs`, `fire global`/`await on`, Aktoren (`process`, `await a.M()`), Regel 10, `catch threads`/
+   `catch terminate`, Kanäle, `Completion`, Abbruch, `await [...]` (nacheinander), `handover`, Lambdas mit einem Ziel in einem anderen Thread, `Sleep`.
+   Rückrufe ohne Kontext: die Funktion steht in den Argumenten (Thread, Nachricht), `catch`-Handler über Trampoline. Die Runtime ist unverändert.
+   Maß: **910 von 1128** (vorher 751); `vm-gl`, `vm-shutdown`, `vm-life` ganz, die Thread-Fälle von `native` bis auf die, die Natives der Schritte 4/5
+   brauchen; unter ASan/TSan ohne Befund. **Offen**: Tasks (`FIRE_TASKS` gibt es nur ohne GIL - dafür bräuchte die VM Sperren um ihre Tabellen und
+   ihren Zustand am Task, ein Eingriff in die Runtime); `await [...]` läuft deshalb nacheinander.
 4. Natives: eine Tabelle Name -> Funktion für die Kern-Natives (in der Runtime vorhanden, heute vom Generator direkt aufgerufen); Paket-Natives
    zunächst unverändert als Shared Library über die [C-ABI v1](../native/abi/fire_pkg_abi.h), den Host (`fire_host`: IO-/Netz-Regeln, Lambdas, Dienste) in C.
+   **Umgesetzt** ([VM_C.md](spec/VM_C.md#natives)): die Kern-Natives als Tabelle nach Namen; die Natives der Importe nach Index (graphics, windows,
+   reflection: `native/tables/bridges.def`, von `forge tables`; dann die der Pakete), beim Laden nach Namen gebunden - an eine Funktion der VM (was ein
+   Paket seinem Host lässt: `Sleep`, `__time_unit_ticks`, die Wartefunktionen der Geräte) oder an ihre Bibliothek: dieselben Shared Libraries, die
+   `PackageLibrary` für die C#-VM baut, auch `libfire_gfx` für Fenster (`FIRE_DISPLAY=headless` ohne Bildschirm), gesucht in `FIRE_PKG_PATH` und neben
+   der Programmdatei (`Packages/`, `Prebuilt/` eines forge). `fire_host` in C mit allem, was die Kopfdatei hat (Konsole, IO-/Netz-Regeln - alles
+   erlaubt wie in der gepackten C#-Runtime -, Lambdas mit dem Aufschub ihrer Ausnahmen bis zum Ende des Natives, Aufrufe von anderen Threads am
+   nächsten sicheren Punkt, Dienste, Leerlauf, Halte auf dem Ende des Programms). Dazu `Library` und `extern` über einen Aufruf nach der Signatur zur
+   Laufzeit (System V x86-64, AArch64). Offen: Regeln eines Hosts und seine Geräte (spark, Schritt 9), `inline c`, `Library`/`extern` unter Windows x64.
 5. Reflection, JSON, Probes, Module und Plugins in der VM.
+   **Zum größten Teil umgesetzt** ([VM_C.md](spec/VM_C.md#reflection-und-probes)): Reflection auf den Meta-Daten der Datei, die der Lader jetzt
+   behält (`vm-rf` 18 von 18), Lesen/Schreiben/Aufrufen/Erzeugen nach Namen auf den Wegen des Interpreters; JSON mit der Engine des nativen Builds
+   (`fire_json.h`) auf Tabellen, die die VM aus dem Programm baut (`$id`/`$ref`, Einheiten, Enums, Generics); Probes mit dem Probe-Speicher der Runtime
+   (`FIRE_REFLECTION` in der VM) und einer eigenen Fassung von `probedSet` nach Namen statt der Rückrufe ohne Kontext; `linq` (bis auf einen Fall von
+   Besitz aus Schritt 2). Offen: Fire-Plugins und Module (das Laden der Klassen eines zweiten Programms in ein laufendes; kein Fall des Korpus).
+   Maß: **869 von 1128** (vorher 751); was fehlt, ist Schritt 3 (rund 185) und Schritt 2 (rund 75).
 6. Debug-Agent (L4): Haltepunkte, Schritte, Variablen über die Scope-Ebenen, `set`, Pause, Zeilenprofil.
 7. Programm `fire` (`fire run x.fbc`); der Korpus, vom C#-Compiler übersetzt, läuft mit den erwarteten Ausgaben; Benchmarks gegen die C#-VM.
 8. `forge build --engine vm` bleibt: die C-VM mit angehängtem `.fbc` (und den Bibliotheken der Packages) statt der .NET-Einzeldatei.
@@ -325,4 +376,5 @@ Offen:
 
 * **ember**: in C mit forge, oder wie die IDE in fire (Tendenz des Benutzers: fire). Der Plan nimmt fire an und hält nur den Teil in C, den
   forge selbst zum Bauen braucht; die Entscheidung muss erst vor Phase D Schritt 3 fallen.
-* **L1** (VM auf `fire_rt.h`): vom Spike abhängig, unter Bedingung 3.
+* ~~**L1** (VM auf `fire_rt.h`): vom Spike abhängig, unter Bedingung 3.~~ Entschieden durch den Spike (19.11.2026, [VM_SPIKE.md](spec/VM_SPIKE.md)):
+  L1 hält, Bedingung 3 ist erfüllt.

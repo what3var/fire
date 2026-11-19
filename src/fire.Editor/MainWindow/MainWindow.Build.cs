@@ -382,8 +382,6 @@ namespace fire.Editor
                 output = path;
             }
 
-            IReadOnlyList<string> sources = plan != null ? plan.SourceTexts : new[] { script!.GetText() };
-            string? baseDirectory = script?.BaseDirectory;
             var mode = _session.ExecutionMode;
             string what = $"{(plan != null ? plan.Name : script!.FilePath != null ? Path.GetFileName(script.FilePath) : "script")} for {target.Name} ({toolchain.EffectiveKind})";
             UpdateStatus($"Building {what}...");
@@ -393,12 +391,18 @@ namespace fire.Editor
             string? defaultPath = plan != null ? null : FullPathOf(ActiveDocument);
             if (BuildRunning()) return;   // (one may have started while the folder or file was asked for)
             var job = BeginBuildJob(what);
-            NativeBuildResult result;
+            // forge builds it (the same configuration, target and mode; the text of the editor as overlays): `forge build ... --engine native --report json`
+            var overlays = OverlaysOfOpenDocuments();
+            var args = new List<string> { "build" };
+            args.AddRange(project != null ? ForgeProjectArgs(project) : new List<string> { ForgeScriptSource(ActiveDocument!, overlays) });
+            args.AddRange(new[] { "--engine", "native", "-t", target.Name, "-m", ForgeMode(mode), "-o", output });
+            if (config.Path != null) args.AddRange(new[] { "--config", config.Path });
+            if (_settings.BuildStats) args.Add("--stats");   // (the Statistics switch: the report next to the program, shown below)
+            ForgeOutcome result;
             try
             {
-                config.Stats = _settings.BuildStats;   // (the Statistics switch: the report next to the program, shown below)
-                result = await Task.Run(() =>
-                    fire.Compiler.NativeBuilder.BuildSafe(sources, config, target, toolchain, output, mode, null, false, baseDirectory, null, plan, job.Monitor));
+                await EnsureToolchainAsync(toolchain);
+                result = await RunForgeAsync(job, args, overlays);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
@@ -406,25 +410,24 @@ namespace fire.Editor
                 UpdateStatus("The native build failed: " + ex.Message);
                 return;
             }
-            // what the tools said (the C++ compiler with its stdout and stderr), then the errors and warnings of the fire compiler
-            AppendBuildResultLog(job, result.Log);
+            job.Feed.Drain();
             if (result.Cancelled)
             {
                 EndBuildJob(job, BuildOutcome.Cancelled);
                 return;
             }
-            FinishBuild("Build", result.Ok, result.Diagnostics ?? Array.Empty<Diagnostic>(), defaultFile, defaultPath);
-            if (result.Ok)
+            // what the tools said (the C compiler with its stdout and stderr) is in the log already; then the errors and warnings of the fire compiler
+            FinishBuild("Build", result.Ok, ForgeDiagnostics(result, overlays), defaultFile, defaultPath);
+            if (result.Ok && result.Output("program", "folder") is { } built)
             {
                 EndBuildJob(job, BuildOutcome.Succeeded);
-                CopyContentNextTo(plan, result.Output);
-                UpdateStatus($"Built {result.Output} (native, {target.Name}).");
-                if (_settings.BuildStats && result.Output is { } built) ShowBuildStats(built + ".stats.json");
+                UpdateStatus($"Built {built} (native, {target.Name}).");
+                if (_settings.BuildStats) ShowBuildStats(built + ".stats.json");
                 return;
             }
             EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
             UpdateStatus("The native build failed.");
-            if (!FailureShown(job)) await Dialogs.Message(this, result.Log, "Build Native");
+            if (!FailureShown(job)) await Dialogs.Message(this, BuildErrorText(result), "Build Native");
         }
 
         /// <summary>The Statistics switch of the build tool strip: native builds write their statistics and show them in a tab (kept in the settings of spark).</summary>
@@ -471,11 +474,59 @@ namespace fire.Editor
             output ??= await PickSavePath("Build virtual", "program" + (windows ? ".exe" : ""), windows ? "exe" : "");
             if (output == null) return;
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-            if (await CompileAndPrepareAsync(output) && project != null)
+            await BuildVirtualAsync(project, output);
+        }
+
+        /// <summary>Build virtual through forge: `forge build ... --engine vm -o output` - the project (its files and libraries, the files with the build action Copy next to the
+        /// program) or the active script, with the text of the editor.</summary>
+        private async Task BuildVirtualAsync(LoadedProject? project, string output)
+        {
+            if (BuildRunning()) return;
+            var doc = ActiveDocument;
+            if (project != null)
             {
-                try { CopyContentNextTo(CreatePlan(project), output); }
-                catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { _buildLog.AppendLine($"{project.Name}: warning: {ex.Message}"); }
+                var plan = CreatePlan(project);
+                if (!plan.IsValid)
+                {
+                    UpdateStatus($"The project {project.Name} has problems: {plan.Errors[0]}");
+                    await Dialogs.Message(this, string.Join(Environment.NewLine, plan.Errors), "Project problems");
+                    return;
+                }
             }
+            else if (doc?.Script == null)
+            {
+                UpdateStatus(doc == null ? "No document is open." : "The active document is not a script - select a script tab to build.");
+                return;
+            }
+            string what = $"{project?.Name ?? doc!.DisplayName} (virtual, {RunModeName})";
+            UpdateStatus($"Building {what}...");
+            BeginBuildLog(what);
+            RevealTool("buildlog");
+            var job = BeginBuildJob(what);
+            var overlays = OverlaysOfOpenDocuments();
+            var args = new List<string> { "build" };
+            args.AddRange(project != null ? ForgeProjectArgs(project) : new List<string> { ForgeScriptSource(doc!, overlays) });
+            args.AddRange(new[] { "--engine", "vm", "-m", ForgeMode(_session.ExecutionMode), "-o", output });
+            ForgeOutcome result;
+            try { result = await RunForgeAsync(job, args, overlays); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                EndBuildJob(job, BuildOutcome.Failed, ex.Message);
+                UpdateStatus("Build virtual failed: " + ex.Message);
+                return;
+            }
+            job.Feed.Drain();
+            if (result.Cancelled) { EndBuildJob(job, BuildOutcome.Cancelled); return; }
+            FinishBuild("Build virtual", result.Ok, ForgeDiagnostics(result, overlays), project != null ? null : doc?.DisplayName, project != null ? null : FullPathOf(doc));
+            if (result.Ok)
+            {
+                EndBuildJob(job, BuildOutcome.Succeeded);
+                UpdateStatus($"Built {result.Output("program") ?? output} (virtual, {RunModeName}).");
+                return;
+            }
+            EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
+            UpdateStatus("Build virtual failed (see the build log and the error list).");
+            if (!FailureShown(job) && !_quietCompile) await Dialogs.Message(this, BuildErrorText(result), "Build virtual");
         }
     }
 }

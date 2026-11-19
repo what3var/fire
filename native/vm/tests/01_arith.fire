@@ -1,0 +1,31 @@
+// arithmetic, locals in nested scopes, loops, functions, string concat
+var a = 7
+var b = 3
+print(a + b)
+print(a - b * 2)
+print(a / b)
+print(a % b)
+print(7.5 / 2)
+print(-a)
+print(a < b)
+print(a == 7 && b != 4)
+var s = "x=" + a + ", y=" + 2.5
+print(s)
+var total = 0
+for (var i = 0; i < 10; i = i + 1) {
+    var sq = i * i
+    if (sq % 2 == 0) { total = total + sq } else { total = total - 1 }
+}
+print(total)
+var fact = func (int n) => {
+    var r = 1
+    var k = 2
+    while (k <= n) { r = r * k; k = k + 1 }
+    return r
+}
+print(fact(10))
+class M {
+    static int Fib(int n) { if (n < 2) { return n } return M.Fib(n - 1) + M.Fib(n - 2) }
+}
+print(M.Fib(15))
+print("done " + fact(3))

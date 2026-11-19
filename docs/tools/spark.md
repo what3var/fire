@@ -41,6 +41,17 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   published as its package. It is a build job like Build Solution: the *Build log* says per project what was built and what was copied, errors go into
   the *Error list*, *Cancel Build* stops it, the status bar ends with the summary ("2 projects published to ..."). *Publish* of a project with publishing
   off opens its properties on the *Publish* page instead ([projects](projects.md#publish)).
+- **spark builds with forge:** every build - *Build*, *Build virtual*, *Build Solution*, the build of a native *Run* or *Debug* (also for the ESP32),
+  *Publish*, *Pack Library* and *Install* of a library - runs `forge build`/`forge publish` with `--report json` as a child process
+  ([the report](forge.md#the-report-for-tools)): what spark shows in the *Build log*, the build window, the status bar and the *Error list* is what
+  forge reports, and *Cancel Build* asks forge to stop (it ends its compilers and deletes what it had begun and its temporary folders; a forge that has not
+  ended after ten seconds is killed with its process tree). **Unsaved text is built as it is in the editor**, without saving: each changed document goes to
+  forge as an overlay (`--overlay <file>=<copy>`), a script that was never saved as a temporary file - the same as when spark built in its own process
+  (Visual Studio saves first; spark leaves saving to you, so a build never writes your files). spark still decides what it decided before: the target of
+  the tool strip (`-t`), the mode of the run (`-m`), where the program goes (`-o`), the statistics switch (`--stats`); a missing compiler is asked for
+  in spark before forge starts. Clean builds nothing and stays in spark, so does the compile for a run in the VM (the VM runs inside spark until it moves
+  to a child process, [ROADMAP_C_PORT](../ROADMAP_C_PORT.md)). `FIRE_FORGE` names another forge (a program or a `forge.dll`). *Build virtual* only writes
+  the program now; *Start* compiles for the VM itself.
 - **Build action of a file:** the *Properties* window of a file of a project has the category *Build* - *Build action*: *Build* (the default), *Ignore*,
   *Copy if newer*, *Copy always* - and *Set by* (the file itself, a pattern or the default). Several files selected in the Solution Explorer (Ctrl+click,
   Shift+click) are changed at once (the window shows "(mixed)" when they differ); the context menu of a file has the same as *Build Action*. An ignored

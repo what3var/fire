@@ -10,22 +10,10 @@ using fire.Projects;
 namespace fire.Editor
 {
     // Publish (docs/tools/spark.md, "Publish"; docs/tools/projects.md, "Publish"): the projects that have publishing on are built again where something changed and copied with what they
-    // need into their publish folders (ProjectPublisher) - one build job: the build log, the error list, Cancel.
+    // need into their publish folders (ProjectPublisher, run by `forge publish`) - one build job: the build log, the error list, Cancel. (The files with the build action Copy go next to
+    // a program built by Build, too: forge copies them.)
     public partial class MainWindow
     {
-        /// <summary>After a build of a project: the files with the build action Copy (of the project and its libraries) next to the program - `output` is the program, or the folder of a
-        /// toolchain that only writes files (docs/tools/projects.md, "Build actions"). What it copied goes into the build log.</summary>
-        private void CopyContentNextTo(BuildPlan? plan, string? output)
-        {
-            if (plan == null || output == null) return;
-            var items = ProjectContent.ItemsOf(plan);
-            if (items.Count == 0) return;
-            string folder = Directory.Exists(output) ? output : Path.GetDirectoryName(Path.GetFullPath(output))!;
-            var result = ProjectContent.CopyTo(items, folder);
-            foreach (var p in result.Problems) _buildLog.AppendLine($"{plan.Name}: warning: could not copy {p}");
-            _buildLog.AppendLine($"{plan.Name}: {result.Copied.Count} file{(result.Copied.Count == 1 ? "" : "s")} (build action Copy) copied next to the program{(result.UpToDate > 0 ? $", {result.UpToDate} up to date" : "")}.");
-        }
-
         /// <summary>Run > Publish: the project of the active document (else the start project).</summary>
         private async void Publish_Click(object? sender, RoutedEventArgs e) => await PublishProject(ContextProject() ?? _workspace.Startup);
 
@@ -42,7 +30,7 @@ namespace fire.Editor
                 await ShowProjectProperties(project, page: "publish");
                 if (project.Project.Publish?.Enabled != true) return;
             }
-            await RunPublish(new[] { project }, $"Publish {project.Name}");
+            await RunPublish(new[] { project }, $"Publish {project.Name}", single: project);
         }
 
         private async Task PublishSolutionAsync()
@@ -55,11 +43,12 @@ namespace fire.Editor
                 if (_workspace.Projects.Count == 1) await PublishProject(_workspace.Projects[0]);
                 return;
             }
-            await RunPublish(projects, $"Publish Solution {_workspace.Name} ({projects.Count} project{(projects.Count == 1 ? "" : "s")})");
+            await RunPublish(projects, $"Publish Solution {_workspace.Name} ({projects.Count} project{(projects.Count == 1 ? "" : "s")})", single: null);
         }
 
-        /// <summary>The publish as a build job: the open documents' text goes in (as for Build), the log into the build log, errors and warnings into the error list.</summary>
-        private async Task RunPublish(IReadOnlyList<LoadedProject> projects, string what)
+        /// <summary>The publish as a build job, through forge (`forge publish <solution> [-p name] --report json`): the open documents' text goes in (as for Build), the log into the
+        /// build log, errors and warnings into the error list. <paramref name="single"/>: one project (also when its publishing is off), else the projects with publishing on.</summary>
+        private async Task RunPublish(IReadOnlyList<LoadedProject> projects, string what, LoadedProject? single)
         {
             if (BuildRunning()) return;
             if (_nativeRun is { HasExited: false } || _nativePlainRunning) { UpdateStatus("A native program is running from its build folder - stop it first (Shift+F5)."); return; }
@@ -67,19 +56,12 @@ namespace fire.Editor
             BeginBuildLog(what);
             RevealTool("buildlog");
             var job = BeginBuildJob(what);
-            // (the text of open documents is read on the interface thread, before the build runs elsewhere)
-            var texts = new Dictionary<string, string>(ProjectFiles.PathComparer);
-            foreach (var doc in _documents)
-                if (doc.Script != null && FullPathOf(doc) is { } path) texts[path] = doc.Script.GetText();
-            PublishResult result;
-            try
-            {
-                result = await Task.Run(() => ProjectPublisher.Publish(_workspace, projects, new PublishOptions
-                {
-                    Monitor = job.Monitor,
-                    TextOf = p => texts.TryGetValue(Path.GetFullPath(p), out var t) ? t : null,
-                }));
-            }
+            var overlays = OverlaysOfOpenDocuments();
+            var args = new List<string> { "publish" };
+            if (single != null) args.AddRange(ForgeProjectArgs(single));
+            else args.Add(_workspace.FilePath ?? projects[0].FilePath);
+            ForgeOutcome result;
+            try { result = await RunForgeAsync(job, args, overlays); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
                 EndBuildJob(job, BuildOutcome.Failed, ex.Message);
@@ -92,16 +74,16 @@ namespace fire.Editor
                 EndBuildJob(job, BuildOutcome.Cancelled);
                 return;
             }
-            FinishBuild("Publish", result.Ok, result.Diagnostics.ToList(), null, null);
+            FinishBuild("Publish", result.Ok, ForgeDiagnostics(result, overlays), null, null);
+            string summary = result.Summary ?? result.Error ?? "Publish failed.";
             if (result.Ok)
             {
                 EndBuildJob(job, BuildOutcome.Succeeded);
-                UpdateStatus(result.Summary);
+                UpdateStatus(summary);
                 return;
             }
-            var first = result.Projects.FirstOrDefault(p => !p.Ok && p.Error != null);
-            EndBuildJob(job, BuildOutcome.Failed, first != null ? $"{first.Project.Name}: {first.Error}" : result.Summary);
-            UpdateStatus($"Publish: {result.Summary} (see the build log and the error list).");
+            EndBuildJob(job, BuildOutcome.Failed, result.Error ?? summary);
+            UpdateStatus($"Publish: {summary} (see the build log and the error list).");
         }
     }
 }
