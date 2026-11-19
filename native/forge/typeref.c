@@ -17,7 +17,7 @@ static const char* fcPlainName(FcCtx* c, const char* name) {
 
 static bool fcTrIsInferred(const FcTypeRef* t) { return streq0(t->baseName, FC_INFERRED_MARKER); }
 static const char* fcTrRequiredUnit(const FcTypeRef* t) { return t->unit == NULL || streq0(t->unit, "any") ? NULL : t->unit; }
-static int fcTrTypeArgsCount(const FcTypeRef* t) { return t->typeArgs ? t->typeArgs->count : 0; }
+FC_LATER static int fcTrTypeArgsCount(const FcTypeRef* t) { return t->typeArgs ? t->typeArgs->count : 0; }
 
 /* TypeRef.ResolveBaseName */
 static const char* fcTrResolveBaseName(FcCtx* c, const FcTypeRef* t, FcKnown known) {
@@ -73,7 +73,7 @@ static void fcTrText(FcBuf* b, const FcTypeRef* t) {
     }
     for (i = 0; i < t->pointerDepth; i++) fcBufChar(b, '*');
 }
-static const char* fcTrString(FcCtx* c, const FcTypeRef* t) { FcBuf b = {0}; fcBufStr(&b, ""); fcTrText(&b, t); return fcBufDone(c, &b); }
+FC_LATER static const char* fcTrString(FcCtx* c, const FcTypeRef* t) { FcBuf b = {0}; fcBufStr(&b, ""); fcTrText(&b, t); return fcBufDone(c, &b); }
 
 /* GenericClassNames.ResolveNewTarget */
 typedef struct FcKnownMangled { FcCtx* c; FcKnown inner; int count; } FcKnownMangled;

@@ -383,6 +383,17 @@ static void fcProcessInner(FcPreprocessor* pp, const uint16_t* source, int lengt
     free(conditional.frames);
 }
 
+/* fcProcessInner, and on an exception the buffer freed (an error of a directive's handler, Phase C 3) */
+static void fcProcessGuarded(FcPreprocessor* pp, const uint16_t* source, int length, const char* basePath, FcU16* out) {
+    FcCtx* c = pp->ctx;
+    FC_TRY(c) {
+        fcProcessInner(pp, source, length, basePath, out);
+    } FC_CATCH(c) {
+        fcU16Free(out);
+        fcRethrow(c);
+    } FC_END_TRY;
+}
+
 /* Preprocessor.Process(source, basePath, registry): the default registry with the symbols of the context */
 FcProcessed* fcPreprocess(FcCtx* c, const uint16_t* source, int length, const char* basePath) {
     FcPreprocessor pp;
@@ -396,7 +407,7 @@ FcProcessed* fcPreprocess(FcCtx* c, const uint16_t* source, int length, const ch
     pp.importNamespaces = fcListNew(c);
     pp.alreadyIncluded = c->sharedIncluded ? c->sharedIncluded : fcListNew(c);
     fcU16Put(&out, NULL, 0);
-    fcProcessInner(&pp, source, length, basePath, &out);
+    fcProcessGuarded(&pp, source, length, basePath, &out);
     copy = (uint16_t*)fcAlloc(c, sizeof(uint16_t) * (size_t)(out.len + 1));
     if (out.len) memcpy(copy, out.p, sizeof(uint16_t) * (size_t)out.len);
     r->source = copy;

@@ -242,7 +242,7 @@ static FcDict* fcAstNamesDeclared(FcCtx* c, FcStmt* node) {
     return declared;
 }
 /* AstNames.Assigned */
-static FcDict* fcAstNamesAssigned(FcCtx* c, FcBlockStmt* body) {
+FC_LATER static FcDict* fcAstNamesAssigned(FcCtx* c, FcBlockStmt* body) {
     FcDict* names = fcDictNew(c, FC_KEY_STR);
     FcList* tags;
     FcList* nodes;
@@ -271,7 +271,7 @@ static void fcConsumed(FcDict* wanted, FcDict* safe, FcExpr* e) {
     if (root && fcDictHas(wanted, root->name)) fcSetAdd(safe, root);
 }
 /* AstNames.ReadOnly */
-static FcDict* fcAstNamesReadOnly(FcCtx* c, FcLambdaExpr* lambda, FcList* names) {
+FC_LATER static FcDict* fcAstNamesReadOnly(FcCtx* c, FcLambdaExpr* lambda, FcList* names) {
     FcList* tags;
     FcList* nodes;
     FcDict* declared = fcAstNamesDeclared(c, (FcStmt*)lambda->body);
@@ -321,7 +321,7 @@ static FcDict* fcAstNamesReadOnly(FcCtx* c, FcLambdaExpr* lambda, FcList* names)
 }
 
 /* AstNames.ProveMember / ProvenMember: a table on the context */
-static void fcProveMember(FcCtx* c, FcDict** table, FcExpr* e) { if (!*table) *table = fcDictNew(c, FC_KEY_PTR); fcDictPut(*table, e, (void*)1); }
+FC_LATER static void fcProveMember(FcCtx* c, FcDict** table, FcExpr* e) { if (!*table) *table = fcDictNew(c, FC_KEY_PTR); fcDictPut(*table, e, (void*)1); }
 
 /* ---- the resolver ---- */
 typedef struct FcResolverScope {
@@ -657,9 +657,29 @@ static const char* DisplayName(FcResolver* r, FcClassDecl* cd) {
 }
 
 static FcList* InterfaceClosure(FcResolver* r, const char* name);
+static void CheckAmbiguous(FcResolver* r, const FcTypeRef* tr, int line, FcKnown known, const char* ownNamespace);
 static FcList* InterfaceCycle(FcResolver* r, FcInterfaceDecl* id);
 static void ValidateStaticAndInstance(FcResolver* r, FcClassDecl* cd);
 static void ValidateImplementsInterface(FcResolver* r, FcClassDecl* cd, FcInterfaceDecl* iface, bool onlyOwn);
+
+/* Guard(() => ...) of the checks of CollectClasses: each in a function of its own, so that no local of the caller lives across the setjmp */
+static bool fcAmbiguousFails(FcResolver* r, const FcTypeRef* baseRef, int line, FcKnown known, const char* ns) {
+    bool failed = false;
+    FC_TRY(R_) {
+        CheckAmbiguous(r, baseRef, line, known, ns);
+    } FC_CATCH(R_) {
+        if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_);
+        AddError(r, fcRErrorOfCtx(r));
+        failed = true;
+    } FC_END_TRY;
+    return failed;
+}
+static void fcGuardStaticAndInstance(FcResolver* r, FcClassDecl* cd) {
+    FC_TRY(R_) { ValidateStaticAndInstance(r, cd); } FC_CATCH(R_) { if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_); AddError(r, fcRErrorOfCtx(r)); } FC_END_TRY;
+}
+static void fcGuardImplements(FcResolver* r, FcClassDecl* cd, FcInterfaceDecl* iface, bool onlyOwn) {
+    FC_TRY(R_) { ValidateImplementsInterface(r, cd, iface, onlyOwn); } FC_CATCH(R_) { if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_); AddError(r, fcRErrorOfCtx(r)); } FC_END_TRY;
+}
 
 static void CollectClasses(FcResolver* r, FcList* statements) {
     int i, k, j;
@@ -683,15 +703,8 @@ static void CollectClasses(FcResolver* r, FcList* statements) {
         for (k = 0; k < cd->baseRefs->count; k++) {
             FcTypeRef* baseRef = (FcTypeRef*)cd->baseRefs->items[k];
             const char* n;
-            bool isClass, failed = false;
-            FC_TRY(R_) {
-                CheckAmbiguous(r, baseRef, cd->h.line, K(r, kClassOrInterfaceOrException), NamespaceOf(r, cd->name));
-            } FC_CATCH(R_) {
-                if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_);
-                AddError(r, fcRErrorOfCtx(r));
-                failed = true;
-            } FC_END_TRY;
-            if (failed) continue;
+            bool isClass;
+            if (fcAmbiguousFails(r, baseRef, cd->h.line, K(r, kClassOrInterfaceOrException), NamespaceOf(r, cd->name))) continue;
             n = ResolveBaseRef(r, baseRef);
             isClass = streq0(n, "Exception") || fcDictHas(&r->classes, n);
             if (isClass) {
@@ -708,15 +721,7 @@ static void CollectClasses(FcResolver* r, FcList* statements) {
             for (k = 0; k < id->baseRefs->count; k++) {
                 FcTypeRef* baseRef = (FcTypeRef*)id->baseRefs->items[k];
                 const char* n;
-                bool failed = false;
-                FC_TRY(R_) {
-                    CheckAmbiguous(r, baseRef, id->h.line, K(r, kClassOrInterface), NamespaceOf(r, id->name));
-                } FC_CATCH(R_) {
-                    if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_);
-                    AddError(r, fcRErrorOfCtx(r));
-                    failed = true;
-                } FC_END_TRY;
-                if (failed) continue;
+                if (fcAmbiguousFails(r, baseRef, id->h.line, K(r, kClassOrInterface), NamespaceOf(r, id->name))) continue;
                 n = ResolveBaseRef(r, baseRef);
                 if (!fcDictHas(&r->interfaces, n))
                     ADDERR(id->h.line, "'%s' of interface '%s' is not a known interface (an interface can only extend interfaces)", baseRef->baseName, id->name);
@@ -730,7 +735,7 @@ static void CollectClasses(FcResolver* r, FcList* statements) {
     }
     FC_DICT_EACH(&r->classes, e) {
         FcClassDecl* cd = (FcClassDecl*)e->value;
-        FC_TRY(R_) { ValidateStaticAndInstance(r, cd); } FC_CATCH(R_) { if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_); AddError(r, fcRErrorOfCtx(r)); } FC_END_TRY;
+        fcGuardStaticAndInstance(r, cd);
     }
     FC_DICT_EACH(&r->classes, e) {
         FcClassDecl* cd = (FcClassDecl*)e->value;
@@ -746,7 +751,7 @@ static void CollectClasses(FcResolver* r, FcList* statements) {
                 for (j = 0; j < closure->count; j++) {
                     FcInterfaceDecl* iface = (FcInterfaceDecl*)closure->items[j];
                     if (!fcSetAdd(done, iface->name)) continue;
-                    FC_TRY(R_) { ValidateImplementsInterface(r, cd, iface, false); } FC_CATCH(R_) { if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_); AddError(r, fcRErrorOfCtx(r)); } FC_END_TRY;
+                    fcGuardImplements(r, cd, iface, false);
                 }
             }
         fcSetAdd(seen, cd);
@@ -760,7 +765,7 @@ static void CollectClasses(FcResolver* r, FcList* statements) {
                 for (j = 0; j < closure->count; j++) {
                     FcInterfaceDecl* inherited = (FcInterfaceDecl*)closure->items[j];
                     if (!fcSetAdd(done, inherited->name)) continue;
-                    FC_TRY(R_) { ValidateImplementsInterface(r, cd, inherited, true); } FC_CATCH(R_) { if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_); AddError(r, fcRErrorOfCtx(r)); } FC_END_TRY;
+                    fcGuardImplements(r, cd, inherited, true);
                 }
             }
         }
@@ -1592,7 +1597,7 @@ static FcResolvedRef* ResolveIdentifierRef(FcResolver* r, const char* name, int 
     RERR(line, "Unknown identifier '%s'", name);
 }
 
-static bool IsCapturedVariable(FcResolver* r, const char* name) {
+FC_LATER static bool IsCapturedVariable(FcResolver* r, const char* name) {
     FcResolverScope* scope;
     for (scope = r->current; scope != NULL; scope = scope->parent) if (fcDictHas(&scope->slots, name)) return fcDictHas(&scope->captureNames, name);
     return false;
@@ -1852,7 +1857,17 @@ typedef struct FcMethodSig { const char* name; FcList* types; } FcMethodSig;
 static void ResolveFunctionLike(FcResolver* r, FcList* parms, FcBlockStmt* body, FcList* baseArgs, bool isConstructor, bool isStatic);
 static void ResolveFieldInitializer(FcResolver* r, FcFieldDecl* fd);
 
-#define GUARD(code) do { FC_TRY(R_) { code; } FC_CATCH(R_) { if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_); AddError(r, fcRErrorOfCtx(r)); } FC_END_TRY; } while (0)
+/* Guard(() => ...): each guarded check is a function of its own (the setjmp of the try is in it, no local of the caller lives across it) */
+#define GUARD_BODY(code) FC_TRY(R_) { code; } FC_CATCH(R_) { if (R_->err.kind != FC_ERR_RESOLVE) fcRethrow(R_); AddError(r, fcRErrorOfCtx(r)); } FC_END_TRY
+static void gValidateTypeRef(FcResolver* r, FcTypeRef* type, int line) { GUARD_BODY(ValidateTypeRef(r, type, line)); }
+static void gValidateNonNull(FcResolver* r, FcTypeRef* type, int ranks, int line) { GUARD_BODY(ValidateNonNull(r, type, ranks, line)); }
+static void gCheckDefinedObjectField(FcResolver* r, FcClassDecl* cd, FcFieldDecl* fd) { GUARD_BODY(CheckDefinedObjectField(r, cd, fd)); }
+static void gValidateOptionalParamsAreTrailing(FcResolver* r, FcList* parms, int line);
+static void gDefine(FcResolver* r, const char* name, int line, const char* requiredUnit, bool isRef, int width, FcTypeRef* arrayElem, int arrayRank) {
+    GUARD_BODY(Define(r, name, line, false, requiredUnit, isRef, width, arrayElem, arrayRank));
+}
+static void ResolveNewTargetOf(FcResolver* r, FcNewExpr* ne);
+static void gResolveNewTargetOf(FcResolver* r, FcNewExpr* ne) { GUARD_BODY(ResolveNewTargetOf(r, ne)); }
 
 static FcList* fcTypeParamNames(FcResolver* r, FcList* typeParams) {
     FcList* l = fcListNew(R_);
@@ -1880,9 +1895,9 @@ static void fcResolveMember(FcResolver* r, FcClassDecl* cd, FcStmt* member, FcLi
             if (fcStartsWith(fd->name, "_Auto") && fd->access == ACC_Private && (fd->type == NULL || fcTrIsInferred(fd->type))) { }
             else if (fd->type == NULL || fcTrIsInferred(fd->type))
                 ADDERR(fd->h.line, "Field '%s' of class '%s' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed)", fd->name, cd->name);
-            else GUARD(ValidateTypeRef(r, fd->type, fd->h.line));
-            GUARD(ValidateNonNull(r, fd->type, fd->arrayRanks->count, fd->h.line));
-            if (fd->initializer == NULL && HasNoZero(r, fd->type, fd->arrayRanks->count)) GUARD(CheckDefinedObjectField(r, cd, fd));
+            else gValidateTypeRef(r, fd->type, fd->h.line);
+            gValidateNonNull(r, fd->type, fd->arrayRanks->count, fd->h.line);
+            if (fd->initializer == NULL && HasNoZero(r, fd->type, fd->arrayRanks->count)) gCheckDefinedObjectField(r, cd, fd);
             ResolveArrayRanks(r, fd->arrayRanks);
             ResolveFieldInitializer(r, fd);
             break;
@@ -1909,8 +1924,8 @@ static void fcResolveMember(FcResolver* r, FcClassDecl* cd, FcStmt* member, FcLi
             AddTypeParamNames(r, methodTypeParamNames);
             FC_TRY(R_) {
                 if (md->returnType) {
-                    GUARD(ValidateTypeRef(r, md->returnType, md->h.line));
-                    GUARD(ValidateNonNull(r, md->returnType, 0, md->h.line));
+                    gValidateTypeRef(r, md->returnType, md->h.line);
+                    gValidateNonNull(r, md->returnType, 0, md->h.line);
                 }
                 all = fcListCopy(R_, classTypeParamNames);
                 for (i = 0; i < methodTypeParamNames->count; i++) fcListAdd(R_, all, methodTypeParamNames->items[i]);
@@ -1938,8 +1953,8 @@ static void fcResolveMember(FcResolver* r, FcClassDecl* cd, FcStmt* member, FcLi
             if (pd->type == NULL || fcTrIsInferred(pd->type))
                 ADDERR(pd->h.line, "Property '%s' of class '%s' needs a type (use the type it holds, or 'any' if every type is allowed)", pd->name, cd->name);
             else {
-                GUARD(ValidateTypeRef(r, pd->type, pd->h.line));
-                GUARD(ValidateNonNull(r, pd->type, 0, pd->h.line));
+                gValidateTypeRef(r, pd->type, pd->h.line);
+                gValidateNonNull(r, pd->type, 0, pd->h.line);
             }
             if (pd->getter) fcGuardedFunctionLike(r, fcListNew(R_), pd->getter, pd->isStatic);
             if (pd->setter) {
@@ -2003,6 +2018,7 @@ static void ValidateOptionalParamsAreTrailing(FcResolver* r, FcList* parms, int 
         if (seenOptional) RERR(line, "Parameter '%s' without a default value must not follow an optional parameter (optional parameters must be contiguous at the end).", p->name);
     }
 }
+static void gValidateOptionalParamsAreTrailing(FcResolver* r, FcList* parms, int line) { GUARD_BODY(ValidateOptionalParamsAreTrailing(r, parms, line)); }
 static void ResolveParamDefaults(FcResolver* r, FcList* parms) {
     FcResolverScope* saved = r->current;
     int i;
@@ -2015,7 +2031,7 @@ static void ResolveFunctionLike(FcResolver* r, FcList* parms, FcBlockStmt* body,
     bool savedInConstructor, savedInStaticMethod;
     int savedLoopDepth, savedTryDepth, i;
     FcIntStack* savedLoopFinallyDepths;
-    GUARD(ValidateOptionalParamsAreTrailing(r, parms, body->h.line));
+    gValidateOptionalParamsAreTrailing(r, parms, body->h.line);
     {
         FcResolverState state = SaveState(r);
         FC_TRY(R_) { ResolveParamDefaults(r, parms); } FC_CATCH(R_) {
@@ -2028,11 +2044,11 @@ static void ResolveFunctionLike(FcResolver* r, FcList* parms, FcBlockStmt* body,
     for (i = 0; i < parms->count; i++) {
         FcLambdaParam* p = (FcLambdaParam*)parms->items[i];
         const char* parameterClass;
-        if (p->type) GUARD(ValidateTypeRef(r, p->type, body->h.line));
-        GUARD(ValidateNonNull(r, p->type, p->arrayRanks->count, body->h.line));
+        if (p->type) gValidateTypeRef(r, p->type, body->h.line);
+        gValidateNonNull(r, p->type, p->arrayRanks->count, body->h.line);
         ResolveArrayRanks(r, p->arrayRanks);
-        GUARD(Define(r, p->name, body->h.line, false, p->type ? fcUnitDemandOf(R_, p->type) : NULL, p->byRef,
-            p->arrayRanks->count == 0 ? (p->type ? fcTrWidthCode(p->type) : 0) : 0, p->byRef ? NULL : p->type, p->arrayRanks->count));
+        gDefine(r, p->name, body->h.line, p->type ? fcUnitDemandOf(R_, p->type) : NULL, p->byRef,
+            p->arrayRanks->count == 0 ? (p->type ? fcTrWidthCode(p->type) : 0) : 0, p->byRef ? NULL : p->type, p->arrayRanks->count);
         if ((parameterClass = KnownClassOf(r, p->type, NULL, p->arrayRanks->count > 0)) != NULL) fcDictPut(&r->current->knownClasses, p->name, (void*)parameterClass);
     }
     if (baseArgs != NULL) {
@@ -2145,7 +2161,7 @@ static void ResolveExprCore(FcResolver* r, FcExpr* expr) {
         case EK_CallExpr: {
             FcCallExpr* call = (FcCallExpr*)expr;
             fcDictPut(&r->calleeArity, call->callee, FC_IVAL(call->args->count));
-            if (call->typeArgs) for (i = 0; i < call->typeArgs->count; i++) GUARD(ValidateTypeRef(r, (FcTypeRef*)call->typeArgs->items[i], call->h.line));
+            if (call->typeArgs) for (i = 0; i < call->typeArgs->count; i++) gValidateTypeRef(r, (FcTypeRef*)call->typeArgs->items[i], call->h.line);
             ResolveExpr(r, call->callee);
             for (i = 0; i < call->args->count; i++) ResolveExprAllowTake(r, (FcExpr*)call->args->items[i]);
             break;
@@ -2217,7 +2233,7 @@ static void ResolveExprCore(FcResolver* r, FcExpr* expr) {
         case EK_IncDecExpr: ResolveAssignTarget(r, ((FcIncDecExpr*)expr)->target); break;
         case EK_NewExpr: {
             FcNewExpr* ne = (FcNewExpr*)expr;
-            GUARD(ResolveNewTargetOf(r, ne));
+            gResolveNewTargetOf(r, ne);
             for (i = 0; i < ne->args->count; i++) ResolveExprAllowTake(r, (FcExpr*)ne->args->items[i]);
             break;
         }

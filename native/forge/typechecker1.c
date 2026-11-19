@@ -223,7 +223,7 @@ static void CheckUnitAssignable(FcTC* t, const FcST* value, const FcST* target, 
 }
 
 /* DemandText(Unit): the text when Unit.Parse reads the same unit back from it */
-static const char* DemandTextOf(FcTC* t, const FcU* unit) {
+FC_LATER static const char* DemandTextOf(FcTC* t, const FcU* unit) {
     const char* text = fcUText(TC_, unit);
     return fcUEquals(fcUParse(TC_, text), unit) ? text : NULL;
 }
@@ -273,8 +273,6 @@ static bool Assignable(FcTC* t, const FcST* value, const FcST* target) {
     if (value->kind == STK_Enum || target->kind == STK_Enum) return value->kind == target->kind && streq0(value->cls, target->cls);
     return value->kind == target->kind;
 }
-
-static bool fcListHasStr2(const FcList* l, const char* s) { return l && fcListHasStr(l, s); }
 
 static bool DerivesFrom(FcTC* t, const char* derived, const char* baseName) {
     int guard, k;
@@ -761,12 +759,6 @@ static bool fcHasTypeParamNamed(FcList* tps, const char* name) {
     if (!tps) return false;
     for (i = 0; i < tps->count; i++) if (streq0(((FcTypeParam*)tps->items[i])->name, name)) return true;
     return false;
-}
-static FcTypeParam* fcTypeParamNamed(FcList* tps, const char* name) {
-    int i;
-    if (!tps) return NULL;
-    for (i = 0; i < tps->count; i++) if (streq0(((FcTypeParam*)tps->items[i])->name, name)) return (FcTypeParam*)tps->items[i];
-    return NULL;
 }
 static const char* OverloadKey(FcLambdaParam* p, FcMethodDecl* m) {
     FcTypeRef* ty = p->type;

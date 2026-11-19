@@ -131,6 +131,12 @@ void fcDiagLogLine(FcBuf* out, const FcDiagnostic* d);           /* Diagnostic.T
 FcList* fcDiagnosticsOf(FcCtx* c, const FcError* e, const char* file);   /* CompileDiagnostics.Of */
 void fcWarn(FcCtx* c, int id, const char* message, int line, const char* file);   /* DiagnosticCollector.Warn */
 void fcDeclare(FcCtx* c, FcDeclaredWarning* w);
+/* a function of the port that the frontend does not call yet (the bytecode compiler will, Phase C 4) */
+#if defined(__GNUC__) || defined(__clang__)
+#define FC_LATER __attribute__((unused))
+#else
+#define FC_LATER
+#endif
 #define FC_KEYWORD_HINT_TAIL " is a keyword and cannot be a name)"
 
 #endif
