@@ -679,6 +679,27 @@ static class CircuitEditorTests
             Check("Live-Sitzung: Stop beendet das Programm", !live.IsRunning);
         }
 
+        // one print is one message, also one of several lines (in fire: FIRE_PRINT_RECORDS); a program that fails in fire before its first picture starts again
+        // in the C# VM here (the view still works; why: ChildFailure)
+        using (var live = new LiveSession())
+        {
+            var messages = new List<string>();
+            var ended = new ManualResetEventSlim();
+            live.Message += m => { lock (messages) messages.Add(m); };
+            live.Ended += _ => ended.Set();
+            live.Start("""
+                print("@two\nlines")
+                if (Environment.Get("FIRE_DISPLAY_SHM") != undefined && Environment.Get("FIRE_DISPLAY_SHM") != "") { throw new Exception("only in fire") }
+                print("@done")
+                """);
+            bool done = ended.Wait(30000);
+            string all;
+            lock (messages) all = string.Join("|", messages.Select(m => m.Replace("\n", "\\n")));
+            Check("Live-Sitzung: ein print mit Zeilenumbruch ist eine Nachricht", messages.Contains("@two\nlines"), all);
+            Check("Live-Sitzung: scheitert das Programm in fire vor dem ersten Bild, laeuft es in der C#-VM hier", done && messages.Contains("@done")
+                && (fire.Debugging.CVmLaunch.UseDotnet ? live.ChildFailure == null : live.ChildFailure is { } why && why.Contains("only in fire") && live.InProcess), $"{all} / {live.ChildFailure}");
+        }
+
         Console.WriteLine(_failures == 0 ? "Alle Schaltungseditor-Pruefungen bestanden." : $"FEHLER: {_failures} Schaltungseditor-Pruefung(en) fehlgeschlagen.");
     }
 }

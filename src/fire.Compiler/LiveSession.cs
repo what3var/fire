@@ -147,7 +147,7 @@ namespace fire.Compiler
             var display = HostDisplayFile.Create();
             _display = display;
             var environment = fire.Debugging.CVmLaunch.Environment(linked.PackageLibraryFiles ?? new List<string>(),
-                new Dictionary<string, string> { [HostDisplayFile.EnvironmentVariable] = display.Path });
+                new Dictionary<string, string> { [HostDisplayFile.EnvironmentVariable] = display.Path, ["FIRE_PRINT_RECORDS"] = "1" });   // (one print, one message - also one of several lines)
             var info = new System.Diagnostics.ProcessStartInfo(vm)
             {
                 UseShellExecute = false, CreateNoWindow = true,
@@ -158,7 +158,7 @@ namespace fire.Compiler
             foreach (var a in fire.Debugging.CVmLaunch.Arguments(programFile, Array.Empty<string>())) info.ArgumentList.Add(a);
             foreach (var (k, v) in environment) info.Environment[k] = v;
             var process = new System.Diagnostics.Process { StartInfo = info, EnableRaisingEvents = true };
-            process.OutputDataReceived += (_, e) => { if (e.Data != null) Message?.Invoke(e.Data); };
+            process.OutputDataReceived += (_, e) => { if (e.Data != null) Message?.Invoke(e.Data.Replace('\x1F', '\n')); };   // (FIRE_PRINT_RECORDS: a line break of a print came as \x1F)
             process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (_childErrors) _childErrors.AppendLine(e.Data); };
             process.Start();
             process.BeginOutputReadLine();
@@ -193,9 +193,34 @@ namespace fire.Compiler
                     }
                 }
                 catch (InvalidOperationException) { }
+                // a program that fails in `fire` before its first picture (the VM in C does not run everything the C# VM runs yet - docs/spec/VM_C.md, "Stand"): it
+                // starts again in the C# VM of this process, so that the view works; why stays in ChildFailure
+                if (error != null && Interlocked.Read(ref _frame) == 0 && !_stopping && !NoFallback)
+                {
+                    ChildFailure = error;
+                    var display = _display;
+                    _display = null;
+                    _child = null;
+                    display?.Dispose();
+                    DeleteChildFolder();
+                    try { StartInProcess(script, basePath); return; }
+                    catch (Exception ex) { error = CompileErrors.Describe(ex); }
+                }
                 Ended?.Invoke(error);
             }) { IsBackground = true, Name = "fire live session (fire)" };
             _thread.Start();
+        }
+
+        /// <summary>Why the program did not run in `fire` and runs in the C# VM here instead (null: it did not fail there).</summary>
+        public string? ChildFailure { get; private set; }
+
+        /// <summary>No second start in the C# VM when the program fails in `fire` (the tests of the VM in C).</summary>
+        public bool NoFallback { get; init; }
+
+        private void DeleteChildFolder()
+        {
+            if (_childFolder != null) try { System.IO.Directory.Delete(_childFolder, true); } catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException) { }
+            _childFolder = null;
         }
 
         /// <summary>A new picture from the program's file: like the window of the C# VM, the same picture as before is not handed over again.</summary>
@@ -334,8 +359,7 @@ namespace fire.Compiler
             if (_child != null && _thread is not { IsAlive: true })
             {
                 _display?.Dispose();
-                if (_childFolder != null) try { System.IO.Directory.Delete(_childFolder, true); } catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException) { }
-                _childFolder = null;
+                DeleteChildFolder();
             }
         }
 
