@@ -1,4 +1,4 @@
-// ends with an error of the runtime (here: something the spike does not support, which the runtime reports with fatal) - the process must go on
+// ends with an error of the runtime (here: a pointer difference of two variables, which the runtime reports with fatal) - the process must go on
 class Res {
     string name
     construct(string n) { this.name = n; print("open " + n) }
@@ -6,6 +6,12 @@ class Res {
 }
 var keep = new Res("kept")
 print("before")
-var a = [1, 2, 3]
+unsafe {
+    any x = 1
+    any y = 2
+    any p = &x
+    any q = &y
+    print(p - q)
+}
 print("not reached")
 //# vm-spike: fails

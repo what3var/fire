@@ -241,6 +241,15 @@ Nichts davon kippt L1; es sind die Stellen, an denen die VM - nach der Regel "wo
 Nicht Teil des Spikes (unverändert Arbeit von Phase B): Arrays, Strings als Empfänger von Methoden (`$string`), Überladungen nach Typ, Properties,
 Generics, Zeiger, Records, Threads/Tasks/Aktoren, die übrigen Natives, Paket-Natives, Debugger.
 
+## Nachtrag: Phase B, Schritte 1 und 2
+
+Der Spike ist in `native/vm` aufgegangen; Aufbau und Stand der VM beschreibt [VM_C.md](VM_C.md). Von den Punkten oben: **1** ist für Generics
+(`TArg`: eigene Fassungen der VM), Records (generische Rückrufe), Einheiten mit Umrechnungsfunktionen (`UnitConvFn`: 16 Trampoline) und typisierte
+Arrays einer Klasse (`ArrClass`: 64 Trampoline) gelöst, offen für Aktoren, `catch threads`, Probes und Reflection; **4** ist gelöst (Einheiten, eigene
+Einheiten und Enums der Datei werden beim Start die Tabellen der Runtime); **7** ist um `finally` ergänzt (über den Operandenstapel wie die C#-VM, auf
+dem Handler-Stapel der Runtime); **2** bleibt (`#intwidth`/`#floatwidth` brauchen eine Variante der VM). Die Runtime ist weiterhin nur um den Eingriff
+in `exitNow` geändert.
+
 ## Empfehlung
 
 **L1 hält.** Die VM wird ein Interpreter auf `fire_rt.h`: derselbe Code für Werte, Formatierung, Besitz und Ausnahmen, und der native Build bleibt

@@ -1,33 +1,13 @@
-/* fire VM in C (spike): the loader of the program file (.fbc, docs/spec/BYTECODE.md section 48). It reads the whole format - every part is parsed, so
- * that a file of the C# compiler is read to its end and checked like ProgramFile.Read does - and keeps what the interpreter of the spike uses: the names, the
- * classes (fields, statics, methods, constructors, destructor, base), the chunks (code, constants, functions, handlers). Skipped after parsing: units beyond
- * "unitless", enums, custom units, resources, externs, class meta (reflection), field infos, line tables, local names. */
+/* fire VM in C: the loader of the program file (.fbc, docs/spec/BYTECODE.md section 48) - ProgramFile.Read of src/fire/Bytecode/ProgramFile.cs, in its
+ * order. The whole format is read and checked (magic, version, references in range, "bytes behind its end", a file that ends too early); what the
+ * interpreter uses is kept in the arena of the program (native/base): the names (interned - a name compares by its pointer), the units (given to the
+ * runtime's unit table when the program starts), the enums (the runtime's g_enums), the classes with their fields, field infos, statics, methods,
+ * constructors (by arity and the extra ones of overloading by type) and destructor, the chunks (code, constants, units, functions, handlers, line tables)
+ * and the functions (parameters, defaults, access, masks, overload descriptors, specializations). Parsed and skipped: custom units (their units are in the
+ * unit table), externs, the meta data of the classes (reflection, phase B step 5), receiverTypeArgs and the names of locals (the debugger, step 6). */
 
-static void* vmAlloc(VmArena* a, size_t n) {
-    VmArenaBlock* b = a->head;
-    n = (n + 15u) & ~(size_t)15u;
-    if (!b || b->used + n > b->cap) {
-        size_t cap = n > 65536u ? n : 65536u;
-        b = (VmArenaBlock*)malloc(sizeof(VmArenaBlock) + 16 + cap);
-        if (!b) { fputs("fire vm: out of memory\n", stderr); exit(3); }
-        b->next = a->head; b->used = 0; b->cap = cap;
-        a->head = b;
-    }
-    {
-        char* base = (char*)(b + 1);
-        void* p;
-        base += (16 - ((uintptr_t)base & 15u)) & 15u;
-        p = base + b->used;
-        b->used += n;
-        memset(p, 0, n);
-        return p;
-    }
-}
-static void vmArenaFree(VmArena* a) {
-    VmArenaBlock* b = a->head;
-    while (b) { VmArenaBlock* n = b->next; free(b); b = n; }
-    a->head = NULL;
-}
+static void vmOom(void) { fputs("fire vm: out of memory\n", stderr); exit(3); }
+#define vmAlloc(a, n) fbAlloc((a), (n))
 
 typedef struct VmReader {
     const uint8_t* in;
@@ -91,52 +71,36 @@ static const char* rdName(VmReader* r) {
     if (!s) rdFail(r, "a name is missing");
     return s;
 }
-static void rdStrList(VmReader* r) { uint32_t n = rdCount(r); while (n--) rdStr(r); }
-static void rdOptStrList(VmReader* r) { uint32_t n = rdCount(r); if (n) { n--; while (n--) rdStr(r); } }
-static void rdDims(VmReader* r) { uint32_t n = rdCount(r); while (n--) { rdName(r); rdInt(r); } }
-static void rdUnitBody(VmReader* r) { rdDims(r); rdF64(r); rdStr(r); rdF64(r); rdStr(r); rdStr(r); }
-static void rdUnitRef(VmReader* r) { uint32_t i = rdCount(r); if (i > r->p->nunits) rdFail(r, "a unit out of range"); }
-static void rdAttributes(VmReader* r) { uint32_t n = rdCount(r); while (n--) { rdName(r); rdStrList(r); rdName(r); } }
+static const char** rdStrList(VmReader* r, uint32_t* count) {
+    uint32_t n = rdCount(r), i;
+    const char** l = (const char**)vmAlloc(&r->p->arena, (n + 1) * sizeof(char*));
+    for (i = 0; i < n; i++) l[i] = rdStr(r);
+    if (count) *count = n;
+    return l;
+}
+/* opt list<str>: NULL when there is none */
+static const char** rdOptStrList(VmReader* r, uint32_t* count) {
+    uint32_t n = rdCount(r), i;
+    const char** l;
+    if (count) *count = 0;
+    if (!n) return NULL;
+    n--;
+    l = (const char**)vmAlloc(&r->p->arena, (n + 1) * sizeof(char*));
+    for (i = 0; i < n; i++) l[i] = rdStr(r);
+    if (count) *count = n;
+    return l;
+}
+static void rdAttributes(VmReader* r) { uint32_t n = rdCount(r); while (n--) { rdName(r); rdStrList(r, NULL); rdName(r); } }
 
 /* ---- interning: every name of the program once, so that a name compares by its pointer ---- */
-static uint32_t vmHashStr(const char* s) { uint32_t h = 2166136261u; while (*s) { h ^= (uint8_t)*s++; h *= 16777619u; } return h; }
-static const char* vmIntern(VmProgram* p, const char* s, size_t n, bool copy) {
-    uint32_t h, i;
-    if (p->internCount * 2 + 2 > p->internCap) {
-        uint32_t cap = p->internCap ? p->internCap * 2 : 1024, k;
-        const char** t = (const char**)vmAlloc(&p->arena, cap * sizeof(char*));
-        for (k = 0; k < p->internCap; k++) {
-            const char* e = p->internTab[k];
-            if (!e) continue;
-            for (i = vmHashStr(e) & (cap - 1); t[i]; i = (i + 1) & (cap - 1)) { }
-            t[i] = e;
-        }
-        p->internTab = t;
-        p->internCap = cap;
-    }
-    {
-        char tmp[512];
-        const char* key = s;
-        char* stored = NULL;
-        if (copy) {
-            if (n < sizeof tmp) { memcpy(tmp, s, n); tmp[n] = 0; key = tmp; }
-            else { stored = (char*)vmAlloc(&p->arena, n + 1); memcpy(stored, s, n); stored[n] = 0; key = stored; }
-        }
-        h = vmHashStr(key);
-        for (i = h & (p->internCap - 1); p->internTab[i]; i = (i + 1) & (p->internCap - 1))
-            if (strcmp(p->internTab[i], key) == 0) return p->internTab[i];
-        if (copy && !stored) { stored = (char*)vmAlloc(&p->arena, n + 1); memcpy(stored, tmp, n + 1); }
-        p->internTab[i] = stored ? stored : s;
-        p->internCount++;
-        return p->internTab[i];
-    }
-}
+static const char* vmIntern(VmProgram* p, const char* s, size_t n) { return fbIntern(&p->interns, s, n); }
+static const char* vmName(VmProgram* p, const char* s) { return fbIntern(&p->interns, s, strlen(s)); }
 
 /* An immortal string of the program (a constant): the runtime never counts it (IMMORTAL), the program frees it when it is unloaded. */
 static Value vmConstStr(VmProgram* p, const fire_char16* d, uint32_t n) {
     Str* s = (Str*)malloc(sizeof(Str) + (n + 1) * sizeof(fire_char16));
     fire_char16* chars;
-    if (!s) { fputs("fire vm: out of memory\n", stderr); exit(3); }
+    if (!s) vmOom();
     s->h.rc = IMMORTAL;
     s->h.type = R_Str;
     s->length = n;
@@ -147,27 +111,45 @@ static Value vmConstStr(VmProgram* p, const fire_char16* d, uint32_t n) {
     if (p->nstrs == p->capStrs) {
         p->capStrs = p->capStrs ? p->capStrs * 2 : 256;
         p->strs = (Str**)realloc(p->strs, p->capStrs * sizeof(Str*));
-        if (!p->strs) { fputs("fire vm: out of memory\n", stderr); exit(3); }
+        if (!p->strs) vmOom();
     }
     p->strs[p->nstrs++] = s;
     return StrV(s);
+}
+static Value vmConstStrUtf8(VmProgram* p, const char* s) {
+    fire_char16 small[256];
+    uint32_t n = (uint32_t)strlen(s);
+    fire_char16* d = n + 2 < 256 ? small : (fire_char16*)malloc((n + 2) * sizeof(fire_char16));
+    Value v;
+    n = utf8ToUtf16(s, d, n + 2);
+    v = vmConstStr(p, d, n);
+    if (d != small) free(d);
+    return v;
+}
+
+static uint32_t rdUnitRef(VmReader* r) {
+    uint32_t i = rdCount(r);
+    if (i > r->p->nunits) rdFail(r, "a unit out of range");
+    return i == 0 ? 0 : r->p->unitIds[i - 1];
 }
 
 static Value rdConstant(VmReader* r, const char** name) {
     uint32_t tag = rdU8(r);
     *name = NULL;
     switch (tag) {
-        case 0: rdUnitRef(r); return Undef();
+        case 0: { uint32_t u = rdUnitRef(r); return UndefU(u); }
         case 1: return Bool(rdU8(r) != 0);
         case 2: {
             int64_t i = rdInt(r);
-            uint32_t width = rdU8(r), wide = rdU8(r), e;
-            (void)width; (void)wide;
-            rdUnitRef(r);   /* (units: not in the spike - the value is unitless) */
+            uint32_t width = rdU8(r), wide = rdU8(r), u, e;
+            (void)width;
+            u = rdUnitRef(r);
             e = rdCount(r);
-            return e ? EnumV(i, (uint16_t)e) : Int(i);
+            if (e > r->p->nenums) rdFail(r, "an enum out of range");
+            if (e) return EnumV(i, (uint16_t)e);
+            { Value v = IntW(i, u, (uint8_t)wide); return v; }
         }
-        case 3: { double f = rdF64(r); rdU8(r); rdUnitRef(r); return Float((Real)f); }
+        case 3: { double f = rdF64(r); uint32_t u; rdU8(r); u = rdUnitRef(r); return Float((Real)f, u); }
         case 4: return Char(rdCount(r));
         case 5: {
             uint32_t n = rdCount(r), i;
@@ -183,7 +165,7 @@ static Value rdConstant(VmReader* r, const char** name) {
             v = vmConstStr(r->p, d, n);
             if (d != small) free(d);
             /* the same text as a name (a field, a method, a class): interned */
-            if (n < 200) { strToUtf8(v, utf8, sizeof utf8); *name = vmIntern(r->p, utf8, strlen(utf8), true); }
+            if (n < 300) { strToUtf8(v, utf8, sizeof utf8); *name = vmIntern(r->p, utf8, strlen(utf8)); }
             return v;
         }
         case 6: { const uint8_t* b = rdNeed(r, 8); uint64_t u = 0; int i; for (i = 7; i >= 0; i--) u = (u << 8) | b[i]; return WordV(u); }
@@ -194,48 +176,60 @@ static Value rdConstant(VmReader* r, const char** name) {
 
 static VmChunk* rdChunk(VmReader* r);
 static VmProto* rdProto(VmReader* r) {
-    uint32_t ref = rdCount(r), i, n;
+    uint32_t ref = rdCount(r), i, n, flags;
     VmProto* f;
+    FbArena* a = &r->p->arena;
     if (ref == 0) return NULL;
     if (ref >= 2) { if (ref - 2 >= r->nprotos) rdFail(r, "a function out of range"); return r->protos[ref - 2]; }
-    f = (VmProto*)vmAlloc(&r->p->arena, sizeof(VmProto));
+    f = (VmProto*)vmAlloc(a, sizeof(VmProto));
     if (r->nprotos == r->capProtos) {
         r->capProtos = r->capProtos ? r->capProtos * 2 : 1024;
         r->protos = (VmProto**)realloc(r->protos, r->capProtos * sizeof(VmProto*));
+        if (!r->protos) vmOom();
     }
     r->protos[r->nprotos++] = f;   /* (its number is taken where it begins, as the writer counted) */
     f->chunk = rdChunk(r);
     f->nparams = (int32_t)rdInt(r);
     n = rdCount(r);
     f->ndefaults = n;
-    f->defaults = n ? (VmProto**)vmAlloc(&r->p->arena, n * sizeof(VmProto*)) : NULL;
+    f->defaults = n ? (VmProto**)vmAlloc(a, n * sizeof(VmProto*)) : NULL;
     for (i = 0; i < n; i++) f->defaults[i] = rdProto(r);
     f->access = (uint8_t)rdU8(r);
-    f->isStatic = (uint8_t)(rdU8(r) & 1);
-    rdUInt(r); rdUInt(r); rdUInt(r);            /* refMask, captureCopyMask, captureMovedMask */
-    rdOptStrList(r);                            /* selectorPath */
-    rdOptStrList(r);                            /* paramTypes */
-    rdStr(r);                                   /* fieldGetterOf */
-    rdOptStrList(r);                            /* paramNames */
-    rdInt(r);                                   /* typeParamCount */
+    flags = rdU8(r);
+    f->isStatic = (uint8_t)(flags & 1);
+    f->readsOnly = (uint8_t)((flags >> 1) & 1);
+    f->refMask = rdUInt(r); f->captureCopyMask = rdUInt(r); f->captureMovedMask = rdUInt(r);
+    rdOptStrList(r, NULL);                      /* selectorPath (reflection) */
+    f->paramTypes = rdOptStrList(r, &f->nparamTypes);
+    f->fieldGetterOf = rdStr(r);
+    f->paramNames = rdOptStrList(r, &f->nparamNames);
+    f->typeParamCount = (int32_t)rdInt(r);
     n = rdCount(r);                             /* specializations */
-    if (n) { n--; while (n--) if (!rdProto(r)) rdFail(r, "a specialization is missing"); }
-    rdStr(r); rdOptStrList(r); rdInt(r);        /* specOwner, specArgs, specDefinedMask */
+    if (n) {
+        n--;
+        f->nspecs = n;
+        f->specs = (VmProto**)vmAlloc(a, (n + 1) * sizeof(VmProto*));
+        for (i = 0; i < n; i++) if (!(f->specs[i] = rdProto(r))) rdFail(r, "a specialization is missing");
+    }
+    f->specOwner = rdStr(r);
+    f->specArgs = rdOptStrList(r, &f->nspecArgs);
+    f->specDefinedMask = rdInt(r);
     n = rdCount(r);
-    if (n) rdNeed(r, n - 1);                    /* specParamKinds */
+    if (n) { f->nspecParamKinds = n - 1; f->specParamKinds = rdNeed(r, n - 1); }   /* specParamKinds */
     return f;
 }
 
 static VmChunk* rdChunk(VmReader* r) {
     uint32_t ref = rdCount(r), i, n;
     VmChunk* c;
-    VmArena* a = &r->p->arena;
+    FbArena* a = &r->p->arena;
     if (ref == 0) rdFail(r, "a chunk is missing");
     if (ref >= 2) { if (ref - 2 >= r->nchunks) rdFail(r, "a chunk out of range"); return r->chunks[ref - 2]; }
     c = (VmChunk*)vmAlloc(a, sizeof(VmChunk));
     if (r->nchunks == r->capChunks) {
         r->capChunks = r->capChunks ? r->capChunks * 2 : 1024;
         r->chunks = (VmChunk**)realloc(r->chunks, r->capChunks * sizeof(VmChunk*));
+        if (!r->chunks) vmOom();
     }
     r->chunks[r->nchunks++] = c;
     n = rdCount(r);
@@ -252,12 +246,14 @@ static VmChunk* rdChunk(VmReader* r) {
     c->kname = (const char**)vmAlloc(a, (n + 1) * sizeof(char*));
     for (i = 0; i < n; i++) c->k[i] = rdConstant(r, &c->kname[i]);
     n = rdCount(r);
-    for (i = 0; i < n; i++) { uint32_t u = rdCount(r); if (u == 0 || u > r->p->nunits) rdFail(r, "a unit is missing"); }
+    c->nunits = n;
+    c->units = (uint32_t*)vmAlloc(a, (n + 1) * sizeof(uint32_t));
+    for (i = 0; i < n; i++) { uint32_t u = rdCount(r); if (u == 0 || u > r->p->nunits) rdFail(r, "a unit is missing"); c->units[i] = r->p->unitIds[u - 1]; }
     n = rdCount(r);
     c->nfn = n;
     c->fn = (VmProto**)vmAlloc(a, (n + 1) * sizeof(VmProto*));
     for (i = 0; i < n; i++) if (!(c->fn[i] = rdProto(r))) rdFail(r, "a function is missing");
-    n = rdCount(r);                             /* receiverTypeArgs */
+    n = rdCount(r);                             /* receiverTypeArgs (the native backend's typing) */
     if (n) { n--; while (n--) { rdInt(r); rdName(r); } }
     n = rdCount(r);
     c->nhandlers = n;
@@ -274,8 +270,13 @@ static VmChunk* rdChunk(VmReader* r) {
         f = rdInt(r);
         h->finallyAddr = f == 0 ? -1 : (int32_t)(f - 1);
     }
-    if (r->lines) { n = rdCount(r); while (n--) { rdInt(r); rdInt(r); rdInt(r); } }
-    n = rdCount(r);
+    if (r->lines) {
+        n = rdCount(r);
+        c->nlines = n;
+        c->lines = (int32_t*)vmAlloc(a, (3 * n + 1) * sizeof(int32_t));
+        for (i = 0; i < n; i++) { c->lines[3 * i] = (int32_t)rdInt(r); c->lines[3 * i + 1] = (int32_t)rdInt(r); c->lines[3 * i + 2] = (int32_t)rdInt(r); }
+    }
+    n = rdCount(r);                             /* DebugLocalNames (the debugger) */
     while (n--) { rdInt(r); rdInt(r); rdName(r); }
     return c;
 }
@@ -284,33 +285,50 @@ static void rdType(VmReader* r) {
     uint32_t n;
     if (!rdU8(r)) return;
     rdName(r); rdInt(r); rdInt(r);
-    if (rdU8(r)) { rdStr(r); rdStrList(r); rdU8(r); rdName(r); rdU8(r); }
-    rdOptStrList(r); rdStr(r); rdInt(r); rdInt(r);
+    if (rdU8(r)) { rdStr(r); rdStrList(r, NULL); rdU8(r); rdName(r); rdU8(r); }
+    rdOptStrList(r, NULL); rdStr(r); rdInt(r); rdInt(r);
     n = rdCount(r);
     if (n) { n--; while (n--) { if (!rdU8(r)) rdFail(r, "a type argument is missing"); r->at--; rdType(r); } }
     rdU8(r);
 }
 
+static void vmRelinkOwner(VmProto* p, VmClass* c, int depth) {
+    uint32_t i;
+    if (!p || depth > 64) return;
+    if (!p->chunk->owner) p->chunk->owner = c;
+    if (!p->owner) p->owner = c;
+    for (i = 0; i < p->chunk->nfn; i++) vmRelinkOwner(p->chunk->fn[i], c, depth + 1);
+    for (i = 0; i < p->ndefaults; i++) vmRelinkOwner(p->defaults[i], c, depth + 1);
+    for (i = 0; i < p->nspecs; i++) vmRelinkOwner(p->specs[i], c, depth + 1);
+}
+
 static VmClass* rdClass(VmReader* r) {
-    VmArena* a = &r->p->arena;
+    FbArena* a = &r->p->arena;
     VmClass* c = (VmClass*)vmAlloc(a, sizeof(VmClass));
     uint32_t n, i, k;
     c->name = rdName(r);
     c->baseRef = rdCount(r);
     c->flags = (uint8_t)rdU8(r);
-    if (rdU8(r)) {   /* meta (reflection): parsed, not kept by the spike */
+    if (rdU8(r)) {   /* meta (reflection, phase B step 5): parsed */
         n = rdCount(r);
-        while (n--) { rdName(r); rdName(r); rdName(r); rdName(r); rdU8(r); rdName(r); rdStrList(r); rdStrList(r); rdAttributes(r); }
-        rdStrList(r); rdAttributes(r); rdStrList(r);
+        while (n--) { rdName(r); rdName(r); rdName(r); rdName(r); rdU8(r); rdName(r); rdStrList(r, NULL); rdStrList(r, NULL); rdAttributes(r); }
+        rdStrList(r, NULL); rdAttributes(r); rdStrList(r, NULL);
     }
-    rdStrList(r); rdOptStrList(r); rdOptStrList(r);   /* interfaces, baseTypeArgs, keptMembers */
+    c->interfaces = rdStrList(r, &c->ninterfaces);
+    c->baseTypeArgs = rdOptStrList(r, &c->nbaseTypeArgs);
+    rdOptStrList(r, NULL);   /* keptMembers (stripping of the native backend) */
     n = rdCount(r);
     c->nfields = n;
     c->fields = (VmField*)vmAlloc(a, (n + 1) * sizeof(VmField));
     for (i = 0; i < n; i++) { c->fields[i].name = rdName(r); if (!(c->fields[i].init = rdProto(r))) rdFail(r, "a field without its initializer"); }
     n = rdCount(r);   /* fieldInfo */
-    while (n--) {
-        rdName(r); rdStr(r); rdU8(r); rdStr(r); rdUInt(r); rdStr(r); rdStr(r); rdU8(r); rdU8(r); rdName(r);
+    c->nfinfo = n;
+    c->finfo = (VmFieldInfo*)vmAlloc(a, (n + 1) * sizeof(VmFieldInfo));
+    for (i = 0; i < n; i++) {
+        VmFieldInfo* fi = &c->finfo[i];
+        fi->name = rdName(r); fi->requiredUnit = rdStr(r); fi->unitId = 0xFFFFFFFFu; fi->requiredKind = (uint8_t)rdU8(r); fi->requiredType = rdStr(r);
+        fi->requiredArray = (uint32_t)rdUInt(r); fi->requiredArrayType = rdStr(r); fi->arrayOfParam = rdStr(r);
+        fi->flags = (uint8_t)rdU8(r); fi->access = (uint8_t)rdU8(r); fi->typeText = rdName(r);
         if (rdU8(r)) rdAttributes(r);
     }
     {
@@ -327,7 +345,7 @@ static VmClass* rdClass(VmReader* r) {
         for (i = 0; i < nv; i++) { c->snames[i] = vn[i]; c->svals[i] = vv[i]; }
         for (i = 0; i < nf; i++) { c->snames[nv + i] = rdName(r); c->svals[nv + i] = Undef(); if (!(c->sinit[nv + i] = rdProto(r))) rdFail(r, "a static field without its initializer"); }
     }
-    rdOptStrList(r);   /* readonlyStatics */
+    c->readonlyStatics = rdOptStrList(r, &c->nreadonly);
     n = rdCount(r);
     c->nmethods = n;
     c->methods = (VmMethod*)vmAlloc(a, (n + 1) * sizeof(VmMethod));
@@ -336,22 +354,100 @@ static VmClass* rdClass(VmReader* r) {
         m->name = rdName(r);
         m->nov = rdCount(r);
         m->ov = (VmProto**)vmAlloc(a, (m->nov + 1) * sizeof(VmProto*));
-        for (k = 0; k < m->nov; k++) if (!(m->ov[k] = rdProto(r))) rdFail(r, "a method is missing");
+        for (k = 0; k < m->nov; k++) {
+            if (!(m->ov[k] = rdProto(r))) rdFail(r, "a method is missing");
+            if (!m->ov[k]->name) m->ov[k]->name = m->name;
+            if (!m->ov[k]->declaring) m->ov[k]->declaring = c;
+        }
     }
     n = rdCount(r);
     c->nctors = n;
     c->ctors = (VmCtor*)vmAlloc(a, (n + 1) * sizeof(VmCtor));
-    for (i = 0; i < n; i++) { c->ctors[i].arity = (int32_t)rdInt(r); if (!(c->ctors[i].p = rdProto(r))) rdFail(r, "a constructor is missing"); }
-    n = rdCount(r);   /* extraConstructors (overloads by type): not chosen by the spike */
-    while (n--) if (!rdProto(r)) rdFail(r, "a constructor is missing");
+    for (i = 0; i < n; i++) { c->ctors[i].arity = (int32_t)rdInt(r); if (!(c->ctors[i].p = rdProto(r))) rdFail(r, "a constructor is missing"); c->ctors[i].p->declaring = c; }
+    n = rdCount(r);
+    c->nxctors = n;
+    c->xctors = (VmProto**)vmAlloc(a, (n + 1) * sizeof(VmProto*));
+    for (i = 0; i < n; i++) { if (!(c->xctors[i] = rdProto(r))) rdFail(r, "a constructor is missing"); c->xctors[i]->declaring = c; }
     c->dtor = rdProto(r);
-    n = rdCount(r);   /* thisReads */
-    if (n) { n--; while (n--) { rdName(r); rdStrList(r); } }
-    /* (the members know their class) */
-    for (i = 0; i < c->nmethods; i++) for (k = 0; k < c->methods[i].nov; k++) if (!c->methods[i].ov[k]->owner) c->methods[i].ov[k]->owner = c;
-    for (i = 0; i < c->nctors; i++) if (!c->ctors[i].p->owner) c->ctors[i].p->owner = c;
-    if (c->dtor && !c->dtor->owner) c->dtor->owner = c;
+    n = rdCount(r);   /* thisReads (the native backend) */
+    if (n) { n--; while (n--) { rdName(r); rdStrList(r, NULL); } }
+    /* (Chunk.OwnerClass: the code of the class knows it - CompiledProgram.RelinkProtoOwner) */
+    for (i = 0; i < c->nfields; i++) vmRelinkOwner(c->fields[i].init, c, 0);
+    for (i = 0; i < c->nstatic; i++) vmRelinkOwner(c->sinit[i], c, 0);
+    for (i = 0; i < c->nmethods; i++) for (k = 0; k < c->methods[i].nov; k++) vmRelinkOwner(c->methods[i].ov[k], c, 0);
+    for (i = 0; i < c->nctors; i++) vmRelinkOwner(c->ctors[i].p, c, 0);
+    for (i = 0; i < c->nxctors; i++) vmRelinkOwner(c->xctors[i], c, 0);
+    vmRelinkOwner(c->dtor, c, 0);
     return c;
+}
+
+/* The units of the file, as rows of the runtime's table: unit 0 is "no unit" (the runtime's convention), every other unit gets the next row. */
+static void rdUnits(VmReader* r) {
+    VmProgram* p = r->p;
+    uint32_t n = rdCount(r), i, k;
+    p->nunits = n;
+    p->unitIds = (uint32_t*)vmAlloc(&p->arena, (n + 1) * sizeof(uint32_t));
+    p->unitInit = (UnitInit*)vmAlloc(&p->arena, (n + 2) * sizeof(UnitInit));
+    p->unitInit[0].scale = 1.0; p->unitInit[0].conv = -1; p->unitInit[0].ulconv = -1;
+    {
+        uint32_t rows = 1;
+        for (i = 0; i < n; i++) {
+            UnitInit* u = &p->unitInit[rows];
+            uint32_t nd = rdCount(r);
+            bool plain;
+            for (k = 0; k < nd; k++) {
+                const char* sym = rdName(r);
+                int64_t e = rdInt(r);
+                uint32_t d;
+                for (d = 0; d < p->ndims && p->dimNames[d] != sym; d++) { }
+                if (d == p->ndims) {
+                    if (p->ndims >= FIRE_NDIMS) rdFail(r, "too many base units for this VM");
+                    p->dimNames[p->ndims++] = sym;
+                }
+                u->dims[d] = (int32_t)e;
+            }
+            u->scale = rdF64(r);
+            u->display = rdStr(r);
+            u->offset = rdF64(r);
+            {   /* the conversion functions (the static To/From of a hidden class): their index in the VM's trampolines (vm_core.c, VM_SPIKE point 1) */
+                const char* cv = rdStr(r);
+                const char* ucv = rdStr(r);
+                const char* names[2];
+                int32_t* outs[2];
+                int q;
+                names[0] = cv; names[1] = ucv; outs[0] = &u->conv; outs[1] = &u->ulconv;
+                for (q = 0; q < 2; q++) {
+                    uint32_t c;
+                    *outs[q] = -1;
+                    if (!names[q]) continue;
+                    for (c = 0; c < p->nconv && p->convClasses[c] != names[q]; c++) { }
+                    if (c == p->nconv) { if (p->nconv >= 16) rdFail(r, "too many units with conversion functions for this VM"); p->convClasses[p->nconv++] = names[q]; }
+                    *outs[q] = (int32_t)c;
+                }
+            }
+            plain = u->scale == 1.0 && !u->display && u->offset == 0.0 && u->conv < 0 && u->ulconv < 0;
+            for (k = 0; plain && k < FIRE_NDIMS; k++) if (u->dims[k]) plain = false;
+            if (plain) { p->unitIds[i] = 0; memset(u, 0, sizeof *u); continue; }
+            p->unitIds[i] = rows++;
+        }
+        p->unitRows = rows;
+    }
+}
+
+static void rdEnums(VmReader* r, FireEnum** out, uint32_t* count) {
+    uint32_t n = rdCount(r), i, m;
+    FireEnum* e = (FireEnum*)vmAlloc(&r->p->arena, (n + 1) * sizeof(FireEnum));
+    for (i = 0; i < n; i++) {
+        FireEnumMember* ms;
+        e[i].name = rdName(r);
+        e[i].flags = (uint8_t)rdU8(r);
+        m = rdCount(r);
+        ms = (FireEnumMember*)vmAlloc(&r->p->arena, (m + 1) * sizeof(FireEnumMember));
+        for (e[i].count = 0; e[i].count < m; e[i].count++) { ms[e[i].count].name = rdName(r); ms[e[i].count].value = rdInt(r); }
+        e[i].members = ms;
+    }
+    *out = e;
+    *count = n;
 }
 
 /* Reads a program file. NULL and the reason in `error` when it is not one or is damaged. */
@@ -359,7 +455,9 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
     VmReader r;
     VmProgram* volatile p = (VmProgram*)calloc(1, sizeof(VmProgram));
     uint32_t n, i;
+    if (!p) vmOom();
     memset(&r, 0, sizeof r);
+    p->interns.arena = &p->arena;
     r.in = in; r.len = len; r.p = p;
     if (setjmp(r.fail)) {
         VmProgram* q = r.p;
@@ -367,7 +465,8 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
         free(r.protos); free(r.chunks);
         for (i = 0; i < q->nstrs; i++) free(q->strs[i]);
         free(q->strs);
-        vmArenaFree(&q->arena);
+        fbMapFree(&q->classByName);
+        fbArenaFree(&q->arena);
         free(q);
         return NULL;
     }
@@ -378,27 +477,41 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
     n = rdCount(&r);
     p->nnames = n;
     p->names = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
-    for (i = 0; i < n; i++) { uint32_t l = rdCount(&r); const char* s = (const char*)rdNeed(&r, l); p->names[i] = vmIntern(p, s, l, true); }
-    p->nunits = rdCount(&r);
-    for (i = 0; i < p->nunits; i++) rdUnitBody(&r);
-    n = rdCount(&r);   /* enums */
-    while (n--) { uint32_t m; rdName(&r); rdU8(&r); for (m = rdCount(&r); m > 0; m--) { rdName(&r); rdInt(&r); } }
+    for (i = 0; i < n; i++) { uint32_t l = rdCount(&r); const char* s = (const char*)rdNeed(&r, l); p->names[i] = vmIntern(p, s, l); }
+    rdUnits(&r);
+    rdEnums(&r, &p->enums, &p->nenums);
     p->mode = (uint8_t)rdU8(&r); p->floatWidth = (uint8_t)rdU8(&r); p->intWidth = (uint8_t)rdU8(&r); p->wordWidth = (uint8_t)rdU8(&r);
     rdInt(&r);                               /* firstUserSource */
-    rdStrList(&r);                           /* nativeImports */
-    rdOptStrList(&r); rdOptStrList(&r); rdOptStrList(&r);
-    n = rdCount(&r);                         /* customUnits */
-    while (n--) { rdName(&r); rdName(&r); rdU8(&r); rdDims(&r); rdF64(&r); rdF64(&r); rdStr(&r); rdStr(&r); }
-    n = rdCount(&r);                         /* enumDecls */
-    while (n--) { uint32_t m; rdName(&r); rdU8(&r); for (m = rdCount(&r); m > 0; m--) { rdName(&r); rdInt(&r); } }
+    p->nativeImports = rdStrList(&r, &p->nnativeImports);
+    p->packageNatives = rdOptStrList(&r, &p->npackageNatives);
+    rdOptStrList(&r, NULL); rdOptStrList(&r, NULL);   /* their libraries, graphicsNatives (step 4) */
+    n = rdCount(&r);                         /* customUnits: the units a text may name besides those of fire */
+    p->ncustomUnits = n;
+    p->customUnits = (struct VmCustomUnit*)vmAlloc(&p->arena, (n + 1) * sizeof(struct VmCustomUnit));
+    for (i = 0; i < n; i++) {
+        struct VmCustomUnit* cu = &p->customUnits[i];
+        uint32_t d, k;
+        cu->name = rdName(&r); cu->symbol = rdName(&r); cu->prefixed = rdU8(&r) != 0;
+        for (d = rdCount(&r); d > 0; d--) {
+            const char* sym = rdName(&r);
+            int64_t e = rdInt(&r);
+            for (k = 0; k < p->ndims && p->dimNames[k] != sym; k++) { }
+            if (k == p->ndims) { if (p->ndims >= FIRE_NDIMS) rdFail(&r, "too many base units for this VM"); p->dimNames[p->ndims++] = sym; }
+            cu->dims[k] = (int32_t)e;
+        }
+        cu->scale = rdF64(&r); cu->offset = rdF64(&r); rdStr(&r); rdStr(&r);
+    }
+    { FireEnum* decls; uint32_t nd; rdEnums(&r, &decls, &nd); (void)decls; }   /* enumDecls (the same enums by declaration) */
     n = rdCount(&r);                         /* resources */
-    while (n--) { rdName(&r); rdNeed(&r, rdCount(&r)); }
+    p->nresources = n;
+    p->resources = vmAlloc(&p->arena, (n + 1) * sizeof(*p->resources));
+    for (i = 0; i < n; i++) { p->resources[i].name = rdName(&r); p->resources[i].len = rdCount(&r); p->resources[i].data = rdNeed(&r, p->resources[i].len); }
     n = rdCount(&r);                         /* externs */
     while (n--) {
         uint32_t m;
         rdName(&r); rdStr(&r);
         for (m = rdCount(&r); m > 0; m--) rdType(&r);
-        rdType(&r); rdStr(&r); rdOptStrList(&r); rdInt(&r); rdInt(&r); rdStr(&r);
+        rdType(&r); rdStr(&r); rdOptStrList(&r, NULL); rdInt(&r); rdInt(&r); rdStr(&r);
     }
     n = rdCount(&r);
     p->nclasses = n;
@@ -410,19 +523,22 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
         if (b) p->classes[i]->base = p->classes[b - 1];
     }
     n = rdCount(&r);
-    p->nclassNames = n;
-    p->classNames = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
-    p->classByName = (VmClass**)vmAlloc(&p->arena, (n + 1) * sizeof(VmClass*));
     for (i = 0; i < n; i++) {
-        uint32_t k;
-        p->classNames[i] = rdName(&r);
-        k = rdCount(&r);
+        const char* name = rdName(&r);
+        uint32_t k = rdCount(&r);
         if (k >= p->nclasses) rdFail(&r, "a class out of range");
-        p->classByName[i] = p->classes[k];
+        fbMapPut(&p->classByName, name, p->classes[k]);
     }
     p->top = rdChunk(&r);
     if (r.at != r.len) rdFail(&r, "bytes behind its end");
     free(r.protos); free(r.chunks);
+    /* the base-type extensions (`class extends string`, BaseTypeExtensions.ClassNameFor) */
+    p->extClass[K_String] = (VmClass*)fbMapGet(&p->classByName, "$string");
+    p->extClass[K_Char] = (VmClass*)fbMapGet(&p->classByName, "$char");
+    p->extClass[K_Int] = (VmClass*)fbMapGet(&p->classByName, "$int");
+    p->extClass[K_Float] = (VmClass*)fbMapGet(&p->classByName, "$float");
+    p->extClass[K_Bool] = (VmClass*)fbMapGet(&p->classByName, "$bool");
+    p->extClass[K_Array] = (VmClass*)fbMapGet(&p->classByName, "$array");
     return p;
 }
 
@@ -431,6 +547,7 @@ static void vmUnload(VmProgram* p) {
     if (!p) return;
     for (i = 0; i < p->nstrs; i++) free(p->strs[i]);
     free(p->strs);
-    vmArenaFree(&p->arena);
+    fbMapFree(&p->classByName);
+    fbArenaFree(&p->arena);
     free(p);
 }
