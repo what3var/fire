@@ -12,18 +12,20 @@ using fire.Values;
 // own for this run (the C++ libraries of their natives are built on first use).
 // every check line numbered against the count of the last run ("OK: [12/530] ..."), every line flushed at once (TestUtils.cs, docs/tools/testing.md)
 TestProgress.Install();
+// FIRE_TESTS_ONLY=resume: the keys and records of FIRE_TESTS_RESUME / FIRE_TESTS_SHARD (TestResumeTests.cs; a second, nothing built)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "resume") { Environment.ExitCode = TestResumeTests.Run() == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=startproject: the start project of a solution, the order of Build Solution and Clean (seconds; before the standard libraries are installed, which it does not need)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "startproject") { Environment.ExitCode = StartProjectTests.Run() == 0 ? 0 : 1; return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "startproject") { Environment.ExitCode = TestResume.Group("StartProjectTests", StartProjectTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=publish: build actions (Ignore, Copy) and Publish of projects and solutions (PublishTests.cs; seconds, the native part only with a C compiler; nothing installed)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "publish") { Environment.ExitCode = PublishTests.Run() == 0 ? 0 : 1; return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "publish") { Environment.ExitCode = TestResume.Group("PublishTests", PublishTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=forgereport: spark builds through forge - the report of `forge build --report json` written and read, spark's runner against a fake forge (cancel included), the real forge on a library (ForgeReportTests.cs; seconds)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "forgereport") { Environment.ExitCode = ForgeReportTests.Run() == 0 ? 0 : 1; return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "forgereport") { Environment.ExitCode = TestResume.Group("ForgeReportTests", ForgeReportTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=cvmrun: spark on the VM in C - Run/Debug as a child process `fire run x.fbc` against a fake fire and with the real forge and fire (CVmRunTests.cs; seconds)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmrun") { Environment.ExitCode = CVmRunTests.Run() == 0 ? 0 : 1; return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmrun") { Environment.ExitCode = TestResume.Group("CVmRunTests", CVmRunTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=explorer: the filter, Sync and Show All Files of spark's solution explorer (ExplorerTests.cs; seconds, nothing installed)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "explorer") { Environment.ExitCode = ExplorerTests.Run() == 0 ? 0 : 1; return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "explorer") { Environment.ExitCode = TestResume.Group("ExplorerTests", ExplorerTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=editorchecks: how spark checks the documents in the background while typing - debounce, cancellation, stale results, the gate of the analyses (BackgroundCheckTests.cs; seconds)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "editorchecks") { Environment.ExitCode = BackgroundCheckTests.Run() == 0 ? 0 : 1; return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "editorchecks") { Environment.ExitCode = TestResume.Group("BackgroundCheckTests", BackgroundCheckTests.Run, 0) == 0 ? 0 : 1; return; }
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
 // scene3d's GPU path takes a Vulkan device that is a CPU (lavapipe) only with FIRE_S3D_GPU=cpu - without it the hardware checks only see the fallback to
@@ -57,38 +59,39 @@ File.WriteAllBytes(Path.Combine(fontTestDir, "FireSans.ttf"), fireTestFont);
 Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 
 // FIRE_TESTS_ONLY=projects runs only the tests of projects, templates and packing (a quick run while working on them).
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
+// (TestResume.Group: a group of checks is one unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD - not run again when it passed with the same build)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { TestResume.Group("ProjectTests.Run", () => { ProjectTests.Run(); }); return; }
 // FIRE_TESTS_ONLY=linkage: linkage "static" of native builds (libraries in the cache, ROADMAP 9)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { LinkageTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { TestResume.Group("LinkageTests.Run", () => { LinkageTests.Run(); }); return; }
 // FIRE_TESTS_ONLY=registry: the package sources of ember against an index on the web (a local HTTP server; docs/packages/README.md)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "registry") { RegistryTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "registry") { TestResume.Group("RegistryTests.Run", () => { RegistryTests.Run(); }); return; }
 // FIRE_TESTS_ONLY=bios16: the targets without an operating system (ROADMAP 13.5: the boot sector, a build booted in QEMU)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "bios16") { BiosTests.RunAlone(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ai") { AiTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mcpserver") { McpServerTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "aimodels") { AiModelsTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "bios16") { TestResume.Group("BiosTests.RunAlone", () => { BiosTests.RunAlone(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { TestResume.Group("Scene3DTests.Run", () => { Scene3DTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ai") { TestResume.Group("AiTests.Run", () => { AiTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mcpserver") { TestResume.Group("McpServerTests.Run", () => { McpServerTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "aimodels") { TestResume.Group("AiModelsTests.Run", () => { AiModelsTests.Run(); }); return; }
 // FIRE_TESTS_ONLY=setupwizard: spark's setup wizard without a window (catalog, pages, plan, progress, the download of a model)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "setupwizard") { SetupWizardTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "blocks") { BlockModelTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mesh") { MeshModelTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "setupwizard") { TestResume.Group("SetupWizardTests.Run", () => { SetupWizardTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "blocks") { TestResume.Group("BlockModelTests.Run", () => { BlockModelTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mesh") { TestResume.Group("MeshModelTests.Run", () => { MeshModelTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { TestResume.Group("DiagnosticTests.Run", () => { DiagnosticTests.Run(); }); return; }
 // FIRE_TESTS_ONLY=programfile: the program file .fbc and `forge dump` (docs/ROADMAP_C_PORT.md, phase A)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "programfile") { ProgramFileTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "tables") { TablesTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "completion") { CompletionTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { NotesTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "programfile") { TestResume.Group("ProgramFileTests.Run", () => { ProgramFileTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "tables") { TestResume.Group("TablesTests.Run", () => { TablesTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { TestResume.Group("SyntaxTests.Run", () => { SyntaxTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TestResume.Group("TypeTests.Run", () => { TypeTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "completion") { TestResume.Group("CompletionTests.Run", () => { CompletionTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestResume.Group("TestingTests.Run", () => { TestingTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { TestResume.Group("NotesTests.Run", () => { NotesTests.Run(); }); return; }
 // FIRE_TESTS_ONLY=git: git (GitTests), the files that change under the editor, the Git panel (GitSyncTests), the Repository view: graph, rebase, reset, cherry-pick, ... (GitRepositoryViewTests); FIRE_TESTS_FILTER narrows the GitSync checks by title
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "git") { GitTests.Run(); GitSyncTests.Run(); GitRepositoryViewTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { CircuitEditorTests.Run(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "debugger") { DebuggerTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "git") { TestResume.Group("GitTests.Run", () => { GitTests.Run(); }); TestResume.Group("GitSyncTests.Run", () => { GitSyncTests.Run(); }); TestResume.Group("GitRepositoryViewTests.Run", () => { GitRepositoryViewTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { TestResume.Group("WindowManagerTests.Run", () => { WindowManagerTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { TestResume.Group("DialogTests.Run", () => { DialogTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { TestResume.Group("DockingTests.Run", () => { DockingTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { TestResume.Group("CircuitEditorTests.Run", () => { CircuitEditorTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TestResume.Group("TypeTests.Snippets", () => { TypeTests.Snippets(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "debugger") { TestResume.Group("DebuggerTests.Run", () => { DebuggerTests.Run(); }); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "drivers") { int driverFailures = DriverAgentTests.Run(); Console.WriteLine(driverFailures == 0 ? "Alle Treiber-Pruefungen bestanden." : $"FEHLER: {driverFailures} Treiber-Pruefung(en) fehlgeschlagen."); return; }
 // (filled by sections that FIRE_TESTS_ONLY may skip: the native device cases by the device checks of the VM, the UI drawing by the UI checks)
 var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
@@ -11350,7 +11353,7 @@ devNativeCases.Clear();
 // ---------------------------------------------------------------------------
 // Debugger run of the editor: VM.RunUntilBreakpoint/RunUntilEnd (F5), line table (binary search), native forwarding
 // ---------------------------------------------------------------------------
-DebuggerTests.Run();
+TestResume.Group("DebuggerTests.Run", () => { DebuggerTests.Run(); });
 
 // ---------------------------------------------------------------------------
 // Lambda captures, short syntax `x => ...` and the query library (#import "linq")
@@ -11997,28 +12000,28 @@ static int CountOccurrences(string haystack, string needle)
     Console.WriteLine(embFailures == 0 ? "Alle Embedding-Pruefungen bestanden." : $"FEHLER: {embFailures} Embedding-Pruefung(en) fehlgeschlagen.");
 }
 
-ProjectTests.Run();
-RegistryTests.Run();
-NotesTests.Run();
-ExplorerTests.Run();
-BackgroundCheckTests.Run();
-PublishTests.Run();
-McpServerTests.Run();
-AiModelsTests.Run();
-DiagnosticTests.Run();
-TablesTests.Run();
-ProgramFileTests.Run();
-SyntaxTests.Run();
-TypeTests.Run();
-CompletionTests.Run();
-TestingTests.Run();
-WindowManagerTests.Run();
-DialogTests.Run();
-DockingTests.Run();
-CircuitEditorTests.Run();
-ImageTests.Run();
-GitTests.Run();
-GitSyncTests.Run();
+TestResume.Group("ProjectTests.Run", () => { ProjectTests.Run(); });
+TestResume.Group("RegistryTests.Run", () => { RegistryTests.Run(); });
+TestResume.Group("NotesTests.Run", () => { NotesTests.Run(); });
+TestResume.Group("ExplorerTests.Run", () => { ExplorerTests.Run(); });
+TestResume.Group("BackgroundCheckTests.Run", () => { BackgroundCheckTests.Run(); });
+TestResume.Group("PublishTests.Run", () => { PublishTests.Run(); });
+TestResume.Group("McpServerTests.Run", () => { McpServerTests.Run(); });
+TestResume.Group("AiModelsTests.Run", () => { AiModelsTests.Run(); });
+TestResume.Group("DiagnosticTests.Run", () => { DiagnosticTests.Run(); });
+TestResume.Group("TablesTests.Run", () => { TablesTests.Run(); });
+TestResume.Group("ProgramFileTests.Run", () => { ProgramFileTests.Run(); });
+TestResume.Group("SyntaxTests.Run", () => { SyntaxTests.Run(); });
+TestResume.Group("TypeTests.Run", () => { TypeTests.Run(); });
+TestResume.Group("CompletionTests.Run", () => { CompletionTests.Run(); });
+TestResume.Group("TestingTests.Run", () => { TestingTests.Run(); });
+TestResume.Group("WindowManagerTests.Run", () => { WindowManagerTests.Run(); });
+TestResume.Group("DialogTests.Run", () => { DialogTests.Run(); });
+TestResume.Group("DockingTests.Run", () => { DockingTests.Run(); });
+TestResume.Group("CircuitEditorTests.Run", () => { CircuitEditorTests.Run(); });
+TestResume.Group("ImageTests.Run", () => { ImageTests.Run(); });
+TestResume.Group("GitTests.Run", () => { GitTests.Run(); });
+TestResume.Group("GitSyncTests.Run", () => { GitSyncTests.Run(); });
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Native backend (fire.Native): the same source runs in the VM and as generated C++ - the output must be identical
@@ -13366,6 +13369,8 @@ else
             if (probe.ExitCode == 0 && System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(probeFile + ".bin") { UseShellExecute = false, RedirectStandardError = true }) is { } run) { run.StandardError.ReadToEnd(); run.WaitForExit(); if (run.ExitCode == 0) sanitize = "-fsanitize=address,undefined -fno-sanitize-recover=undefined "; }
         }
         Console.WriteLine(sanitize.Length > 0 ? "(die Faelle laufen unter AddressSanitizer/UBSan)" : "(Sanitizer nicht verfuegbar)");
+        // the key of a check that is code here (FIRE_TESTS_RESUME, TestResume.cs): its title, the build of the test program (in TestResume.Global) and the sanitizers
+        string NatUnitKey(string title) => TestResume.Active ? TestResume.Key(title, sanitize) : "";
 
         // a call through an interface (members public, E4063): its own dispatcher over the implementing classes - no caller class, no access check, not the
         // class outside the interface that has the name privately
@@ -13391,6 +13396,21 @@ else
         // (the thread cases for the run under ThreadSanitizer below - before the filter: that test has a title of its own)
         var natThreadCases = natCases.Where(c => c.Name.StartsWith("Threads:", StringComparison.Ordinal) || c.Name.StartsWith("[NoCopy] Threads:", StringComparison.Ordinal)).ToArray();
         natCases = natCases.Where(c => TestSelected(c.Name)).ToArray();
+        // FIRE_TESTS_RESUME / FIRE_TESTS_SHARD (TestResume.cs): every case is a unit "Native == VM: <title>", keyed by its source and expected files; a case of another
+        // part or one that passed with the same key is not built (its VM run stays: the parts below take their cases and expected outputs from here)
+        var natUnits = new (string Unit, string Key, TestResume.Decision Decision)[natCases.Length];
+        {
+            var caseFiles = new Dictionary<string, TestCases.Case>();
+            foreach (var f in TestCases.Load("native")) caseFiles.TryAdd(f.Name, f);
+            for (int i = 0; i < natCases.Length; i++)
+            {
+                caseFiles.TryGetValue(natCases[i].Name, out var f);
+                string unit = "Native == VM: " + natCases[i].Name;
+                string key = TestResume.Active ? TestResume.Key(natCases[i].Source, f?.Source == natCases[i].Source ? f.Id : null, f?.Expected, f?.Unhandled, f?.Varies.ToString(), sanitize) : "";
+                natUnits[i] = (unit, key, TestResume.Decide(unit, key));
+            }
+        }
+        bool NatSkipped(int i) => natUnits[i].Decision != TestResume.Decision.Run;
         // First the VM runs the cases here, one after the other and alone, as before: the precision of float (Value.SingleFloats) and the handlers of
         // `terminate` are process-wide while a program runs (the compiler must not make its constants while a VM with 32-bit floats runs), and some thread
         // cases of the VM depend on timing that a machine busy with compilers upsets. Then the C of every case is generated (in parallel, in this process) and
@@ -13420,6 +13440,8 @@ else
                     continue;
                 }
                 string title = $"VM: {natCases[i].Name}: die erwartete Ausgabe ({file.Id}.expected)";
+                if (NatSkipped(i)) continue;
+                using var unitScope = TestResume.Unit(natUnits[i].Unit, natUnits[i].Key);
                 if (file.Expected == null) CheckNat(title, false, "  Der Fall hat noch keine erwartete Ausgabe: einmal mit FIRE_TESTS_UPDATE=1 laufen lassen (FIRE_TESTS_ONLY=native), die Datei pruefen und mit dem Fall einchecken.");
                 else if (file.Expected != vmResults[i]) CheckNat(title, false, TestCases.Difference(file.Expected, vmResults[i]));
                 else CheckNat(title, file.Unhandled == unhandled, $"  erwartet am Ende: {file.Unhandled ?? "(keine Ausnahme)"}\n  erhalten: {unhandled ?? "(keine Ausnahme)"}");
@@ -13434,8 +13456,35 @@ else
         // (generated first: the cases with big libraries - their C is the biggest)
         string[] natHeavyImports = { "\"ui\"", "\"circuits.ui\"", "\"ui.docking\"", "\"dialogs\"", "\"scene3d\"", "\"circuits\"" };
         var natOrder = Enumerable.Range(0, natCases.Length).OrderByDescending(i => natHeavyImports.Count(h => natCases[i].Source.Contains("#import " + h))).ThenByDescending(i => natCases[i].Source.Length).ToList();
+        // the verdict of a case: what the VM printed against what the program did (an "Abbruch:" case also compares the line on stderr, ...)
+        (bool Ok, string Detail) NatVerdict(int index)
+        {
+            var c = natCases[index];
+            var (stdout, stderr, exit) = natRan[index];
+            string expected = vmResults[index], actual;
+            if (stdout == null) actual = stderr;
+            else if (c.Name.StartsWith("Abbruch:"))
+            {
+                // an exception that nothing catches: the program ends with exit code 1 after the output so far and writes the text of the VM's command line runner to
+                // stderr ("Unhandled exception of type 'Class': message")
+                expected += "stderr: " + vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
+                actual = exit == 1 ? stdout + "stderr: " + stderr.TrimEnd('\n', '\r') : $"Exitcode {exit}: {stdout}{stderr}";
+            }
+            // (the end of the program ended a thread: the line on stderr is checked on its own - the VM writes it to the console, not to the output)
+            else if (c.Name.Contains("(Meldung auf stderr)"))
+                actual = exit == 0 && stderr.Contains("ended like with terminate") ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
+            // (Http.Pages without OnError: the errors of the pages are lines on stderr - checked on their own, the VM writes them to the console)
+            else if (c.Name.Contains("(Http.Pages-Zeile auf stderr)"))
+                actual = exit == 0 && stderr.Contains("Http.Pages: page 'BadPage' (/bad), circuit ") && stderr.Contains(": a handler of the page threw Boom: bang 1") && stderr.Contains(": a handler of the page threw ArgumentException: ") && stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 2
+                    ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
+            // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
+            else actual = exit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
+            return (expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
+        }
+        var natVerdicts = new (bool Ok, string Detail)[natCases.Length];
         var natPipeline = TestJobs.StartPipeline(natOrder, index =>
         {
+            if (NatSkipped(index)) return (Sources: (fire.Native.NativeSources?)null, Error: (string?)"");
             try { return (Sources: (fire.Native.NativeSources?)fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release)), Error: (string?)null); }
             catch (fire.Native.NativeNotSupportedException ex) { return (Sources: null, Error: $"nicht uebersetzbar: {ex.Message}"); }
             catch (Exception ex) { return (Sources: null, Error: $"Generator: {ex}"); }
@@ -13443,6 +13492,7 @@ else
         {
             (string? Output, string Stderr, int Exit) Ran()
             {
+                if (NatSkipped(index)) return (null, "", 0);
                 var generated = item.Sources;
                 if (generated == null) return (null, item.Error!, 0);
                 string exeFile = Path.Combine(workDir, $"case{index}.bin");
@@ -13454,6 +13504,14 @@ else
             }
             try { natRan[index] = Ran(); }
             catch (Exception ex) { natRan[index] = (null, "Test: " + ex, 0); }
+            if (!NatSkipped(index))
+            {
+                natVerdicts[index] = NatVerdict(index);
+                // (FIRE_TESTS_RESUME: the case is finished now - recorded at once, not when its line is printed in the order of the cases: a run that is killed
+                // keeps every case that finished, also those after a case that still builds)
+                TestResume.Complete(natUnits[index].Unit, natUnits[index].Key, new TestResume.Check(natVerdicts[index].Ok, $"Native == VM: {natCases[index].Name}", natVerdicts[index].Ok ? null : natVerdicts[index].Detail));
+                if (natVerdicts[index].Ok) NativeTestBuild.Clean(workDir, $"case{index}", Path.Combine(workDir, $"case{index}.bin"));
+            }
             Interlocked.Increment(ref natRanCount);
             natRanReady[index].Set();
         });
@@ -13464,34 +13522,20 @@ else
                 Volatile.Write(ref natWaiting, index);
                 natRanReady[index].Wait();
                 var c = natCases[index];
-                var (stdout, stderr, exit) = natRan[index];
-                string expected = vmResults[index], actual;
-                if (stdout == null) actual = stderr;
-                else if (c.Name.StartsWith("Abbruch:"))
-                {
-                    // an exception that nothing catches: the program ends with exit code 1 after the output so far and writes the text of the VM's command line runner to
-                    // stderr ("Unhandled exception of type 'Class': message")
-                    expected += "stderr: " + vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
-                    actual = exit == 1 ? stdout + "stderr: " + stderr.TrimEnd('\n', '\r') : $"Exitcode {exit}: {stdout}{stderr}";
-                }
-                // (the end of the program ended a thread: the line on stderr is checked on its own - the VM writes it to the console, not to the output)
-                else if (c.Name.Contains("(Meldung auf stderr)"))
-                    actual = exit == 0 && stderr.Contains("ended like with terminate") ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
-                // (Http.Pages without OnError: the errors of the pages are lines on stderr - checked on their own, the VM writes them to the console)
-                else if (c.Name.Contains("(Http.Pages-Zeile auf stderr)"))
-                    actual = exit == 0 && stderr.Contains("Http.Pages: page 'BadPage' (/bad), circuit ") && stderr.Contains(": a handler of the page threw Boom: bang 1") && stderr.Contains(": a handler of the page threw ArgumentException: ") && stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 2
-                        ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
-                // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
-                else actual = exit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
-                CheckNat($"Native == VM: {c.Name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
+                if (NatSkipped(index)) { if (natUnits[index].Decision == TestResume.Decision.Resumed) TestResume.Reprint(natUnits[index].Unit, natUnits[index].Key); continue; }
+                var (natOk, natDetail) = natVerdicts[index];
+                // (recorded for FIRE_TESTS_RESUME by the worker as soon as the case finished - here only printed)
+                using (TestResume.Unrecorded()) CheckNat($"Native == VM: {c.Name}", natOk, natDetail);
             }
         natPipeline.Join();
 
         // The C in several translation units (docs/spec/NATIVE_SPLIT.md): `auto` keeps a small program the one file it was (byte for byte), `on` splits it the same way
         // every time, and the units build and run like the one file (FIRE_SPLIT=1 runs the whole group so)
         const string splitTitle = "Teilen (NATIVE_SPLIT): auto laesst kleine Programme byte-gleich, on teilt deterministisch, die Einheiten bauen und laufen wie die eine Datei";
-        if (TestSelected(splitTitle))
+        if (TestSelected(splitTitle) && TestResume.Pending(splitTitle, NatUnitKey(splitTitle)))
         {
+            // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+            using var resumeUnit1 = TestResume.Unit(splitTitle, NatUnitKey(splitTitle));
             if (fire.Native.SplitModes.FromEnvironment != null) Console.WriteLine("(FIRE_SPLIT ist gesetzt: der Vergleich mit der einen Datei entfaellt)");
             else
             {
@@ -13525,13 +13569,16 @@ else
                 if (splitExit != 0 || build.Contains("warning:") || splitOut != "box 40 2 b TEXT\n") detail.AppendLine($"gebaut: {build}\nAusgabe: {splitOut}{splitErr}");
                 CheckNat(splitTitle, compared >= 20 && detail.Length == 0, $"{compared} verglichen\n{detail}");
             }
+            resumeUnit1.Done();
         }
 
         // Tasks step 1 (docs/ROADMAP_TASKS.md): the thread cases built with ThreadSanitizer instead of ASan (the two do not go together) - the default build,
         // which runs without the GIL on this platform (step 1g): no data race may show up.
         const string tsanTitle = "ThreadSanitizer: die Thread-Faelle laufen ohne Data Race (ohne GIL, auf allen Kernen)";
-        if (TestSelected(tsanTitle))
+        if (TestSelected(tsanTitle) && TestResume.Pending(tsanTitle, NatUnitKey(tsanTitle)))
         {
+            // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+            using var resumeUnit2 = TestResume.Unit(tsanTitle, NatUnitKey(tsanTitle));
             string tsan = "-fsanitize=thread -g";
             // (FIRE_TEST_GIL=1: the same cases with the GIL, as the targets with a scheduler of fire itself run them)
             string noGil = Environment.GetEnvironmentVariable("FIRE_TEST_GIL") == "1" ? " -DFIRE_GIL" : "";
@@ -13560,6 +13607,7 @@ else
                 });
                 CheckNat(tsanTitle, tsanReports.IsEmpty, string.Join("\n\n", tsanReports.OrderBy(r => r.Index).Select(r => r.Text)));
             }
+            resumeUnit2.Done();
         }
 
         // the C of numbers (readonly static constants, arithmetic of defined numbers, elements of typed arrays) and fields derived `defined`
@@ -13616,8 +13664,10 @@ else
         // TinyCC with tasks: no thread-local storage and no builtins for atomics in tcc - the runtime brings its own (x86 instructions, a few slots on a key
         // of pthreads: FIRE_TLS_EMULATED) - the thread cases built with tcc run without the GIL, on the scheduler of tasks, and print what the VM prints
         const string tccTitle = "TinyCC: die Thread-Faelle laufen mit Tasks (ohne GIL; Atomics und Thread-Slots der Runtime) - dieselbe Ausgabe wie die VM";
-        if (TestSelected(tccTitle) && File.Exists("/usr/bin/tcc") && !OperatingSystem.IsWindows())
+        if (TestSelected(tccTitle) && TestResume.Pending(tccTitle, NatUnitKey(tccTitle)) && File.Exists("/usr/bin/tcc") && !OperatingSystem.IsWindows())
         {
+            // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+            using var resumeUnit3 = TestResume.Unit(tccTitle, NatUnitKey(tccTitle));
             var expectedOf = new Dictionary<string, string>();
             for (int i = 0; i < natCases.Length; i++) expectedOf[natCases[i].Name] = vmResults[i];
             // (the cases that the filter left out of the run above: their VM output here, one after the other like there)
@@ -13644,6 +13694,7 @@ else
                 if (actual != expected) tccReports.Add((i, $"{c.Name}:\n  erwartet (VM):\n{expected}\n  erhalten (tcc):\n{actual}"));
             });
             CheckNat(tccTitle + $" ({tccRan} Faelle)", tccReports.IsEmpty && tccRan > 0, string.Join("\n\n", tccReports.OrderBy(r => r.Index).Select(r => r.Text)));
+            resumeUnit3.Done();
         }
 
         // (the trim cases and the TLS case under Wine at the same time)
@@ -13654,8 +13705,10 @@ else
             // 3 (all, the default: only what is reached); names given as literals to reflection always stay, a lookup of what was left out is an error that says so
             // (the VM has every class and member, so only a native build can hit it).
             const string trimTitle = "Weglassen (stripping): Reflection, Proben und JSON in den Stufen 0-3, Literale, [Keep], Aliase, Debug, Groesse des ui-Programms";
-            if (TestSelected(trimTitle))
+            if (TestSelected(trimTitle) && TestResume.Pending(trimTitle, NatUnitKey(trimTitle)))
             {
+                // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+                using var resumeUnit4 = TestResume.Unit(trimTitle, NatUnitKey(trimTitle));
                 string trRunTrim(string source, fire.Native.StrippingLevel? stripping, string tag)
                 {
                     fire.Native.NativeSources generated;
@@ -13929,6 +13982,7 @@ else
                 CheckNat("Weglassen (stripping): das minimale ui-Programm bleibt klein (Stufe 3 unter 5 MB C; Stufe 2 kleiner als 1, 3 kleiner als 2, 1 etwa wie 0 und mehr als doppelt so gross wie 3)",
                     trUiSize == trUiSizes[3] && trUiSize < 5_000_000 && trUiSizes[1] <= trUiSizes[0] + 20_000 && trUiSizes[2] < trUiSizes[1] && trUiSizes[3] < trUiSizes[2] && trUiSizes[0] > 2 * trUiSize,
                     string.Join(" / ", trUiSizes.Select((s, i) => $"{i}: {s}")));
+                resumeUnit4.Done();
             }
         }, () =>
         {
@@ -14224,8 +14278,10 @@ else
         CheckNat("Zielprofil: Namen und Host", TargetProfile.TryGet("ESP32", out var byName) && byName == esp && !TargetProfile.TryGet("amiga", out _) && TargetProfile.All.Contains(TargetProfile.Host));
         // the text console (#import "console", docs/stdlib/console.md): without a console (redirected) plain text and the characters of standard input as keys -
         // the VM and the native program alike; in a terminal (a pseudo-terminal through `script`) the escape sequences and the keys of their sequences
-        if (TestSelected("console"))
+        if (TestSelected("console") && TestResume.Pending("console", NatUnitKey("console")))
         {
+            // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+            using var resumeUnit5 = TestResume.Unit("console", NatUnitKey("console"));
             const string conSource = """
                 #import "console"
                 Console.WriteLine("console " + Console.IsConsole() + " " + Console.Width() + "x" + Console.Height())
@@ -14301,6 +14357,7 @@ else
                 CheckNat("console: im Terminal - ANSI-Farben und -Cursor, Tasten aus ihren Folgen (Pfeil, F5, Strg+Pfeil, Alt+Taste, Enter)",
                     termWant.All(termOut.Contains), $"  erwartet (enthalten): {string.Join(" | ", termWant.Select(w => w.Replace("\u001b", "ESC")))}\n  Terminal:\n{termOut.Replace("\u001b", "ESC")}");
             }
+            resumeUnit5.Done();
         }
         // dos16 (ROADMAP 13.3): DOS in real mode - the profile, the generated C, and with Open Watcom and DOSBox-X on the machine: built and run like the VM
         {
@@ -15167,7 +15224,9 @@ else
             // ---- Devices: the same scripts as in the device checks of the VM, natively with the loopback device (FIRE_DEVICES), against the expected outputs
             {
                 if (devNativeCases.Count == 0) Console.WriteLine("(Geraete nativ: keine Faelle - die Geraete-Pruefungen der VM liefen nicht)");
-                var devTasks = TestJobs.Map(devNativeCases.Where(c => TestSelected(c.Title)).ToList(), (c, index) =>
+                // (every case a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+                string DevKey((string Title, string Script, string[] Expected, string? DefaultId) c) => TestResume.Active ? TestResume.Key(c.Script, string.Join("\n", c.Expected), c.DefaultId, sanitize) : "";
+                var devTasks = TestJobs.Map(devNativeCases.Where(c => TestSelected(c.Title) && TestResume.Pending("Geraete nativ: " + c.Title, DevKey(c))).ToList(), (c, index) =>
                 {
                     var defines = new List<string> { "FIRE_DEVICES=\"loopback\"" };
                     if (c.DefaultId != null) defines.Add($"FIRE_DEFAULT_DEVICE=\"{c.DefaultId}\"");
@@ -15179,12 +15238,15 @@ else
                     string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"dev{index}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit);
                     if (buildExit != 0 || build.Contains("warning:")) return (c.Title, "", "C/C++-Compiler: " + build);
                     string actual = RunProc(exe, "", workDir, out int runExit);
-                    return (c.Title, string.Concat(c.Expected.Select(l => l + "\n")), runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
+                    string expectedText = string.Concat(c.Expected.Select(l => l + "\n"));
+                    if (runExit == 0 && actual == expectedText) NativeTestBuild.Clean(workDir, $"dev{index}", exe);
+                    return (c.Title, expectedText, runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
                 });
                 foreach (var task in devTasks)
                 {
                     var (title, expected, actual) = task;
-                    CheckNat($"Geraete nativ: {title}", expected == actual, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
+                    var devCase = devNativeCases.First(d => d.Title == title);
+                    TestResume.Run("Geraete nativ: " + title, DevKey(devCase), () => CheckNat($"Geraete nativ: {title}", expected == actual, $"  erwartet:\n{expected}\n  erhalten:\n{actual}"));
                 }
                 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER")) && Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == null) CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
             }
@@ -15442,7 +15504,15 @@ else
                 Action PrepareWindowCase(string title, string script, string[] expected, string define, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null)
                 {
                     var said = new List<Action>();
-                    Action Replay() => () => { foreach (var say in said) say(); };
+                    // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD, TestResume.cs: keyed by what is built and run - the folder of this run left out)
+                    string unitName = "Fenster: " + title;
+                    string unitKey = TestResume.Active ? TestResume.Key(script, string.Join("\n", expected), define, display, second, secondCommand?.Replace(workDir, ""), firstCommand?.Replace(workDir, ""), sanitize) : "";
+                    switch (TestResume.Decide(unitName, unitKey))
+                    {
+                        case TestResume.Decision.Resumed: return () => TestResume.Reprint(unitName, unitKey);
+                        case TestResume.Decision.OtherShard: return () => { };
+                    }
+                    Action Replay() => () => TestResume.Run(unitName, unitKey, () => { foreach (var say in said) say(); });
                     string label = title;
                     var target = TargetProfile.Host;
                     fire.Native.NativeSources Generate(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, target), target);
@@ -15504,6 +15574,7 @@ else
                             }
                         }
                         string want = string.Concat(expected.Select(l => l + "\n"));
+                        if (runExit == 0 && actual == want) { NativeTestBuild.Clean(workDir, name, exe); NativeTestBuild.Clean(workDir, name + "_w", exe2); }
                         said.Add(() => CheckNat($"Fenster: {label}", runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}"));
                     }
                     return Replay();
@@ -15785,10 +15856,12 @@ else
                     string title = "Fenster: PresentArea auf X11 (Xvfb) - nur der gemeldete Bereich geht an den X-Server, leere Bereiche im Leerlauf ueberschreiben nichts";
                     string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
                     string? xvfbRunTool = FindProgram("xvfb-run"), importTool = FindProgram("import");
-                    if (!TestSelected(title)) { }
+                    if (!TestSelected(title) || !TestResume.Pending(title, NatUnitKey(title))) { }
                     else if (!File.Exists(forge) || xvfbRunTool == null || importTool == null || OperatingSystem.IsWindows()) Console.WriteLine("(PresentArea unter Xvfb: uebersprungen - forge, xvfb-run oder import fehlt)");
                     else
                     {
+                        // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+                        using var resumeUnit6 = TestResume.Unit(title, NatUnitKey(title));
                         string dir = Path.Combine(workDir, "presentarea");
                         Directory.CreateDirectory(dir);
                         File.WriteAllText(Path.Combine(dir, "area.fire"), """
@@ -15973,6 +16046,7 @@ else
                             if (trGot[0].StartsWith("gpu False")) Console.WriteLine("(transparenter Hintergrund auf der GPU: uebersprungen - kein Vulkan-Geraet)");
                             else CheckNat(trTitle, trGot[0] == "gpu True 0 Transparent | (0, 0, 255) (0, 64, 0)" && trGot[1] == "gpu False 0 Transparent | (0, 0, 255) (0, 64, 0)", string.Join("\n", trGot));
                         }
+                        resumeUnit6.Done();
                     }
                 });
 
@@ -16246,10 +16320,12 @@ else
                         """;
                     string title = "Fenster: Drag aus dem Fenster in ein anderes Programm (Wayland: weston unter Xvfb, wl_data_device): Text und Dateien, die Antwort Kopie; ins Leere 0";
                     string? weston = FindProgram("weston");
-                    if (!TestSelected(title)) { }
+                    if (!TestSelected(title) || !TestResume.Pending(title, NatUnitKey(title))) { }
                     else if (xvfbRun == null || weston == null) Console.WriteLine($"(uebersprungen - xvfb-run oder weston fehlen: {title})");
                     else
                     {
+                        // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+                        using var resumeUnit7 = TestResume.Unit(title, NatUnitKey(title));
                         string handC = Path.Combine(workDir, "wlhand.c"), hand = Path.Combine(workDir, "wlhand.bin");
                         File.WriteAllText(handC, handSource);
                         RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{handC}\" -o \"{hand}\" -lX11 -ldl", workDir, out int handExit);
@@ -16311,6 +16387,7 @@ else
                             }
                             catch (InvalidOperationException ex) { CheckNat(title, false, ex.Message); }
                         }
+                        resumeUnit7.Done();
                     }
                 });
 
@@ -16325,10 +16402,12 @@ else
                             string title = "Fenster: Windows (MinGW, eigene Anzeige, unter Wine): Fenster, Zwischenablage mit Text, Bild und Dateien, Drop-Ereignisse";
                             string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
                             string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
-                            if (!TestSelected(title)) { }
+                            if (!TestSelected(title) || !TestResume.Pending(title, NatUnitKey(title))) { }
                             else if (mingw == null || wine == null || xvfbRun == null) Console.WriteLine("(Fenster unter Wine, eigene Anzeige: uebersprungen - MinGW, Wine oder xvfb-run fehlen)");
                             else
                             {
+                                // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+                                using var resumeUnit8 = TestResume.Unit(title, NatUnitKey(title));
                                 var winTarget = TargetProfile.Windows;
                                 string winDir = Path.Combine(workDir, "wine_fire");
                                 Directory.CreateDirectory(winDir);
@@ -16451,6 +16530,7 @@ else
                                     }
                                 }
                                 catch (Exception ex) { CheckNat($"{title}: PresentArea", false, ex.ToString()); }
+                                resumeUnit8.Done();
                             }
                         }
 
@@ -16461,11 +16541,13 @@ else
                             string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
                             string title = "Fenster: Drag aus dem Fenster in ein anderes Programm (Windows unter Wine, OLE): Text (CF_UNICODETEXT) und Dateien (CF_HDROP)";
                             string? driver = null;
-                            if (!TestSelected(title)) { }
+                            if (!TestSelected(title) || !TestResume.Pending(title, NatUnitKey(title))) { }
                             else if (mingw == null || wine == null || xvfbRun == null) Console.WriteLine($"(uebersprungen - MinGW, Wine oder xvfb-run fehlen: {title})");
                             else if ((driver = DragDriver()) == null) Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
                             else
                             {
+                                // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+                                using var resumeUnit9 = TestResume.Unit(title, NatUnitKey(title));
                                 string winDir = Path.Combine(workDir, "wine_drag");
                                 Directory.CreateDirectory(winDir);
                                 fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
@@ -16511,6 +16593,7 @@ else
                                     string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]" }.Select(l => l + "\n"));
                                     CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}{runLog}");
                                 }
+                                resumeUnit9.Done();
                             }
                         }
                     }
@@ -16523,9 +16606,11 @@ else
 
             // ---- UI library: the same elements natively (fire's own display without a screen: FIRE_DISPLAY=headless) against the VM with the dummy
             {
-                if (uiDrawExpected.Length == 0 || !TestSelected("UI nativ == VM")) Console.WriteLine("(UI nativ == VM: uebersprungen - die UI-Pruefungen der VM liefen nicht, oder der Filter schliesst es aus)");
+                if (uiDrawExpected.Length == 0 || !TestSelected("UI nativ == VM") || !TestResume.Pending("UI nativ == VM", NatUnitKey("UI nativ == VM"))) Console.WriteLine("(UI nativ == VM: uebersprungen - die UI-Pruefungen der VM liefen nicht, oder der Filter schliesst es aus)");
                 else
                 {
+                    // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+                    using var resumeUnit10 = TestResume.Unit("UI nativ == VM", NatUnitKey("UI nativ == VM"));
                     var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
                     string exe = Path.Combine(workDir, "uidraw.bin");
                     string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, "uidraw", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, " -ldl -lpthread");
@@ -16536,6 +16621,7 @@ else
                         string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
                         CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 5, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
                     }
+                    resumeUnit10.Done();
                 }
             }
         }, () =>
@@ -16545,7 +16631,9 @@ else
                 string[] rtosCases = { "Actor: fire with", "Actor: mehrere", "sync: die Kopie", "sync: Arrays", "taking: der Thread", "terminate im Hauptprogramm", "catch threads()",
                     "Globals: sync global ist atomar", "Globals: fire global mit taking", "Thread startet Thread", "Globals: #nosync haelt", "leave aus einer Funktion" };
                 var rtosIndexes = Enumerable.Range(0, natCases.Length).Where(i => natCases[i].Name.StartsWith("Threads:") && rtosCases.Any(c => natCases[i].Name.Contains(c))).ToArray();
-                var rtosTasks = TestJobs.Map(rtosIndexes, (index, _) =>
+                // (every case a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD, TestResume.cs: keyed by its source and what the VM printed)
+                string RtosKey(int index) => TestResume.Active ? TestResume.Key(natCases[index].Source, vmResults[index], sanitize) : "";
+                var rtosTasks = TestJobs.Map(rtosIndexes.Where(i => TestResume.Pending("FreeRTOS == VM: " + natCases[i].Name, RtosKey(i))).ToList(), (index, _) =>
                 {
                     string expected = vmResults[index];
                     var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
@@ -16553,14 +16641,16 @@ else
                     // the board's startup code would call the entry point from a task; here main does
                     generated = NativeTestBuild.Append(generated, "\nint main(void) { fire_start(); return 0; }\n");
                     string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"rtos{index}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}-I\"{Path.Combine(workDir, "sim")}\"", exe, out int buildExit);
-                    if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C/C++-Compiler: " + build);
+                    if (buildExit != 0 || build.Contains("warning:")) return (index, expected, "C/C++-Compiler: " + build);
                     string actual = RunProc(exe, "", workDir, out _);   // (a FreeRTOS program has no exit code)
-                    return (natCases[index].Name, expected, actual);
+                    if (actual == expected) NativeTestBuild.Clean(workDir, $"rtos{index}", exe);
+                    return (index, expected, actual);
                 });
                 foreach (var task in rtosTasks)
                 {
-                    var (name, expected, actual) = task;
-                    CheckNat($"FreeRTOS == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (FreeRTOS):\n{actual}");
+                    var (index, expected, actual) = task;
+                    string name = natCases[index].Name;
+                    TestResume.Run("FreeRTOS == VM: " + name, RtosKey(index), () => CheckNat($"FreeRTOS == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (FreeRTOS):\n{actual}"));
                 }
                 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
             }
@@ -16569,17 +16659,23 @@ else
             if (!OperatingSystem.IsWindows())
             {
                 var greenIndexes = Enumerable.Range(0, natCases.Length).Where(i => natCases[i].Name.StartsWith("Threads:") && TestSelected("Gruene Threads " + natCases[i].Name)).ToArray();
-                var greenTasks = TestJobs.Map(greenIndexes, (index, _) =>
+                string GreenKey(int index) => TestResume.Active ? TestResume.Key(natCases[index].Source, vmResults[index]) : "";
+                var greenTasks = TestJobs.Map(greenIndexes.Where(i => TestResume.Pending("Gruene Threads (eigener Scheduler) == VM: " + natCases[i].Name, GreenKey(i))).ToList(), (index, _) =>
                 {
                     string expected = vmResults[index];
                     var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release));
                     string exe = Path.Combine(workDir, $"green{index}.bin");
                     string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"green{index}", $"-pthread -DFIRE_GREEN_THREADS {NativeTestBuild.Opt} -Wall -Wextra", exe, out int buildExit);
-                    if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C-Compiler: " + build);
-                    return (natCases[index].Name, expected, RunProc(exe, "", workDir, out _));
+                    if (buildExit != 0 || build.Contains("warning:")) return (index, expected, "C-Compiler: " + build);
+                    string actual = RunProc(exe, "", workDir, out _);
+                    if (actual == expected) NativeTestBuild.Clean(workDir, $"green{index}", exe);
+                    return (index, expected, actual);
                 });
-                foreach (var (name, expected, actual) in greenTasks)
-                    CheckNat($"Gruene Threads (eigener Scheduler) == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (eigener Scheduler):\n{actual}");
+                foreach (var (index, expected, actual) in greenTasks)
+                {
+                    string name = natCases[index].Name;
+                    TestResume.Run("Gruene Threads (eigener Scheduler) == VM: " + name, GreenKey(index), () => CheckNat($"Gruene Threads (eigener Scheduler) == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (eigener Scheduler):\n{actual}"));
+                }
                 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("Gruene Threads: es gibt Faelle", greenIndexes.Length >= 30, greenIndexes.Length.ToString());
             }
         });
@@ -16722,10 +16818,12 @@ else
             // The ESP-IDF project stays in ~/.cache/fire-tests/esp32 (the first build takes minutes, later ones only the program).
             string esp32Title = "ESP32 (ESP-IDF, QEMU): das Programm baut ohne Warnung und laeuft auf dem Emulator wie in der VM";
             string? idfPath = Environment.GetEnvironmentVariable("IDF_PATH");
-            if (!TestSelected(esp32Title)) { }
+            if (!TestSelected(esp32Title) || !TestResume.Pending(esp32Title, NatUnitKey(esp32Title))) { }
             else if (idfPath == null || !File.Exists(Path.Combine(idfPath, "export.sh"))) Console.WriteLine("(ESP32 mit ESP-IDF: uebersprungen - IDF_PATH fehlt)");
             else
             {
+                // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: TestResume.cs)
+                using var resumeUnit11 = TestResume.Unit(esp32Title, NatUnitKey(esp32Title));
                 const string espSource = "#import \"time\"\n#import \"hash\"\n#import \"compression\"\nclass Counter {\n    private int count = 0\n    int Next() { this.count++; return this.count }\n}\n"
                     + "var c = new Counter()\nvar l = new List<string>()\nfor (var i = 0; i < 3; i++) { l.Add(\"n\" + c.Next()) }\nprint(l[0] + \" \" + l[2])\n"
                     + "try { var a = [1]; print(a[5]) } catch (IndexOutOfBoundsException e) { print(\"caught\") }\nprint(Hash.Sha256.HexOf(\"abc\").Substring(0, 16))\n"
@@ -16788,6 +16886,7 @@ else
                     CheckNat("ESP32 (ESP-IDF, QEMU): linkage static - die Module als eigene Uebersetzungseinheiten der Komponente, laeuft wie in der VM",
                         stCode == 0 && stModules && stWarnings == "0" && stGot == string.Join("\n", vmLines), $"build {stCode}, warnings {stWarnings}\n{stOut}\n{stErr}\n  ESP32:\n{stGot}");
                 }
+                resumeUnit11.Done();
             }
         }
 

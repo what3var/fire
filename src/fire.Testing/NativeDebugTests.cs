@@ -714,7 +714,8 @@ static partial class NativeDebugTests
     static void RunCases(Action<string, bool, string?> check, string cxx, string workDir, string sanitize)
     {
         string flags = $"-pthread -O0 -g -Wall -Wextra {sanitize}";
-        var selected = Cases.Where(c => TestSelectedName("Native-Debugger: " + c.Name)).ToList();
+        // (FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: every case is a unit, TestResume.cs)
+        var selected = Cases.Where(c => TestSelectedName("Native-Debugger: " + c.Name) && TestResume.Pending("Native-Debugger: " + c.Name, CaseKey(c, sanitize))).ToList();
         // (built and compared on the workers of TestJobs, reported in the order of the cases)
         TestJobs.Ordered(selected.Count, index =>
         {
@@ -740,9 +741,14 @@ static partial class NativeDebugTests
                     }
             }
             catch (Exception ex) { results.Add(($"Native-Debugger: {c.Name}", false, ex.ToString())); }
+            if (results.All(r => r.Ok)) NativeTestBuild.Clean(workDir, $"dbg{index}", exe);
             return results;
-        }, (_, results) => { foreach (var (title, ok, detail) in results) check(title, ok, detail); });
+        }, (index, results) => TestResume.Run("Native-Debugger: " + selected[index].Name, CaseKey(selected[index], sanitize), () => { foreach (var (title, ok, detail) in results) check(title, ok, detail); }));
     }
+
+    /// <summary>The key of a case for FIRE_TESTS_RESUME: its script, breakpoints and plan, and the flags it is built with.</summary>
+    static string CaseKey(Case c, string flags) =>
+        TestResume.Active ? TestResume.Key(c.Name, c.Script, string.Join(",", c.Breakpoints), string.Join(",", c.Plan), c.StepAll.ToString(), flags) : "";
 
     static string RunTool(string tool, string arguments, string dir, out int exit, int timeoutMs = 120000)
     {
@@ -771,8 +777,14 @@ static partial class NativeDebugTests
             string full = (vm != null ? "VM-Debugger: " : "Native-Debugger: ") + title;
             if (!TestSelectedName(full)) return;
             if (vm != null && (title.StartsWith("#line") || title.StartsWith("gcc und clang") || title.StartsWith("gdb") || title.StartsWith("Windows"))) return;   // (the C of a native build)
-            try { var (ok, detail) = body(); check(full, ok, detail); }
-            catch (Exception ex) { check(full, false, ex.ToString()); }
+            // (a unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD: its title, the build of the test program - the check is code here)
+            string key = TestResume.Active ? TestResume.Key(full, sanitize) : "";
+            if (!TestResume.Pending(full, key)) return;
+            TestResume.Run(full, key, () =>
+            {
+                try { var (ok, detail) = body(); check(full, ok, detail); }
+                catch (Exception ex) { check(full, false, ex.ToString()); }
+            });
         }
         // (the C VM: the program is a .fbc that `fire` runs - NativeDebugTests.Vm.cs)
         string? Bld(string script, string cxx_, string dir, string name, string fl, out string error, string? sourcePath = null) =>
