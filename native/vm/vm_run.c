@@ -151,8 +151,9 @@ static bool vmIsOfName(Vm* vm, Value v, const char* t) {
 
 /* DeclaredType (a declaration with a class, an interface or a type parameter: GuardTopType/GuardLocalType, FieldInfo.RequiredType, an overload `g:...`):
  * the text for messages up to \x01, then `@k@Class` \x03 for the k-th type parameter of a class (`@k@` of the call), then the alternatives (`|`) of
- * conditions (`&`, `in:` before a unit); \x04 in front: `defined`; \x05 behind: the type arguments of a generic class (not checked by the VM yet). */
-typedef struct VmSpec { const char* text; char display[160]; bool nonNull; int typeParam; char owner[160]; const char* alts; struct VmSpec* next; } VmSpec;
+ * conditions (`&`, `in:` before a unit); \x04 in front: `defined`; \x05 behind: the type arguments of a generic class (`Bag<int> b`, DECISIONS D10:
+ * separated by \x06, `$k@Class` for a type parameter of the code around, "" for one that is not known). */
+typedef struct VmSpec { const char* text; char display[160]; bool nonNull; int typeParam; char owner[160]; const char* alts; const char* targs; struct VmSpec* next; } VmSpec;
 static VmSpec* g_vmSpecs;
 static VmSpec* vmSpec(Vm* vm, const char* text) {
     VmSpec* sp;
@@ -182,6 +183,7 @@ static VmSpec* vmSpec(Vm* vm, const char* text) {
         const char* ek = strchr(t, '\x02');   /* (an enum's key behind its name: ArrayOfTypeArg) */
         if (ek && (!ta || ek < ta)) ta = ek;
         sp->alts = ta ? vmIntern(vm->prog, t, (size_t)(ta - t)) : t;
+        sp->targs = ta && *ta == '\x05' ? ta + 1 : NULL;
     }
     sp->next = g_vmSpecs;
     g_vmSpecs = sp;
@@ -250,6 +252,43 @@ static const char* vmTypeArgOf(Vm* vm, Value obj, const char* declaring, int k) 
     if (!c || (uint32_t)k >= n || !args[k] || !args[k][0]) return NULL;
     return args[k];
 }
+/* DeclaredType.WantedTypeArg: the type argument a declaration `Bag<int> b` asks for at place k (`$k@Class` of the code around resolved); NULL: not known. */
+static const char* vmWantedTypeArg(Vm* vm, const char* w, size_t n, Value self, TArgs ctargs, char* buf, size_t cap) {
+    const char* at;
+    int k;
+    if (n == 0) return NULL;
+    if (n >= cap) n = cap - 1;
+    memcpy(buf, w, n);
+    buf[n] = 0;
+    if (buf[0] != '$') return buf;
+    at = strchr(buf, '@');
+    if (!at) return NULL;
+    k = atoi(buf + 1);
+    if (!at[1]) return ctargs && ctargs[k] && ctargs[k]->display && ctargs[k]->display[0] ? ctargs[k]->display : NULL;
+    return vmTypeArgOf(vm, self, at + 1, k);
+}
+/* The k-th type argument of the declaration's text (NULL: none or not known). */
+static const char* vmSpecTArg(Vm* vm, const VmSpec* sp, int k, Value self, TArgs ctargs, char* buf, size_t cap) {
+    const char* w = sp->targs;
+    int i;
+    for (i = 0; i < k && w; i++) { w = strchr(w, '\x06'); if (w) w++; }
+    if (!w) return NULL;
+    { const char* e = strchr(w, '\x06'); return vmWantedTypeArg(vm, w, e ? (size_t)(e - w) : strlen(w), self, ctargs, buf, cap); }
+}
+static int vmSpecTArgCount(const VmSpec* sp) { int n = 1; const char* w; if (!sp->targs) return 0; for (w = sp->targs; *w; w++) if (*w == '\x06') n++; return n; }
+/* DeclaredType.TypeArgsFit: an object of the declared class whose type arguments are known has those the declaration names - or ones that are of them (a
+ * `List<Dog>` is a `List<Animal>`: the list keeps checking what goes in). */
+static bool vmTypeArgsFit(Vm* vm, Value v, const VmSpec* sp, Value self, TArgs ctargs) {
+    int k, n = vmSpecTArgCount(sp);
+    if (v.kind != K_Class || strpbrk(sp->alts, "|&") || !strncmp(sp->alts, "in:", 3)) return true;
+    for (k = 0; k < n; k++) {
+        char buf[160];
+        const char* wanted = vmSpecTArg(vm, sp, k, self, ctargs, buf, sizeof buf);
+        const char* has = wanted ? vmTypeArgOf(vm, v, sp->alts, k) : NULL;
+        if (wanted && has && strcmp(has, wanted) != 0 && !vmTypeTextIsOf(vm, has, wanted)) return false;
+    }
+    return true;
+}
 static bool vmFitsDeclared(Vm* vm, Value v, const char* text, Value self, TArgs ctargs) {
     VmSpec* sp;
     if (!text) return true;
@@ -263,7 +302,39 @@ static bool vmFitsDeclared(Vm* vm, Value v, const char* text, Value self, TArgs 
         if (targ) return vmHolds(vm, v, targ, strlen(targ));
         if (!sp->alts[0]) return true;
     }
-    return vmHoldsAlts(vm, v, sp->alts);
+    if (!vmHoldsAlts(vm, v, sp->alts)) return false;
+    return !sp->targs || vmTypeArgsFit(vm, v, sp, self, ctargs);
+}
+/* DeclaredType.DisplayOf a type argument (`int : cm`, `in cm`, the plain name of a class) */
+static void vmTArgDisplay(const char* a, char* out, size_t cap) {
+    const char* colon = strchr(a, ':');
+    if (!strncmp(a, "in:", 3)) snprintf(out, cap, "in %s", a + 3);
+    else if (colon && (!strncmp(a, "int:", 4) || !strncmp(a, "float:", 6))) snprintf(out, cap, "%.*s : %s", (int)(colon - a), a, colon + 1);
+    else vmPlainName(a, out, cap);
+}
+/* DeclaredType.Mismatch of `Bag<int> b` given an object of the class with other type arguments: "... is a Bag<int>, not Bag<string>." True: it said so. */
+static bool vmTypeArgsFailed(Vm* vm, Value v, const char* text, Value self, TArgs ctargs, const char* what) {
+    VmSpec* sp = vmSpec(vm, text);
+    char w[200], h[200], text2[500];
+    size_t wn = 0, hn = 0;
+    int k, n;
+    if (!sp->targs || v.kind != K_Class || sp->typeParam >= 0 || !vmHoldsAlts(vm, v, sp->alts)) return false;
+    n = vmSpecTArgCount(sp);
+    w[0] = h[0] = 0;
+    for (k = 0; k < n; k++) {
+        char buf[160], d1[160], d2[160];
+        const char* wanted = vmSpecTArg(vm, sp, k, self, ctargs, buf, sizeof buf);
+        const char* has = vmTypeArgOf(vm, v, sp->alts, k);
+        if (wanted) vmTArgDisplay(wanted, d1, sizeof d1); else snprintf(d1, sizeof d1, "any");
+        if (has) vmTArgDisplay(has, d2, sizeof d2); else snprintf(d2, sizeof d2, "any");
+        wn += (size_t)snprintf(w + wn, wn < sizeof w ? sizeof w - wn : 0, "%s%s", k ? ", " : "", d1);
+        hn += (size_t)snprintf(h + hn, hn < sizeof h ? sizeof h - hn : 0, "%s%s", k ? ", " : "", d2);
+        if (wn >= sizeof w) wn = sizeof w - 1;
+        if (hn >= sizeof h) hn = sizeof h - 1;
+    }
+    snprintf(text2, sizeof text2, "%s is %s %s<%s>, not %s<%s>.", what, strchr("AEIOUaeiou", sp->display[0]) ? "an" : "a", sp->display, w, sp->display, h);
+    fireError("ArgumentException", text2);
+    return true;
 }
 /* the text of a declaration for its message ("... is a Dog, not Cat.", "... is a T (int), not String.") */
 static const char* vmDeclaredDisplayFor(Vm* vm, const char* text, Value self, TArgs ctargs, char* buf, size_t cap) {
@@ -317,6 +388,7 @@ static bool vmGuardType(Vm* vm, Value* v, const char* text, Value self, TArgs ct
         if (slot && !g_unwind.active) { retain(*v); release(old); }
         return g_unwind.active;
     }
+    if (vmTypeArgsFailed(vm, *v, text, self, ctargs, what ? what : "A value")) return true;
     guardClassFailed(*v, vmDeclaredDisplayFor(vm, text, self, ctargs, db, sizeof db), what ? what : "A value");
     return true;
 }

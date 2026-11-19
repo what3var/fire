@@ -78,7 +78,7 @@ static void vmStrandFree(Vm* vm, bool keepGlobal) {
 }
 
 /* The body of a fire thread (the runtime's ThreadStart.fn, on the new thread with the GIL): args[0] the function, args[1] the main program's global
- * slots | the number of arguments << 32, then the arguments (the copies of `taking`, what `handover` moved, the `with` values). */
+ * slots | the number of arguments << 32, args[2] the flag it sets when it runs, then the arguments (the copies of `taking`, what `handover` moved, the `with` values). */
 static void vmThreadBody(const Value* args) {
     VmProto* p = (VmProto*)(uintptr_t)args[0].i;
     uint32_t shared = (uint32_t)(args[1].i & 0xFFFFFFFF), argc = (uint32_t)(args[1].i >> 32), i;
@@ -87,7 +87,8 @@ static void vmThreadBody(const Value* args) {
     g_vmCur = vm;
     g_globalOwn = &vm->global->own;
     adoptTravel(&vm->global->own);   /* (the copies `taking` made: the thread's own) */
-    for (i = 0; i < argc; i++) scDefine(vm->global, args[2 + i]);
+    for (i = 0; i < argc; i++) scDefine(vm->global, args[3 + i]);
+    fire_atomic_storeRelease((fire_atomic32*)(uintptr_t)args[2].i, 1);   /* (it runs: the `fire` that started it goes on) */
     {
         VmFrame* f = &vm->frames[0];
         memset(f, 0, sizeof *f);
@@ -125,13 +126,14 @@ static bool vmFire(Vm* vm, VmFrame* fr, VmProto* body, uint32_t globalSlots, uin
     uint32_t with = (flags & 1) == 0 ? 0 : ((flags >> 2) > 1 ? (flags >> 2) : 1);
     uint32_t argc = taking + with, copies = taking - handover, i;
     Value* first = vm->stack + vm->sp - argc;
-    Value av[2 + 256];
+    Value av[3 + 256];
+    fire_atomic32 started;
     OwnList* travel;
     if (argc > 256) fatal("fire: too many values for the thread.");
     if (taking > 0 && !((copies == 0 || takingNoCopyFree(first, copies)) && (handover == 0 || handoverFree(first + copies, handover)))) return false;
     travel = newTravel();
-    for (i = 0; i < copies; i++) av[2 + i] = takeCopy(first[i], travel);
-    if (handover > 0) handOverAll(first + copies, av + 2 + copies, handover, travel);
+    for (i = 0; i < copies; i++) av[3 + i] = takeCopy(first[i], travel);
+    if (handover > 0) handOverAll(first + copies, av + 3 + copies, handover, travel);
     for (i = 0; i < with; i++) {
         Value w = first[taking + i];
         VmClass* c = vmClassOfValue(vm, w);
@@ -148,14 +150,21 @@ static bool vmFire(Vm* vm, VmFrame* fr, VmProto* body, uint32_t globalSlots, uin
                 w = e;
             }
         }
-        av[2 + taking + i] = w;
+        av[3 + taking + i] = w;
     }
     (void)fr;
     av[0] = Int((int64_t)(uintptr_t)body);
     av[1] = Int((int64_t)globalSlots | ((int64_t)argc << 32));
     ensureDomain();
-    if (flags & 2) fireThreadDedicated(vmThreadBody, av, argc + 2, travel);
-    else fireThread(vmThreadBody, av, argc + 2, travel);
+    av[2] = Int((int64_t)(uintptr_t)&started);
+    fire_atomic_store(&started, 0);
+    if (flags & 2) fireThreadDedicated(vmThreadBody, av, argc + 3, travel);
+    else fireThread(vmThreadBody, av, argc + 3, travel);
+    /* (the thread gets the GIL once before the one that started it goes on: what it does first does not race against how fast the starter runs - a
+     * `terminate` at its start stops a short loop of the starter, as in the C# VM, whose threads begin while the interpreter is slower) */
+    gilRelease();
+    while (!fire_atomic_loadAcquire(&started)) fire_plat_sleepMs(0);
+    gilAcquire();
     return true;
 }
 
