@@ -221,8 +221,10 @@ static const char* vmTypeArgOf(Vm* vm, Value obj, const char* declaring, int k) 
     char plainBuf[160];
     if (!c || !leafAlive(obj)) return NULL;
     ta = objTArgs(asObj(obj));
-    if (ta) for (n = 0; n < (uint32_t)(c->typeParams > 0 ? c->typeParams : 0) && n < 16; n++) args[n] = ta[n] ? ta[n]->display : NULL;
-    else n = 0;
+    {
+        uint32_t len = ta ? vmTArgsLen(vm, ta) : 0;
+        for (n = 0; n < len && n < 16; n++) args[n] = ta[n] ? ta[n]->display : NULL;
+    }
     while (c && strcmp(c->name, declaring) != 0 && strcmp(vmPlainName(c->name, plainBuf, sizeof plainBuf), declaring) != 0) {
         const char* next[16];
         uint32_t m = 0;
@@ -1093,7 +1095,6 @@ static void vmRun(Vm* vm, int32_t base) {
             o = newObject(c->id, c->nlayout, owner);   /* unclaimed: the statement temporaries (SPEC 2.1) */
             if (vm->pendingTArgsFor == 0 && vm->pendingTArgs) {
                 objSetTArgs(asObj(o), vm->pendingTArgs);
-                if (c->typeParams < (int32_t)vm->pendingTArgsN) c->typeParams = (int32_t)vm->pendingTArgsN;
                 vm->pendingTArgs = NULL;
             }
             vmPushCall(vm, ctor, (int)argc, op == OP_NewObjectOwned ? 1 : 0, o, FR_CTOR);
@@ -1640,7 +1641,8 @@ static void vmRun(Vm* vm, int32_t base) {
         case OP_SetAutoSync: ip += 1; break;
         case OP_SetEndWait: sp--; break;
         case OP_SetTimeout: { Value t = POP(); SYNC(); setDefaultTimeout(t); CHECK(); break; }
-        case OP_SyncGlobals: case OP_SectionEnter: case OP_SectionExit: break;
+        case OP_SyncGlobals: PUSH(Int(0)); break;   /* (the jobs it ran: none without threads) */
+        case OP_SectionEnter: case OP_SectionExit: break;
         case OP_Dedicate: case OP_Undedicate: break;
         case OP_AwaitReply: break;
         case OP_Terminate: {

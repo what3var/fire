@@ -470,8 +470,22 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
     rdInt(&r);                               /* firstUserSource */
     p->nativeImports = rdStrList(&r, &p->nnativeImports);
     rdOptStrList(&r, NULL); rdOptStrList(&r, NULL); rdOptStrList(&r, NULL);   /* packageNatives, their libraries, graphicsNatives (step 4) */
-    n = rdCount(&r);                         /* customUnits (their units are rows of the unit table) */
-    while (n--) { uint32_t d; rdName(&r); rdName(&r); rdU8(&r); for (d = rdCount(&r); d > 0; d--) { rdName(&r); rdInt(&r); } rdF64(&r); rdF64(&r); rdStr(&r); rdStr(&r); }
+    n = rdCount(&r);                         /* customUnits: the units a text may name besides those of fire */
+    p->ncustomUnits = n;
+    p->customUnits = (struct VmCustomUnit*)vmAlloc(&p->arena, (n + 1) * sizeof(struct VmCustomUnit));
+    for (i = 0; i < n; i++) {
+        struct VmCustomUnit* cu = &p->customUnits[i];
+        uint32_t d, k;
+        cu->name = rdName(&r); cu->symbol = rdName(&r); cu->prefixed = rdU8(&r) != 0;
+        for (d = rdCount(&r); d > 0; d--) {
+            const char* sym = rdName(&r);
+            int64_t e = rdInt(&r);
+            for (k = 0; k < p->ndims && p->dimNames[k] != sym; k++) { }
+            if (k == p->ndims) { if (p->ndims >= FIRE_NDIMS) rdFail(&r, "too many base units for this VM"); p->dimNames[p->ndims++] = sym; }
+            cu->dims[k] = (int32_t)e;
+        }
+        cu->scale = rdF64(&r); cu->offset = rdF64(&r); rdStr(&r); rdStr(&r);
+    }
     { FireEnum* decls; uint32_t nd; rdEnums(&r, &decls, &nd); (void)decls; }   /* enumDecls (the same enums by declaration) */
     n = rdCount(&r);                         /* resources */
     p->nresources = n;

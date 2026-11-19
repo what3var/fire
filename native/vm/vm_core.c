@@ -788,6 +788,18 @@ static void vmInstallUnits(Vm* vm) {
         g_vmTextUnits[nt].prefixable = prefixable[i];
         nt++;
     }
+    {   /* the units of the program (`unit in = 2.54cm`): by their symbol and their name */
+        uint32_t k;
+        TextUnit* more = (TextUnit*)realloc(g_vmTextUnits, (nt + 2 * p->ncustomUnits + 1) * sizeof(TextUnit));
+        if (!more) outOfMemory();
+        g_vmTextUnits = more;
+        for (k = 0; k < p->ncustomUnits; k++) {
+            struct VmCustomUnit* cu = &p->customUnits[k];
+            uint32_t u = cu->offset != 0.0 ? unitAppend(cu->dims, cu->scale, cu->symbol, cu->offset, -1, -1) : unitIntern(cu->dims, cu->scale, cu->symbol);
+            g_vmTextUnits[nt].symbol = cu->symbol; g_vmTextUnits[nt].unit = u; g_vmTextUnits[nt].prefixable = cu->prefixed; nt++;
+            if (strcmp(cu->name, cu->symbol) != 0) { g_vmTextUnits[nt].symbol = cu->name; g_vmTextUnits[nt].unit = u; g_vmTextUnits[nt].prefixable = false; nt++; }
+        }
+    }
     g_textUnits = g_vmTextUnits;
     g_textUnitCount = nt;
 }
@@ -912,7 +924,20 @@ static TArgs vmTArgsOf(Vm* vm, VmFrame* fr, const char* text) {
         if (!e) break;
         s = e + 1;
     }
-    return n ? internTArgsN(items, n) : NULL;
+    if (!n) return NULL;
+    {
+        TArgs r = internTArgsN(items, n);
+        struct VmTArgsLen* l;
+        for (l = vm->targsLen; l; l = l->next) if (l->ta == r) return r;
+        l = (struct VmTArgsLen*)vmAlloc(&vm->prog->arena, sizeof *l);
+        l->ta = r; l->n = n; l->next = vm->targsLen; vm->targsLen = l;
+        return r;
+    }
+}
+static uint32_t vmTArgsLen(Vm* vm, TArgs ta) {
+    struct VmTArgsLen* l;
+    for (l = vm->targsLen; l; l = l->next) if (l->ta == ta) return l->n;
+    return 0;
 }
 /* Is the type `name` (a type argument's text) `target` or one that derives from it or implements it (VM.TypeNameIsOf)? */
 static bool vmTypeTextIsOf(Vm* vm, const char* name, const char* target) {

@@ -144,6 +144,8 @@ struct VmProgram {
     uint32_t unitRows;
     const char* dimNames[FIRE_NDIMS];
     uint32_t ndims;
+    struct VmCustomUnit { const char* name; const char* symbol; bool prefixed; int32_t dims[FIRE_NDIMS]; double scale, offset; } * customUnits;
+    uint32_t ncustomUnits;
     FireEnum* enums;        /* the file's enum table: g_enums while the program runs */
     uint32_t nenums;
     VmClass** classes;
@@ -258,6 +260,7 @@ typedef struct Vm {
     uint32_t savedEnumCount;
     /* the interned type arguments (VmTArg) */
     struct VmTArg* targs;
+    struct VmTArgsLen { TArgs ta; uint32_t n; struct VmTArgsLen* next; } * targsLen;
     int argc; char** argv;
 } Vm;
 
