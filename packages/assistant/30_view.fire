@@ -57,6 +57,15 @@ namespace Assistant {
         // the events of the window seen last (UIRoot.Events), and until when the view cycles at full speed after one (or after a change of the brain)
         defined int seenEvents = 0
         defined int activeUntil = 0
+        // FIRE_ASSISTANT_FPS=1: once a second the cycles, the pictures of the character and where the time of a cycle went (stdout)
+        bool fpsLog = false
+        defined int fpsSince = 0
+        defined int fpsCycles = 0
+        defined int fpsFigures = 0
+        defined int fpsTickUs = 0
+        defined int fpsRestUs = 0
+        defined int fpsOutsideUs = 0
+        defined int fpsLeft = 0
         // a press on the character: a click pokes it, a drag moves the window
         bool pressed = false
         defined int pressX = 0
@@ -94,6 +103,8 @@ namespace Assistant {
             // double clicks, tooltips and the caret count real milliseconds (the cycles are fewer while the view rests)
             this.startMs = Assistant.Brain.Clock()
             this.UIRoot.clock = func () => { return Assistant.Brain.Clock() }
+            any fps = Environment.Get("FIRE_ASSISTANT_FPS")
+            this.fpsLog = fps != undefined && fps != "" && fps != "0"
             this.Build()
         }
 
@@ -298,6 +309,7 @@ namespace Assistant {
         }
 
         undefined PaintFigure(UI.DrawingCanvas c) {
+            this.fpsFigures++
             var r = c.renderer
             r.ClearTo(UI.Color.Transparent())
             this.Brain.Character.Paint(r, 0.0, 0.0, c.framebuffer.Width() * 1.0, c.framebuffer.Height() * 1.0, this.frame, this.Brain.Mood())
@@ -356,6 +368,39 @@ namespace Assistant {
         // Every cycle: the brain works a little, the bubble follows it, the character moves when its next picture is due - and while nothing happens
         // the view rests a little.
         undefined Cycle() {
+            defined int entered = 0
+            if (this.fpsLog) {
+                entered = Assistant.View.Micros()
+                if (this.fpsLeft > 0) { this.fpsOutsideUs += entered - this.fpsLeft }
+            }
+            this.CycleWork()
+            if (this.fpsLog) { this.FpsCount(entered) }
+        }
+
+        // Microseconds of the clock (FIRE_ASSISTANT_FPS).
+        static defined int Micros() { return DateTime.UtcNow.Ticks / 10 }
+
+        // FIRE_ASSISTANT_FPS: counts the cycle (its work began at `entered`) and once a second writes "fps: <cycles> cycles, <pictures> pictures, tick <ms>,
+        // rest <ms>, outside <ms>" - outside is the time between two cycles that the interface and the window took (events, painting, showing the frame).
+        undefined FpsCount(defined int entered) {
+            defined int now = Assistant.View.Micros()
+            this.fpsCycles++
+            this.fpsLeft = now
+            if (this.fpsSince == 0) { this.fpsSince = now }
+            if (now - this.fpsSince >= 1000000) {
+                defined int c = UI.M.Max(1, this.fpsCycles)
+                print("fps: " + this.fpsCycles + " cycles, " + this.fpsFigures + " pictures, tick " + (this.fpsTickUs / c / 1000.0) + " ms, rest " +
+                    (this.fpsRestUs / c / 1000.0) + " ms, outside " + (this.fpsOutsideUs / c / 1000.0) + " ms, phase " + this.Brain.Phase + ", mood " + this.Brain.Mood())
+                this.fpsSince = now
+                this.fpsCycles = 0
+                this.fpsFigures = 0
+                this.fpsTickUs = 0
+                this.fpsRestUs = 0
+                this.fpsOutsideUs = 0
+            }
+        }
+
+        undefined CycleWork() {
             this.cycles++
             this.nowMs = Assistant.Brain.Clock() - this.startMs
             if (this.nowMs < 0) {
@@ -381,7 +426,9 @@ namespace Assistant {
                 this.menuOpen = false
                 this.Show()
             }
+            defined int tickStart = this.fpsLog ? Assistant.View.Micros() : 0
             bool changed = this.Brain.Tick()
+            if (this.fpsLog) { this.fpsTickUs += Assistant.View.Micros() - tickStart }
             if (this.Brain.Quit) {
                 this.win.Close()
                 return
@@ -427,7 +474,11 @@ namespace Assistant {
             if (this.flame.Visible && this.nextFlame < due) { due = this.nextFlame }
             // (the next frame waits for the screen too: about 16 ms)
             defined int wait = UI.M.Clamp(due - this.nowMs - 16, 0, this.Brain.Visible ? 100 : 250)
-            if (wait > 0) { Sleep(wait) }
+            if (wait > 0) {
+                defined int restStart = this.fpsLog ? Assistant.View.Micros() : 0
+                Sleep(wait)
+                if (this.fpsLog) { this.fpsRestUs += Assistant.View.Micros() - restStart }
+            }
         }
 
         // Lays the bubble out for what it shows: the text takes the room the choices and the question line leave.

@@ -132,8 +132,8 @@ namespace fire.Editor
                 var native = AssistantWantsVm ? default : await Task.Run(() => AssistantNative.Look(script, AppContext.BaseDirectory, folder));
                 if (!_settings.Assistant || _assistant is { HasExited: false }) return;   // (switched off meanwhile)
                 if (native.Binary != null && LaunchAssistant(native.Binary, Array.Empty<string>(), true)) return;
-                // the native build is due: build it now and start the assistant natively when it is done (the VM is far too slow for it) - with TinyCC
-                // as the Build toolchain that takes seconds; only when no native build is possible does it run in the VM
+                // the native build is due: build it now and start the assistant natively when it is done (the VM is far too slow for it) - with GCC
+                // about a minute (AssistantNative.BuildToolchain); only when no native build is possible does it run in the VM
                 if (!AssistantWantsVm && native.Error == null && !native.FailedBefore && native.Toolchain && native.Key != null)
                 {
                     BuildAssistantNatively(forge, script, folder, native.Key, startAfter: true);
@@ -157,7 +157,7 @@ namespace fire.Editor
             Task.Run(() =>
             {
                 using var work = fire.Native.BackgroundWork.Begin("Building the assistant as a native program - it starts when the build is done");
-                return AssistantNative.Build(forge, script, folder, key, p => _assistantBuild = p, null, cancel.Token);
+                return AssistantNative.Build(forge, script, folder, key, p => _assistantBuild = p, null, cancel.Token, AssistantNative.BuildToolchain());
             }).ContinueWith(t => Dispatcher.UIThread.Post(() =>
             {
                 if (_assistantBuildCancel == cancel) _assistantBuildCancel = null;

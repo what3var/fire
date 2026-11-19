@@ -110,6 +110,19 @@ static class SetupWizardTests
             return none && AssistantNative.Current(folder, "K") != null && AssistantNative.Current(folder, "L") == null
                 && AssistantNative.FailedBefore(folder, "F") && !AssistantNative.FailedBefore(folder, "K");
         });
+        // the compiler: GCC without optimisation (the engine of the model optimises itself), else Clang/MSVC as for publishing, TinyCC alone: the machine's
+        Check("Assistent nativ: der Compiler - GCC mit -O0, sonst Clang/MSVC wie zum Veroeffentlichen, nur TinyCC: der Build-Compiler der Maschine", () =>
+        {
+            var machine = new fire.Native.MachineToolchains("tcc", "gcc");
+            Func<fire.Native.ToolchainDef, string?> Only(params string[] kinds) => d => kinds.Contains(d.EffectiveKind) ? "/usr/bin/" + d.EffectiveKind : null;
+            var gcc = AssistantNative.BuildToolchain(machine, Only("tcc", "gcc", "clang"));
+            var clang = AssistantNative.BuildToolchain(machine, Only("tcc", "clang"));
+            var tcc = AssistantNative.BuildToolchain(machine, Only("tcc"));
+            return gcc is { EffectiveKind: "gcc", Optimization: "-O0" } && gcc.Args!.SequenceEqual(new[] { "-w" })
+                && clang is { EffectiveKind: "clang", Optimization: "-O2" } && tcc == null
+                && AssistantNative.Describe(gcc) != AssistantNative.Describe(clang) && AssistantNative.Describe(null) != AssistantNative.Describe(gcc)
+                && AssistantNative.Key(main, tree, new[] { compiler }, AssistantNative.Describe(gcc)) != AssistantNative.Key(main, tree, new[] { compiler }, AssistantNative.Describe(clang));
+        });
         if (OperatingSystem.IsWindows()) return;   // (the stand-ins of forge below are shell scripts)
         Check("Assistent nativ: ein Bau, der scheitert, wird fuer seinen Schluessel gemerkt", () =>
         {
@@ -131,6 +144,19 @@ static class SetupWizardTests
             return r.Binary != null && File.ReadAllText(r.Binary).Trim() == "built" && AssistantNative.Current(folder, "Y") == r.Binary
                 && !r.Output.Contains("##fire-progress") && Directory.GetFiles(folder, "build-*").Length == 0;
         });
+        Check("Assistent nativ: der Compiler geht als Toolchain einer eigenen Konfiguration an forge (--config, --toolchain assistant)", () =>
+        {
+            string folder = Path.Combine(root, "configured");
+            string fake = Path.Combine(root, "fake-forge-args.sh");
+            File.WriteAllText(fake, "#!/bin/sh\necho \"$7 $9 ${10}\" > \"$6\"\n");
+            File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var gcc = AssistantNative.BuildToolchain(new fire.Native.MachineToolchains("tcc", "auto"), d => d.EffectiveKind == "gcc" ? "/usr/bin/gcc" : null)!;
+            var r = AssistantNative.Build(fake, main, folder, "C", toolchain: gcc);
+            string config = Path.Combine(folder, "assistant.native.json");
+            var loaded = File.Exists(config) ? fire.Native.NativeConfig.Load(config).Toolchains.GetValueOrDefault(AssistantNative.ToolchainName) : null;
+            return r.Binary != null && File.ReadAllText(r.Binary).Trim() == "--config --toolchain " + AssistantNative.ToolchainName
+                && loaded is { EffectiveKind: "gcc", Optimization: "-O0" };
+        }, () => File.Exists(Path.Combine(root, "configured", "assistant")) ? File.ReadAllText(Path.Combine(root, "configured", "assistant")) : "no binary");
         Check("Assistent nativ: abgebrochen - kein Binary, kein Fehlschlag gemerkt", () =>
         {
             string folder = Path.Combine(root, "cancelled");

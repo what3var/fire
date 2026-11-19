@@ -16,6 +16,9 @@ namespace fire.Editor.Assistant
     /// as machine code, not in the virtual machine. The build is made again only when what it is made of changed (<see cref="Key"/>: the script, the sources of
     /// the packages it imports - directly or through other packages - and the compiler); a build that failed is not tried again for the same key.
     /// While the build runs the assistant waits (spark starts it when the build is done); only without a C toolchain, or when the build failed, does it run in the VM.
+    /// <para>The compiler is not simply the machine's Build toolchain (<see cref="BuildToolchain"/>): with TinyCC the model's engine (packages/ai) computes ten times
+    /// slower and keeps the machine's cores busy that much longer (the instructions it reads at the start: minutes). GCC builds the program without optimisation
+    /// (about a minute - the engine optimises itself, fire_ai_engine.h), Clang and MSVC as for publishing; TinyCC only when there is no other compiler.</para>
     /// </summary>
     public static class AssistantNative
     {
@@ -30,10 +33,11 @@ namespace fire.Editor.Assistant
 
         /// <summary>The key of a build: SHA-256 over the script, every file of the packages it uses (their folders in <paramref name="packagesFolder"/>, the standard
         /// packages' sources beside forge) and the compiler (<paramref name="compilerFiles"/>: their contents - or, for a large single file, its size and time).</summary>
-        public static string Key(string script, string packagesFolder, IEnumerable<string> compilerFiles)
+        public static string Key(string script, string packagesFolder, IEnumerable<string> compilerFiles, string? toolchain = null)
         {
             using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             void Add(string text) => sha.AppendData(Encoding.UTF8.GetBytes(text + "\n"));
+            if (toolchain != null) Add("toolchain " + toolchain);
             Add("script");
             sha.AppendData(File.ReadAllBytes(script));
             foreach (string folder in PackageFolders(script, packagesFolder))
@@ -140,6 +144,48 @@ namespace fire.Editor.Assistant
             return false;
         }
 
+        /// <summary>The name of the toolchain in the build's configuration (<see cref="ConfigIn"/>).</summary>
+        public const string ToolchainName = "assistant";
+
+        private static string ConfigIn(string folder) => Path.Combine(folder, "assistant.native.json");
+
+        /// <summary>
+        /// The compiler the assistant is built with (null: the machine's Build toolchain, which forge takes itself): GCC - the machine's choice for publishing or
+        /// building when it is GCC, else a GCC that is there - without optimisation of the program (-O0, about a minute for its 400 000 lines; TinyCC takes seconds,
+        /// -O2 minutes) while the engine of the model optimises itself; else Clang or MSVC with their optimisation (as for publishing). Measured (4 cores,
+        /// Qwen3.5 0.8B): TinyCC reads a prompt at 2.8 tokens a second and writes 1.6 a second, GCC -O0 with the engine optimised 41 and 14, GCC -O2 40 and 13.
+        /// <paramref name="find"/> looks for a compiler (default: <see cref="fire.Native.ToolchainDetector.FindC"/>).
+        /// </summary>
+        public static fire.Native.ToolchainDef? BuildToolchain(fire.Native.MachineToolchains? machine = null, Func<fire.Native.ToolchainDef, string?>? find = null)
+        {
+            machine ??= fire.Native.MachineToolchains.Load();
+            find ??= fire.Native.ToolchainDetector.FindC;   // (the program is C)
+            bool There(string kind)
+            {
+                try { return fire.Native.ToolchainDef.BuiltIn.ContainsKey(kind) && find(machine.DefFor(kind)) != null; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { return false; }
+            }
+            fire.Native.ToolchainDef With(string kind, string? optimization, List<string>? args)
+            {
+                var def = machine.DefFor(kind);
+                var copy = new fire.Native.ToolchainDef { Extends = kind, Kind = kind }.WithBase(def);
+                copy.Extends = kind;
+                if (optimization != null) copy.Optimization = optimization;
+                if (args != null) copy.Args = args;
+                return copy;
+            }
+            if (There("gcc")) return With("gcc", "-O0", new List<string> { "-w" });
+            string publish = fire.Native.MachineToolchains.Pick(machine.Publish, fire.Native.ToolchainPurpose.Publish, There).Kind ?? "";
+            if (publish is "clang" or "msvc") return With(publish, null, null);
+            foreach (string kind in new[] { "clang", "msvc" })
+                if (There(kind)) return With(kind, null, null);
+            return null;
+        }
+
+        /// <summary>What a toolchain is for the key of the build (a change builds anew): its kind, compiler and flags.</summary>
+        public static string Describe(fire.Native.ToolchainDef? toolchain) => toolchain == null ? "machine build"
+            : string.Join(" ", toolchain.EffectiveKind, toolchain.Compiler ?? "", toolchain.CCompiler ?? "", toolchain.Optimization ?? "", string.Join(" ", toolchain.Args ?? new List<string>()));
+
         /// <summary>What <see cref="Look"/> found: the key of the build that fits, the binary when it is built (null: not yet), whether that build failed before,
         /// whether there is a C toolchain for it, or why nothing could be looked at.</summary>
         public readonly record struct State(string? Key, string? Binary, bool FailedBefore, bool Toolchain, string? Error);
@@ -150,7 +196,7 @@ namespace fire.Editor.Assistant
         {
             try
             {
-                string key = Key(script, Path.Combine(baseDirectory, "Source"), CompilerFiles(baseDirectory));
+                string key = Key(script, Path.Combine(baseDirectory, "Source"), CompilerFiles(baseDirectory), Describe(BuildToolchain()));
                 string? binary = Current(folder, key);
                 bool failed = binary == null && FailedBefore(folder, key);
                 return new State(key, binary, failed, binary == null && !failed && HasCToolchain(), null);
@@ -169,7 +215,8 @@ namespace fire.Editor.Assistant
         /// place of the binary, and the key beside it. A failure is remembered for the key (<see cref="FailedBefore"/>). <paramref name="started"/> gets forge's
         /// process (spark ends it when it closes), <paramref name="line"/> every line it writes. Only one build at a time (a lock file): a second one returns null at once.
         /// </summary>
-        public static BuildResult Build(string forge, string script, string folder, string key, Action<Process>? started = null, Action<string>? line = null, CancellationToken token = default)
+        public static BuildResult Build(string forge, string script, string folder, string key, Action<Process>? started = null, Action<string>? line = null, CancellationToken token = default,
+            fire.Native.ToolchainDef? toolchain = null)
         {
             Directory.CreateDirectory(folder);
             FileStream gate;
@@ -186,6 +233,14 @@ namespace fire.Editor.Assistant
                     var info = new ProcessStartInfo(forge) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = folder };
                     info.Environment[fire.Native.BackgroundWork.LinesVariable] = "1";
                     foreach (string a in new[] { "build", script, "--engine", "native", "-o", fresh }) info.ArgumentList.Add(a);
+                    if (toolchain != null)
+                    {
+                        // (the compiler as a toolchain of a configuration of its own: forge takes it instead of the machine's Build toolchain)
+                        var config = new fire.Native.NativeConfig();
+                        config.Toolchains[ToolchainName] = toolchain;
+                        config.Save(ConfigIn(folder));
+                        foreach (string a in new[] { "--config", ConfigIn(folder), "--toolchain", ToolchainName }) info.ArgumentList.Add(a);
+                    }
                     using var p = Process.Start(info) ?? throw new IOException("forge did not start.");
                     try { p.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }   // (the editor stays quick while the C compiler works)
                     started?.Invoke(p);
