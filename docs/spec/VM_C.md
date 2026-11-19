@@ -210,7 +210,7 @@ fire-Thread mit der Ebene seiner eigenen Globals (`T:`), `this`. Die Namen der S
 **Tests**: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER=VM-Debugger` (`NativeDebugTests.Vm.cs`): `fire` aus `native/vm/fire.c` gebaut, jeder Fall des nativen
 Debuggers als `.fbc` (Modus Debug), über TCP gegen die C#-VM verglichen - Halte, Tiefen, Aufrufstapel, Scopes, `this`, Globals an jedem Halt, jeder
 Step Into/Over bis zum Ende (auch durch den Prelude) -, dazu die Protokoll-Prüfungen der nativen Builds, die nicht das C betreffen (expand/set, gepackte
-Felder, hello mit Quellen und SHA-256, detach, Profiler, pause/terminate, Threads), und ein Fall über stdio. Stand: VMDBG_STAND.
+Felder, hello mit Quellen und SHA-256, detach, Profiler, pause/terminate, Threads), und ein Fall über stdio. Stand: alle 74 Prüfungen richtig (22 Fälle je Plan, Step Into und Step Over; 7 des Protokolls; stdio); die des nativen Debuggers unverändert. Ohne Debugger kostet der Haken in der Schleife im Rahmen der Messschwankung.
 
 **Offen**: die Eingabe des Programms über den gerahmten Transport erreicht nur, was `fire_dbgStdinRead` liest (die Natives der Pakete lesen stdin
 selbst); fire-Plugins (`sources`) lädt die VM noch nicht; Aufgaben mit `await [...]` auf eigenen Threads melden sich als fire-Threads; ein Frame, der an
