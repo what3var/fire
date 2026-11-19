@@ -78,6 +78,8 @@ struct FcCtx {
     FcList* sharedIncluded;
     void (*directiveHook)(struct FcCtx* c, void* state, const char* name, FcList* args, int line, FcList* importNamespaces);
     void* directiveState;
+    /* the ResourceTable of `new Resource("path")` (Preprocessor.ResolveResources): the full paths, a resource's id is its index; NULL: none */
+    FcList* resourcePaths;
 };
 
 void fcCtxInit(FcCtx* c);

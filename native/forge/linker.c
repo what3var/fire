@@ -417,6 +417,7 @@ static FcFrontend* fcCompileFrontend(FcCtx* c, const char* path, const char* pre
     fcSymbolsForHost(c, c->symbols);
     c->sharedIncluded = fcListNew(c);
     fcListAdd(c, c->sharedIncluded, (void*)full);
+    c->resourcePaths = fcListNew(c);
     c->directiveHook = fcLinkerDirective;
     c->directiveState = L;
     if (!fcReadSource(c, preludePath, &src, &len)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "cannot read the prelude '%s'", preludePath));
