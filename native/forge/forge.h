@@ -65,6 +65,7 @@ typedef struct FcCtx {
     FbMap customTable;     /* symbol and name -> FcCustomUnit* */
     /* Parser._declaredNamespaces */
     FbMap declaredNamespaces;
+    FbMap unitWords;       /* Parser.DefineUnits: the symbols and names of the declared units */
     bool hasDeclaredNamespaces;
 } FcCtx;
 

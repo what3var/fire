@@ -13,7 +13,8 @@ namespace fire.Compiler
 {
     /// <summary>`forge tokens <file>` / `forge ast <file>` (docs/spec/FORGE_C.md): the tokens and the syntax tree of one source as text, with the
     /// diagnostics as forge prints them - the measure for the frontend in C (native/forge, docs/ROADMAP_C_PORT.md Phase C 1/2), which prints the same.
-    /// The source is preprocessed with the default directives (`#include`, the announced ones disappear) and the symbols of a VM run on this machine;
+    /// The source is preprocessed with the directives of a build (`#include`, and the ones Linker registers - their parameters checked,
+    /// without their effects) and the symbols of a VM run on this machine;
     /// `ast` parses it alone, as `Parser.ParseMultiple` of one source named by its file name. `--list <file> --out <dir>` dumps many files, one output
     /// each (`<dir>/<n>.txt`, n the line of the list, from 1).</summary>
     public static class FrontendDump
@@ -38,6 +39,13 @@ namespace fire.Compiler
             return 2;
         }
 
+        /// <summary>The directives Linker registers besides `#include` (name, number of parameters); native/forge/preprocessor.c has the same list.</summary>
+        private static readonly (string Name, int Count)[] LinkerDirectives =
+        {
+            ("import", 1), ("noconsole", 0), ("debug", 0), ("performance", 0), ("floatwidth", 1), ("intwidth", 1), ("name", 1), ("codename", 1),
+            ("description", 1), ("author", 1), ("comments", 1), ("icon", 1), ("version", 1), ("fileversion", 1),
+        };
+
         private static int Dump(string command, string path, Stream output)
         {
             var o = new StringBuilder();
@@ -46,6 +54,8 @@ namespace fire.Compiler
             {
                 string text = File.ReadAllText(path);
                 var registry = DirectiveRegistry.CreateDefault();
+                // the directives a build registers (Linker), with their numbers of parameters - what they do is not part of the frontend
+                foreach (var (name, count) in LinkerDirectives) registry.Register(name, count, (_, _, _) => null);
                 foreach (var symbol in ConditionalSymbols.For(null, ConditionalSymbols.DefaultEngine)) registry.Symbols.Add(symbol);
                 var processed = Preprocessor.Process(text, Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".", registry) with { Name = Path.GetFileName(path) };
                 if (command == "tokens")

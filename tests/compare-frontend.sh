@@ -6,6 +6,8 @@
 #
 # <forge (C#)> is the program forge (or `dotnet .../forge.dll`, quoted); <forge-c> the program built from native/forge/forge.c. Prints the match rate per
 # part of the corpus and the first differences; the outputs stay in the work folder (default: a temporary one). Exit code 0 when everything matches.
+# FRONTEND_MUTANTS=n adds a part "mutants": n damaged copies of every source of the corpus (cut off, a character removed, a piece repeated - the same
+# ones every time), which go through the error paths of the lexer, the preprocessor and the parser.
 set -u
 if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both] [work folder]" >&2; exit 2; fi
 FORGE_CS=$1
@@ -21,12 +23,32 @@ list tests/cases > "$WORK/cases.lst"
 list packages > "$WORK/packages.lst"
 list src/fire.Project > "$WORK/project.lst"
 
+parts=(cases packages project)
+if [ -n "${FRONTEND_MUTANTS:-}" ]; then
+  mkdir -p "$WORK/mutants"
+  cat "$WORK/cases.lst" "$WORK/packages.lst" "$WORK/project.lst" | python3 -c '
+import random, sys
+out, n = sys.argv[1], int(sys.argv[2])
+random.seed(7)
+names = []
+for k, path in enumerate(l.rstrip("\n") for l in sys.stdin):
+    data = open(path, encoding="utf-8", errors="replace").read()
+    for m in range(n if data else 0):
+        i, j, r = random.randrange(len(data)), random.randrange(len(data)), random.random()
+        text = data[:i] if r < 0.34 else data[:i] + data[i + 1:] if r < 0.67 else data[:i] + data[j:j + random.randrange(1, 20)] + data[i:]
+        name = "%s/m%05d-%d.fire" % (out, k, m)
+        open(name, "w", encoding="utf-8").write(text)
+        names.append(name)
+print("\n".join(names))' "$WORK/mutants" "$FRONTEND_MUTANTS" > "$WORK/mutants.lst"
+  parts+=(mutants)
+fi
+
 status=0
 kinds=(tokens ast)
 [ "$WHAT" = tokens ] && kinds=(tokens)
 [ "$WHAT" = ast ] && kinds=(ast)
 for kind in "${kinds[@]}"; do
-  for part in cases packages project; do
+  for part in "${parts[@]}"; do
     lst="$WORK/$part.lst"
     total=$(wc -l < "$lst")
     rm -rf "$WORK/$kind-$part-cs" "$WORK/$kind-$part-c"

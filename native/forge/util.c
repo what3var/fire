@@ -69,6 +69,7 @@ void fcCtxInit(FcCtx* c) {
 void fcCtxFree(FcCtx* c) {
     fbMapFree(&c->customTable);
     fbMapFree(&c->declaredNamespaces);
+    fbMapFree(&c->unitWords);
     fbArenaFree(&c->arena);
 }
 

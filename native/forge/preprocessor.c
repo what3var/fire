@@ -1,5 +1,5 @@
 /* native/forge/preprocessor.c - port of src/fire.Compiler/Preprocessor.cs (commit df5ad3c3): Preprocessor, DirectiveRegistry (the default one:
- * `#include` and the announced directives), ProcessedSource. Not ported: the resources of `new Resource("path")` (only with a ResourceTable, which
+ * `#include` and the directives Linker registers, with their numbers of parameters - without their effects), ProcessedSource. Not ported: the resources of `new Resource("path")` (only with a ResourceTable, which
  * the frontend dumps do not have) and markup files included with `#include` (Phase C 5: an internal error). */
 
 typedef struct FcProcessed {
@@ -18,9 +18,13 @@ typedef struct FcPreprocessor {
     FcList* alreadyIncluded;  /* full paths (case-insensitive, as the C# set) */
 } FcPreprocessor;
 
-/* the directives the default registry knows (DirectiveRegistry constructor and CreateDefault): announced ones disappear, `include` has a handler */
-static const char* const fcAnnounced[] = { "import", "include", "name", "codename", "author", "comments", "description", "icon", "debug", "performance",
-    "floatwidth", "noconsole", "version", "fileversion" };
+/* the directives of the registry: DirectiveRegistry.CreateDefault (`include` with its handler) and what Linker registers, with the number of
+ * parameters (the dumps register them without effects, src/fire.Compiler/FrontendDump.cs LinkerDirectives) - the line of each disappears */
+typedef struct FcDirectiveDef { const char* name; int paramCount; } FcDirectiveDef;
+static const FcDirectiveDef fcDirectives[] = {
+    {"import", 1}, {"include", 1}, {"name", 1}, {"codename", 1}, {"author", 1}, {"comments", 1}, {"description", 1}, {"icon", 1}, {"debug", 0},
+    {"performance", 0}, {"floatwidth", 1}, {"noconsole", 0}, {"version", 1}, {"fileversion", 1}, {"intwidth", 1},
+};
 
 static bool fcAsciiIEq(const char* a, const char* b) {
     for (; *a && *b; a++, b++) {
@@ -184,11 +188,15 @@ static void fcLexDirectiveArgs(FcCtx* c, FcSlice argText, const char* defName, i
     } FC_END_TRY;
 }
 
-/* ParseDirectiveArgs + ReadDirectiveLiteral for the one directive with parameters (`#include`, 1 parameter): the tokens of the values */
+/* ParseDirectiveArgs + ReadDirectiveLiteral: the tokens of the values (the kind of a value is all a handler here asks) */
 static FcList* fcParseDirectiveArgs(FcCtx* c, FcSlice argText, const char* defName, int paramCount, int line) {
     FcTokens tokens;
     FcList* values = fcListNew(c);
     int i = 0;
+    if (paramCount == 0) {
+        if (fcSliceTrim(argText).n > 0) fcPreError(c, fcFmt(c, "'#%s' expects no parameters (line %d).", defName, line));
+        return values;
+    }
     fcLexDirectiveArgs(c, argText, defName, line, &tokens);
     while (i < tokens.count && tokens.items[i].type != TT_Eof) {
         FcToken* tok = &tokens.items[i];
@@ -277,14 +285,13 @@ static void fcProcessInner(FcPreprocessor* pp, const uint16_t* source, int lengt
         }
         {
             size_t k;
-            bool known = false;
-            for (k = 0; k < sizeof fcAnnounced / sizeof fcAnnounced[0]; k++) if (fcAsciiIEq(name, fcAnnounced[k])) known = true;
-            if (!known) { fcU16Put(out, line.p, line.n); fcU16Unit(out, '\n'); goto next; }
-            if (!fcAsciiIEq(name, "include")) { fcU16Unit(out, '\n'); goto next; }
+            const FcDirectiveDef* def = NULL;
+            for (k = 0; k < sizeof fcDirectives / sizeof fcDirectives[0]; k++) if (fcAsciiIEq(name, fcDirectives[k].name)) def = &fcDirectives[k];
+            if (!def) { fcU16Put(out, line.p, line.n); fcU16Unit(out, '\n'); goto next; }
             {
-                FcList* args = fcParseDirectiveArgs(c, argument, "include", 1, lineNo + 1);
+                FcList* args = fcParseDirectiveArgs(c, argument, def->name, def->paramCount, lineNo + 1);
                 int before = out->len;
-                fcIncludeHandler(pp, basePath, args, lineNo + 1, out);
+                if (strcmp(def->name, "include") == 0) fcIncludeHandler(pp, basePath, args, lineNo + 1, out);
                 if (out->len > before) { if (!fcU16EndsWithNewline(out, before)) fcU16Unit(out, '\n'); }
                 else fcU16Unit(out, '\n');
             }
