@@ -35,6 +35,10 @@ namespace fire.Bytecode
 
         /// <summary>Flag of the header: the chunks carry their line tables (what an error message, the debugger and the native backend's `#line` need).</summary>
         private const int FlagLines = 1;
+        /// <summary>Flag of the header: behind the top level chunk the sources of the program - file and SHA-256 by source index (LinkedProgram.SourceFiles,
+        /// SourceHashes), what the debugger of the VM in C says in its hello (docs/spec/NATIVE_DEBUG_PROTOCOL.md). Written for a program in the mode Debug with
+        /// line tables.</summary>
+        private const int FlagSources = 2;
 
         // the tags of a constant
         private const byte TagUndefined = 0, TagBool = 1, TagInt = 2, TagFloat = 3, TagChar = 4, TagString = 5, TagWord = 6;
@@ -119,6 +123,14 @@ namespace fire.Bytecode
                 foreach (var (name, rc) in p.Classes) { Str(name); Count(_classes[rc]); }
 
                 ChunkRef(p.TopLevel);
+                bool sources = _lines && linked.ExecutionMode == VmExecutionMode.Debug && linked.SourceFiles != null;
+                if (sources)
+                {
+                    var files = linked.SourceFiles!;
+                    var hashes = linked.SourceHashes;
+                    Count(files.Count);
+                    for (int i = 0; i < files.Count; i++) { Str(files[i]); Str(hashes != null && i < hashes.Count ? hashes[i] : null); }
+                }
 
                 // the tables are complete only now, and they stand before the program: the units and the enums first (they add names), then the names
                 var body = _out;
@@ -137,7 +149,7 @@ namespace fire.Bytecode
                 _out = new MemoryStream();
                 _out.Write(Magic);
                 U8(Version);
-                U8((byte)(_lines ? FlagLines : 0));
+                U8((byte)((_lines ? FlagLines : 0) | (sources ? FlagSources : 0)));
                 Count(_stringList.Count);
                 foreach (var s in _stringList) Bytes(Encoding.UTF8.GetBytes(s));
                 tables.WriteTo(_out);
@@ -558,7 +570,8 @@ namespace fire.Bytecode
                 _at = 4;
                 int version = U8();
                 if (version != Version) throw new ProgramFileException($"The program file has version {version} of the format; this program reads version {Version}.");
-                _lines = (U8() & FlagLines) != 0;
+                int flags = U8();
+                _lines = (flags & FlagLines) != 0;
 
                 Strings();
                 _units = new Unit[Count()];
@@ -612,6 +625,13 @@ namespace fire.Bytecode
                 for (int n = Count(); n > 0; n--) { string name = Name(); classes[name] = classList[Count()]; }
 
                 var topLevel = ChunkRef();
+                List<string?>? sourceFiles = null, sourceHashes = null;
+                if ((flags & FlagSources) != 0)
+                {
+                    sourceFiles = new List<string?>();
+                    sourceHashes = new List<string?>();
+                    for (int n = Count(); n > 0; n--) { sourceFiles.Add(Str()); sourceHashes.Add(Str()); }
+                }
                 if (_at != _in.Length) throw new ProgramFileException("The program file is damaged (bytes behind its end).");
 
                 var compiled = new CompiledProgram { TopLevel = topLevel, Classes = classes, ExternSignatures = externs, Resources = resources, EnumDecls = enumDecls, CustomUnits = customUnits };
@@ -620,6 +640,7 @@ namespace fire.Bytecode
                 {
                     FloatWidth = floatWidth, IntWidth = intWidth, WordWidth = wordWidth,
                     PackageNatives = packageNatives?.ToList()!, PackageNativeLibraries = packageLibraries?.ToList()!, GraphicsNatives = graphicsNatives?.ToList()!,
+                    SourceFiles = sourceFiles, SourceHashes = sourceHashes,
                 };
             }
 

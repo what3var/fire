@@ -4,7 +4,7 @@
  * runtime's unit table when the program starts), the enums (the runtime's g_enums), the classes with their fields, field infos, statics, methods,
  * constructors (by arity and the extra ones of overloading by type) and destructor, the chunks (code, constants, units, functions, handlers, line tables)
  * and the functions (parameters, defaults, access, masks, overload descriptors, specializations). Parsed and skipped: custom units (their units are in the
- * unit table), externs, the meta data of the classes (reflection, phase B step 5), receiverTypeArgs and the names of locals (the debugger, step 6). */
+ * unit table), externs, the meta data of the classes (reflection, phase B step 5), receiverTypeArgs. The names of locals and the sources are kept for the debugger (vm_debug.c). */
 
 static void vmOom(void) { fputs("fire vm: out of memory\n", stderr); exit(3); }
 #define vmAlloc(a, n) fbAlloc((a), (n))
@@ -282,8 +282,27 @@ static VmChunk* rdChunk(VmReader* r) {
         c->lines = (int32_t*)vmAlloc(a, (3 * n + 1) * sizeof(int32_t));
         for (i = 0; i < n; i++) { c->lines[3 * i] = (int32_t)rdInt(r); c->lines[3 * i + 1] = (int32_t)rdInt(r); c->lines[3 * i + 2] = (int32_t)rdInt(r); }
     }
-    n = rdCount(r);                             /* DebugLocalNames (the debugger) */
-    while (n--) { rdInt(r); rdInt(r); rdName(r); }
+    n = rdCount(r);                             /* DebugLocalNames (the debugger, vm_debug.c): depth -1 = the DeclareLocal at the offset, depth 0 = a parameter */
+    if (n) {
+        int64_t* e = (int64_t*)malloc(2 * (size_t)n * sizeof(int64_t));
+        const char** names = (const char**)malloc((size_t)n * sizeof(char*));
+        uint32_t k, maxDecl = 0, maxLocal = 0;
+        if (!e || !names) vmOom();
+        for (k = 0; k < n; k++) {
+            e[2 * k] = rdInt(r); e[2 * k + 1] = rdInt(r); names[k] = rdName(r);
+            if (e[2 * k + 1] < 0 || e[2 * k + 1] > 0x7FFFFFF) continue;
+            if (e[2 * k] == -1 && (uint32_t)e[2 * k + 1] >= maxDecl) maxDecl = (uint32_t)e[2 * k + 1] + 1;
+            if (e[2 * k] == 0 && (uint32_t)e[2 * k + 1] >= maxLocal) maxLocal = (uint32_t)e[2 * k + 1] + 1;
+        }
+        if (maxDecl) { c->declNames = (const char**)vmAlloc(a, maxDecl * sizeof(char*)); c->ndeclNames = maxDecl; }
+        if (maxLocal) { c->localNames = (const char**)vmAlloc(a, maxLocal * sizeof(char*)); c->nlocalNames = maxLocal; }
+        for (k = 0; k < n; k++) {
+            if (e[2 * k + 1] < 0 || e[2 * k + 1] > 0x7FFFFFF) continue;
+            if (e[2 * k] == -1) c->declNames[e[2 * k + 1]] = names[k];
+            else if (e[2 * k] == 0) c->localNames[e[2 * k + 1]] = names[k];
+        }
+        free(e); free(names);
+    }
     return c;
 }
 
@@ -484,7 +503,7 @@ static void rdEnums(VmReader* r, FireEnum** out, uint32_t* count) {
 static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t errorCap) {
     VmReader r;
     VmProgram* volatile p = (VmProgram*)calloc(1, sizeof(VmProgram));
-    uint32_t n, i;
+    uint32_t n, i, flags;
     if (!p) vmOom();
     memset(&r, 0, sizeof r);
     p->interns.arena = &p->arena;
@@ -503,7 +522,8 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
     if (len < 6 || in[0] != 'F' || in[1] != 'B' || in[2] != 'C' || in[3] != 0x1A) { snprintf(r.error, sizeof r.error, "Not a fire program file (.fbc)."); longjmp(r.fail, 1); }
     r.at = 4;
     if (rdU8(&r) != 1) { snprintf(r.error, sizeof r.error, "The program file has another version of the format; this VM reads version 1."); longjmp(r.fail, 1); }
-    r.lines = (rdU8(&r) & 1) != 0;
+    flags = rdU8(&r);
+    r.lines = (flags & 1) != 0;
     n = rdCount(&r);
     p->nnames = n;
     p->names = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
@@ -511,7 +531,7 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
     rdUnits(&r);
     rdEnums(&r, &p->enums, &p->nenums);
     p->mode = (uint8_t)rdU8(&r); p->floatWidth = (uint8_t)rdU8(&r); p->intWidth = (uint8_t)rdU8(&r); p->wordWidth = (uint8_t)rdU8(&r);
-    rdInt(&r);                               /* firstUserSource */
+    p->firstUserSource = (int32_t)rdInt(&r);
     p->nativeImports = rdStrList(&r, &p->nnativeImports);
     p->packageNatives = rdOptStrList(&r, &p->npackageNatives);
     p->packageLibraries = rdOptStrList(&r, &p->npackageLibraries);
@@ -575,8 +595,16 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
         fbMapPut(&p->classByName, name, p->classes[k]);
     }
     p->top = rdChunk(&r);
+    if (flags & 2) {                         /* the sources (a debug build): file and SHA-256 by source index, for the debugger */
+        n = rdCount(&r);
+        p->nsources = n;
+        p->sourceFiles = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
+        p->sourceHashes = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
+        for (i = 0; i < n; i++) { p->sourceFiles[i] = rdStr(&r); p->sourceHashes[i] = rdStr(&r); }
+    }
     if (r.at != r.len) rdFail(&r, "bytes behind its end");
-    free(r.protos); free(r.chunks);
+    free(r.protos);
+    p->chunks = r.chunks; p->nchunks = r.nchunks;
     /* the base-type extensions (`class extends string`, BaseTypeExtensions.ClassNameFor) */
     p->extClass[K_String] = (VmClass*)fbMapGet(&p->classByName, "$string");
     p->extClass[K_Char] = (VmClass*)fbMapGet(&p->classByName, "$char");
@@ -590,6 +618,7 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
 static void vmUnload(VmProgram* p) {
     uint32_t i;
     if (!p) return;
+    free(p->chunks);
     for (i = 0; i < p->nstrs; i++) free(p->strs[i]);
     free(p->strs);
     fbMapFree(&p->classByName);

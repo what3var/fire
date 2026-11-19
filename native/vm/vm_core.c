@@ -45,6 +45,7 @@ static VmScope* scNew(Vm* vm, VmScope* parent) {
     s->parent = parent;
     s->n = 0;
     s->hi = 0;
+    s->nnames = 0;
     s->own = scopeList(poolMark());
     s->temp = scopeList(0xFFFFFFFFu);
     s->temp.home = &s->own;
@@ -756,6 +757,7 @@ static void vmCatchFn(void* ctx, uint32_t ci, Value e) {
 static void vmUnhandledFn(void* ctx, uint32_t ci, Value e) {
     Vm* vm = (Vm*)ctx;
     (void)ci;
+    if (FIRE_UNLIKELY(g_dbgArmed) && vmDbgUnhandled(e)) return;   /* (the debugger: stopped at the throw site; `resume` - the throw gives undefined) */
     reportUnhandled(e);
     vm->failed = 1;
     if (!vm->quiet) { vm->quiet = 1; g_zombies.quiet++; }

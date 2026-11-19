@@ -71,7 +71,8 @@ static void vmStrandFree(Vm* vm, bool keepGlobal) {
         vm->global->n = vm->global->hi = 0;
         vm->global->nextFree = vm->freeScopes; vm->freeScopes = vm->global;
     } else scLeave(vm, vm->global);
-    while (vm->freeScopes) { VmScope* s = vm->freeScopes; vm->freeScopes = s->nextFree; free(s->slots); free(s); }
+    while (vm->freeScopes) { VmScope* s = vm->freeScopes; vm->freeScopes = s->nextFree; free(s->slots); free(s->names); free(s); }
+    vmDbgFree(vm);
     free(vm->stack);
     free(vm->frames);
     free(vm);
