@@ -34,6 +34,11 @@
 #include "typeref.c"
 #include "resolver.c"
 #include "typechecker.c"
+#include "bytecode.c"
+#include "compiler.c"
+#include "compiler2.c"
+#include "compilertrees.c"
+#include "programfile.c"
 
 void fbOutOfMemory(void) {
     fputs("forge-c: out of memory\n", stderr);
@@ -114,6 +119,14 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
     source = (const uint16_t*)fcAlloc(c, sizeof(uint16_t) * (size_t)(n + 1));
     if (n) memcpy((void*)source, text.p, sizeof(uint16_t) * (size_t)n);
     fcU16Free(&text);
+    if (strncmp(job->command, "fbc:", 4) == 0) {
+        /* `fbc <mode>`: the program file `forge bytecode <file> -m <mode>` writes */
+        const char* m = job->command + 4;
+        int mode = strcmp(m, "debug") == 0 ? 0 : strcmp(m, "release") == 0 ? 1 : strcmp(m, "performance") == 0 ? 2 : -1;
+        FcLinked* linked = fcLinkFile(c, job->path, job->prelude, job->store, fcStrictTag(job->path), mode);
+        fcProgramFileWrite(c, linked, true, job->out);
+        return;
+    }
     if (strcmp(job->command, "diagnostics") == 0) {
         fcU16Free(&text);
         c->collecting = true;
@@ -161,6 +174,7 @@ static int fcDump(const char* command, const char* path, FILE* out, const char* 
         int i;
         if (strcmp(command, "ast") == 0) o.len = 0, o.p[0] = 0;   /* (the tree is written only when the parse is done) */
         if (strcmp(command, "diagnostics") == 0) { o.len = 0; o.p[0] = 0; for (i = 0; i < ctx.diags->count; i++) fcDiagLogLine(&o, (const FcDiagnostic*)ctx.diags->items[i]); }
+        if (strncmp(command, "fbc:", 4) == 0) { o.len = 0; fcBufStr(&o, "error\n"); }
         for (i = 0; i < diags->count; i++) fcDiagLogLine(&o, (const FcDiagnostic*)diags->items[i]);
         result = 1;
     } FC_END_TRY;
@@ -192,12 +206,64 @@ static const char* fcFindStore(const char* exe, char* buf, size_t n) {
     return buf;
 }
 
-static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0; }
+static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0 || strncmp(s, "fbc:", 4) == 0; }
 
 int main(int argc, char** argv) {
     char preludeBuf[4096], storeBuf[4096];
     const char* prelude = fcFindPrelude(argv[0], preludeBuf, sizeof preludeBuf);
     const char* store = fcFindStore(argv[0], storeBuf, sizeof storeBuf);
+    char fbcCommand[64];
+    /* `fbc <mode> ...`: the mode is part of the command */
+    if (argc >= 4 && strcmp(argv[1], "fbc") == 0 && strlen(argv[2]) < 32) {
+        snprintf(fbcCommand, sizeof fbcCommand, "fbc:%s", argv[2]);
+        argv[2] = fbcCommand;
+        argv++;
+        argc--;
+    }
+    /* `bytecode <file> -o <out> [-m MODE]`: the program file as forge bytecode writes it */
+    if (argc >= 5 && strcmp(argv[1], "bytecode") == 0) {
+        const char* file = NULL;
+        const char* out = NULL;
+        const char* mode = "default";
+        int i;
+        FILE* f;
+        for (i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) out = argv[++i];
+            else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) { i++; mode = fcAsciiIEq(argv[i], "debug") ? "debug" : fcAsciiIEq(argv[i], "performance") ? "performance" : "release"; }
+            else if (strcmp(argv[i], "--types") == 0 && i + 1 < argc) i++;
+            else file = argv[i];
+        }
+        if (!file || !out) { fprintf(stderr, "usage: forge-c bytecode <file.fire> -o <file.fbc> [-m DEBUG|RELEASE|PERFORMANCE]\n"); return 2; }
+        snprintf(fbcCommand, sizeof fbcCommand, "fbc:%s", mode);
+        {
+            FcCtx ctx;
+            FcBuf o = {0};
+            FcDumpJob job;
+            volatile int result = 0;
+            fcCtxInit(&ctx);
+            fcBufStr(&o, "");
+            job.command = fbcCommand; job.path = file; job.out = &o; job.prelude = prelude; job.store = store;
+            FC_TRY(&ctx) {
+                fcDumpRun(&ctx, &job);
+            } FC_CATCH(&ctx) {
+                FcList* diags = fcDiagnosticsOf(&ctx, &ctx.err, NULL);
+                FcBuf e = {0};
+                fcBufStr(&e, "");
+                for (i = 0; i < diags->count; i++) fcDiagLogLine(&e, (const FcDiagnostic*)diags->items[i]);
+                fwrite(e.p, 1, e.len, stderr);
+                fcBufFree(&e);
+                result = 1;
+            } FC_END_TRY;
+            if (result == 0) {
+                f = fopen(out, "wb");
+                if (!f) { fprintf(stderr, "forge-c: cannot write %s\n", out); result = 1; }
+                else { fwrite(o.p, 1, o.len, f); fclose(f); printf("%s (%zu bytes)\n", fcFullPath(&ctx, ".", out), o.len); }
+            }
+            fcBufFree(&o);
+            fcCtxFree(&ctx);
+            return result;
+        }
+    }
     if (argc == 3 && fcIsCommand(argv[1])) return fcDump(argv[1], argv[2], stdout, prelude, store);
     if (argc == 6 && fcIsCommand(argv[1]) && strcmp(argv[2], "--list") == 0 && strcmp(argv[4], "--out") == 0) {
         size_t len = 0;

@@ -112,7 +112,9 @@ typedef struct FcPkgImport {
     bool hasNative;
     FcList* functions;            /* names */
     FcList* returns;              /* their "returns" (NULL: none), in the same order */
+    FcList* hosts;                /* their "host" (FC_IVAL(0/1)), in the same order */
     const char* dir;              /* the package's folder */
+    const char* packageName;      /* the "name" of the package */
 } FcPkgImport;
 
 typedef struct FcStore { const char* root; FcList* imports; bool loaded; } FcStore;
@@ -180,6 +182,8 @@ static void fcStoreLoad(FcCtx* c, FcStore* store) {
             if (v && v->kind == FJ_ARR) for (f = 0; f < v->items->count; f++) if (((FcJson*)v->items->items[f])->kind == FJ_STR) fcListAdd(c, pi->requires, (void*)((FcJson*)v->items->items[f])->s);
             pi->functions = fcListNew(c);
             pi->returns = fcListNew(c);
+            pi->hosts = fcListNew(c);
+            pi->packageName = fcJsonStr(manifest, "name");
             v = fcJsonGet(im, "native");
             if (v && v->kind == FJ_OBJ) {
                 FcJson* fns = fcJsonGet(v, "functions");
@@ -190,6 +194,7 @@ static void fcStoreLoad(FcCtx* c, FcStore* store) {
                         if (!fcJsonStr(fn, "name")) continue;
                         fcListAdd(c, pi->functions, (void*)fcJsonStr(fn, "name"));
                         fcListAdd(c, pi->returns, (void*)fcJsonStr(fn, "returns"));
+                        { FcJson* h = fcJsonGet(fn, "host"); fcListAdd(c, pi->hosts, FC_IVAL(h && h->kind == FJ_BOOL && h->b)); }
                     }
             }
             pi->dir = dir;
@@ -226,7 +231,9 @@ typedef struct FcLinker {
     FcStore store;
     FcDict nativeImports;       /* HashSet<string> */
     FcDict natives;             /* the names of the NativeRegistry */
+    FcNatives registry;         /* the NativeRegistry with its indexes */
     int directiveIntWidth, directiveFloatWidth;   /* FC_NULL_INT: none */
+    int executionMode;          /* AssemblyInfo.ExecutionMode: 0 Debug, 1 Release, 2 Performance */
 } FcLinker;
 
 /* ImportedPreludes.ParseImportName */
@@ -279,6 +286,8 @@ static void fcLinkerDirective(FcCtx* c, void* state, const char* name, FcList* a
         if (pi && !pi->standard && pi->prelude && pi->prelude[0] && !fcListHasStr(importNamespaces, pi->name)) fcListAdd(c, importNamespaces, (void*)pi->name);
         return;
     }
+    if (streq0(name, "debug")) { L->executionMode = 0; return; }
+    if (streq0(name, "performance")) { L->executionMode = 2; return; }
     if (streq0(name, "floatwidth")) {
         if (!(arg->type == TT_IntLiteral && (arg->intValue == 32 || arg->intValue == 64))) fcThrow(c, FC_ERR_LINKER, 1, 0, NULL, "The 'floatwidth' directive expects 32 or 64.");
         L->directiveFloatWidth = (int)arg->intValue;
@@ -295,7 +304,7 @@ static void fcLinkerDirective(FcCtx* c, void* state, const char* name, FcList* a
     }
 }
 
-static void fcRegisterNative(FcLinker* L, const char* name) { fcSetAdd(&L->natives, name); }
+static void fcRegisterNative(FcLinker* L, const char* name) { fcSetAdd(&L->natives, name); fcNativesRegister(L->c, &L->registry, name); }
 
 /* the text of a file as fc8 units (File.ReadAllText) into the arena */
 static bool fcReadSource(FcCtx* c, const char* path, const uint16_t** source, int* length) {
@@ -388,7 +397,7 @@ static FcDict* fcNativeReturnTypes(FcLinker* L) {
 }
 
 /* the result of the frontend: the program as the type checker left it */
-typedef struct FcFrontend { FcList* program; FcResolveResult* resolved; int firstUserSource; FcList* processed; } FcFrontend;
+typedef struct FcFrontend { FcList* program; FcResolveResult* resolved; int firstUserSource; FcList* processed; FcLinker* linker; const uint16_t* userText; int userLength; } FcFrontend;
 
 static void fcTypeCheckRun(FcCtx* c, FcList* program, FcResolveResult* resolved, bool strict, int firstUserSource, int reportFrom, int intWidth, int floatWidth, FcDict* nativeReturns);
 
@@ -409,7 +418,9 @@ static FcFrontend* fcCompileFrontend(FcCtx* c, const char* path, const char* pre
     L->directiveIntWidth = L->directiveFloatWidth = FC_NULL_INT;
     fcDictInit(c, &L->nativeImports, FC_KEY_STR);
     fcDictInit(c, &L->natives, FC_KEY_STR);
-    fcRegisterNative(L, "print");
+    fcNativesInit(c, &L->registry);
+    L->executionMode = 1;
+    /* ("print" and the base natives: natives.def is NativeRegistry.CreateDefault) */
 #define FIRE_NATIVE(index, name, tryable) fcRegisterNative(L, name);
 #include "../tables/natives.def"
 #undef FIRE_NATIVE
@@ -418,11 +429,15 @@ static FcFrontend* fcCompileFrontend(FcCtx* c, const char* path, const char* pre
     c->sharedIncluded = fcListNew(c);
     fcListAdd(c, c->sharedIncluded, (void*)full);
     c->resourcePaths = fcListNew(c);
+    c->resourceNames = fcListNew(c);
     c->directiveHook = fcLinkerDirective;
     c->directiveState = L;
     if (!fcReadSource(c, preludePath, &src, &len)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "cannot read the prelude '%s'", preludePath));
     fcListAdd(c, processed, fcPreprocess(c, src, len, folder));
     if (!fcReadSource(c, full, &src, &len)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "cannot read '%s'", path));
+    fe->userText = src;
+    fe->userLength = len;
+    fe->linker = L;
     p = fcPreprocess(c, src, len, folder);
     p->name = fcStr(c, fcBaseName(path));
     fcListAdd(c, processed, p);
@@ -438,4 +453,149 @@ static FcFrontend* fcCompileFrontend(FcCtx* c, const char* path, const char* pre
     floatWidth = L->directiveFloatWidth != FC_NULL_INT ? L->directiveFloatWidth : 64;
     fcTypeCheckRun(c, fe->program, fe->resolved, strict, firstUserSource, firstUserSource, intWidth, floatWidth, fcNativeReturnTypes(L));
     return fe;
+}
+
+/* ---- the rest of Linker.CompileAndLink: the bytecode compiler and the linked program ---- */
+
+/* FloatNarrowing (src/fire/Runtime/FloatNarrowing.cs): the constants of every chunk once, narrowed */
+typedef FcConst* (*FcNarrow)(FcCtx* c, const FcConst* v, int bits);
+static FcConst* fcNarrowFloat(FcCtx* c, const FcConst* v, int bits) {
+    FcConst* k;
+    (void)bits;
+    if (v->kind != CK_Float) return NULL;
+    k = (FcConst*)fcAlloc(c, sizeof *k); *k = *v;
+    k->f = (double)(float)v->f;
+    return k;
+}
+static int64_t fcCutInt(int64_t v, int bits) { return bits == 16 ? (int64_t)(int16_t)v : (int64_t)(int32_t)v; }
+static FcConst* fcNarrowInt(FcCtx* c, const FcConst* v, int bits) {
+    FcConst* k;
+    if (!(v->kind == CK_Int && v->wide == 0 && fcCutInt(v->i, bits) != v->i)) return NULL;
+    k = (FcConst*)fcAlloc(c, sizeof *k); *k = *v;
+    k->i = v->en ? (int64_t)(int32_t)fcCutInt(v->i, bits) : fcCutInt(v->i, bits);
+    if (v->en) k->width = 64;
+    return k;
+}
+typedef struct FcNarrowing { FcCtx* c; FcDict* seen; FcNarrow narrow; int bits; } FcNarrowing;
+static void fcNarrowChunk(FcNarrowing* n, FcChunk* chunk);
+static void fcNarrowProto(FcNarrowing* n, FcProto* proto) {
+    int i;
+    if (!proto || !fcSetAdd(n->seen, proto->chunk)) return;
+    fcNarrowChunk(n, proto->chunk);
+    for (i = 0; i < proto->paramDefaults->count; i++) fcNarrowProto(n, (FcProto*)proto->paramDefaults->items[i]);
+}
+static void fcNarrowChunk(FcNarrowing* n, FcChunk* chunk) {
+    int i;
+    for (i = 0; i < chunk->constants->count; i++) {
+        FcConst* narrowed = n->narrow(n->c, (FcConst*)chunk->constants->items[i], n->bits);
+        if (narrowed) chunk->constants->items[i] = narrowed;
+    }
+    for (i = 0; i < chunk->functions->count; i++) fcNarrowProto(n, (FcProto*)chunk->functions->items[i]);
+}
+static void fcNarrow(FcCtx* c, FcCompiled* program, FcNarrow narrow, int bits) {
+    FcNarrowing n;
+    int i;
+    n.c = c; n.seen = fcDictNew(c, FC_KEY_PTR); n.narrow = narrow; n.bits = bits;
+    if (fcSetAdd(n.seen, program->topLevel)) fcNarrowChunk(&n, program->topLevel);
+    FC_DICT_EACH(program->classes, e) {
+        FcRtClass* rc = (FcRtClass*)e->value;
+        for (i = 0; i < rc->fieldInits->count; i++) fcNarrowProto(&n, (FcProto*)rc->fieldInits->items[i]);
+        for (i = 0; i < rc->staticFieldInits->count; i++) fcNarrowProto(&n, (FcProto*)rc->staticFieldInits->items[i]);
+        FC_DICT_EACH(rc->methods, m) { FcList* overloads = (FcList*)m->value; int k; for (k = 0; k < overloads->count; k++) fcNarrowProto(&n, (FcProto*)overloads->items[k]); }
+        for (i = 0; i < rc->ctorProtos->count; i++) fcNarrowProto(&n, (FcProto*)rc->ctorProtos->items[i]);
+        for (i = 0; i < rc->extraConstructors->count; i++) fcNarrowProto(&n, (FcProto*)rc->extraConstructors->items[i]);
+        fcNarrowProto(&n, rc->destructor);
+    }
+}
+
+/* PackageLibrary.Safe */
+static const char* fcPkgSafe(FcCtx* c, const char* text) {
+    FcBuf b = {0};
+    const unsigned char* p = (const unsigned char*)text;
+    fcBufStr(&b, "");
+    while (*p) {
+        uint16_t u = fc8Next(&p);
+        if (fcIsLetterOrDigit(u)) { if (u < 0x80) fcBufChar(&b, (char)tolower(u)); else fcBufUnit(&b, u); }
+        else fcBufChar(&b, '_');
+    }
+    return fcBufDone(c, &b);
+}
+#ifdef _WIN32
+#define FC_LIB_PREFIX ""
+#define FC_LIB_EXT ".dll"
+#elif defined(__APPLE__)
+#define FC_LIB_PREFIX "lib"
+#define FC_LIB_EXT ".dylib"
+#else
+#define FC_LIB_PREFIX "lib"
+#define FC_LIB_EXT ".so"
+#endif
+/* PackageImports.NativesOf */
+static void fcPackageNativesOf(FcLinker* L, FcList** names, FcList** libraries) {
+    FcCtx* c = L->c;
+    FcList* keys = fcListNew(c);
+    int i, f;
+    *names = fcListNew(c);
+    *libraries = fcListNew(c);
+    FC_DICT_EACH(&L->nativeImports, e) if (fcStartsWith((const char*)e->key, "pkg:")) fcListAdd(c, keys, (void*)e->key);
+    if (keys->count > 1) qsort(keys->items, (size_t)keys->count, sizeof(void*), fcCmpOrdinal);
+    for (i = 0; i < keys->count; i++) {
+        FcPkgImport* pi = fcStoreFindKey(c, &L->store, (const char*)keys->items[i]);
+        if (!pi || !pi->hasNative) continue;
+        for (f = 0; f < pi->functions->count; f++) {
+            const char* name = (const char*)pi->functions->items[f];
+            if (fcListHasStr(*names, name)) continue;
+            fcListAdd(c, *names, (void*)name);
+            if (FC_VALI(pi->hosts->items[f])) fcListAdd(c, *libraries, (void*)"@host");
+            else fcListAdd(c, *libraries, (void*)fcFmt(c, FC_LIB_PREFIX "fire_pkg_%s_%s" FC_LIB_EXT, fcPkgSafe(c, pi->packageName ? pi->packageName : ""), fcPkgSafe(c, pi->name)));
+        }
+    }
+}
+
+/* Linker.CompileAndLink for one file (as `forge bytecode <file> [-m <mode>]`): the linked program. modeOverride: -1 none */
+static FcLinked* fcLinkFile(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, int modeOverride) {
+    FcFrontend* fe = fcCompileFrontend(c, path, preludePath, storeRoot, strict);
+    FcLinker* L = fe->linker;
+    FcCompiled* compiled = fcCompile(c, fe->program, fe->resolved, &L->registry, false);
+    FcLinked* linked = (FcLinked*)fcAlloc(c, sizeof *linked);
+    FcDict* notSerializable = fcDictNew(c, FC_KEY_STR);
+    int i, total = fe->processed->count;
+    for (i = 0; i < fe->processed->count; i++) if (((FcProcessed*)fe->processed->items[i])->notSerializable) fcSetAdd(notSerializable, fcFmt(c, "%d", i));
+    if (fcDictCount(notSerializable) > 0)
+        FC_DICT_EACH(compiled->classes, e) {
+            FcRtClass* rc = (FcRtClass*)e->value;
+            if (rc->decl && fcDictHas(notSerializable, fcFmt(c, "%d", rc->decl->h.source))) rc->notSerializable = true;
+        }
+    for (i = 0; i < c->resourcePaths->count; i++) {
+        FcResourceEntry* r = (FcResourceEntry*)fcAlloc(c, sizeof *r);
+        size_t n = 0;
+        uint8_t* data = fbReadFile((const char*)c->resourcePaths->items[i], &n);
+        r->name = (const char*)c->resourceNames->items[i];
+        r->data = (uint8_t*)fcAlloc(c, n + 1);
+        if (data && n) memcpy((void*)r->data, data, n);
+        free(data);
+        r->size = n;
+        fcListAdd(c, compiled->resources, r);
+    }
+    for (i = 0; i < c->customUnits->count; i++) fcListAdd(c, compiled->customUnits, c->customUnits->items[i]);
+    linked->program = compiled;
+    linked->floatWidth = L->directiveFloatWidth != FC_NULL_INT ? L->directiveFloatWidth : 64;
+    if (linked->floatWidth == 32) fcNarrow(c, compiled, fcNarrowFloat, 32);
+    linked->intWidth = L->directiveIntWidth != FC_NULL_INT ? L->directiveIntWidth : 64;
+    if (linked->intWidth < 64) fcNarrow(c, compiled, fcNarrowInt, linked->intWidth);
+    linked->wordWidth = 64;
+    linked->firstUserSource = fe->firstUserSource;
+    linked->mode = modeOverride >= 0 ? modeOverride : L->executionMode;
+    linked->nativeImports = &L->nativeImports;
+    fcPackageNativesOf(L, &linked->packageNatives, &linked->packageNativeLibraries);
+    linked->graphicsNatives = NULL;
+    /* SourceFilesOf / SourceHashesOf: the user's file is the last source */
+    linked->sourceFiles = fcListNew(c);
+    linked->sourceHashes = fcListNew(c);
+    for (i = 0; i < total; i++) { fcListAdd(c, linked->sourceFiles, NULL); fcListAdd(c, linked->sourceHashes, NULL); }
+    if (total >= 1) {
+        linked->sourceFiles->items[total - 1] = (void*)fcFullPath(c, ".", path);
+        linked->sourceHashes->items[total - 1] = (void*)fcSha256OfText(c, fc8FromU16(c, fe->userText, fe->userLength));
+    }
+    return linked;
 }
