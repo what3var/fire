@@ -68,19 +68,45 @@ static void svThreadStart(SvThread* t, void* (*fn)(void*), void* arg) { pthread_
 #include "serve_diag.c"
 
 /* ---- texts shared between the threads (immutable, counted under the server's lock) ---- */
-typedef struct SvText { int refs; int len; uint64_t hash; uint16_t* p; } SvText;
+typedef struct SvText {
+    int refs; int len; uint64_t hash; uint16_t* p;
+    char** imports; int nimports; bool importsRead;   /* its `#import` names (read once, by the main thread only) */
+} SvText;
 static SvText* svTextNew(const uint16_t* p, int len) {
     SvText* t = (SvText*)malloc(sizeof *t);
     if (!t) fbOutOfMemory();
     t->refs = 1;
     t->len = len;
+    t->imports = NULL; t->nimports = 0; t->importsRead = false;
     t->p = (uint16_t*)malloc(sizeof(uint16_t) * (size_t)(len + 1));
     if (!t->p) fbOutOfMemory();
     if (len) memcpy(t->p, p, sizeof(uint16_t) * (size_t)len);
     t->hash = svHash(p, len);
     return t;
 }
-static void svTextUnref(SvText* t) { if (t && --t->refs == 0) { free(t->p); free(t); } }
+static void svTextUnref(SvText* t) {
+    int i;
+    if (!t || --t->refs != 0) return;
+    for (i = 0; i < t->nimports; i++) free(t->imports[i]);
+    free(t->imports);
+    free(t->p);
+    free(t);
+}
+static char* svDup(const char* s);
+/* the `#import` names of a text (FindImportNames), remembered with the text */
+static void svTextImports(SvText* t, FcCtx* into, FcList* out) {
+    int i;
+    if (!t->importsRead) {
+        FcCtx* c = svNewCtx();
+        FcList* names = svFindImportNames(c, t->p, t->len);
+        t->imports = (char**)calloc((size_t)names->count + 1, sizeof(char*));
+        for (i = 0; i < names->count; i++) t->imports[i] = svDup((const char*)names->items[i]);
+        t->nimports = names->count;
+        t->importsRead = true;
+        svFreeCtx(c);
+    }
+    for (i = 0; i < t->nimports; i++) fcListAdd(into, out, t->imports[i]);
+}
 static SvText* svTextRef(SvText* t) { if (t) t->refs++; return t; }
 
 static char* svDup(const char* s) { size_t n; char* r; if (!s) return NULL; n = strlen(s); r = (char*)malloc(n + 1); if (!r) fbOutOfMemory(); memcpy(r, s, n + 1); return r; }
@@ -89,6 +115,8 @@ static char* svDup(const char* s) { size_t n; char* r; if (!s) return NULL; n = 
 typedef struct SvPFile { char* path; SvText* text; } SvPFile;
 typedef struct SvPLib { char** names; int nnames; char* import; char* name; char* ns; char** requires; int nrequires; SvPFile* files; int nfiles; } SvPLib;
 typedef struct SvProject { char* key; SvPFile* files; int nfiles; SvPLib* libs; int nlibs; bool strict; char* ownImport; int stamp; } SvProject;
+
+#define SV_REMEMBERED 4
 
 typedef struct SvDoc {
     char* path;
@@ -108,8 +136,8 @@ typedef struct SvDoc {
     int64_t deliveredSeq;   /* the request whose result was sent last */
     int64_t due;
     int64_t touched;
-    uint64_t rememberedKey;
-    char* rememberedItems;   /* the `items` JSON of that key */
+    uint64_t rememberedKey[SV_REMEMBERED];
+    char* rememberedItems[SV_REMEMBERED];   /* the `items` JSON of the last analyses (newest first): a tab again, an undo back to a checked text */
 } SvDoc;
 
 typedef struct SvMsg { struct SvMsg* next; char* line; int64_t id; bool cancelled; bool eof; } SvMsg;
@@ -407,9 +435,12 @@ SV_THREAD_FN(svAnalysisThread) {
             char* items;
             bool fromMemory;
             best->pending = false;
-            fromMemory = best->rememberedItems && best->rememberedKey == j->key;
-            if (fromMemory) { items = svDup(best->rememberedItems); S->remembered++; }
-            else {
+            fromMemory = false;
+            items = NULL;
+            for (i = 0; i < SV_REMEMBERED && !fromMemory; i++) {
+                if (best->rememberedItems[i] && best->rememberedKey[i] == j->key) { items = svDup(best->rememberedItems[i]); fromMemory = true; S->remembered++; }
+            }
+            if (!fromMemory) {
                 svUnlock(&S->mu);
                 items = svRunJob(S, &S->wlang, j);
                 svLock(&S->mu);
@@ -419,7 +450,13 @@ SV_THREAD_FN(svAnalysisThread) {
             for (i = 0; i < S->ndocs; i++) if (S->docs[i] == j->doc) break;
             if (i < S->ndocs) {
                 SvDoc* d = j->doc;
-                if (!fromMemory) { free(d->rememberedItems); d->rememberedItems = svDup(items); d->rememberedKey = j->key; }
+                if (!fromMemory) {
+                    int k;
+                    free(d->rememberedItems[SV_REMEMBERED - 1]);
+                    for (k = SV_REMEMBERED - 1; k > 0; k--) { d->rememberedItems[k] = d->rememberedItems[k - 1]; d->rememberedKey[k] = d->rememberedKey[k - 1]; }
+                    d->rememberedItems[0] = svDup(items);
+                    d->rememberedKey[0] = j->key;
+                }
                 if (j->seq > d->deliveredSeq) {
                     FcBuf b = {0};
                     d->deliveredSeq = j->seq;
@@ -504,14 +541,15 @@ static SvIndex* svDocIndex(SvServer* S, SvDoc* d) {
     files = (SvFile*)fcAlloc(S->lang.tmp, sizeof(SvFile) * (size_t)cap);
     if (p) {
         /* ProjectFilesFor: the other files, then the files of the libraries the program imports */
-        imports = svFindImportNames(S->lang.tmp, d->text->p, d->text->len);
+        imports = fcListNew(S->lang.tmp);
+        svTextImports(d->text, S->lang.tmp, imports);
         for (i = 0; i < p->nfiles; i++) {
             SvText* t;
             if (svSamePath(p->files[i].path, d->path)) continue;
             t = svOverlay(S, &p->files[i]);
             files[n].path = fcStr(S->lang.tmp, p->files[i].path); files[n].text = t->p; files[n].len = t->len;
             n++;
-            { FcList* more = svFindImportNames(S->lang.tmp, t->p, t->len); for (k = 0; k < more->count; k++) fcListAdd(S->lang.tmp, imports, more->items[k]); }
+            svTextImports(t, S->lang.tmp, imports);
             key = (key * 1099511628211ULL) ^ t->hash;
         }
         for (i = 0; i < p->nlibs; i++) {
@@ -544,7 +582,8 @@ static void svDocFree(SvServer* S, SvDoc* d) {
     if (d->index) svIndexFree(&S->lang, d->index);
     svTextUnref(d->text);
     svFreeFiles(d->includes, d->nincludes);
-    free(d->path); free(d->project); free(d->base); free(d->rememberedItems);
+    { int k; for (k = 0; k < SV_REMEMBERED; k++) free(d->rememberedItems[k]); }
+    free(d->path); free(d->project); free(d->base);
     free(d);
 }
 

@@ -10003,11 +10003,20 @@ uiDrawScript = """
                     "p1|p1|P1|True|True|False|50", "|||True", "|OSLO", "|||False|False|True|-1",
                 });
 
-            // IntelliSense of the markup editor: `|` is the caret
+            // IntelliSense of the markup editor: `|` is the caret - over the protocol (`forge serve`) when the server has the markup schema, compared with this process
+            int markupDocument = 0;
             List<string> Suggest(string withCaret)
             {
                 int caret = withCaret.IndexOf('|');
-                var result = fire.UI.Markup.MarkupCompletion.Suggest(withCaret.Remove(caret, 1), caret);
+                string text = withCaret.Remove(caret, 1);
+                var result = fire.UI.Markup.MarkupCompletion.Suggest(text, caret);
+                string path = Path.Combine(Path.GetTempPath(), $"fire-markup-{Environment.ProcessId}", $"m{++markupDocument}.fxml");
+                if (fire.Editor.ServeDocuments.CompleteMarkup(path, text, caret) is { } served)
+                {
+                    static string Show(fire.UI.Markup.MarkupCompletionResult r) => r.ReplaceStart + ":" + string.Join(",", r.Items.Select(i => $"{i.Text}|{i.Kind}|{i.Detail}|{i.CaretBack}|{i.Display}"));
+                    CheckMarkup("Markup-IntelliSense ueber forge serve wie im eigenen Prozess: " + withCaret.Replace("\n", " "), Show(served) == Show(result), $"\n  Protokoll: {Show(served)}\n  eigener Prozess: {Show(result)}");
+                    result = served;
+                }
                 return result.Items.Select(x => x.Label).ToList();
             }
             bool Has(List<string> list, params string[] names) => names.All(list.Contains);

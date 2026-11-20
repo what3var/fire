@@ -399,6 +399,27 @@ namespace fire.Editor
             return items;
         }
 
+        /// <summary>The completion of a markup document (`kind` `fxml`, MarkupCompletion.Suggest on the server): what the items replace and the items, the best first.</summary>
+        public fire.UI.Markup.MarkupCompletionResult MarkupCompletion(string path, int offset)
+        {
+            var result = Request("markupCompletion", new JsonObject { ["path"] = path, ["offset"] = offset });
+            var items = new List<fire.UI.Markup.MarkupCompletionItem>();
+            foreach (var node in result?["items"]?.AsArray() ?? new JsonArray())
+            {
+                if (node is not JsonObject o) continue;
+                var kind = (o["kind"]?.GetValue<string>()) switch
+                {
+                    "element" => fire.UI.Markup.MarkupCompletionKind.Element,
+                    "attribute" => fire.UI.Markup.MarkupCompletionKind.Attribute,
+                    "extension" => fire.UI.Markup.MarkupCompletionKind.Extension,
+                    "namespace" => fire.UI.Markup.MarkupCompletionKind.Namespace,
+                    _ => fire.UI.Markup.MarkupCompletionKind.Value,
+                };
+                items.Add(new fire.UI.Markup.MarkupCompletionItem(o["text"]!.GetValue<string>(), kind, o["detail"]?.GetValue<string>(), o["caretBack"]?.GetValue<int>() ?? 0, o["display"]?.GetValue<string>()));
+            }
+            return new fire.UI.Markup.MarkupCompletionResult(result?["replaceStart"]?.GetValue<int>() ?? 0, items);
+        }
+
         /// <summary>The analysis of a document right now (without the debounce): its version and its diagnostics.</summary>
         public (int Version, List<Diagnostic> Items) Diagnose(string path, int timeoutMs = 60000)
         {
@@ -502,6 +523,23 @@ namespace fire.Editor
         public static List<CompletionItem>? Complete(string path, string text, int offset, IReadOnlyList<(string Path, string Text)> context)
         {
             try { return Sync(path, text, context, null, null)?.Completion(path, offset, out _); }
+            catch (Exception ex) when (ex is IOException or ServeException) { return null; }
+        }
+
+        /// <summary>The completion of a markup file over the protocol; null: not available (the server cannot, or the own process serves).</summary>
+        public static fire.UI.Markup.MarkupCompletionResult? CompleteMarkup(string path, string text, int offset)
+        {
+            var client = ServeClient.Shared;
+            if (client == null || !client.Capabilities.Contains("markupCompletion")) return null;
+            try
+            {
+                lock (Docs)
+                {
+                    if (!Docs.TryGetValue(path, out var doc) || doc.Client != client) { doc = new Doc { Client = client }; Docs[path] = doc; }
+                    if (!string.Equals(doc.Text, text, StringComparison.Ordinal)) { doc.Version++; client.Open(path, doc.Version, text, kind: "fxml"); doc.Text = text; }
+                }
+                return client.MarkupCompletion(path, offset);
+            }
             catch (Exception ex) when (ex is IOException or ServeException) { return null; }
         }
 
