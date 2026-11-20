@@ -483,15 +483,18 @@ static FcFrontend* fcCompileFrontend(FcCtx* c, const char* path, const char* pre
     fcListAdd(c, processed, p);
     firstUserSource += fcInsertPreludes(L, processed);
     c->directiveHook = NULL;
+    { char step[64]; snprintf(step, sizeof step, "Compiling fire: parsing %d sources", processed->count); fcMonitorStep(0, step, 0, 4); }   /* (BuildMonitor.Step, Phase D 4) */
     arr = (FcProcessed**)fcAlloc(c, sizeof(FcProcessed*) * (size_t)processed->count);
     for (i = 0; i < processed->count; i++) arr[i] = (FcProcessed*)processed->items[i];
     fe->program = fcParseMultiple(c, arr, processed->count);
     if (c->testDriver) fcTestDriverApply(c, fe->program, processed, firstUserSource);   /* (`forge test`, Phase D 4) */
+    fcMonitorStep(0, "Compiling fire: resolving names", 1, 4);
     fe->resolved = fcResolve(c, fe->program, &L->natives, NULL);
     fe->firstUserSource = firstUserSource;
     fe->processed = processed;
     intWidth = L->directiveIntWidth != FC_NULL_INT ? L->directiveIntWidth : 64;
     floatWidth = L->directiveFloatWidth != FC_NULL_INT ? L->directiveFloatWidth : 64;
+    fcMonitorStep(0, "Compiling fire: checking types", 2, 4);
     fcTypeCheckRun(c, fe->program, fe->resolved, strict, firstUserSource, firstUserSource, intWidth, floatWidth, fcNativeReturnTypes(L));
     return fe;
 }
@@ -602,7 +605,7 @@ static FcLinked* fcLinkFile(FcCtx* c, const char* path, const char* preludePath,
 static FcLinked* fcLinkFileFe(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, int modeOverride, FcFrontend** frontend) {
     FcFrontend* fe = fcCompileFrontend(c, path, preludePath, storeRoot, strict);
     FcLinker* L = fe->linker;
-    FcCompiled* compiled = fcCompile(c, fe->program, fe->resolved, &L->registry, false);
+    FcCompiled* compiled = (fcMonitorStep(0, "Compiling fire: generating bytecode", 3, 4), fcCompile(c, fe->program, fe->resolved, &L->registry, false));
     FcLinked* linked = (FcLinked*)fcAlloc(c, sizeof *linked);
     FcDict* notSerializable = fcDictNew(c, FC_KEY_STR);
     int i, total = fe->processed->count;

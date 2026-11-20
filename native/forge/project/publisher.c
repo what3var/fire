@@ -9,6 +9,8 @@ typedef struct PjPublishResult {
     FcList* folders; int filesCopied; const char* error; FcList* diagnostics;
 } PjPublishResult;
 
+static const char* pjPublishSummary;   /* the summary of the last pjPublish */
+static const char* nsDescribe(FcCtx* c);   /* (project/standard.c: CompileErrors.Describe) */
 static void pjLog(const char* line) { if (pjMonitorOut) { fcBufStr(pjMonitorOut, line); fcBufChar(pjMonitorOut, '\n'); } }
 
 /* ---- the stamps ---- */
@@ -322,7 +324,7 @@ static PjPublishResult* pjPublishOne(FcCtx* c, PjOut* po, PjWorkspace* w, PjLoad
                     broken = true;
                     res.ok = false;
                     res.log = step.err.kind == FC_ERR_NATIVE ? fcFmt(c, "Not supported by the native backend yet: %s", step.err.message) : "";
-                    if (step.err.kind != FC_ERR_NATIVE) { FcBuf l = {0}; fcBufStr(&l, ""); pjDescribeErrors(&step, &l); res.log = fcBufDone(c, &l); }
+                    if (step.err.kind != FC_ERR_NATIVE) res.log = fcStr(c, nsDescribe(&step));   /* (BuildSafe: CompileErrors.Describe) */
                     res.error = NULL;
                 } FC_END_TRY;
                 nbMonitorLine = NULL;
@@ -515,6 +517,7 @@ static FcList* pjPublish(FcCtx* c, PjOut* po, PjWorkspace* w, FcList* projects, 
     if (skipped > 0) fcBufFmt(&summary, ", %d skipped", skipped);
     if (options->quick >= 0 && anyNative) fcBufFmt(&summary, " - %s, not for release", nbQuickLabel(c, options->quick, NULL));
     fcBufChar(&summary, '.');
-    pjLog(fcFmt(c, "========== Publish: %s ==========", fcBufDone(c, &summary)));
+    pjPublishSummary = fcBufDone(c, &summary);   /* (PublishResult.Summary: the end of the report, tools/report.c) */
+    pjLog(fcFmt(c, "========== Publish: %s ==========", pjPublishSummary));
     return results;
 }

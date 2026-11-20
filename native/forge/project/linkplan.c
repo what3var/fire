@@ -239,6 +239,7 @@ typedef struct PjLinkIn {
     const char* toolchainKind;   /* the symbol of the toolchain (a native build) */
     int modeOverride;            /* -1: none (the VM; a native build takes o->mode) */
     int floatWidthOverride;      /* 0: none */
+    int intWidthOverride;        /* 0: none (-i, Linker.ProcessIntWidth; a native build takes o->intWidth) - Phase D 4 */
     FcStore** storeOut;          /* gets the store of the link, with the overlay of the plan (the engine vm: the libraries of its packages, build/cvm.c); NULL: not wanted */
 } PjLinkIn;
 
@@ -261,7 +262,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     FcDict* notSerializable;
     FcDict* done = fcDictNew(c, FC_KEY_STR);
     const uint16_t* src;
-    int len, firstUserSource = 1, i, k, total, intWidth, floatWidth, intOverride = in->o ? in->o->intWidth : 0, floatOverride = in->o ? in->o->floatWidth : in->floatWidthOverride;
+    int len, firstUserSource = 1, i, k, total, intWidth, floatWidth, intOverride = in->o ? in->o->intWidth : in->intWidthOverride, floatOverride = in->o ? in->o->floatWidth : in->floatWidthOverride;
     bool strict = plan->settings->typeChecking && pjIEq(plan->settings->typeChecking, "strict");
     L->c = c;
     L->store.root = in->storeRoot;
@@ -289,6 +290,8 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     } else {
         fcSymbolsForHost(c, c->symbols);
         if (floatOverride == 32) fcSymbolsAdd(c, c->symbols, "float32");
+        if (intOverride == 32) fcSymbolsAdd(c, c->symbols, "int32");
+        if (intOverride == 16) fcSymbolsAdd(c, c->symbols, "int16");
     }
     for (i = 0; i < defines->count; i++) if (!pjIsWhite((const char*)defines->items[i])) fcSymbolsAdd(c, c->symbols, pjTrim(c, (const char*)defines->items[i]));
     if (in->toolchainKind && *fgTrim(c, in->toolchainKind)) fcSymbolsAdd(c, c->symbols, fgTrim(c, in->toolchainKind));
@@ -302,7 +305,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
         if (streq0(lower, "graphics") || streq0(lower, "windows") || streq0(lower, "ui") || streq0(lower, "linq") || streq0(lower, "reflection")) { fcSetAdd(P->ownBuiltIn, lower); fcSetAdd(&L->nativeImports, lower); }
     }
     c->sharedIncluded = fcListNew(c);
-    for (i = 0; i < plan->sources->count; i++) {
+    for (i = 0; plan->files != 2 && i < plan->sources->count; i++) {
         const char* full = pjFull(c, ((PjSource*)plan->sources->items[i])->path, ".");
         if (fcSetAdd(done, full)) fcListAdd(c, c->sharedIncluded, (void*)full);
     }
@@ -319,8 +322,17 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     for (i = 0; i < plan->sources->count; i++) {
         const PjSource* s = (const PjSource*)plan->sources->items[i];
         const char* full = pjFull(c, s->path, ".");
-        FcProcessed* p = pjPreprocessText(c, s->text, fcDirectoryName(c, full));
-        p->name = pjRelative(c, plan->project->project->directory, full);
+        FcProcessed* p;
+        if (plan->files == 2) {
+            /* (texts: from BasePath, else the current folder; no name) */
+            char cwd[4096];
+            if (!getcwd(cwd, sizeof cwd)) strcpy(cwd, ".");
+            p = pjPreprocessText(c, s->text, plan->baseFolder ? plan->baseFolder : fcStr(c, cwd));
+            p->name = NULL;
+        } else {
+            p = pjPreprocessText(c, s->text, fcDirectoryName(c, full));
+            p->name = plan->files == 1 ? fcStr(c, pjFileName(full)) : pjRelative(c, plan->project->project->directory, full);
+        }
         fcListAdd(c, processed, p);
     }
     /* ProjectLibraries.Process: the libraries the sources import (and what they need, the needed ones first) - a file may import more */
@@ -384,6 +396,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     }
     sourceModules = fcListNew(c);
     for (i = 0; i < processed->count; i++) fcListAdd(c, sourceModules, i == 0 ? (void*)"core" : (void*)((FcProcessed*)processed->items[i])->module);
+    { char step[64]; snprintf(step, sizeof step, "Compiling fire: parsing %d sources", processed->count); fcMonitorStep(0, step, 0, 4); }   /* (BuildMonitor.Step, Phase D 4) */
     arr = (FcProcessed**)fcAlloc(c, sizeof(FcProcessed*) * (size_t)processed->count);
     for (i = 0; i < processed->count; i++) arr[i] = (FcProcessed*)processed->items[i];
     program = fcParseMultiple(c, arr, processed->count);
@@ -402,12 +415,15 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
         }
         if (errors->count > 0) fcThrow(c, FC_ERR_LINKER, 1, 0, NULL, fgJoin(c, errors, "\n"));
     }
+    fcMonitorStep(0, "Compiling fire: resolving names", 1, 4);
     resolved = fcResolve(c, program, &L->natives, NULL);
     intWidth = intOverride ? intOverride : plan->settings->intWidth != FC_NULL_INT ? plan->settings->intWidth : L->directiveIntWidth != FC_NULL_INT ? L->directiveIntWidth : t ? t->intWidth : 64;
     floatWidth = floatOverride ? floatOverride : plan->settings->floatWidth != FC_NULL_INT ? plan->settings->floatWidth : L->directiveFloatWidth != FC_NULL_INT ? L->directiveFloatWidth : t ? t->floatWidth : 64;
     c->programWordWidth = t ? t->wordWidth : 64;
+    fcMonitorStep(0, "Compiling fire: checking types", 2, 4);
     fcTypeCheckRun(c, program, resolved, strict, firstUserSource, firstUserSource, intWidth, floatWidth, fcNativeReturnTypes(L));
     /* (Linker.ForcedGlobalJobs: the project's settings.globalJobs before `#globaljobs`; GlobalJobsDefault: "globalJobs" of fire.native.json, a native build) */
+    fcMonitorStep(0, "Compiling fire: generating bytecode", 3, 4);
     compiled = fcCompileJobs(c, program, resolved, &L->registry, false, plan->settings->globalJobs ? nbGlobalJobsParse(c, plan->settings->globalJobs) : -1, in->o ? in->o->globalJobs - 1 : -1);
     linked = (FcLinked*)fcAlloc(c, sizeof *linked);
     notSerializable = fcDictNew(c, FC_KEY_STR);

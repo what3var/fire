@@ -300,7 +300,10 @@ static PjNativePart* pjNativesResolve(FcCtx* c, const PjLoaded* project, FcList*
 /* ---- BuildPlan ---- */
 typedef struct PjSource { const char* path; const char* text; const char* projectName; } PjSource;
 typedef struct PjLibrary { const char* importName; PjLoaded* project; FcList* sources /* PjSource* */; FcList* requires; FcList* packages /* PjReference* */; PjSettings* settings; PjNativePart* native; } PjLibrary;
-typedef struct PjPlan { PjLoaded* project; FcList* sources; FcList* libraries /* PjLibrary*, the order of the dictionary */; FcList* packages; PjSettings* settings; FcList* errors; PjNativePart* native; } PjPlan;
+typedef struct PjPlan { PjLoaded* project; FcList* sources; FcList* libraries /* PjLibrary*, the order of the dictionary */; FcList* packages; PjSettings* settings; FcList* errors; PjNativePart* native;
+    /* (Phase D 4, tools/commands.c) no project: the sources of the command line - 1 files (Linker.SourcePaths: each named by its file name, from its folder),
+     * 2 texts (no SourcePaths: unnamed, from baseFolder - BasePath -, else the current folder); 0: a project */
+    int files; const char* baseFolder; } PjPlan;
 static PjLibrary* pjPlanLibrary(const PjPlan* plan, const char* name) {
     int i;
     for (i = 0; i < plan->libraries->count; i++) if (pjIEq(((PjLibrary*)plan->libraries->items[i])->importName, name)) return (PjLibrary*)plan->libraries->items[i];

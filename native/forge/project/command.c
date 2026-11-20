@@ -10,7 +10,8 @@ typedef struct PjOut { FcCtx* c; FcList* seen; FcBuf* err; } PjOut;
 static bool pjSameDiag(const FcDiagnostic* o, const FcDiagnostic* d) {
     return o->line == d->line && o->severity == d->severity && o->column == d->column && fcSameText(o->message, d->message) && fcSameText(o->code, d->code) && fcSameText(o->file, d->file);
 }
-/* the warnings of a step (its context): those not reported yet into `err` */
+/* the warnings of a step (its context): those not reported yet into `err` - or to pjOnWarning (the collector of a build that reports, Phase D 4) */
+static void (*pjOnWarning)(const FcDiagnostic* d);
 static void pjForwardWarnings(PjOut* out, FcCtx* step) {
     int i, k;
     for (i = 0; i < step->diags->count; i++) {
@@ -20,7 +21,8 @@ static void pjForwardWarnings(PjOut* out, FcCtx* step) {
         for (k = 0; k < out->seen->count; k++) if (pjSameDiag((const FcDiagnostic*)out->seen->items[k], d)) { seen = true; break; }
         if (seen) continue;
         fcListAdd(out->c, out->seen, (void*)d);
-        fcDiagLogLine(out->err, d);
+        if (pjOnWarning) pjOnWarning(d);   /* (a build that reports: the report has it, tools/report.c) */
+        else fcDiagLogLine(out->err, d);
     }
 }
 
@@ -126,6 +128,7 @@ static const char* pjPackLibrary(FcCtx* c, PjOut* out, PjPlan* plan, const char*
         } FC_END_TRY;
         pjForwardWarnings(out, &step);
     }
+    { char stepText[512]; snprintf(stepText, sizeof stepText, "Packing %s as a package", project->project->name); fcMonitorStep(6, stepText, 0, 0); }   /* (BuildMonitor.Step, Phase D 4) */
     import = pjImportName(c, project->project);
     version = pjPackageVersion(c, plan->settings->version);
     outDir = pjFull(c, outputDirectory ? outputDirectory : plan->settings->output ? plan->settings->output : nbCombine(c, project->project->directory, "bin"), ".");
@@ -279,6 +282,7 @@ static void pjCopyContent(FcCtx* c, const PjPlan* plan, const char* folder, FcBu
     for (i = 0; i < r.problems->count; i++) fcBufFmt(err, "warning: %s\n", (const char*)r.problems->items[i]);
     if (r.copied->count > 0) fcBufFmt(out, "%d file%s copied next to the program (%d up to date)\n", r.copied->count, r.copied->count == 1 ? "" : "s", r.upToDate);
 }
+static const char* nsDescribe(FcCtx* c);   /* (project/standard.c: CompileErrors.Describe) */
 /* the line of an error of a compile (DescribeErrors) */
 static void pjDescribeErrors(FcCtx* c, FcBuf* err) {
     FcList* diags = fcDiagnosticsOf(c, &c->err, NULL);
@@ -383,12 +387,8 @@ static int pjBuildProgram(FcCtx* c, PjOut* po, const PjBuildArgs* a, PjPlan* pla
         /* BuildSafe: the errors and the warnings are the result's */
         r.ok = false; r.output = to; r.error = NULL;
         if (step.err.kind == FC_ERR_NATIVE) r.log = fcFmt(&step, "Not supported by the native backend yet: %s", step.err.message);
-        else if (pjIsCompileErrorKind(step.err.kind)) {
-            FcBuf l = {0};
-            fcBufStr(&l, "");
-            pjDescribeErrors(&step, &l);
-            r.log = fcBufDone(&step, &l);
-        } else { c->err = step.err; fcRethrow(c); }
+        else if (pjIsCompileErrorKind(step.err.kind)) r.log = nsDescribe(&step);   /* (BuildSafe: CompileErrors.Describe) */
+        else { c->err = step.err; fcRethrow(c); }
         {
             FcList* diags = fcDiagnosticsOf(&step, &step.err, NULL);
             FcList* all = fcListNew(&step);

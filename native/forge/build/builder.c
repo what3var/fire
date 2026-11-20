@@ -1191,6 +1191,7 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
     memset(&store, 0, sizeof store);
     store.root = b->storeRoot;
     if (b->overlay) b->overlay(c, b, &store);
+    fcMonitorStep(2, "Generating the C of the program", 0, 0);   /* (BuildMonitor.Step of a build that reports, Phase D 4) */
     program = fgGenerateSources(c, linked, registry->names, target, o.stripping, config->stats, nbQuickSplitOf(config, kind), kind, &store);
     /* natives in C++, and the machine's compiler is C only (TinyCC): the next compiler builds it, the log says so in one line */
     if (program.natives && (cppToolchain = nbCppFallback(c, toolchain)) != NULL) {
@@ -1294,6 +1295,7 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
             return r;
         }
         if (cacheKey && nbProgramCacheTryRestore(c, target, cacheKey, exe)) {
+            fcMonitorStep(4, "The program is unchanged: taken from the cache", sourceCommands->count - 1, sourceCommands->count);
             fcBufFmt(&log, "The C of the program and the commands are those of a program built before: taken from the cache (%.16s).\n", cacheKey);
             sourceCommands = fcListNew(c);
         }
@@ -1308,6 +1310,8 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
         for (i = 0; i < sourceCommands->count; i++) {
             NbCommand* k = (NbCommand*)sourceCommands->items[i];
             NbRunResult run;
+            if (i == sourceCommands->count - 1) fcMonitorStep(4, sourceCommands->count == 1 ? "Compiling and linking the program (C)" : "Compiling the natives (C++) and linking the program", i, sourceCommands->count);
+            else fcMonitorStep(3, "Compiling the program (C)", i, sourceCommands->count);
             fcBufFmt(&log, "%s %s\n", k->exe, k->args);
             run = nbRun(k->exe, k->args, workDir);
             nbAppendRun(&log, &run);

@@ -120,6 +120,13 @@ static FcDiagnostic* fcDiagNew(FcCtx* c, int line, const char* message, FcSeveri
 
 static bool fcSameText(const char* a, const char* b) { return a == b || (a && b && strcmp(a, b) == 0); }
 
+/* DiagnosticCollector.OnReport and BuildMonitor.Step of a build that reports (`forge-c build|publish|bytecode --report json`, tools/report.c, Phase D 4): each
+ * diagnostic as it is collected, each step of the build as it begins; NULL: no report. phase: BuildPhase (0 compile-fire, 1 package-natives, 2 generate-c,
+ * 3 compile-c, 4 link, 5 flash, 6 pack) */
+static void (*fcOnReport)(const FcDiagnostic* d);
+static void (*fcMonitorStepHook)(int phase, const char* text, int done, int total);
+static void fcMonitorStep(int phase, const char* text, int done, int total) { if (fcMonitorStepHook) fcMonitorStepHook(phase, text, done, total); }
+
 /* DiagnosticCollector.Add: the same message for the same place once */
 static void fcCollect(FcCtx* c, FcDiagnostic* d) {
     int i;
@@ -129,6 +136,7 @@ static void fcCollect(FcCtx* c, FcDiagnostic* d) {
             && fcSameText(o->code, d->code) && fcSameText(o->file, d->file)) return;
     }
     fcListAdd(c, c->diags, d);
+    if (fcOnReport) fcOnReport(d);
 }
 
 void fcWarn(FcCtx* c, int id, const char* message, int line, const char* file) {

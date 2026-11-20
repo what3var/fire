@@ -140,6 +140,8 @@ static bool fcStrictTag(const char* path);
 /* the rest of the command line (Phase D 4, tools/): `forge test` */
 #include "tools/testdriver.c"
 #include "tools/testrunner.c"
+#include "tools/commands.c"   /* the rest of the command line: run, bytecode of projects, ... (Phase D 4) */
+#include "tools/report.c"     /* build|publish|bytecode --report json (Phase D 4) */
 #endif
 
 /* `ui|biscuit|fdata <file>` (Program.cs: MarkupFiles.GenerateScript, the script on stdout, the diagnostics of a MarkupException on stderr) and
@@ -182,6 +184,30 @@ static int fcMarkupRun(const char* command, const char* path, FcBuf* out, FcBuf*
     return result;
 }
 static bool fcIsMarkupCommand(const char* s) { return strcmp(s, "ui") == 0 || strcmp(s, "biscuit") == 0 || strcmp(s, "fdata") == 0 || strcmp(s, "falstad") == 0; }
+
+/* Program.cs: `-o <file>` of ui, biscuit, fdata, falstad - File.WriteAllText; its IOException is the message and exit 1 (Phase D 4) */
+static void tcWriteAllText(const char* path, FcBuf* text, FcBuf* err, int* result) {
+    FILE* f = fopen(path, "wb");
+    FcCtx scratch;
+    const char* full;
+    fcCtxInit(&scratch);
+    full = fcFullPath(&scratch, ".", path);
+    if (!f) {
+        if (errno == EACCES || errno == EISDIR || errno == EPERM || errno == EROFS) {
+            /* (UnauthorizedAccessException is no IOException: the C# forge ends with it unhandled) */
+            fcBufFmt(err, "Unhandled exception. System.UnauthorizedAccessException: Access to the path '%s' is denied.\n", full);
+            *result = 134;
+        } else {
+            fcBufFmt(err, "Could not find a part of the path '%s'.\n", full);
+            *result = 1;
+        }
+        fcCtxFree(&scratch);
+        return;
+    }
+    fwrite(text->p, 1, text->len, f);
+    fclose(f);
+    fcCtxFree(&scratch);
+}
 
 /* FrontendDump.Token */
 static void fcDumpToken(FcBuf* o, const FcToken* t) {
@@ -396,6 +422,7 @@ int main(int argc, char** argv) {
         }
     }
     nbProjectBuildPlan = pjProjectBuildPlanHook;   /* (buildplan of a project, Phase D 3) */
+    { int r = tcMain(argc, argv, prelude, store); if (r >= 0) return r; }   /* Phase D 4: the rest of the command line, the report (tools/) */
     /* (Program.cs: the standard packages of Source/ next to the program packed and installed when they are missing or changed - project/standard.c) */
     if (argc >= 2 && strcmp(argv[1], "install-standard") == 0) { nsEnsureInstalled(prelude, store, stdout); return 0; }
     if (argc >= 2 && (strcmp(argv[1], "build") == 0 || strcmp(argv[1], "publish") == 0 || strcmp(argv[1], "bytecode") == 0)) nsEnsureInstalled(prelude, store, stderr);
@@ -473,12 +500,15 @@ int main(int argc, char** argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "serve") == 0) return svServe(argc, argv, prelude, store);   /* docs/spec/FORGE_SERVE.md */
     if (argc == 3 && fcIsCommand(argv[1])) return fcDump(argv[1], argv[2], stdout, prelude, store);
-    if (argc == 3 && fcIsMarkupCommand(argv[1])) {
+    if (argc >= 3 && fcIsMarkupCommand(argv[1]) && strcmp(argv[2], "--list") != 0) {
         FcBuf out = {0}, err = {0};
-        int result;
+        int result, i;
+        const char* to = NULL;   /* (Program.cs: `-o <file>` anywhere after the file; without it to the output) */
+        for (i = 3; i + 1 < argc; i++) if (strcmp(argv[i], "-o") == 0) { to = argv[i + 1]; break; }
         fcBufStr(&out, "");
         fcBufStr(&err, "");
         result = fcMarkupRun(argv[1], argv[2], &out, &err);
+        if (result == 0 && to) { tcWriteAllText(to, &out, &err, &result); out.len = 0; }
         fwrite(err.p, 1, err.len, stderr);
         fwrite(out.p, 1, out.len, stdout);
         fcBufFree(&out);
