@@ -4,11 +4,17 @@
  * DefaultOutput), NativeBuilder.Quick.cs (QuickBuild), NativeBuilder.ProgramCache.cs (ProgramCache), src/fire.Native/NativeRuntimeFiles.cs (WriteTo: the files
  * of native/ that the C# forge carries as resources, read from the folder native/ of the repository here - FIRE_NATIVE_ROOT, else next to the tables) and from
  * src/fire.Package.Manager PackageHeaders.WriteTo and NativeLibraryCache.Root. Not yet: linkage static, shared and plugin (BuildStatic, LinkDlls,
- * WriteStaticFiles - the generator has no modules yet), `--stats` (NativeStats), the version info and icon of a Windows program (ApplyPeMetadata), the disk image
+ * WriteStaticFiles - the generator has no modules yet), the version info and icon of a Windows program (ApplyPeMetadata), the disk image
  * of bios16 (WatcomToolchain.AfterLink), ToolchainProvider (no compiler: the build says so), BuildMonitor and BuildTimes, TestToolchain. */
+
+/* (build/stats.c) */
+static const char* nsMapOptions(FcCtx* c, const char* kind, const char* map);
+static const char* nsMapFileOf(FcCtx* c, const char* exe);
+static void nbWriteStats(FcCtx* c, const FgTarget* target, const char* exe, const char* workDir, const char* cFile, const char* mapFile, FcList* funcs, FcBuf* log);
 
 /* ---- QuickBuild (NativeBuilder.Quick.cs) ---- */
 /* The level of `--quick` / `--quick=<level>`: 0 or 1 (`0`, `1`, `O0`, `O1`, `-O0`, `-O1`); -1: not a level. */
+
 static int nbQuickParseLevel(const char* text) {
     const char* t = text ? text : "";
     size_t n;
@@ -1164,7 +1170,6 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
     kind = nbKind(toolchain);
     if (config->linkage && !fcAsciiIEq(config->linkage, "source"))
         fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: linkage \"%s\" (the library modules of the generator, Phase D 2)", config->linkage));
-    if (config->stats) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: --stats");
     /* (a quick build, `--quick`: the units forced on where the toolchain splits; its optimisation level is set below, when the compiler is known) */
     memset(&o, 0, sizeof o);
     o.target = target;
@@ -1177,7 +1182,7 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
     linked = b->link ? b->link(c, b, &o, &registry, kind) : fgLinkNativeKind(c, b->path, b->prelude, b->storeRoot, b->strict, &o, &registry, kind);
     memset(&store, 0, sizeof store);
     store.root = b->storeRoot;
-    program = fgGenerateSources(c, linked, registry->names, target, o.stripping, nbQuickSplitOf(config, kind), kind, &store);
+    program = fgGenerateSources(c, linked, registry->names, target, o.stripping, config->stats, nbQuickSplitOf(config, kind), kind, &store);
     /* natives in C++, and the machine's compiler is C only (TinyCC): the next compiler builds it, the log says so in one line */
     if (program.natives && (cppToolchain = nbCppFallback(c, toolchain)) != NULL) {
         NbResult inner = nbBuild(c, b, config, target, cppToolchain, output);
@@ -1230,6 +1235,8 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
         FcList* sourceCommands;
         int sideBySide = 0, i;
         const char* cacheKey;
+        const char* mapFile = NULL;
+        const char* mapOptions;
         bool ok = true, compiled, built;
         cppFile = nbWriteFiles(c, &store, instImports, workDir, program.program, target, "fire_program.c", configDirectory, program.natives, program.units);
         nativesFile = program.natives ? nbCombine(c, workDir, "fire_natives.cpp") : NULL;
@@ -1256,6 +1263,13 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
             sourceCommands = nbSplitCommands(c, toolchain, target, units, ((FgSplitUnit*)program.units->items[0])->name, nativesFile, workDir, exe, false, nativesToolchain);
             sideBySide = units->count;
         } else sourceCommands = nbBuildCommands(c, toolchain, target, cppFile, nativesFile, workDir, exe, false, NULL);
+        if (config->stats && sourceCommands->count > 0 && (mapOptions = nsMapOptions(c, nbKind(toolchain), nsMapFileOf(c, exe))) != NULL) {
+            NbCommand* last = (NbCommand*)sourceCommands->items[sourceCommands->count - 1];
+            NbCommand* with = (NbCommand*)fcAlloc(c, sizeof *with);
+            mapFile = nsMapFileOf(c, exe);
+            with->exe = last->exe; with->args = fcFmt(c, "%s %s", last->args, mapOptions);
+            sourceCommands->items[sourceCommands->count - 1] = with;
+        }
         /* (the same files and commands as a program built before: that program - ProgramCache) */
         cacheKey = nbProgramCacheKey(c, toolchain, target, workDir, exe, sourceCommands, config->stats, sideBySide, config->quick);
         if (b->dryRun) {
@@ -1286,6 +1300,7 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
         }
         built = ok && nbFileExists(exe);
         if (built && compiled && cacheKey) nbProgramCacheStore(c, target, cacheKey, exe);
+        if (built && config->stats) nbWriteStats(c, target, exe, workDir, cppFile, mapFile, program.funcs, &log);
         if (!b->keepSources) nbDeleteTree(c, workDir);
         r.ok = built;
         r.output = exe;

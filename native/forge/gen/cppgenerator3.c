@@ -149,6 +149,8 @@ static const char* DebugPrologue(FgGen* g, FgFunc* f, FgFuncDebug* d);
 static const char* DebugTables(FgGen* g, FgFunc* f, FgFuncDebug* d);
 static const char* DebugWrapper(FgGen* g, FgFunc* f, const char* call);
 static const char* DebugCatchWrapper(FgGen* g, FgFunc* f, const char* catchName);
+/* (gen/stats.c) */
+static FgFuncStat* StatOf(FgGen* g, FgFunc* f, int valueLocals, int cLocals);
 static void GenerateChunk(FgGen* g, FgFunc* f) {
     if (f->external) return;
     GenerateChunkCore(g, f);
@@ -487,7 +489,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         for (i = 0; i < scalarLocals->count; i++) { fcListAdd(g->c, scalarNames, scalarLocals->items[i]); fcListAdd(g->c, scalarTypes, (void*)ScalarVarCType(g, f, (const char*)scalarLocals->items[i])); }
         scalarKeys = fgSortedKeys(g->c, f->scalars, true);
         for (i = 0; i < scalarKeys->count; i++) { fcListAdd(g->c, scalarNames, scalarKeys->items[i]); fcListAdd(g->c, scalarTypes, fcDictGet(f->scalars, scalarKeys->items[i])); }
-        if (g->collectStats) FG_UNPORTED("--stats");
+        if (g->collectStats) f->stat = StatOf(g, f, localsToDeclare->count, scalarLocals->count);
         for (i = 0; i < scalarNames->count; i++) {
             const char* sn = (const char*)scalarNames->items[i];
             const char* stype = (const char*)scalarTypes->items[i];

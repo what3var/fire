@@ -77,6 +77,7 @@ static bool fcStrictTag(const char* path);
 #include "gen/reflection.c"
 #include "gen/debug.c"
 #include "gen/split.c"
+#include "gen/stats.c"
 #include "gen/cppgenerator4.c"
 #include "gen/cppgenerator5.c"
 #include "gen/cppgenerator6.c"
@@ -94,6 +95,7 @@ static bool fcStrictTag(const char* path);
 #include <sys/wait.h>
 #include "build/toolchain.c"
 #include "build/builder.c"
+#include "build/stats.c"
 #include "build/command.c"
 #endif
 
