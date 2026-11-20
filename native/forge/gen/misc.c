@@ -233,8 +233,6 @@ static FcList* ComputedSources(FgGen* g, const FcRtClass* rc, const char* name) 
 static const char* ReflectionCode(FgGen* g) { FG_UNPORTED("reflection"); }
 
 /* ---- CppGenerator.Json.cs ---- */
-static void RegisterJsonTargets(FgGen* g) { if (g->usesJson) FG_UNPORTED("JSON"); }
-static const char* JsonCode(FgGen* g) { FG_UNPORTED("JSON"); }
 /* ProgramEnum: the enum of this name in the program; false: none */
 static bool ProgramEnumKnown(FgGen* g, const char* name, const FcEnumType** type) {
     FcList* enums = g->program->program->enums;

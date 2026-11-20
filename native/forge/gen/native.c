@@ -190,7 +190,7 @@ static FgGen* fgGenNew(FcCtx* c, FcLinked* program, FcList* natives, const FgTar
     FG_D(typeIsOfIds); FG_D(externDecls); FG_D(restrictedMethods); FG_D(restrictedFields); g->errorClasses = fcListNew(c); FG_D(pkgLocks); FG_D(arrClasses);
     FG_D(lineFiles); FG_D(standardNativesWritten); FG_D(knownArrayElem); FG_D(needsDefaults); FG_D(nativeThunks); FG_D(packageNatives); g->packageImports = fcListNew(c);
     FG_P(cRet); FG_P(cAbiParams); FG_P(funcDebug); FG_D(globalNames); FG_D(overloadSelectors); FG_D(ovClassNames); FG_D(ovGenericTests); FG_D(rawType); FG_P(rawLayouts);
-    FG_D(literalClasses); FG_D(literalMembers); FG_P(literalChunks); FG_P(instImports); FG_D(bridgeCache); FG_D(pointerFuncs); FG_P(rtNames); FG_P(rtIndex); FG_D(rtCands); FG_D(specCache); FG_D(condCache); FG_D(nativeImportOf);
+    FG_D(literalClasses); FG_D(literalMembers); FG_P(literalChunks); FG_P(instImports); FG_D(bridgeCache); FG_P(jsonFields); FG_D(pointerFuncs); FG_P(rtNames); FG_P(rtIndex); FG_D(rtCands); FG_D(specCache); FG_D(condCache); FG_D(nativeImportOf);
 #undef FG_D
 #undef FG_P
     g->splitMode = -1;

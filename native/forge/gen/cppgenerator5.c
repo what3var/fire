@@ -520,7 +520,18 @@ static FgStep StepCoreNative(FgSC* x) {
         Check();
         d = first + 1; SetR(first, false); return Next();
     }
-    if (streq0(native, "__JsonCall") && (argc == 2 || argc == 3)) FG_UNPORTED("JSON");
+    if (streq0(native, "__JsonCall") && (argc == 2 || argc == 3)) {
+        UseJson(g);
+        g->callsJsonEngine = true;
+        {
+            const char* s0 = S(first);
+            const char* s1 = S(first + 1);
+            const char* s2 = argc == 3 ? S(first + 2) : "Undef()";
+            E("%s = fire_jsonCall(%d, %s, %s, %s, %s, &%s);", s0, argc, s0, s1, s2, JsonCallType(f), OwnerList());
+        }
+        Check();
+        d = first + 1; SetR(first, true); return Next();
+    }
     if (streq0(native, "__LibCall") && argc >= 2 && argc <= 5) {
         g->usesLibCall = true;
         if (!fcListHasStr(g->errorClasses, "ArgumentException")) fcListAdd(g->c, g->errorClasses, (void*)"ArgumentException");

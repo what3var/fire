@@ -453,7 +453,7 @@ static const char* Run(FgGen* g) {
     }
     if (g->usesReflection) FG_UNPORTED("reflection");
     fcBufFmt(&sb, "%s\n", IndexHelpers(g));
-    if (g->usesJson) FG_UNPORTED("JSON");
+    if (g->usesJson) fcBufFmt(&sb, "%s\n", JsonCode(g));
     fcBufFmt(&sb, "%s\n", RuntimeHooks(g));
     if (g->usesLibCall) fcBufStr(&sb, LibraryThunks(g));
 
