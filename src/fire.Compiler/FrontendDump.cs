@@ -160,7 +160,19 @@ namespace fire.Compiler
             try
             {
                 string full = Path.GetFullPath(path);
-                var program = new Linker { BasePath = Path.GetDirectoryName(full), SourcePaths = new string?[] { full } }
+                fire.Runtime.LinkedProgram program;
+                if (full.EndsWith(fire.Projects.FireProject.Extension, StringComparison.OrdinalIgnoreCase) || full.EndsWith(fire.Projects.FireSolution.Extension, StringComparison.OrdinalIgnoreCase))
+                {
+                    // a project or a solution (Phase D 3): the program of its startup project (a library: as ProjectBuilder.Check compiles it)
+                    var workspace = fire.Projects.Workspace.Open(full);
+                    var plan = ProjectBuilder.PlanOrThrow(workspace, ProjectBuilder.SelectProject(workspace, null));
+                    // (`fbc native <project>`: linked for a native build for this machine, as NativeBuilder links it - the input of the generator)
+                    program = mode == "native"
+                        ? new Linker { Plan = plan, Engine = "native", SourcePaths = plan.SourcePaths.Cast<string?>().ToList(), Optimize = NativeBuilder.OptimizeOf(null, plan, fire.Runtime.TargetProfile.Host) }
+                            .CompileAndLink(plan.SourceTexts, null, null, null, null, fire.Runtime.TargetProfile.Host)
+                        : new Linker { Plan = plan, SourcePaths = plan.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(plan.SourceTexts, null, null, executionMode);
+                }
+                else program = new Linker { BasePath = Path.GetDirectoryName(full), SourcePaths = new string?[] { full } }
                     .CompileAndLink(new[] { File.ReadAllText(path) }, null, null, executionMode);
                 bytes = fire.Bytecode.ProgramFile.Write(program);
             }
@@ -303,18 +315,30 @@ namespace fire.Compiler
             try
             {
                 string full = Path.GetFullPath(path);
-                var target = config.ResolveTarget(targetName);
-                var toolchain = config.ResolveToolchain(target, toolchainName, fire.Native.ToolchainPurpose.Build);
+                // a project or a solution (Phase D 3): the program of its startup project, with the project's target, toolchain, stripping and direction
+                fire.Projects.BuildPlan? plan = null;
+                if (full.EndsWith(fire.Projects.FireProject.Extension, StringComparison.OrdinalIgnoreCase) || full.EndsWith(fire.Projects.FireSolution.Extension, StringComparison.OrdinalIgnoreCase))
+                {
+                    var workspace = fire.Projects.Workspace.Open(full);
+                    plan = ProjectBuilder.PlanOrThrow(workspace, ProjectBuilder.SelectProject(workspace, null));
+                    if (plan.Type == fire.Projects.OutputType.Library) { o.Append("library\n"); goto written; }
+                }
+                var target = config.ResolveTarget(targetName ?? plan?.Settings.Target);
+                var toolchain = config.ResolveToolchain(target, toolchainName ?? plan?.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
                 string exe = Path.GetFullPath("plan-out" + target.ProgramExtension);
                 var log = new StringBuilder();
                 NativeBuilder.NativeProgram program;
                 while (true)
                 {
                     // (Build: the direction, the program for the kind of the toolchain, the compiler that compiles C++ for a C-only one)
-                    toolchain = NativeBuilder.WithDirection(toolchain, NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target));
-                    program = NativeBuilder.GenerateLinked(new[] { File.ReadAllText(path) }, target, mode, floatWidth, Path.GetDirectoryName(full), null, null, new string?[] { full },
-                        NativeBuilder.StrippingOf(config, null), config.GlobalJobsValue, toolchain.EffectiveKind, NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target), config.Stats,
-                        NativeBuilder.QuickBuild.SplitOf(config, toolchain.EffectiveKind));
+                    toolchain = NativeBuilder.WithDirection(toolchain, NativeBuilder.OptimizeOf(config, plan, target));
+                    program = plan != null
+                        ? NativeBuilder.GenerateLinked(plan.SourceTexts, target, mode, floatWidth, null, null, plan, null,
+                            NativeBuilder.StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind, NativeBuilder.OptimizeOf(config, plan, target), config.Stats,
+                            NativeBuilder.QuickBuild.SplitOf(config, toolchain.EffectiveKind))
+                        : NativeBuilder.GenerateLinked(new[] { File.ReadAllText(path) }, target, mode, floatWidth, Path.GetDirectoryName(full), null, null, new string?[] { full },
+                            NativeBuilder.StrippingOf(config, null), config.GlobalJobsValue, toolchain.EffectiveKind, NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target), config.Stats,
+                            NativeBuilder.QuickBuild.SplitOf(config, toolchain.EffectiveKind));
                     if (program.Natives != null && NativeBuilder.CppFallback(toolchain) is { } cppToolchain)
                     {
                         log.AppendLine(NativeBuilder.CppFallbackNote(toolchain, cppToolchain, program.Natives));

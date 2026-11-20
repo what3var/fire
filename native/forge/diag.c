@@ -187,6 +187,8 @@ FcList* fcDiagnosticsOf(FcCtx* c, const FcError* e, const char* file) {
             break;
         }
         case FC_ERR_LINKER:
+        case FC_ERR_PROJECT:    /* (ProjectException, PackageException: the default of CompileDiagnostics.Of, Phase D 3) */
+        case FC_ERR_PACKAGE:
             fcListAdd(c, r, fcDiagNew(c, 1, e->message, FC_SEV_ERROR, fcCodeOf(c, FC_AREA_LINKER, e->message), file, 0));
             break;
         case FC_ERR_COMPILE: {

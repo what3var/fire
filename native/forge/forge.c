@@ -10,6 +10,9 @@
  *   forge-c ui|biscuit|fdata <file>                 the script generated from a markup file (Phase C 5), as `forge ui|biscuit|fdata`
  *   forge-c falstad <circuit.txt>                   a circuit of Falstad's simulator as a schematic, as `forge falstad`
  *   forge-c markup --list <files.txt> --out <folder>   per file what forge writes for it (both streams; the command by the extension)
+ *   forge-c build|publish <project|solution> ...    projects and solutions, the package file .fpk (Phase D 3, project/; -lpthread)
+ *   forge-c projectplan <project|solution>          the model of a project or solution, as `forge projectplan` (docs/spec/FORGE_C.md)
+ *   forge-c fpk <file.fpk>                          a package as it is read, as `forge fpk`
  *
  * The output is byte for byte what `forge tokens` / `forge ast` / `forge diagnostics` of the C# compiler prints (src/fire.Compiler/FrontendDump.cs);
  * tests/compare-frontend.sh compares the two over the corpus. */
@@ -102,6 +105,20 @@ static bool fcStrictTag(const char* path);
 #include "biscuitgenerator.c"
 #include "datamodelgenerator.c"
 #include "falstadimport.c"
+
+/* projects and solutions, the package file (Phase D 3, project/): POSIX, with the builder */
+#ifndef _WIN32
+#include <fcntl.h>
+#include "project/projectmodel.c"
+#include "project/projectfiles.c"
+#include "project/manifest.c"
+#include "project/workspace.c"
+#include "project/linkplan.c"
+#include "project/fpk.c"
+#include "project/command.c"
+#include "project/publisher.c"
+#include "project/cli.c"
+#endif
 
 /* `ui|biscuit|fdata <file>` (Program.cs: MarkupFiles.GenerateScript, the script on stdout, the diagnostics of a MarkupException on stderr) and
  * `falstad <file>` (FalstadImport.Convert: the warnings on stderr, the schematic on stdout); `out` and `err` get what forge writes there */
@@ -226,6 +243,10 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
         int mode = strcmp(m, "debug") == 0 ? 0 : strcmp(m, "release") == 0 ? 1 : strcmp(m, "performance") == 0 ? 2 : -1;
         FcLinked* linked;
         c->collecting = true;   /* (the warnings: `forge-c bytecode` prints them as forge does) */
+#ifndef _WIN32
+        if (pjIsProjectFile(job->path)) linked = pjLinkProjectFile(c, job->path, job->prelude, job->store, mode, strcmp(m, "native") == 0);   /* (a project, Phase D 3) */
+        else
+#endif
         linked = fcLinkFile(c, job->path, job->prelude, job->store, fcStrictTag(job->path), mode);
         fcProgramFileWrite(c, linked, true, job->out);
         return;
@@ -345,7 +366,15 @@ int main(int argc, char** argv) {
             if (realpath(tablesBuf, exeBuf)) nbNativeRoot = strdup(exeBuf);
         }
     }
-    if (argc >= 2 && strcmp(argv[1], "build") == 0) return nbBuildMain(argc, argv, prelude, store);   /* Phase D 2 */
+    nbProjectBuildPlan = pjProjectBuildPlanHook;   /* (buildplan of a project, Phase D 3) */
+    if (argc >= 2 && strcmp(argv[1], "build") == 0) {
+        int i;
+        for (i = 2; i < argc; i++) if (argv[i][0] != '-' && pjIsProjectFile(argv[i])) return pjBuildCommand(argc, argv, prelude, store);   /* Phase D 3 */
+        return nbBuildMain(argc, argv, prelude, store);   /* Phase D 2 */
+    }
+    if (argc >= 2 && strcmp(argv[1], "publish") == 0) return pjPublishCommand(argc, argv, prelude, store);   /* Phase D 3 */
+    if (argc == 3 && strcmp(argv[1], "projectplan") == 0) return pjProjectPlanDump(argv[2], stdout);
+    if (argc == 3 && strcmp(argv[1], "fpk") == 0) return pjPackageDump(argv[2], stdout);
 #endif
     /* `fbc <mode> ...`: the mode is part of the command */
     if (argc >= 4 && (strcmp(argv[1], "fbc") == 0 || strcmp(argv[1], "cgen") == 0 || strcmp(argv[1], "buildplan") == 0) && strlen(argv[2]) < 200) {

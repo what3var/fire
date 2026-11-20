@@ -521,6 +521,7 @@ typedef struct NbConfig {
     const char* globalJobs;
     const char* linkage;
     int split;                  /* FG_SPLIT_* (SplitValue: auto when not given) */
+    bool splitGiven;            /* `"split"` was in the file (Split ?? ...: publish, Phase D 3) */
     int quick;                  /* -1: a normal build, else the level */
     const char* host;
     FcList* targets;            /* NbTargetDef* */
@@ -573,6 +574,7 @@ static NbConfig* nbConfigLoad(FcCtx* c, const char* path) {
     if ((s = fcJsonStr(json, "globalJobs")) != NULL) k->globalJobs = s;
     if ((s = fcJsonStr(json, "split")) != NULL) {
         if ((k->split = fgSplitModeParse(s)) < 0) NB_CONFIG_FAIL("fire.native.json: \"split\": '%s' is not one of: auto, on, off.", s);
+        k->splitGiven = true;
     }
     if ((v = fcJsonGet(json, "targets")) && v->kind == FJ_OBJ)
         for (i = 0; i < v->keys->count; i++) {

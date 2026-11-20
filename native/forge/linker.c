@@ -116,6 +116,8 @@ typedef struct FcPkgImport {
     FcList* hosts;                /* their "host" (FC_IVAL(0/1)), in the same order */
     const char* dir;              /* the package's folder */
     const char* packageName;      /* the "name" of the package */
+    const char* packageVersion;   /* its "version" (a project's reference to it, Phase D 3) */
+    bool overlay;                 /* the natives of a project (ProjectNativeOverlay, Phase D 3): no package on the disk */
 } FcPkgImport;
 
 typedef struct FcStore { const char* root; FcList* imports; bool loaded; } FcStore;
@@ -185,6 +187,7 @@ static void fcStoreLoad(FcCtx* c, FcStore* store) {
             pi->returns = fcListNew(c);
             pi->hosts = fcListNew(c);
             pi->packageName = fcJsonStr(manifest, "name");
+            pi->packageVersion = fcJsonStr(manifest, "version");
             v = fcJsonGet(im, "native");
             if (v && v->kind == FJ_OBJ) {
                 FcJson* fns = fcJsonGet(v, "functions");

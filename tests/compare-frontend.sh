@@ -27,8 +27,14 @@
 # quick, quick1, nosplit). `build` builds every BUILD_EVERY-th case of tests/cases (default 25) with both forges for real, with each toolchain of
 # BUILD_TOOLCHAINS (default "gcc tcc"; BUILD_FLAGS="--quick" for more switches), without the program cache, and compares the logs (normalized) and what the two
 # programs print - and counts the programs of forge-c that print the case's .expected.
+# `project` (Phase D 3) compares the model of projects: `forge projectplan <file>` (the workspace, the build order, every member's files, folders, build actions,
+# its BuildPlan) for every project and solution file of src/fire.Project, packages, tests and PROJECT_EXTRA (files or folders, read only); `buildplan` of every
+# program project (PROJECT_BUILDPLAN_OPTIONS, default "default"); and packs every library project with both forges into the work folder: what they print,
+# each forge's `fpk` read of both packages, the zips (tests/fpk-compare.py: everything but the times and the compressed bytes) and the forge copies (json/).
+# `projectbuild` builds the program projects of src/fire.Project natively with both forges (BUILD_TOOLCHAINS) - log and program byte-identical - and runs
+# `build --all` (PROJECT_ALL_FLAGS, default --engine native) and `publish` on a copy of each solution folder of PROJECT_COPY, comparing what they print.
 set -u
-if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|buildplan|build|all] [work folder]" >&2; exit 2; fi
+if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|buildplan|build|project|projectbuild|all] [work folder]" >&2; exit 2; fi
 FORGE_CS=$1
 FORGE_C=$2
 WHAT=${3:-both}
@@ -75,6 +81,8 @@ nativeKinds=(); for o in ${NATIVE_OPTIONS:-default}; do nativeKinds+=("cgen-$o")
 planKinds=(); for o in ${BUILDPLAN_OPTIONS:-default tc:gcc+quick}; do planKinds+=("buildplan-$o"); done
 [ "$WHAT" = buildplan ] && kinds=("${planKinds[@]}")
 [ "$WHAT" = build ] && kinds=()
+[ "$WHAT" = project ] && kinds=()
+[ "$WHAT" = projectbuild ] && kinds=()
 
 # ---- build (Phase D 2): real native builds of a sample of tests/cases with both forges, their logs and what the programs print ----
 if [ "$WHAT" = build ]; then
@@ -117,6 +125,113 @@ if [ "$WHAT" = build ]; then
         esac
       done
     fi
+  done
+fi
+# ---- project (Phase D 3): the model of projects and solutions, the programs of projects, the packages of libraries ----
+if [ "$WHAT" = project ]; then
+  # the project and solution files of the repository and those of PROJECT_EXTRA (paths, separated by spaces; read only - packages are written into the work folder)
+  find src/fire.Project packages tests \( -name bin -o -name obj \) -prune -o \( -name '*.fireproj' -o -name '*.firesln' \) -type f -print | LC_ALL=C sort > "$WORK/projects.lst"
+  for extra in ${PROJECT_EXTRA:-}; do
+    case "$extra" in
+      *.fireproj|*.firesln) echo "$extra" ;;
+      *) find "$extra" \( -name bin -o -name obj -o -name .git \) -prune -o \( -name '*.fireproj' -o -name '*.firesln' \) -type f -print | LC_ALL=C sort ;;
+    esac
+  done >> "$WORK/projects.lst"
+  # projectplan: the workspace, the build order, the files, folders and build actions of every member and its BuildPlan
+  mkdir -p "$WORK/projectplan"
+  n=0 same=0 diffs=()
+  while IFS= read -r file; do
+    n=$((n + 1))
+    $FORGE_CS projectplan "$file" > "$WORK/projectplan/$n-cs.txt" 2>&1
+    "$FORGE_C" projectplan "$file" > "$WORK/projectplan/$n-c.txt" 2>&1
+    if cmp -s "$WORK/projectplan/$n-cs.txt" "$WORK/projectplan/$n-c.txt"; then same=$((same + 1)); else diffs+=("$n:$file"); fi
+  done < "$WORK/projects.lst"
+  echo "projectplan: $same of $n identical"
+  for x in "${diffs[@]:0:5}"; do status=1; echo "  differs: ${x#*:}"; diff "$WORK/projectplan/${x%%:*}-cs.txt" "$WORK/projectplan/${x%%:*}-c.txt" | head -6 | sed 's/^/    /'; done
+  [ ${#diffs[@]} -gt 0 ] && status=1
+  grep '\.fireproj$' "$WORK/projects.lst" | while IFS= read -r file; do
+    if grep -q '"type" *: *"library"' "$file"; then echo "$file" >> "$WORK/libraries.lst.tmp"; else echo "$file" >> "$WORK/programs.lst.tmp"; fi
+  done
+  mv -f "$WORK/libraries.lst.tmp" "$WORK/libraries.lst" 2>/dev/null; mv -f "$WORK/programs.lst.tmp" "$WORK/programs.lst" 2>/dev/null
+  touch "$WORK/libraries.lst" "$WORK/programs.lst"
+  # buildplan of the program of every program project (the C, the commands, the files of the build: the native build of a project)
+  mkdir -p "$WORK/projectbuildplan"
+  for o in ${PROJECT_BUILDPLAN_OPTIONS:-default}; do
+    n=0 same=0 unported=0 diffs=()
+    while IFS= read -r file; do
+      n=$((n + 1))
+      $FORGE_CS buildplan "$o" "$file" > "$WORK/projectbuildplan/$o-$n-cs.txt" 2>&1
+      "$FORGE_C" buildplan "$o" "$file" > "$WORK/projectbuildplan/$o-$n-c.txt" 2>&1
+      if cmp -s "$WORK/projectbuildplan/$o-$n-cs.txt" "$WORK/projectbuildplan/$o-$n-c.txt"; then same=$((same + 1))
+      elif [ -z "${NATIVE_STRICT:-}" ] && head -c 10 "$WORK/projectbuildplan/$o-$n-c.txt" | grep -q '^unported:'; then unported=$((unported + 1))
+      else diffs+=("$n:$file"); fi
+    done < "$WORK/programs.lst"
+    echo "project buildplan $o: $same of $n identical ($unported not ported yet)"
+    for x in "${diffs[@]:0:5}"; do echo "  differs: ${x#*:}"; diff "$WORK/projectbuildplan/$o-${x%%:*}-cs.txt" "$WORK/projectbuildplan/$o-${x%%:*}-c.txt" | head -6 | sed 's/^/    /'; done
+    [ ${#diffs[@]} -gt 0 ] && status=1
+  done
+  # the packages of the libraries: what both forges print, each forge reads both packages (`fpk`), the zips agree in everything but the times and the compressed
+  # bytes (tests/fpk-compare.py), the forge copies (json/) are the same
+  n=0 same=0 diffs=()
+  while IFS= read -r file; do
+    n=$((n + 1))
+    d="$WORK/pack/$n"; rm -rf "$d"; mkdir -p "$d/cs" "$d/c"
+    $FORGE_CS build "$file" -o "$d/cs" > "$d/out-cs.txt" 2> "$d/err-cs.txt"; echo "exit $?" >> "$d/out-cs.txt"
+    "$FORGE_C" build "$file" -o "$d/c" > "$d/out-c.txt" 2> "$d/err-c.txt"; echo "exit $?" >> "$d/out-c.txt"
+    sed -i "s#$d/cs#<out>#g" "$d/out-cs.txt" "$d/err-cs.txt"; sed -i "s#$d/c#<out>#g" "$d/out-c.txt" "$d/err-c.txt"
+    why=""
+    cmp -s "$d/out-cs.txt" "$d/out-c.txt" || why="$why stdout"
+    cmp -s "$d/err-cs.txt" "$d/err-c.txt" || why="$why stderr"
+    pcs=$(ls "$d"/cs/*.fpk 2>/dev/null | head -1); pc=$(ls "$d"/c/*.fpk 2>/dev/null | head -1)
+    if [ -n "$pcs" ] && [ -n "$pc" ]; then
+      $FORGE_CS fpk "$pcs" > "$d/read-cs-cs.txt"; "$FORGE_C" fpk "$pcs" > "$d/read-c-cs.txt"; $FORGE_CS fpk "$pc" > "$d/read-cs-c.txt"; "$FORGE_C" fpk "$pc" > "$d/read-c-c.txt"
+      for r in read-c-cs read-cs-c read-c-c; do cmp -s "$d/read-cs-cs.txt" "$d/$r.txt" || why="$why $r"; done
+      python3 -I tests/fpk-compare.py "$pcs" "$pc" > "$d/zip.txt" || why="$why zip"
+      sed "s#$d/cs#<out>#g" "$d"/cs/json/*.json > "$d/json-cs.txt"; sed "s#$d/c#<out>#g" "$d"/c/json/*.json > "$d/json-c.txt"
+      cmp -s "$d/json-cs.txt" "$d/json-c.txt" || why="$why json"
+    elif [ -n "$pcs$pc" ]; then why="$why one-package"; fi
+    if [ -z "$why" ]; then same=$((same + 1)); else diffs+=("$n:$file:$why"); fi
+  done < "$WORK/libraries.lst"
+  echo "pack: $same of $n identical (what is printed, the packages read by both, their zip structure and the forge copies)"
+  for x in "${diffs[@]:0:5}"; do status=1; echo "  differs:${x#*:}"; done
+fi
+
+# ---- projectbuild (Phase D 3): real native builds of the program projects, `build --all` and `publish` of copies of solutions ----
+if [ "$WHAT" = projectbuild ]; then
+  find src/fire.Project \( -name bin -o -name obj \) -prune -o -name '*.fireproj' -type f -print | LC_ALL=C sort | while IFS= read -r file; do
+    grep -q '"type" *: *"library"' "$file" || echo "$file"
+  done > "$WORK/build-programs.lst"
+  normalize() { sed -E -e 's#/tmp/fire-native-[0-9a-f]{32}#<build>#g' -e "s#$1#<out>#g"; }
+  for tc in ${BUILD_TOOLCHAINS:-gcc tcc}; do
+    n=0 sameLog=0 sameProgram=0 unported=0 diffs=()
+    while IFS= read -r file; do
+      n=$((n + 1))
+      d="$WORK/projectbuild-$tc/$n"; rm -rf "$d"; mkdir -p "$d"
+      FIRE_PROGRAM_CACHE=0 $FORGE_CS build "$file" --engine native -o "$d/p-cs" --toolchain "$tc" ${BUILD_FLAGS:-} 2> "$d/err-cs.txt" | normalize "$d/p-cs" > "$d/log-cs.txt"
+      FIRE_PROGRAM_CACHE=0 "$FORGE_C" build "$file" --engine native -o "$d/p-c" --toolchain "$tc" ${BUILD_FLAGS:-} 2> "$d/err-c.txt" | normalize "$d/p-c" > "$d/log-c.txt"
+      if grep -q '^forge-c: unported: ' "$d/err-c.txt"; then unported=$((unported + 1)); continue; fi
+      if cmp -s "$d/log-cs.txt" "$d/log-c.txt" && cmp -s "$d/err-cs.txt" "$d/err-c.txt"; then sameLog=$((sameLog + 1)); else diffs+=("$n:$file (log)"); fi
+      if cmp -s "$d/p-cs" "$d/p-c"; then sameProgram=$((sameProgram + 1)); else diffs+=("$n:$file (program)"); fi
+    done < "$WORK/build-programs.lst"
+    echo "projectbuild $tc: $n program projects: the log identical $sameLog, the program byte-identical $sameProgram (not ported yet: $unported)"
+    for x in "${diffs[@]:0:5}"; do status=1; echo "  differs: ${x#*:}"; done
+  done
+  # `build --all` and `publish` of a copy of each solution of PROJECT_COPY (folders; their projects write into their folders: bin/, obj/, publish/)
+  for src in ${PROJECT_COPY:-}; do
+    name=$(basename "$src")
+    for side in cs c; do rm -rf "$WORK/copy-$side/$name"; mkdir -p "$WORK/copy-$side"; cp -a "$src" "$WORK/copy-$side/$name"; done
+    sln=$(cd "$WORK/copy-cs/$name" && ls *.firesln | head -1)
+    for cmd in "build --all ${PROJECT_ALL_FLAGS:---engine native}" "publish"; do
+      tag=${cmd%% *}
+      (cd "$WORK/copy-cs/$name" && FIRE_PROGRAM_CACHE=0 $FORGE_CS $cmd "$sln" > "$WORK/$name-$tag-out-cs.txt" 2> "$WORK/$name-$tag-err-cs.txt"; echo "exit $?" >> "$WORK/$name-$tag-out-cs.txt")
+      (cd "$WORK/copy-c/$name" && FIRE_PROGRAM_CACHE=0 "$FORGE_C" $cmd "$sln" > "$WORK/$name-$tag-out-c.txt" 2> "$WORK/$name-$tag-err-c.txt"; echo "exit $?" >> "$WORK/$name-$tag-out-c.txt")
+      for f in out err; do
+        normalize "$WORK/copy-cs/$name" < "$WORK/$name-$tag-$f-cs.txt" | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/<time>/' > "$WORK/$name-$tag-$f-cs.norm"
+        normalize "$WORK/copy-c/$name" < "$WORK/$name-$tag-$f-c.txt" | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/<time>/' > "$WORK/$name-$tag-$f-c.norm"
+        if cmp -s "$WORK/$name-$tag-$f-cs.norm" "$WORK/$name-$tag-$f-c.norm"; then echo "$name $tag $f: identical"
+        else status=1; echo "$name $tag $f: differs"; diff "$WORK/$name-$tag-$f-cs.norm" "$WORK/$name-$tag-$f-c.norm" | head -10 | sed 's/^/    /'; fi
+      done
+    done
   done
 fi
 [ "$WHAT" = all ] && kinds=(tokens ast diagnostics "${fbcKinds[@]}")
