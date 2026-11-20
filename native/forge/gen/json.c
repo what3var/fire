@@ -326,8 +326,17 @@ static const char* JsonCode(FgGen* g) {
     int jsonIds = 0, jsonId, i, half;
     FcList* targs;
     FcList* excluded;
-    fcBufStr(&sb, "#define FIRE_JSON_IMPLEMENTATION 1\n");
-    fcBufStr(&sb, "#include \"fire_json.h\"\n");
+    /* (with library modules in one file it is included before their code; linkage "static": the engine is in the file of the module that calls it) */
+    {
+        bool inLibrary = false;
+        if (g->separate && g->libraries) for (i = 0; i < g->libraries->count; i++) if (((FgModuleOutput*)g->libraries->items[i])->jsonEngine) inLibrary = true;
+        if (!g->moduleBodies && !inLibrary) {
+            fcBufStr(&sb, "#define FIRE_JSON_IMPLEMENTATION 1\n");
+            fcBufStr(&sb, "#include \"fire_json.h\"\n");
+        }
+        else if (!g->moduleBodies) fcBufStr(&sb, "#include \"fire_json.h\"   // (the engine: in the library of the module that calls it)\n");
+        else fcBufStr(&sb, "");
+    }
     for (i = 0; i < g->classList->count; i++) if (((FgClassInfo*)g->classList->items[i])->id + 1 > jsonIds) jsonIds = ((FgClassInfo*)g->classList->items[i])->id + 1;
     for (jsonId = 0; jsonId < jsonIds; jsonId++) {
         FgClassInfo* ci = NULL;

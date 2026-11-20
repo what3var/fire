@@ -342,7 +342,7 @@ static FgSources GenerateModular(FcCtx* c, FcLinked* program, FcList* natives, c
         fcBufStr(&bodies, "");
         for (i = 0; i < outputs->count; i++) fcBufStr(&bodies, ((FgModuleOutput*)outputs->items[i])->body);
         main->moduleBodies = fcBufDone(c, &bodies);
-        main->store = store;
+        main->store = store; CollectPackages(main, store);
         SetModules(main, specs, NULL);
         text = Run(main);
         u |= CurrentFlags(main);
@@ -368,7 +368,7 @@ static FgModuleOutput* GenerateLibrary(FcCtx* c, FcLinked* program, FcList* nati
     generator = fgGenNew(c, view, natives, target);
     generator->strip = fgLibraryStripping(program, stripping);
     generator->role = FG_ROLE_LIBRARY; generator->hasForced = hasFlags; generator->forced = flags; generator->self = spec; generator->separate = separate; generator->dll = dll;
-    generator->store = store;
+    generator->store = store; CollectPackages(generator, store);
     /* (a plugin: the tables a program defines for a library are its own; every member of its classes and of their bases is in their tables) */
     if (plugin) { generator->plugin = true; generator->pluginDeps = plugin; generator->tablesAll = true; }
     FC_TRY(c) {

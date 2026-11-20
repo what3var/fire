@@ -773,7 +773,7 @@ static FgStaticPlan* GenerateStatic(FcCtx* c, FcLinked* program, FcList* natives
         }
         main->dll = dll; main->dllModules = dll ? outputs : NULL; main->toolchainStamp = toolchainStamp;
         main->openWorld = shared;
-        main->store = store;
+        main->store = store; CollectPackages(main, store);
         SetModules(main, specs, NULL);
         text = Run(main);
         u |= CurrentFlags(main);
