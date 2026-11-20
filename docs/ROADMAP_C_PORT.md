@@ -382,11 +382,10 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    Dokumente (ganzer Text oder Edits, Versionen, Overlay), Projekte (Dateien, Bibliotheken mit Namespaces), Diagnosen (entprellt, latest wins,
    `stale`, gemerkt), Vervollständigung, Hover, Signatur, Definition, Referenzen, Gliederung, Faltung, Markup-Vervollständigung, Abbruch. Die
    Logik von `ScriptSymbolIndex`, `CompletionEngine`, `NavigationEngine`, `MarkupCompletion` und `LiveDiagnostics` 1:1 in C
-   (`native/forge/serve*.c`); spark (`ServeClient`, `ServeDocuments`) geht für Vervollständigung, Diagnosen und Markup-Vervollständigung über
+   (`native/forge/serve*.c`); spark (`ServeClient`, `ServeDocuments`) geht für Vervollständigung, Diagnosen, Markup-Vervollständigung, Hover, Signatur und Definition über
    das Protokoll, `FIRE_SPARK_LANG=inproc` behält den eigenen Prozess bis M2. Die Completion-Tests laufen über das Protokoll (jede Liste gleich der
    des eigenen Prozesses), dazu ServeTests (Planung der Diagnosen, Projekte; die Diagnosen gleich `LiveDiagnostics`, auch an ruhrpott-raser).
-   Ein Tastendruck 3-8 ms, eine Analyse rund 3-mal so schnell wie im eigenen Prozess. **Offen**: Hover/Signatur/Definition in spark noch selbst
-   gerechnet, die Prüfung ganzer Projekte (`AnalyzeProjectFiles`), Natives von Bibliotheksprojekten, übersetzte Einheiten über Analysen merken.
+   Ein Tastendruck 3-8 ms, eine Analyse rund 3-mal so schnell wie im eigenen Prozess. **Offen**: Vergleichsprüfungen für Hover/Signatur/Definition, die Prüfung ganzer Projekte (`AnalyzeProjectFiles`), Natives von Bibliotheksprojekten, übersetzte Einheiten über Analysen merken.
 
 **M2:** `forge run`, `forge test`, `forge ui|biscuit|fdata|falstad` für die VM laufen ganz ohne .NET; spark enthält keinen Compiler mehr.
 

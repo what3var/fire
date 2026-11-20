@@ -154,8 +154,8 @@ Maschine gebaut, einmal, in einen Cache nach den Quellen) mit der Prelude von sp
 Anfang und Ende), schickt die Kontextdateien des Index (`includes`) und die Projekte der Analysen (die Dateien und Bibliotheken eines
 `BuildPlan`, nur wenn sich einer ihrer Texte änderte). Über das Protokoll gehen: die Vervollständigung (`ScriptEditorControl`), die Diagnosen
 (`DiagnosticsJob` des Editors und `AnalyzeDocumentJob` des Hauptfensters rufen `diagnose` aus ihren Hintergrundprüfungen), die
-Markup-Vervollständigung (`MarkupEditorControl`, wenn der Server sie kann). Hover, Signatur und Sprung zur Definition rechnet spark noch selbst
-(die Antworten des Servers gibt es; die Tooltips und das Fenster der Prelude hängen an `ResolvedSymbol`).
+Markup-Vervollständigung (`MarkupEditorControl`, wenn der Server sie kann), die Tooltips der `///`-Kommentare (`hover`), der Tooltip eines Aufrufs
+(`signature`) und der Sprung zur Definition (`definition`; findet der Server nichts, sucht spark noch in den `#include`ten Dateien).
 
 Der Schalter: **`FIRE_SPARK_LANG=inproc`** behält den Weg im eigenen Prozess (`ScriptSymbolIndex`, `CompletionEngine`, `LiveDiagnostics`) bis M2;
 ohne ihn geht spark über `forge serve` und fällt auf den eigenen Prozess zurück, wenn der Server nicht startet oder endet.

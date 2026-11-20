@@ -526,6 +526,54 @@ namespace fire.Editor
             catch (Exception ex) when (ex is IOException or ServeException) { return null; }
         }
 
+        /// <summary>A symbol the server answered with (hover, signature): where it is declared, its one-line header and its `///` documentation.</summary>
+        private static ResolvedSymbol? SymbolOf(string path, JsonNode? s)
+        {
+            if (s is not JsonObject o) return null;
+            string? file = o["path"]?.GetValue<string>();
+            var target = new NavigationTarget(file == null || file == path ? null : file, o["line"]?.GetValue<int>() ?? 0, o["prelude"]?.GetValue<string>());
+            string? doc = o["doc"]?.GetValue<string>();
+            return new ResolvedSymbol(target, Text: o["header"]?.GetValue<string>() ?? "", Doc: doc == null ? null : DocComments.Parse(doc));
+        }
+
+        /// <summary>The symbol at `offset` (NavigationEngine.TryResolveSymbol on the server); `Found` false: not available (do it in this process).</summary>
+        public static (bool Found, ResolvedSymbol? Symbol) Hover(string path, string text, int offset, IReadOnlyList<(string Path, string Text)> context)
+        {
+            try
+            {
+                var client = Sync(path, text, context, null, null);
+                if (client == null || !client.Capabilities.Contains("hover")) return (false, null);
+                return (true, SymbolOf(path, client.Request("hover", new JsonObject { ["path"] = path, ["offset"] = offset })));
+            }
+            catch (Exception ex) when (ex is IOException or ServeException) { return (false, null); }
+        }
+
+        /// <summary>The documented overload of the call whose arguments `offset` is in (FindOpenCall, TryResolveCall on the server).</summary>
+        public static (bool Found, ResolvedSymbol? Symbol) Signature(string path, string text, int offset, IReadOnlyList<(string Path, string Text)> context)
+        {
+            try
+            {
+                var client = Sync(path, text, context, null, null);
+                if (client == null || !client.Capabilities.Contains("signature")) return (false, null);
+                return (true, SymbolOf(path, client.Request("signature", new JsonObject { ["path"] = path, ["offset"] = offset })?["symbol"]));
+            }
+            catch (Exception ex) when (ex is IOException or ServeException) { return (false, null); }
+        }
+
+        /// <summary>Where the symbol at `offset` is declared (NavigationEngine.TryResolve on the server): null in the target's file means this document.</summary>
+        public static (bool Found, NavigationTarget? Target) Definition(string path, string text, int offset, IReadOnlyList<(string Path, string Text)> context)
+        {
+            try
+            {
+                var client = Sync(path, text, context, null, null);
+                if (client == null || !client.Capabilities.Contains("definition")) return (false, null);
+                if (client.Request("definition", new JsonObject { ["path"] = path, ["offset"] = offset }) is not JsonObject o) return (true, null);
+                string? file = o["path"]?.GetValue<string>();
+                return (true, new NavigationTarget(file == null || file == path ? null : file, o["line"]?.GetValue<int>() ?? 0, o["prelude"]?.GetValue<string>()));
+            }
+            catch (Exception ex) when (ex is IOException or ServeException) { return (false, null); }
+        }
+
         /// <summary>The completion of a markup file over the protocol; null: not available (the server cannot, or the own process serves).</summary>
         public static fire.UI.Markup.MarkupCompletionResult? CompleteMarkup(string path, string text, int offset)
         {

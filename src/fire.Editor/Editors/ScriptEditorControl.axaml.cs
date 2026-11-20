@@ -404,7 +404,9 @@ namespace fire.Editor
         private bool TryGetDoc(int offset, out string header, out DocComment doc)
         {
             string source = CurrentText();
-            var symbol = NavigationEngine.TryResolveSymbol(source, offset, IndexFor(source));
+            // over `forge serve`, else in this process
+            var (served, symbol) = ServeDocuments.Hover(ServeDocuments.PathOf(FilePath, this), source, offset, ContextFiles(source));
+            if (!served) symbol = NavigationEngine.TryResolveSymbol(source, offset, IndexFor(source));
             if (symbol?.Documentation is { } found)
             {
                 header = symbol.Header;
@@ -460,7 +462,8 @@ namespace fire.Editor
                 return false;
             }
 
-            var symbol = NavigationEngine.TryResolveCall(source, call, IndexFor(source, wordEdit: true));
+            var (served, symbol) = ServeDocuments.Signature(ServeDocuments.PathOf(FilePath, this), source, Editor.CaretOffset, ContextFiles(source));
+            if (!served) symbol = NavigationEngine.TryResolveCall(source, call, IndexFor(source, wordEdit: true));
             if (symbol?.Documentation is not { } doc)
             {
                 if (_docTipKind == DocTipKind.Call) CloseDocTip();
@@ -1020,6 +1023,9 @@ namespace fire.Editor
         private NavigationTarget? FindDefinitionAt(int offset)
         {
             string source = CurrentText();
+            // over `forge serve` (the server knows the other files of the project and the #included scripts), else in this process
+            var (served, target) = ServeDocuments.Definition(ServeDocuments.PathOf(FilePath, this), source, offset, ContextFiles(source));
+            if (served && target != null) return target;
             var index = IndexFor(source);
             return NavigationEngine.TryResolve(source, offset, index)
                 ?? TryResolveAcrossIncludes(source, offset, index);
