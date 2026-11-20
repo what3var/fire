@@ -1420,7 +1420,7 @@ namespace fire.Native
                 // (`T items[]`, `new T[n]`: how this type argument types an array - a class or `string` by its entry in g_arrClasses, ROADMAP 19)
                 var (arrElem, arrClass) = DeclaredType.ArrayOfTypeArg(text, ProgramEnum) is var (elemOfArg, elemText) ? (elemOfArg + 1, elemText != null ? ArrClassId(elemText) : 0) : (0, 0);
                 string isA = IsANames(text, $"{Px}tai_{id}", sb);   // (the table of names first: the TArg points to it)
-                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}, {arrClass}, {isA}}};");
+                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}, {arrClass}, {isA}{ArrClassMap(arrClass)}}};");
             }
             foreach (var (text, id) in _targListIds.OrderBy(kv => kv.Value))
                 sb.AppendLine($"static const TArg* const {Px}tl_{id}[] = {{{string.Join(", ", text.Split('|').Select(TArgRef))}}};");
@@ -1860,7 +1860,7 @@ namespace fire.Native
             int defined = ArrayElem.IsDefined(elemCode) ? 8 : 0;
             // (an array of a class, a string or an enum: its entry in g_arrClasses - TU_CLASS, ROADMAP 19)
             if (ArrayElem.TypeOf(elemCode) == ArrayElem.Class && demand != null)
-                return $"{ArrClassId(demand)}, {16 | defined}, {Constant(Value.MakeString(ArrayElem.Name(ArrayElem.Class, demand)))}";
+                return $"{ArrClassC(ArrClassId(demand))}, {16 | defined}, {Constant(Value.MakeString(ArrayElem.Name(ArrayElem.Class, demand)))}";
             if (demand == null) return $"0, {defined}, {Constant(Value.MakeString("(no unit)"))}";
             string unit = demand.TrimStart('#');
             if (unit == "any") return $"0, {4 | defined}, {Constant(Value.MakeString("any"))}";
@@ -2444,6 +2444,9 @@ namespace fire.Native
             }
             if (_usesExceptions) sb.AppendLine("#define FIRE_EXCEPTIONS 1");
             if (Modular) sb.AppendLine("#define FIRE_MODULES 1   // modules (ROADMAP 9): the members of the classes of other modules by name, through the class descriptors");
+            // (the modules in files of their own, linkage static/shared: what the platform keeps once - the key of the thread state of TinyCC, ... - must be one, in the
+            // program's file; fire_rt.h FIRE_ONCE. Without it every module had a state of its own: TinyCC has no thread-local storage, the state hangs on that key)
+            if (Modular && _separate && !_dll) sb.AppendLine("#define FIRE_SPLIT 1   // the modules are units of their own: what the platform keeps once lives in the program's file (fire_rt.h FIRE_ONCE)");
             if (DebugBuild) sb.AppendLine("#define FIRE_DEBUG 1   // a debug build: the shadow stack and the hooks of the debugger (fire_debug.h)");
             if (DebugBuild && DebugAgent) sb.AppendLine("#define FIRE_DEBUG_AGENT 1   // the debug agent (docs/spec/NATIVE_DEBUG_PROTOCOL.md; the desktop: FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T)");
             if (DebugBuild && DebugAgent && DebugTransportDefine is { } transport)

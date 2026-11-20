@@ -41,7 +41,7 @@ namespace fire.Native
         public static string GeneratorIdentity { get; set; } = typeof(CppGenerator).Assembly.ManifestModule.ModuleVersionId.ToString();
 
         /// <summary>The format of the interface files (ROADMAP 9.7): a changed format is a different key.</summary>
-        public const int InterfaceFormat = 2;   // (2: the units as ProgramFile writes them)
+        public const int InterfaceFormat = 3;   // (2: the units as ProgramFile writes them; 3: ArrClasses, JsonReads)
 
         /// <summary>The library module whose import the natives in C belong to (linkage "static": they live in its file, ROADMAP 9 B2) - null: the program has them (no module
         /// of that name, or one file).</summary>
@@ -274,6 +274,8 @@ namespace fire.Native
             public List<string> Units { get; set; } = new();
             public List<EnumEntry> Enums { get; set; } = new();
             public List<string> ExcTypes { get; set; } = new();
+            public List<string> ArrClasses { get; set; } = new();
+            public List<string> JsonReads { get; set; } = new();
             public List<string> ReflectionNatives { get; set; } = new();
             public List<string> Made { get; set; } = new();
             /// <summary>The classes by the class whose code makes or calls them ("": the module itself); null in an interface of before.</summary>
@@ -313,7 +315,7 @@ namespace fire.Native
                 StaticFields = n.StaticFields.Select(f => new[] { f.Class, f.Field }).ToList(),
                 Units = n.Units.Select(u => Convert.ToBase64String(fire.Bytecode.ProgramFile.WriteUnit(u))).ToList(),
                 Enums = n.Enums.Select(e => new EnumEntry { Name = e.Name, Flags = e.IsFlags, Members = e.Members.Select(m => m.Name).ToList(), Values = e.Members.Select(m => m.Value).ToList() }).ToList(),
-                ExcTypes = n.ExcTypes.ToList(), ReflectionNatives = n.ReflectionNatives.ToList(), Made = n.Classes.ToList(), MadeBy = n.MadeBy, NativeThunks = output.NativeThunks, JsonEngine = output.JsonEngine,
+                ExcTypes = n.ExcTypes.ToList(), ArrClasses = n.ArrClasses.ToList(), JsonReads = n.JsonReads.ToList(), ReflectionNatives = n.ReflectionNatives.ToList(), Made = n.Classes.ToList(), MadeBy = n.MadeBy, NativeThunks = output.NativeThunks, JsonEngine = output.JsonEngine,
                 SharedNatives = n.SharedNatives.Select(x => new[] { x.Key, x.Value.Argc.ToString(CultureInfo.InvariantCulture), x.Value.NeedsList ? "1" : "0", x.Value.Import }).ToList(),
                 HostImports = output.HostImports.Select(h => new[] { h.Key, h.Value }).ToList(),
             };
@@ -335,6 +337,8 @@ namespace fire.Native
             n.Units.AddRange(f.Units.Select(u => fire.Bytecode.ProgramFile.ReadUnit(Convert.FromBase64String(u))));
             n.Enums.AddRange(f.Enums.Select(e => EnumType.Intern(e.Name, e.Flags, e.Members.Zip(e.Values).Select(m => (m.First, m.Second)).ToList())));
             n.ExcTypes.AddRange(f.ExcTypes);
+            n.ArrClasses.AddRange(f.ArrClasses);
+            n.JsonReads.UnionWith(f.JsonReads);
             n.ReflectionNatives.UnionWith(f.ReflectionNatives);
             n.Classes.UnionWith(f.Made);
             n.MadeBy = f.MadeBy;

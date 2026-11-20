@@ -10,7 +10,7 @@ FIRE_BEGIN
 /* A field as JSON sees it (JsonMethods.JsonField): the name in the JSON text, the slot in the object, the declared type (`int`, `Point`, `List<Point>`, `$0`, "" for
  * an untyped one) and the unit it is declared with (0: none). */
 /* `arr`: a field declared as a typed array without a unit (FieldInfo.RequiredArray: the element | the rank << 8; 0: none) - what is read for it is typed */
-typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; uint16_t arr; uint8_t defined; uint8_t raw; uint16_t rawOff; int8_t half; uint32_t arrClass; } JsonFieldInfo;   /* (arrClass: `Dog pets[]` - the entry of the elements in g_arrClasses, 0: a number array) */   /* (half: a narrow field - nvGet/nvSet, 0 or 1; -1: a whole slot) */   /* (raw: a packed field - FIRE_RAW_*, at rawOff of objRaw) */   /* (defined: the kind of a `defined` field, SPEC 8.10b) */
+typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; uint16_t arr; uint8_t defined; uint8_t raw; uint16_t rawOff; int8_t half; uint32_t arrClass; const uint32_t* arrMap; } JsonFieldInfo;   /* (arrClass: `Dog pets[]` - the entry of the elements in g_arrClasses, 0: a number array; arrMap: a library module's - the entry is arrMap[arrClass], see TArg) */   /* (half: a narrow field - nvGet/nvSet, 0 or 1; -1: a whole slot) */   /* (raw: a packed field - FIRE_RAW_*, at rawOff of objRaw) */   /* (defined: the kind of a `defined` field, SPEC 8.10b) */
 /* A class: its name (as the program knows it, `Box`1` for a generic one whose plain name is taken), the plain name, its fields, `flags` (1 actor, 2 has
  * OnDeserialized(), 4 the List of the prelude, 8 JsonObject, 16 not serializable: `[NotSerializable]` or `"serializable": false` in its package) and the number of its
  * type parameters. */
@@ -1238,7 +1238,10 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         s.container = obj; s.index = field->slot; s.has = true;
         v = jsBuild(r, member->node, jsSubstitute(J, field->type, o2, c), objOwned(o2), jsCat3(J, path, ".", key), field->unit, s);
         /* (`defined int a[]`: 0x40 beside the element type - its elements are never undefined, ArrayElem.DefinedFlag) */
-        if (field->arr && !J->failed && v.kind == K_Array) typeArray(v, (uint8_t)(field->arr & 0x3F), field->arr >> 8, field->arrClass, (uint8_t)(((field->arr & 0x40) ? TU_DEFINED : 0) | (field->arrClass ? TU_CLASS : 0)), Undef(), 1);
+        if (field->arr && !J->failed && v.kind == K_Array) {
+            uint32_t ac = field->arrClass && field->arrMap ? field->arrMap[field->arrClass] : field->arrClass;
+            typeArray(v, (uint8_t)(field->arr & 0x3F), field->arr >> 8, ac, (uint8_t)(((field->arr & 0x40) ? TU_DEFINED : 0) | (ac ? TU_CLASS : 0)), Undef(), 1);
+        }
         if ((field->defined & 0x40) && !J->failed && v.kind == K_Undefined) {   /* (`defined Dog d`: null is no object) */
             jsFail(J, jsCat5(J, jsCat3(J, path, ".", key), " is ", strchr("AEIOUaeiou", field->type[0]) ? "an " : "a ", field->type, " and never undefined."), "ArgumentException");
             break;

@@ -1430,7 +1430,9 @@ typedef struct Str {
 /* `arrClass`: for a class, an interface or `string` (arrElem is E_CLASS + 1 then) the 1-based index of the entry in g_arrClasses (ROADMAP 19). */
 /* `isA`: for a class the names of the types it is (itself, its bases, their interfaces; NULL-terminated) - a `List<Dog>` goes where a `List<Animal>` is
  * declared (typeNameIn); NULL for anything else. */
-typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); uint8_t arrElem; uint32_t arrClass; const char* const* isA; } TArg;
+/* `arrMap`: a TArg of a library module (linkage static/shared, FIRE_MODULES): `arrClass` is the module's number, the entry is `arrMap[arrClass]` (the
+ * program's table fire_arrc_M - g_arrClasses has the entries of every module); NULL: `arrClass` is the entry. */
+typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); uint8_t arrElem; uint32_t arrClass; const char* const* isA; const uint32_t* arrMap; } TArg;
 /* The type arguments of an object or a call, one per type parameter (null: not known); interned, never freed. */
 typedef const TArg* const* TArgs;
 
@@ -6671,7 +6673,8 @@ FIRE_ALWAYS_INLINE FIRE_FN bool typeArray(Value v, uint8_t elem, int rank, uint3
 }
 /* `T items[]`, `new T[n]` (OpCode.TypeArrayOfParam): the array typed by a type argument that types arrays (TArg.arrElem; a class by TArg.arrClass). */
 FIRE_FN bool typeArrayOfArg(Value v, const TArg* ta) {
-    return typeArray(v, (uint8_t)(ta->arrElem - 1), 1, ta->arrClass, ta->arrClass ? TU_CLASS : 0, Undef(), 1);
+    uint32_t ac = ta->arrClass && ta->arrMap ? ta->arrMap[ta->arrClass] : ta->arrClass;
+    return typeArray(v, (uint8_t)(ta->arrElem - 1), 1, ac, ac ? TU_CLASS : 0, Undef(), 1);
 }
 FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth) {
     Arr* a;
