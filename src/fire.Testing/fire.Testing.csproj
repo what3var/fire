@@ -26,6 +26,8 @@
     <Compile Include="..\fire.Editor\Language\SyntaxHighlighter.cs" Link="Editor\SyntaxHighlighter.cs" />
     <Compile Include="..\fire.Editor\Language\CppHighlighter.cs" Link="Editor\CppHighlighter.cs" />
     <Compile Include="..\fire.Editor\Language\ColorizeAttributes.cs" Link="Editor\ColorizeAttributes.cs" />
+    <!-- the client of `forge serve` (docs/spec/FORGE_SERVE.md): the language services over the protocol (ServeTests, CompletionTests) -->
+    <Compile Include="..\fire.Editor\Language\ServeClient.cs" Link="Editor\ServeClient.cs" />
     <!-- the debug session of spark (no user interface): tested headless against the debug targets (DebuggerTests) -->
     <Compile Include="..\fire.Editor\Debugging\DebugSession.cs" Link="Editor\DebugSession.cs" />
     <Compile Include="..\fire.Editor\Debugging\DebugThreadContext.cs" Link="Editor\DebugThreadContext.cs" />

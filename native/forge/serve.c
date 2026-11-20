@@ -98,10 +98,11 @@ typedef struct SvDoc {
     SvIndex* index;
     uint64_t indexKey;
     /* the diagnostics (under the lock) */
-    int pending;        /* the version waiting for its analysis (0: none) */
+    bool pending;       /* an analysis is waiting (for the version of the text then) */
+    int64_t seq;        /* the request of the newest analysis (every schedule a new one) */
+    int64_t deliveredSeq;   /* the request whose result was sent last */
     int64_t due;
     int64_t touched;
-    int delivered;      /* the newest version whose result was sent */
     uint64_t rememberedKey;
     char* rememberedItems;   /* the `items` JSON of that key */
 } SvDoc;
@@ -249,6 +250,7 @@ static SvText* svOverlay(SvServer* S, const SvPFile* f) {
 typedef struct SvJob {
     SvDoc* doc;
     int version;
+    int64_t seq;
     char* path;
     char* base;
     SvText* text;
@@ -270,7 +272,8 @@ static SvJob* svTakeJob(SvServer* S, SvDoc* d) {
     int i, k, nt = 0;
     j->c = svNewCtx();
     j->doc = d;
-    j->version = d->pending;
+    j->version = d->version;
+    j->seq = d->seq;
     j->path = svDup(d->path);
     j->base = svDup(d->base);
     j->text = svTextRef(d->text);
@@ -398,7 +401,7 @@ SV_THREAD_FN(svAnalysisThread) {
             int64_t started = svNowMs();
             char* items;
             bool fromMemory;
-            best->pending = 0;
+            best->pending = false;
             fromMemory = best->rememberedItems && best->rememberedKey == j->key;
             if (fromMemory) { items = svDup(best->rememberedItems); S->remembered++; }
             else {
@@ -412,12 +415,12 @@ SV_THREAD_FN(svAnalysisThread) {
             if (i < S->ndocs) {
                 SvDoc* d = j->doc;
                 if (!fromMemory) { free(d->rememberedItems); d->rememberedItems = svDup(items); d->rememberedKey = j->key; }
-                if (j->version > d->delivered) {
+                if (j->seq > d->deliveredSeq) {
                     FcBuf b = {0};
-                    d->delivered = j->version;
+                    d->deliveredSeq = j->seq;
                     fcBufStr(&b, "{\"method\":\"diagnostics\",\"params\":{\"path\":");
                     svJsonEsc(&b, d->path);
-                    fcBufFmt(&b, ",\"version\":%d,\"stale\":%s,\"ms\":%d,\"items\":%s}}", j->version, j->version < d->version ? "true" : "false", (int)(svNowMs() - started), items);
+                    fcBufFmt(&b, ",\"version\":%d,\"stale\":%s,\"ms\":%d,\"items\":%s}}", j->version, j->seq < d->seq ? "true" : "false", (int)(svNowMs() - started), items);
                     svSend(S, &b);
                     fcBufFree(&b);
                 }
@@ -432,9 +435,10 @@ SV_THREAD_FN(svAnalysisThread) {
 
 static void svSchedule(SvServer* S, SvDoc* d) {
     if (d->fxml) return;
-    d->pending = d->version;
+    d->pending = true;
+    d->seq = ++S->clock;
     d->due = svNowMs() + S->debounce;
-    d->touched = ++S->clock;
+    d->touched = d->seq;
     svCondSignal(&S->workCond);
 }
 
@@ -583,7 +587,8 @@ static void svRescheduleDependents(SvServer* S, SvDoc* changed) {
         for (k = 0; k < S->ndocs; k++) if (S->docs[k] != changed && S->docs[k]->project && strcmp(S->docs[k]->project, p->key) == 0) {
             SvDoc* d = S->docs[k];
             /* (after the document typed in: it keeps the first place) */
-            d->pending = d->version;
+            d->pending = true;
+            d->seq = ++S->clock;
             d->due = svNowMs() + S->debounce;
             d->touched = changed->touched - 1;
         }
@@ -726,7 +731,6 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
             svTextUnref(d->text);
             d->text = svTextFromFc8(text);
             d->version = svJNum(params, "version", &num) ? (int)num : d->version + 1;
-            d->delivered = 0;
             free(d->project); d->project = svDup(svJStr(params, "project"));
             free(d->base); d->base = svDup(svJStr(params, "base"));
             svDefaultBase(d, S->lang.tmp);
@@ -823,10 +827,7 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
             if (!d) { svUnlock(&S->mu); fcThrow(&mc, FC_ERR_INTERNAL, 0, 0, NULL, "document"); }
             version = d->version;
             {
-                int had = d->pending;
-                d->pending = d->version;   /* (the snapshot takes `pending` as its version; a scheduled analysis stays scheduled) */
-                j = svTakeJob(S, d);
-                d->pending = had;
+                j = svTakeJob(S, d);   /* (a scheduled analysis stays scheduled) */
             }
             svUnlock(&S->mu);
             items = svRunJob(S, &S->lang, j);

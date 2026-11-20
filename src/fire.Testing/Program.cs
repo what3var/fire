@@ -25,7 +25,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmrun") { Environ
 // FIRE_TESTS_ONLY=explorer: the filter, Sync and Show All Files of spark's solution explorer (ExplorerTests.cs; seconds, nothing installed)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "explorer") { Environment.ExitCode = TestResume.Group("ExplorerTests", ExplorerTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=editorchecks: how spark checks the documents in the background while typing - debounce, cancellation, stale results, the gate of the analyses (BackgroundCheckTests.cs; seconds)
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "editorchecks") { Environment.ExitCode = TestResume.Group("BackgroundCheckTests", BackgroundCheckTests.Run, 0) == 0 ? 0 : 1; return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "editorchecks") { Environment.ExitCode = TestResume.Group("BackgroundCheckTests", BackgroundCheckTests.Run, 0) + TestResume.Group("ServeTests.Protocol", ServeTests.RunProtocol, 0) == 0 ? 0 : 1; return; }
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
 // scene3d's GPU path takes a Vulkan device that is a CPU (lavapipe) only with FIRE_S3D_GPU=cpu - without it the hardware checks only see the fallback to
@@ -82,6 +82,9 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "tables") { TestRes
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { TestResume.Group("SyntaxTests.Run", () => { SyntaxTests.Run(); }); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TestResume.Group("TypeTests.Run", () => { TypeTests.Run(); }); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "completion") { TestResume.Group("CompletionTests.Run", () => { CompletionTests.Run(); }); return; }
+// FIRE_TESTS_ONLY=serve: the language services over the protocol - `forge-c serve` (native/forge/serve*.c) with spark's client: scheduling of the diagnostics, documents, projects,
+// the diagnostics compared with LiveDiagnostics, the completion (CompletionTests over the protocol) and the markup completion (ServeTests.cs; FIRE_SPARK_LANG=inproc: in this process)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "serve") { Environment.ExitCode = TestResume.Group("ServeTests", ServeTests.Run, 0) == 0 ? 0 : 1; TestResume.Group("CompletionTests.Run", () => { CompletionTests.Run(); }); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestResume.Group("TestingTests.Run", () => { TestingTests.Run(); }); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { TestResume.Group("NotesTests.Run", () => { NotesTests.Run(); }); return; }
 // FIRE_TESTS_ONLY=git: git (GitTests), the files that change under the editor, the Git panel (GitSyncTests), the Repository view: graph, rebase, reset, cherry-pick, ... (GitRepositoryViewTests); FIRE_TESTS_FILTER narrows the GitSync checks by title
