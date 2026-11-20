@@ -169,7 +169,7 @@ static void RegisterJsonTargets(FgGen* g) {
             fcListAdd(g->c, funcs, g->main);
             for (i = 0; i < funcs->count; i++) {
                 FgFunc* f = (FgFunc*)funcs->items[i];
-                FgCode code = f->decoded.p ? f->decoded : fgDecode(g->c, f->chunk);
+                FgCode code = f->decoded;   /* (as the C#: Func.Decoded - empty until the function is generated; one GetFunc made in this round is read in the next) */
                 for (k = 0; k < code.n; k++) {
                     const FgInstr* ins = &code.p[k];
                     int set;
