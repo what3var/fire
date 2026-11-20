@@ -1251,11 +1251,13 @@ static const char* FieldHelpersCore(FgGen* g, const char* name) {
         requiredUnit = fgFieldRequiredUnit(cls->rc, name);
         kind = fgFieldRequiredKind(cls->rc, name);
         requiredType = fgFieldRequiredType(cls->rc, name);
-        arrayCheck = FieldArrayCheck(g, cls->rc, name, "o");
-        check = fcFmt(g->c, "%s%s%s%s", requiredUnit ? fcFmt(g->c, "x = %s; ", AdaptUnitCall(g, "x", requiredUnit)) : "",
-            kind != 0 ? fcFmt(g->c, "%s ", FieldKindCheck(g, name, kind)) : "",
-            requiredType ? fcFmt(g->c, "%s ", ClassGuard(g, "x", requiredType, fcFmt(g->c, "Field '%s'", name), "o", NULL, "")) : "",
-            *arrayCheck ? fcFmt(g->c, "%s ", arrayCheck) : "");
+        {
+            const char* c1 = requiredUnit ? fcFmt(g->c, "x = %s; ", AdaptUnitCall(g, "x", requiredUnit)) : "";
+            const char* c2 = kind != 0 ? fcFmt(g->c, "%s ", FieldKindCheck(g, name, kind)) : "";
+            const char* c3 = requiredType ? fcFmt(g->c, "%s ", ClassGuard(g, "x", requiredType, fcFmt(g->c, "Field '%s'", name), "o", NULL, "")) : "";
+            arrayCheck = FieldArrayCheck(g, cls->rc, name, "o");
+            check = fcFmt(g->c, "%s%s%s%s", c1, c2, c3, *arrayCheck ? fcFmt(g->c, "%s ", arrayCheck) : "");
+        }
         if (cls->rc->isRecord) check = fcFmt(g->c, "if (FIRE_UNLIKELY(!recInit(o))) { recordWriteError(o, %s); return; } %s", CString(g, name), check);
         if (*check) fgArmAdd(g, unitArms, cls->id, fcFmt(g->c, "%sbreak;", check));
     }

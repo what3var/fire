@@ -57,6 +57,21 @@ static const char* fcBaseName(const char* path) {
 static int fcCmpOrdinal(const void* a, const void* b) { return strcmp(*(const char* const*)a, *(const char* const*)b); }
 
 #include "linker.c"
+/* the generator bytecode -> C (Phase D 1, gen/) */
+static bool fcStrictTag(const char* path);
+#include "gen/gen.h"
+#include "gen/support.c"
+#include "gen/cppgenerator.c"
+#include "gen/cppgenerator2.c"
+#include "gen/cppgenerator3.c"
+#include "gen/packed.c"
+#include "gen/cabi.c"
+#include "gen/overloads.c"
+#include "gen/misc.c"
+#include "gen/cppgenerator4.c"
+#include "gen/cppgenerator5.c"
+#include "gen/cppgenerator6.c"
+#include "gen/native.c"
 
 /* the markup generators (Phase C 5) */
 #include "markupmodel.c"
@@ -174,6 +189,11 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
     source = (const uint16_t*)fcAlloc(c, sizeof(uint16_t) * (size_t)(n + 1));
     if (n) memcpy((void*)source, text.p, sizeof(uint16_t) * (size_t)n);
     fcU16Free(&text);
+    if (strncmp(job->command, "cgen:", 5) == 0) {
+        /* `cgen <options>`: the C `forge native <file>` writes (Phase D 1, gen/native.c) */
+        fgDumpNative(c, job->command + 5, job->path, job->prelude, job->store, job->out);
+        return;
+    }
     if (strncmp(job->command, "fbc:", 4) == 0) {
         /* `fbc <mode>`: the program file `forge bytecode <file> -m <mode>` writes */
         const char* m = job->command + 4;
@@ -232,6 +252,13 @@ static int fcDump(const char* command, const char* path, FILE* out, const char* 
         if (strcmp(command, "ast") == 0) o.len = 0, o.p[0] = 0;   /* (the tree is written only when the parse is done) */
         if (strcmp(command, "diagnostics") == 0) { o.len = 0; o.p[0] = 0; for (i = 0; i < ctx.diags->count; i++) fcDiagLogLine(&o, (const FcDiagnostic*)ctx.diags->items[i]); }
         if (strncmp(command, "fbc:", 4) == 0) { o.len = 0; fcBufStr(&o, "error\n"); }
+        if (strncmp(command, "cgen:", 5) == 0) {
+            /* (FrontendDump.DumpNative: a program the backend refuses, a part of the generator in C that is not ported yet, a compile error) */
+            o.len = 0;
+            if (ctx.err.kind == FC_ERR_NATIVE) { fcBufStr(&o, "unsupported: "); fcOut8(&o, ctx.err.message); fcBufChar(&o, '\n'); diags = fcListNew(&ctx); }
+            else if (ctx.err.kind == FC_ERR_INTERNAL && ctx.err.message && fcStartsWith(ctx.err.message, "unported: ")) { fcOut8(&o, ctx.err.message); fcBufChar(&o, '\n'); diags = fcListNew(&ctx); }
+            else fcBufStr(&o, "error\n");
+        }
         for (i = 0; i < diags->count; i++) fcDiagLogLine(&o, (const FcDiagnostic*)diags->items[i]);
         result = 1;
     } FC_END_TRY;
@@ -263,7 +290,7 @@ static const char* fcFindStore(const char* exe, char* buf, size_t n) {
     return buf;
 }
 
-static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0 || strncmp(s, "fbc:", 4) == 0; }
+static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0 || strncmp(s, "fbc:", 4) == 0 || strncmp(s, "cgen:", 5) == 0; }
 
 int main(int argc, char** argv) {
     char preludeBuf[4096], storeBuf[4096];
@@ -271,8 +298,8 @@ int main(int argc, char** argv) {
     const char* store = fcFindStore(argv[0], storeBuf, sizeof storeBuf);
     char fbcCommand[64];
     /* `fbc <mode> ...`: the mode is part of the command */
-    if (argc >= 4 && strcmp(argv[1], "fbc") == 0 && strlen(argv[2]) < 32) {
-        snprintf(fbcCommand, sizeof fbcCommand, "fbc:%s", argv[2]);
+    if (argc >= 4 && (strcmp(argv[1], "fbc") == 0 || strcmp(argv[1], "cgen") == 0) && strlen(argv[2]) < 56) {
+        snprintf(fbcCommand, sizeof fbcCommand, "%s:%s", argv[1], argv[2]);
         argv[2] = fbcCommand;
         argv++;
         argc--;

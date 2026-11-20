@@ -8,7 +8,7 @@
 #define FG_INDEX(rc) fgFieldIndex(g->c, g->rtNames, g->rtIndex, (rc))
 #define FG_FIND(rc, name, argc) fgFindMethodWithAccess(g->c, g->rtCands, (rc), (name), (argc))
 #define FG_OVERLOADED(rc, name, argc) fgIsTypeOverloaded(g->c, g->rtCands, (rc), (name), (argc))
-#define FG_NOTSUP(...) fcThrow(g->c, FC_ERR_NOTSUPPORTED, 0, 0, NULL, fcFmt(g->c, __VA_ARGS__))
+#define FG_NOTSUP(...) fcThrow(g->c, FC_ERR_NATIVE, 0, 0, NULL, fcFmt(g->c, __VA_ARGS__))
 
 /* the kinds of the static types (see "Static types of values" below) */
 enum { KindUnknown = 0, KindInt = 1, KindFloat = 2, KindBool = 3, KindObj = 4, KindWord = 5, KindBuf = 6, KindArr = 7 };
@@ -63,6 +63,12 @@ static const FcU* DemandUnit(FgGen* g, const char* demand);
 static const char* AdaptUnitCall(FgGen* g, const char* value, const char* demand);
 static const char* UnitDemandDisplay(FgGen* g, const char* demand);
 static bool ProgramEnumKnown(FgGen* g, const char* name, const FcEnumType** type);
+static FgCAbi* CAbiOf(FgGen* g, FgFunc* f);
+static void NoteCReturn(FgGen* g, FgFunc* f);
+static const char* CName(FgGen* g, const FgFunc* f);
+static const char* CSignature(FgGen* g, FgFunc* f, FgCAbi* abi);
+static const char* UndefReturnOf(const FgCAbi* abi);
+static const char* CAbiWrapper(FgGen* g, FgFunc* f, FgCAbi* abi);
 
 static const char* Mangle(FgGen* g, const char* name) {
     FcBuf b = {0};
@@ -1001,17 +1007,19 @@ static const char* DirectSetField(FgGen* g, const FcRtClass* rc, const char* nam
     requiredArray = fgFieldRequiredArray(rc, name);
     arrayKnown = requiredArray != 0 && (requiredArray >> 8) == 1 && fgFieldRequiredUnit(rc, name) == NULL && BaseKindOfType(valueType) == KindArr
         && (valueType & TypeNone) == 0 && UnitOfType(valueType) == (requiredArray & 0xFF);
-    ofParamCheck = "";
-    if (requiredArray == 0 && !(streq0(obj, "self") && (specArr = SpecArrayOfParamType(g, from, rc, name)) >= 0 && (valueType & ~NullableBit) == (specArr & ~NullableBit))) {
-        const char* chk = FieldArrayCheck(g, rc, name, fcFmt(g->c, "objAt(%s)", obj));
-        ofParamCheck = *chk ? fcFmt(g->c, "%s ", chk) : "";
+    {
+        /* (in the order of the C#: each part may register strings, units and type arguments) */
+        const char* c1 = unit ? fcFmt(g->c, "x = %s; ", AdaptUnitCall(g, "x", unit)) : "";
+        const char* c2 = kind != 0 ? fcFmt(g->c, "%s ", FieldKindCheck(g, name, kind)) : cutWide ? "x = intProgram(x); " : "";
+        const char* c3 = requiredType ? fcFmt(g->c, "%s ", ClassGuard(g, "x", requiredType, fcFmt(g->c, "Field '%s'", name), fcFmt(g->c, "objAt(%s)", obj), NULL, "")) : "";
+        const char* c4 = requiredArray != 0 && !arrayKnown ? fcFmt(g->c, "%s ", FieldArrayCheck(g, rc, name, NULL)) : "";
+        ofParamCheck = "";
+        if (requiredArray == 0 && !(streq0(obj, "self") && (specArr = SpecArrayOfParamType(g, from, rc, name)) >= 0 && (valueType & ~NullableBit) == (specArr & ~NullableBit))) {
+            const char* chk = FieldArrayCheck(g, rc, name, fcFmt(g->c, "objAt(%s)", obj));
+            ofParamCheck = *chk ? fcFmt(g->c, "%s ", chk) : "";
+        }
+        checks = fcFmt(g->c, "%s%s%s%s%s", c1, c2, c3, c4, ofParamCheck);
     }
-    checks = fcFmt(g->c, "%s%s%s%s%s",
-        unit ? fcFmt(g->c, "x = %s; ", AdaptUnitCall(g, "x", unit)) : "",
-        kind != 0 ? fcFmt(g->c, "%s ", FieldKindCheck(g, name, kind)) : cutWide ? "x = intProgram(x); " : "",
-        requiredType ? fcFmt(g->c, "%s ", ClassGuard(g, "x", requiredType, fcFmt(g->c, "Field '%s'", name), fcFmt(g->c, "objAt(%s)", obj), NULL, "")) : "",
-        requiredArray != 0 && !arrayKnown ? fcFmt(g->c, "%s ", FieldArrayCheck(g, rc, name, NULL)) : "",
-        ofParamCheck);
     FieldPlace(g, rc, index, &fieldSlot, &fieldHalf);
     rawPut = RawRef(g, rc, index, fcFmt(g->c, "objAt(%s)", obj));
     put = rawPut ? fcFmt(g->c, "%s = %s;", rawPut, RawFromValue(g, RawTypeAt(g, LayoutClass(g, rc, index), index), "x"))
@@ -1867,13 +1875,18 @@ static const char* TypeArrayUnitArgsOf(FgGen* g, const char* demand, int elemCod
     int defined = fgAeIsDefined(elemCode) ? 8 : 0;
     const char* unit;
     bool dimensionOnly;
-    if (fgAeTypeOf(elemCode) == AE_Class && demand)
-        return fcFmt(g->c, "%d, %d, %s", ArrClassId(g, demand), 16 | defined, Constant(g, fcMakeString(g->c, FG_SPEC(fgAeClassText(g->c, demand))->display)));
+    if (fgAeTypeOf(elemCode) == AE_Class && demand) {
+        int id = ArrClassId(g, demand);
+        return fcFmt(g->c, "%d, %d, %s", id, 16 | defined, Constant(g, fcMakeString(g->c, FG_SPEC(fgAeClassText(g->c, demand))->display)));
+    }
     if (!demand) return fcFmt(g->c, "0, %d, %s", defined, Constant(g, fcMakeString(g->c, "(no unit)")));
     unit = fgTrimStart(demand, '#');
     if (streq0(unit, "any")) return fcFmt(g->c, "0, %d, %s", 4 | defined, Constant(g, fcMakeString(g->c, "any")));
     dimensionOnly = fcStartsWith(unit, "any ");
-    return fcFmt(g->c, "%s, %d, %s", UnitC(g, UnitId(g, DemandUnit(g, unit))), (dimensionOnly ? 3 : 1) | defined, Constant(g, fcMakeString(g->c, UnitDemandDisplay(g, unit))));
+    {
+        const char* unitC = UnitC(g, UnitId(g, DemandUnit(g, unit)));
+        return fcFmt(g->c, "%s, %d, %s", unitC, (dimensionOnly ? 3 : 1) | defined, Constant(g, fcMakeString(g->c, UnitDemandDisplay(g, unit))));
+    }
 }
 static const char* TypeArrayUnitArgs(FgGen* g, const FcChunk* chunk, int constIdx, int elemCode) { return TypeArrayUnitArgsOf(g, constIdx == 0xFFFF ? NULL : fgConstStr(chunk, constIdx), elemCode); }
 

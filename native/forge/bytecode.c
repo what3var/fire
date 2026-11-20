@@ -470,4 +470,5 @@ typedef struct FcLinked {
     FcDict* nativeImports;    /* HashSet<string> */
     FcList* packageNatives; FcList* packageNativeLibraries; FcList* graphicsNatives;   /* NULL: none */
     FcList* sourceFiles; FcList* sourceHashes;   /* fc8 or NULL entries */
+    int optimize;             /* OptimizeFor (a native build, gen/native.c): 0 Speed, 1 Size */
 } FcLinked;

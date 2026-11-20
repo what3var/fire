@@ -35,7 +35,7 @@ struct FcList { void** items; int count, cap; bool own; };   /* own: an OwnNames
 /* ---- exceptions: the C# throw/catch/finally, on the context ---- */
 /* FC_ERR_RESOLVE: a ResolverException (one: message, line, source; the combined one of Resolver.Resolve: `list` of FcError*); FC_ERR_TYPECHECK: a
  * TypeCheckException (`list` of FcDiagnostic*); FC_ERR_LINKER: an exception of the linker (CompileDiagnostics.Of: its message, area Linker) */
-typedef enum FcErrKind { FC_ERR_NONE, FC_ERR_LEX, FC_ERR_PRE, FC_ERR_PARSE, FC_ERR_INTERNAL, FC_ERR_RESOLVE, FC_ERR_TYPECHECK, FC_ERR_LINKER, FC_ERR_COMPILE, FC_ERR_NOTSUPPORTED, FC_ERR_MARKUP } FcErrKind;
+typedef enum FcErrKind { FC_ERR_NONE, FC_ERR_LEX, FC_ERR_PRE, FC_ERR_PARSE, FC_ERR_INTERNAL, FC_ERR_RESOLVE, FC_ERR_TYPECHECK, FC_ERR_LINKER, FC_ERR_COMPILE, FC_ERR_NOTSUPPORTED, FC_ERR_MARKUP, FC_ERR_NATIVE } FcErrKind;   /* FC_ERR_NATIVE: NativeNotSupportedException of the generator (gen/) */
 typedef struct FcList FcList;
 typedef struct FcError { FcErrKind kind; const char* message; int line, column; const char* file; int source; FcList* list; } FcError;
 typedef struct FcTry { jmp_buf jb; struct FcTry* prev; } FcTry;

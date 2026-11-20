@@ -7,6 +7,11 @@
 #ifndef FIRE_GEN_H
 #define FIRE_GEN_H
 
+/* (one translation unit with the frontend: its macros that would meet names of the generator) */
+#undef Check
+#define MethodKey fgMethodKey
+#define FieldType fgFieldType
+
 /* ---- the target (TargetProfile, NativeTarget, EntryPoint) ---- */
 typedef struct FgTarget {
     const char* name;
@@ -28,7 +33,7 @@ typedef struct FgTarget {
     const char* const* compileArgs; int compileArgCount;
     const char* toolchain;
     bool lineDirectives, supportsThreads;
-    bool bits16;                  /* the 16-bit targets (TargetProfile.Pc.cs) */
+    bool pointerCalls;            /* NativeTarget.PointerCalls (the PC targets of Open Watcom) */
     const char* memoryModel;
 } FgTarget;
 
@@ -49,6 +54,14 @@ typedef struct FgFlow FgFlow;
 typedef struct FgRegion FgRegion;
 typedef struct FgOut FgOut;
 typedef struct FgCAbi FgCAbi;
+/* the C interface of a method (CppGenerator.CAbi.cs): per parameter the static type it has in C (0: a Value), the type of its C return value */
+struct FgCAbi {
+    int* paramType;
+    const char** paramWhat;
+    const char** paramDemand;
+    int paramCount;
+    int retType;
+};
 typedef struct FgFuncStat FgFuncStat;
 
 typedef struct FgFunc {
@@ -240,7 +253,8 @@ struct FgGen {
     FcDict* ovClassNames;       /* SortedSet<string> ordinal */
     FcDict* ovGenericTests;
     /* CppGenerator.Packed.cs */
-    FcDict* rawType;            /* "class\x01field"? (see Packed) */
+    FcDict* rawType;            /* field name -> its packed type */
+    FcDict* rawLayouts;         /* FcRtClass* -> the offsets of its packed fields */
     /* CppGenerator.Plugins.cs */
     bool openWorld, plugin;
     /* CppGenerator.Reflection.cs */
@@ -278,5 +292,7 @@ typedef struct FgUnitConv { int index; FgFunc* to; FgFunc* from; } FgUnitConv;
 
 /* an exception of the generator: NativeNotSupportedException (FC_ERR_NOTSUPPORTED with the message) */
 #define FG_FMT(...) fcFmt(g->c, __VA_ARGS__)
+/* a part of the generator that is not ported yet: the program is refused with `unported: ...` (FC_ERR_INTERNAL) */
+#define FG_UNPORTED_C(c, ...) fcThrow((c), FC_ERR_INTERNAL, 0, 0, NULL, fcFmt((c), "unported: " __VA_ARGS__))
 
 #endif

@@ -193,6 +193,7 @@ static void fgLocation(const FcChunk* chunk, int ip, int* source, int* line) {
 }
 
 static const char* fgConstStr(const FcChunk* chunk, int k) { const FcConst* v = (const FcConst*)chunk->constants->items[k]; return v->kind == CK_String ? v->s : ""; }
+static double fgConstF(const FcConst* c) { return c->f; }
 static const FcConst* fgConst(const FcChunk* chunk, int k) { return (const FcConst*)chunk->constants->items[k]; }
 
 /* ---- DeclaredType ---- */
