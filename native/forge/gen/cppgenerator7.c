@@ -309,7 +309,7 @@ static FgStep xGetField(FgSC* x) {
         E("%s = %s(%s%s);", s, FieldFn(g, "gf", field), s, xFieldTail(x, field));
         Check();
     }
-    else { const char* s = S(d - 1); E("%s = %s(%s);", s, FieldFn(g, "gf", field), s); Check(); }
+    else { const char* s = S(d - 1); E("%s = %s(%s%s);", s, FieldFn(g, "gf", field), s, Modular ? xFieldTail(x, field) : ""); Check(); }
     fieldType = FieldTypeIn(g, fieldOwner, field);
     if (fieldType == TypeUnknown) { int specType = SpecFieldType(g, f, ins, field); if (specType != -1) fieldType = specType; }
     if (fieldType != TypeUnknown) { SetR(d - 1, false); SetT(d - 1, fieldType); g->kindsKept = true; }
@@ -1038,7 +1038,7 @@ static FgStep StepCore3(FgSC* x) {
                 field = Str(ins->a[0]);
                 s0 = S(d - 1);
                 fcSetAdd(g->fieldNames, field);
-                E("%s = FIRE_LIKELY(%s.kind == K_Array && leafAlive(%s)) ? Int(arrOf(%s)->length) : %s(%s);", s0, s0, s0, s0, FieldFn(g, "gf", field), s0);
+                E("%s = FIRE_LIKELY(%s.kind == K_Array && leafAlive(%s)) ? Int(arrOf(%s)->length) : %s(%s%s);", s0, s0, s0, s0, FieldFn(g, "gf", field), s0, Modular ? xFieldTail(x, field) : "");
                 Check();
                 SetR(d - 1, false); SetT(d - 1, TypeOf(KindInt, 0) | NarrowBit); g->kindsKept = true;
                 return Next();

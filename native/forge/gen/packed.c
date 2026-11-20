@@ -48,8 +48,17 @@ static bool DefinedEverywhere(FgGen* g, const char* name) {
 /* Is the field `index` of `rc` packed, and its static type (0: a Value slot)? */
 static int RawTypeAt(FgGen* g, const FcRtClass* rc, int index) {
     FcList* names = FG_NAMES(rc);
+    const FcFieldInfo* info = NULL;
+    const FcRtClass* c;
+    int type, kind;
     if (index < 0 || index >= names->count) return 0;
-    return RawType(g, (const char*)names->items[index]);
+    if (!Modular) return RawType(g, (const char*)names->items[index]);
+    /* (modules: by the declaration of the field alone - every module that knows the class sees it alike) */
+    for (c = rc; c && !info; c = c->base) info = (const FcFieldInfo*)fcDictGet(c->ownFieldInfo, names->items[index]);
+    if (!info || info->isStatic || info->requiredKind == 0 || !fgDkIsNonNull(info->requiredKind)) return 0;
+    type = DeclaredValueType(g, info->requiredKind, info->requiredUnit);
+    kind = KindOfType(type);
+    return IsNarrowIntType(type) || kind == KindFloat || kind == KindBool || kind == KindWord ? type : 0;
 }
 static const char* RawCType(int type) { int k = KindOfType(type); return k == KindFloat ? "Real" : k == KindWord ? "FireWord" : k == KindBool ? "uint8_t" : "FireInt"; }
 static int RawSize(FgGen* g, int type) {

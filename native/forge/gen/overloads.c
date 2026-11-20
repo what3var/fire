@@ -115,6 +115,7 @@ static const char* OverloadClassFunctions(FgGen* g, bool classScores) {
         for (n = 0; n < names->count; n++) {
             const char* name = (const char*)names->items[n];
             FcBuf cases = {0};
+            if (Modular) { fcBufStr(&sb, ModClassScore(g, name)); continue; }
             fcBufFmt(&sb, "FIRE_MAYBE_UNUSED %sint ovd_%s(Value v) {\n", HelperStorage, Mangle(g, name));
             fcBufFmt(&sb, "    if (!leafAlive(v)) return %d;\n", FGOV_UndefinedScore);
             for (i = 0; i < g->classList->count; i++) {

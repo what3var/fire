@@ -1237,7 +1237,7 @@ static FgStep StepCore4(FgSC* x) {
             lambda = fcFmt(g->c, "%scb_%s", Px, handler->name);
             paramCount = handler->proto ? handler->proto->paramCount : 0;
             fcDictPut(g->catchCallbacks, lambda, (void*)(paramCount >= 1 ? fcFmt(g->c, "return %s(e);", handler->name) : fcFmt(g->c, "(void)e; return %s();", handler->name)));
-            if (ins->op == OP_RegisterThreadsCatch) E("registerThreadsCatch(%s, %s);", ins->a[1] == 0 ? "-1" : fcFmt(g->c, "%d", ExcTypeId(g, Str(ins->a[2]))), lambda);
+            if (ins->op == OP_RegisterThreadsCatch) E("registerThreadsCatch(%s, %s);", ins->a[1] == 0 ? "-1" : LibraryRole ? fcFmt(g->c, "fire_exct_%s[%d]", g->self->id, ExcTypeId(g, Str(ins->a[2]))) : fcFmt(g->c, "%d", ExcTypeId(g, Str(ins->a[2]))), lambda);
             else E("registerTerminateCatch(%s);", lambda);
             return Next();
         }

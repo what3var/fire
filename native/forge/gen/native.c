@@ -72,6 +72,8 @@ typedef struct FgOptions {
     int globalJobs;        /* `"globalJobs"` of fire.native.json (the builder): 0 none, else the GlobalJobsMode + 1 */
 } FgOptions;
 
+static FcDict* fgModuleDependencies(FcLinker* L, FcList* processed);
+static FcList* fgSourceTextHashes(FcCtx* c, FcList* processed);
 /* Linker.CompileAndLink with Engine "native" and the ToolchainKind (its symbol for `#if`) for one file */
 static FcLinked* fgLinkNativeKind(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, const FgOptions* o, FcNatives** registry, const char* toolchainKind) {
     FcLinker* L = (FcLinker*)fcAlloc(c, sizeof *L);
@@ -186,9 +188,43 @@ static FcLinked* fgLinkNativeKind(FcCtx* c, const char* path, const char* prelud
     }
     linked->optimize = o->optimize >= 0 ? o->optimize : t->optimize;
     linked->sourceModules = sourceModules;
+    linked->moduleDeps = fgModuleDependencies(L, processed);
+    linked->sourceTextHashes = fgSourceTextHashes(c, processed);
     *registry = &L->registry;
     (void)userLength;
     return linked;
+}
+
+/* Linker.ModuleDependencies without a plan: the modules each module of the sources needs (ImportedPreludes.WithDependencies of its import; what cannot be
+ * found ends the list - the C# catches the exception of the enumeration) */
+static FcDict* fgModuleDependencies(FcLinker* L, FcList* processed) {
+    FcCtx* c = L->c;
+    FcDict* deps = fcDictNew(c, FC_KEY_STR);
+    FcList* modules = fcListNew(c);
+    int i, k;
+    for (i = 1; i < processed->count; i++) {
+        const char* m = ((FcProcessed*)processed->items[i])->module;
+        if (m && !fcListHasStr(modules, m)) fcListAdd(c, modules, (void*)m);
+    }
+    for (i = 0; i < modules->count; i++) {
+        const char* module = (const char*)modules->items[i];
+        FcList* keys = fcListNew(c);
+        FcList* needs = fcListNew(c);
+        FcList* kept = fcListNew(c);
+        FC_TRY(c) { fcWithDependencies(L, module, fcDictNew(c, FC_KEY_STR), keys); }
+        FC_CATCH(c) { } FC_END_TRY;
+        for (k = 0; k < keys->count; k++) { const char* key = (const char*)keys->items[k]; if (!streq0(key, module) && !fcListHasStr(needs, key)) fcListAdd(c, needs, (void*)key); }
+        for (k = 0; k < needs->count; k++) if (fcListHasStr(modules, (const char*)needs->items[k])) fcListAdd(c, kept, needs->items[k]);
+        fcDictPut(deps, module, kept);
+    }
+    return deps;
+}
+/* LinkedProgram.SourceTextHashes: the SHA-256 of each processed source */
+static FcList* fgSourceTextHashes(FcCtx* c, FcList* processed) {
+    FcList* l = fcListNew(c);
+    int i;
+    for (i = 0; i < processed->count; i++) { FcProcessed* p = (FcProcessed*)processed->items[i]; fcListAdd(c, l, (void*)fcSha256OfText(c, fc8FromU16(c, p->source, p->length))); }
+    return l;
 }
 
 /* ... with the toolchain `files` (what `forge cgen` and `forge native` build with) */
@@ -216,6 +252,8 @@ static FgGen* fgGenNew(FcCtx* c, FcLinked* program, FcList* natives, const FgTar
     FG_D(typeIsOfIds); FG_D(externDecls); FG_D(restrictedMethods); FG_D(restrictedFields); g->errorClasses = fcListNew(c); FG_D(pkgLocks); FG_D(arrClasses);
     FG_D(lineFiles); FG_D(standardNativesWritten); FG_D(knownArrayElem); FG_D(needsDefaults); FG_D(nativeThunks); FG_D(packageNatives); g->packageImports = fcListNew(c);
     FG_P(cRet); FG_P(cAbiParams); FG_P(funcDebug); FG_D(dbgLines); FG_D(globalNames); FG_D(overloadSelectors); FG_D(ovClassNames); FG_D(ovGenericTests); FG_D(rawType); FG_P(rawLayouts);
+    FG_D(foreignClasses); FG_P(usedModules); FG_D(demandedClasses); FG_D(madeBy); FG_D(libDispatchers); FG_D(libFields); FG_D(libFieldAddresses);
+    FG_D(externTables); FG_D(libraryClassTables); FG_D(sharedNatives); FG_D(hostImports); FG_D(hostArrays); FG_D(moduleOfSource); FG_D(modules);
     FG_D(literalClasses); FG_D(reflNativesUsed); FG_D(literalMembers); FG_P(literalChunks); FG_P(instImports); FG_D(bridgeCache); FG_P(jsonFields); FG_D(pointerFuncs); FG_P(rtNames); FG_P(rtIndex); FG_D(rtCands); FG_D(specCache); FG_D(condCache); FG_D(nativeImportOf);
 #undef FG_D
 #undef FG_P
@@ -250,12 +288,28 @@ static bool fgSplitAutoToolchain(const char* kind) { return kind && (streq0(kind
 
 /* CppGenerator.GenerateSources: the program in C, its natives in C++ (NULL: none), the units of a split program (NULL: one file), with `stats` what the
  * generator made of each function (FgFuncStat*, NULL otherwise). split: FG_SPLIT_*, -1: null; toolchainKind: NULL: none */
-typedef struct FgSources { const char* program; const char* natives; FcList* units; FcList* funcs; } FgSources;
+/* (FgSources: gen/gen.h) */
 static FgSources fgGenerateSources(FcCtx* c, FcLinked* program, FcList* natives, const FgTarget* target, int stripping, bool stats, int split, const char* toolchainKind, FcStore* store) {
-    FgGen* g = fgGenNew(c, program, natives, target);
+    FgGen* g;
     FgSources r;
     const char* text;
     int env = fgSplitFromEnvironment(), mode = env >= 0 ? env : split >= 0 ? split : FG_SPLIT_OFF;
+    if (fgModulesFromEnvironment() && program->sourceModules) {
+        /* (tests, ROADMAP 9 phase A: the same program from modules; a program that cannot be split - it declares a class a library declares too - is built whole) */
+        volatile bool done = false;
+        FgSources m;
+        memset(&m, 0, sizeof m);
+        FC_TRY(c) { m = GenerateModular(c, program, natives, target, stripping, store); done = true; }
+        FC_CATCH(c) {
+            if (!(c->err.kind == FC_ERR_NATIVE && fcStartsWith(c->err.message, "module '"))) fcRethrow(c);
+            {
+                const char* logFile = getenv("FIRE_MODULES_LOG");
+                if (logFile && *logFile) { FILE* lf = fopen(logFile, "a"); if (lf) { fprintf(lf, "%s\n", c->err.message); fclose(lf); } }
+            }
+        } FC_END_TRY;
+        if (done) return m;
+    }
+    g = fgGenNew(c, program, natives, target);
     /* EffectiveStripping: a debug build keeps everything, otherwise what is asked for, by default level 3 */
     g->strip = program->mode == 0 ? 0 : stripping >= 0 ? stripping : 3;
     g->collectStats = stats;
@@ -274,6 +328,72 @@ static FgSources fgGenerateSources(FcCtx* c, FcLinked* program, FcList* natives,
     return r;
 }
 
+#ifndef _WIN32
+#include <dirent.h>
+#endif
+/* the files and folders below a folder, then the folder (the cache of a measurement) */
+static void fgRemoveTree(FcCtx* c, const char* dir) {
+#ifndef _WIN32
+    DIR* d = opendir(dir);
+    struct dirent* e;
+    if (!d) { remove(dir); return; }
+    while ((e = readdir(d)) != NULL) {
+        const char* path;
+        struct stat st;
+        if (streq0(e->d_name, ".") || streq0(e->d_name, "..")) continue;
+        path = fcFmt(c, "%s/%s", dir, e->d_name);
+        if (lstat(path, &st) == 0 && S_ISDIR(st.st_mode)) fgRemoveTree(c, path);
+        else remove(path);
+    }
+    closedir(d);
+    rmdir(dir);
+#else
+    (void)c; (void)dir;
+#endif
+}
+/* FrontendDump.DumpModules: `cgen` with the library modules - `modules` (GenerateModular, one file), `static`/`shared` (GenerateStatic into an empty cache of
+ * its own: the program, its natives, per library its C file and its interface, the log, the description for plugins); the keys name the generator "cgen" */
+static void fgDumpModules(FcCtx* c, const char* linkage, FcLinked* linked, FcList* natives, const FgOptions* o, FcStore* store, FcBuf* out) {
+    const char* identity;
+    const char* cache;
+    const char* tmp = getenv("TMPDIR");
+    FgStaticPlan* plan = NULL;
+    volatile bool failed = false;
+    int i;
+    if (streq0(linkage, "modules")) {
+        FgSources s = GenerateModular(c, linked, natives, o->target, o->stripping, store);
+        fcOut8(out, s.program);
+        if (s.natives) { fcBufStr(out, "//==== fire_natives.cpp\n"); fcOut8(out, s.natives); }
+        return;
+    }
+    identity = fgGeneratorIdentity;
+    {
+        char rnd[33];
+        unsigned long long a = ((unsigned long long)rand() << 32) ^ (unsigned long long)rand() ^ (unsigned long long)(uintptr_t)out;
+        snprintf(rnd, sizeof rnd, "%016llx%08x", a, (unsigned)getpid());
+        cache = fcFmt(c, "%s/fire-cgen-cache-%s", tmp && *tmp ? tmp : "/tmp", rnd);
+    }
+    fgGeneratorIdentity = "cgen";
+    FC_TRY(c) { plan = GenerateStatic(c, linked, natives, o->target, "cgen", o->stripping, cache, streq0(linkage, "shared"), false, store); }
+    FC_CATCH(c) { failed = true; } FC_END_TRY;
+    fgGeneratorIdentity = identity;
+    if (failed) { fgRemoveTree(c, cache); fcRethrow(c); }
+    fcOut8(out, plan->programC);
+    if (plan->natives) { fcBufStr(out, "//==== fire_natives.cpp\n"); fcOut8(out, plan->natives); }
+    for (i = 0; i < plan->libraries->count; i++) {
+        const FgStaticLibrary* l = (const FgStaticLibrary*)plan->libraries->items[i];
+        FILE* f;
+        fcBufFmt(out, "//==== library %s %s %s%s\n", l->module, l->libraryName, l->key, l->cached ? " cached" : "");
+        if ((f = fopen(l->cFile, "rb")) != NULL) { char b[65536]; size_t n; while ((n = fread(b, 1, sizeof b, f)) > 0) fcBufPut(out, b, n); fclose(f); }
+        fcBufFmt(out, "//==== interface %s\n", l->module);
+        if ((f = fopen(fcFmt(c, "%s.new", l->interfaceFile), "rb")) != NULL) { char b[65536]; size_t n; while ((n = fread(b, 1, sizeof b, f)) > 0) fcBufPut(out, b, n); fclose(f); fcBufChar(out, '\n'); }
+    }
+    fcBufStr(out, "//==== log\n");
+    fcOut8(out, plan->log);
+    if (plan->host) { fcBufStr(out, "//==== host\n"); fcOut8(out, fgHostInfoJson(c, plan->host)); fcBufChar(out, '\n'); }
+    fgRemoveTree(c, cache);
+}
+
 /* `cgen:<options>` of one file: what FrontendDump.DumpNative writes */
 static void fgDumpNative(FcCtx* c, const char* options, const char* path, const char* prelude, const char* storeRoot, FcBuf* out) {
     FgOptions o;
@@ -282,6 +402,7 @@ static void fgDumpNative(FcCtx* c, const char* options, const char* path, const 
     FcNatives* registry;
     FgSources s;
     FcStore store;
+    const char* linkage = NULL;
     int i;
     memset(&o, 0, sizeof o);
     o.target = fgHostTarget();
@@ -298,6 +419,7 @@ static void fgDumpNative(FcCtx* c, const char* options, const char* path, const 
         else if (streq0(w, "i16")) o.intWidth = 16;
         else if (streq0(w, "i32")) o.intWidth = 32;
         else if (streq0(w, "f32")) o.floatWidth = 32;
+        else if (streq0(w, "modules") || streq0(w, "static") || streq0(w, "shared")) linkage = w;
         else if (fcStartsWith(w, "strip")) o.stripping = atoi(w + 5);
         else if (fcStartsWith(w, "t:")) { o.target = fgTargetNamed(w + 2); if (!o.target) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unknown target %s", w + 2)); }
         else fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unknown option %s", w));
@@ -305,6 +427,7 @@ static void fgDumpNative(FcCtx* c, const char* options, const char* path, const 
     linked = fgLinkNative(c, path, prelude, storeRoot, fcStrictTag(path), &o, &registry);
     memset(&store, 0, sizeof store);
     store.root = storeRoot;
+    if (linkage) { fgDumpModules(c, linkage, linked, registry->names, &o, &store, out); return; }
     s = fgGenerateSources(c, linked, registry->names, o.target, o.stripping, false, o.split ? FG_SPLIT_ON : FG_SPLIT_AUTO, "files", &store);
     fcOut8(out, s.program);
     if (s.natives) { fcBufStr(out, "//==== fire_natives.cpp\n"); fcOut8(out, s.natives); }

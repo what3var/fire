@@ -36,6 +36,10 @@ namespace fire.Native
         /// <summary>Units of at most this many dimensions with linkage "static" (the size of the unit tables is the same in every module).</summary>
         private const int SeparateDims = 16;
 
+        /// <summary>What identifies this generator in the keys of the cache (the libraries, the runtime's DLL, the configuration a plugin is built for): the version
+        /// of its assembly. The measurements (`forge cgen static`, FrontendDump) set a fixed text, so that forge-c (docs/spec/FORGE_C.md) writes the same keys.</summary>
+        public static string GeneratorIdentity { get; set; } = typeof(CppGenerator).Assembly.ManifestModule.ModuleVersionId.ToString();
+
         /// <summary>The format of the interface files (ROADMAP 9.7): a changed format is a different key.</summary>
         public const int InterfaceFormat = 2;   // (2: the units as ProgramFile writes them)
 
@@ -230,7 +234,7 @@ namespace fire.Native
             StrippingLevel stripping = StrippingLevel.Protected)
         {
             var sb = new StringBuilder();
-            sb.Append("fire-static ").Append(InterfaceFormat).Append(' ').Append(typeof(CppGenerator).Assembly.ManifestModule.ModuleVersionId).Append('\n');
+            sb.Append("fire-static ").Append(InterfaceFormat).Append(' ').Append(GeneratorIdentity).Append('\n');
             sb.Append("toolchain ").Append(toolchainStamp).Append('\n');
             sb.Append("target ").Append(target.Name).Append(' ').Append(JsonSerializer.Serialize(target.Native)).Append(' ').Append(target.FloatWidth).Append('\n');
             sb.Append("mode ").Append(program.ExecutionMode).Append(" float ").Append(program.FloatWidth).Append(" int ").Append(program.IntWidth).Append(" word ").Append(program.WordWidth).Append('\n');
@@ -464,7 +468,7 @@ namespace fire.Native
 
         /// <summary>The key of the runtime's DLL (linkage "shared" on Windows): the generator, the toolchain and the head of the files (the switches, the target).</summary>
         private static string RuntimeDllKey(string head, string toolchainStamp) =>
-            Hash($"fire-rt {InterfaceFormat} {typeof(CppGenerator).Assembly.ManifestModule.ModuleVersionId}\n{toolchainStamp}\n{head}").Substring(0, 40);
+            Hash($"fire-rt {InterfaceFormat} {GeneratorIdentity}\n{toolchainStamp}\n{head}").Substring(0, 40);
 
         /// <summary>Linkage "shared" on Windows: the key of the runtime's DLL (known once the head of the files is) and the toolchain it is built with.</summary>
         private string? _runtimeKey;

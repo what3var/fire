@@ -72,6 +72,9 @@ for k, path in enumerate(l.rstrip("\n") for l in sys.stdin):
 print("\n".join(names))' "$WORK/mutants" "$FRONTEND_MUTANTS" > "$WORK/mutants.lst"
   parts+=(mutants)
 fi
+# FRONTEND_LIST=<file>: only the sources of that list (one path per line) - one part "list" instead of the corpus (a chunk of it: the outputs of `native`
+# with the library modules are megabytes each)
+if [ -n "${FRONTEND_LIST:-}" ]; then cp "$FRONTEND_LIST" "$WORK/list.lst"; parts=(list); fi
 
 status=0
 kinds=(tokens ast)

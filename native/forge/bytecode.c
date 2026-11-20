@@ -479,5 +479,7 @@ typedef struct FcLinked {
     FcList* sourceFiles; FcList* sourceHashes;   /* fc8 or NULL entries */
     int optimize;             /* OptimizeFor (a native build, gen/native.c): 0 Speed, 1 Size */
     FcList* sourceModules;    /* LinkedProgram.SourceModules: "core", then the module of each source (NULL: a source of the program); NULL: none */
+    FcDict* moduleDeps;       /* LinkedProgram.ModuleDeps: module -> FcList* of the modules it needs; NULL: none */
+    FcList* sourceTextHashes; /* LinkedProgram.SourceTextHashes: the SHA-256 of each processed source (fc8); NULL: none */
     FcAsmInfo* asmInfo;       /* (the directives of the version info; NULL: none - set by the linkers of linker.c and gen/native.c) */
 } FcLinked;

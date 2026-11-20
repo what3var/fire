@@ -77,7 +77,7 @@ namespace fire.Native
 
         /// <summary>The key of the configuration of the runtime a plugin must be built for: the generator, the switches of the program, the head of its files.</summary>
         internal static string PluginHeadKey(string head, string flags) =>
-            Hash($"fire-plugin {PluginFormat} {typeof(CppGenerator).Assembly.ManifestModule.ModuleVersionId}\nflags {flags}\n{head}").Substring(0, 40);
+            Hash($"fire-plugin {PluginFormat} {GeneratorIdentity}\nflags {flags}\n{head}").Substring(0, 40);
 
         /// <summary>The program (linkage "shared"): what the runtime checks a plugin against (g_pluginHost).</summary>
         private string PluginHostCode()
