@@ -48,7 +48,7 @@ typedef struct FgSplitUnit { const char* name; const char* text; int kind; int64
 /* the units a text may name */
 typedef struct FgTextUnit { const char* symbol; int unit; bool prefixable; } FgTextUnit;
 static const char* const fgBuiltInSymbols[] = { "m", "g", "s", "b", "B", "l", "min", "h", "d" };
-static bool fgBuiltInPrefixable(const char* s) { return (streq0(s, "m") || streq0(s, "g") || streq0(s, "s") || streq0(s, "b") || streq0(s, "B")) && !(streq0(s, "min") || streq0(s, "h") || streq0(s, "d")); }
+static bool fgBuiltInPrefixable(const char* s) { return (streq0(s, "m") || streq0(s, "g") || streq0(s, "s") || streq0(s, "b") || streq0(s, "B") || streq0(s, "l")) && !(streq0(s, "min") || streq0(s, "h") || streq0(s, "d")); }
 /* Unit.OfCustom */
 static const FcU* fgUnitOfCustom(FgGen* g, const FcCustomUnit* own) { return fcUNew(g->c, &own->unit, own->symbol); }
 

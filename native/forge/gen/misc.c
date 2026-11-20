@@ -31,7 +31,8 @@ static int UnitId(FgGen* g, const FcU* unit) {
     return g->units->count - 1;
 }
 
-/* double.ToString("R", InvariantCulture) of .NET: the shortest text that reads back as the number, `E+XX` from the 15th digit on (a float: the 7th) */
+/* double.ToString("R", InvariantCulture) of .NET (Core 3.0 on): the shortest text that reads back as the number; `E+XX` when the digits before the
+ * point are more than those of the number and more than 15 (a float: 9), `E-XX` below 0.0001 (Number.Formatting: FormatGeneral) */
 static const char* fgRoundTrip(FgGen* g, double d, bool single) {
     char buf[64], digits[40];
     int p, exp, nd = 0, i;
@@ -49,7 +50,7 @@ static const char* fgRoundTrip(FgGen* g, double d, bool single) {
     while (nd > 1 && digits[nd - 1] == '0') nd--;
     digits[nd] = 0;
     if (neg) fcBufChar(&b, '-');
-    if (exp >= (single ? 7 : 15) || exp < -5) {
+    if (exp + 1 > (nd > (single ? 9 : 15) ? nd : (single ? 9 : 15)) || exp < -4) {
         fcBufChar(&b, digits[0]);
         if (nd > 1) { fcBufChar(&b, '.'); fcBufStr(&b, digits + 1); }
         fcBufFmt(&b, "E%c%02d", exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
