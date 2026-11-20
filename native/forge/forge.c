@@ -124,6 +124,8 @@ static bool fcStrictTag(const char* path);
 #include "project/command.c"
 #include "project/publisher.c"
 #include "project/cli.c"
+#include <sys/file.h>
+#include "project/standard.c"   /* the standard packages installed from Source/ (Phase D 3) */
 #endif
 
 /* `ui|biscuit|fdata <file>` (Program.cs: MarkupFiles.GenerateScript, the script on stdout, the diagnostics of a MarkupException on stderr) and
@@ -373,6 +375,9 @@ int main(int argc, char** argv) {
         }
     }
     nbProjectBuildPlan = pjProjectBuildPlanHook;   /* (buildplan of a project, Phase D 3) */
+    /* (Program.cs: the standard packages of Source/ next to the program packed and installed when they are missing or changed - project/standard.c) */
+    if (argc >= 2 && strcmp(argv[1], "install-standard") == 0) { nsEnsureInstalled(prelude, store, stdout); return 0; }
+    if (argc >= 2 && (strcmp(argv[1], "build") == 0 || strcmp(argv[1], "publish") == 0 || strcmp(argv[1], "bytecode") == 0)) nsEnsureInstalled(prelude, store, stderr);
     if (argc >= 2 && strcmp(argv[1], "build") == 0) {
         int i;
         for (i = 2; i < argc; i++) if (argv[i][0] != '-' && pjIsProjectFile(argv[i])) return pjBuildCommand(argc, argv, prelude, store);   /* Phase D 3 */
