@@ -20,6 +20,7 @@ typedef struct FgPkgNativeM {
     FcList* platforms;
     FcList* linkLibraries;     /* FgKeyed (FcList* of names) */
     FcList* functions;         /* FgPkgFn* */
+    FcList* bridge;            /* FgPkgFn*: the natives of the display (graphics, windows) */
     FcList* exceptions;
     bool threadSafe;
     FcList* uses;              /* FgNativeUse* */
@@ -80,7 +81,9 @@ static FgPkgNativeM* fgJsonNative(FcCtx* c, const FcJson* v) {
             fcListAdd(c, n->linkLibraries, k);
         }
     n->functions = fcListNew(c);
-    if ((x = fcJsonGet(v, "functions")) != NULL && x->kind == FJ_ARR)
+    n->bridge = fcListNew(c);
+    for (int list = 0; list < 2; list++)
+    if ((x = fcJsonGet(v, list == 0 ? "functions" : "bridge")) != NULL && x->kind == FJ_ARR)
         for (i = 0; i < x->items->count; i++) {
             FcJson* e = (FcJson*)x->items->items[i];
             FgPkgFn* fn = (FgPkgFn*)fcAlloc(c, sizeof *fn);
@@ -94,7 +97,7 @@ static FgPkgNativeM* fgJsonNative(FcCtx* c, const FcJson* v) {
             fn->host = (y = fcJsonGet(e, "host")) && y->kind == FJ_BOOL && y->b;
             fn->returns = fcJsonStr(e, "returns");
             fn->parameters = (y = fcJsonGet(e, "parameters")) && y->kind == FJ_ARR ? fgJsonStrings(c, y) : NULL;
-            fcListAdd(c, n->functions, fn);
+            fcListAdd(c, list == 0 ? n->functions : n->bridge, fn);
         }
     n->exceptions = fgJsonStrings(c, fcJsonGet(v, "exceptions"));
     n->threadSafe = (x = fcJsonGet(v, "threadSafe")) && x->kind == FJ_BOOL && x->b;

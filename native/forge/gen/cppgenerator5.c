@@ -614,7 +614,57 @@ static FgStep StepCoreNative(FgSC* x) {
         d = first + 1; SetR(first, true); return Next();
     }
     if (fcStartsWith(native, "__refl_")) FG_UNPORTED("reflection (%s)", native);
-    if (fcStartsWith(native, "__GRPH")) FG_UNPORTED("the natives of graphics and windows (%s)", native);
+    if (fcStartsWith(native, "__GRPHWin")) {
+        FcDict* wn = BridgeOf(g, "windows", "__GRPHWin");
+        FgPkgFn* winNative = (FgPkgFn*)fcDictGet(wn, native + 9);
+        if (winNative && winNative->arguments == argc) {
+            const char* name = native + 6;
+            FcList* argl = fcListNew(g->c);
+            const char* args;
+            const char* owner = NULL;
+            bool needsList = false;
+            int k;
+            UseWindows(g);
+            if (streq0(name, "WinRegisterEvent") && g->target->supportsThreads && (streq0(g->target->platform, "posix") || streq0(g->target->platform, "windows"))) UseThreads(g);
+            if (streq0(name, "WinMgrStart")) {
+                if (!g->target->supportsThreads) { E("%s = Bool(false);", S(first)); d = first + 1; SetR(first, false); return Next(); }
+                UseThreads(g);
+            }
+            for (k = first; k < first + argc; k++) fcListAdd(g->c, argl, (void*)SR(k));
+            {
+                FgPkgFn* w;
+                FC_DICT_EACH(wn, e) { w = (FgPkgFn*)e->value; if (w->needsList && streq0(fcFmt(g->c, "Win%s", (const char*)e->key), name)) needsList = true; }
+            }
+            if (needsList) { owner = OwnerList(); fcListAdd(g->c, argl, (void*)fcFmt(g->c, "&%s", owner)); }
+            args = fgJoin(g->c, argl, ", ");
+            {
+                const char* t = T(first);
+                OwnerList();   /* (the C# asks `args.EndsWith("&" + OwnerList())`: the list of the temporaries is used) */
+                E("%s = fire_win_%s(%s);", t, name, args);
+            }
+            CheckNative();
+            d = first + 1; SetR(first, winNative->needsList); return Next();
+        }
+    }
+    if (fcStartsWith(native, "__GRPH")) {
+        FcDict* gn = BridgeOf(g, "graphics", "__GRPH");
+        FgPkgFn* grphNative = (FgPkgFn*)fcDictGet(gn, native + 6);
+        if (grphNative && grphNative->arguments == argc) {
+            const char* name = native + 6;
+            FcList* argl = fcListNew(g->c);
+            int k;
+            UseGraphics(g);
+            for (k = first; k < first + argc; k++) fcListAdd(g->c, argl, (void*)SR(k));
+            if (grphNative->needsList) fcListAdd(g->c, argl, (void*)fcFmt(g->c, "&%s", OwnerList()));
+            {
+                const char* args = fgJoin(g->c, argl, ", ");
+                const char* t = T(first);
+                E("%s = fire_gfx_%s(%s);", t, name, args);
+            }
+            CheckNative();
+            d = first + 1; SetR(first, grphNative->needsList); return Next();
+        }
+    }
     if (fcDictHas(g->packageNatives, native) && ((FgPkgNative*)fcDictGet(g->packageNatives, native))->argc == argc) {
         /* a native of a package (C++ in the generated file): `Value cpp(Value a, ...)`, with the list of the scope as the last argument if it asks for it */
         FgPkgNative* pn = (FgPkgNative*)fcDictGet(g->packageNatives, native);

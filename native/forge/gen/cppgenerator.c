@@ -1879,6 +1879,48 @@ static void CollectPackages(FgGen* g, FcStore* store) {
     }
 }
 
+/* BridgeOf: the natives of the display that a package declares in `native.bridge` (graphics, windows), by their name without `prefix` (-> FgPkgFn*) */
+static FcDict* BridgeOf(FgGen* g, const char* import, const char* prefix) {
+    const char* key = fcFmt(g->c, "bridge\x01%s", import);
+    FcDict* natives = (FcDict*)fcDictGet(g->bridgeCache, key);
+    FcPkgImport* pi;
+    FgInstImport* found;
+    int i;
+    if (natives) return natives;
+    natives = fcDictNew(g->c, FC_KEY_STR);
+    if ((pi = fcStoreFindImport(g->c, g->store, import)) != NULL && (found = fgInstalledImport(g->c, g->instImports, pi))->native)
+        for (i = 0; i < found->native->bridge->count; i++) {
+            FgPkgFn* fn = (FgPkgFn*)found->native->bridge->items[i];
+            if (!fcStartsWith(fn->name, prefix)) continue;
+            fcDictPut(natives, fn->name + strlen(prefix), fn);
+        }
+    fcDictPut(g->bridgeCache, key, natives);
+    return natives;
+}
+/* The C of an import the compiler knows itself (`graphics`, `windows`): the source of the standard package, put into the generated file like that of any package. */
+static void AppendStandardNatives(FgGen* g, FcBuf* sb, const char* import) {
+    FgInstImport* found = NULL;
+    FcList* texts;
+    int i;
+    fcSetAdd(g->standardNativesWritten, fcAsciiLower(g->c, import));
+    if (!g->store->loaded) fcStoreLoad(g->c, g->store);
+    for (i = 0; i < g->store->imports->count && !found; i++) {
+        FcPkgImport* pi = (FcPkgImport*)g->store->imports->items[i];
+        FgInstImport* x;
+        if (!fcAsciiIEq(pi->name, import)) continue;
+        x = fgInstalledImport(g->c, g->instImports, pi);
+        if (x->native) found = x;
+    }
+    if (!found) FG_NOTSUP("the standard package 'fire-%s' with the C of `#import \"%s\"` is not installed (start ember or spark once)", import, import);
+    texts = fgReadNativeSources(g->c, g->instImports, g->store, found, fgPlatformKeys(g));
+    for (i = 0; i < texts->count; i++) {
+        FgNamedText* t = (FgNamedText*)texts->items[i];
+        fcBufFmt(sb, "// ---- %s %s, import \"%s\": %s\n", found->pkgName, found->pkgVersion, import, t->name);
+        fcBufFmt(sb, "%s\n", t->text);
+        fcBufFmt(sb, "// ---- end of %s\n", t->name);
+    }
+}
+
 /* ---- units of a demand ---- */
 /* Unit.Parse of a demand: a text that starts with the mark of an encoded unit (`§in§m:1§0.0254§0§§`) is that unit (Unit.DecodeDemand), every other text Unit.Parse */
 #define FG_DEMAND_MARK "\xC2\xA7"

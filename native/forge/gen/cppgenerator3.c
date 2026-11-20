@@ -494,7 +494,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
                 int home = -1;
                 fcBufChar(&kinds, strstr(init, "0xFFFFFFFF") ? 'f' : strstr(init, "poolMark") ? 'p' : 'z');
                 if (IsTempId(ordered[i])) for (k = 0; k < n; k++) if (ordered[k] == HomeOf(ordered[i])) { home = k; break; }
-                fcBufChar(&kinds, home < 0 ? '-' : (char)('0' + home));
+                fcBufUnit(&kinds, (uint16_t)(home < 0 ? '-' : '0' + home));   /* (a char of .NET: above 0x7F two bytes of UTF-8) */
             }
             fcBufFmt(&decl, "    OwnList OL_[%d];\n", n);
             for (k = 0; k < n; k++) { fcListAdd(g->c, listMacros, (void*)ListName(g, ordered[k])); fcBufFmt(&decl, "#define %s (OL_[%d])\n", ListName(g, ordered[k]), k); }

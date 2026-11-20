@@ -159,7 +159,8 @@ static const char* Run(FgGen* g) {
 
     /* The natives in C of the packages ("language": "c") and the bridges of graphics and windows: part of this file, after the runtime - a C compiler is enough
      * (TinyCC, a board without C++). Their platform layers come with them (platformSources, ROADMAP 13.3b). (the bridges of graphics and windows: not ported yet) */
-    if (g->usesGraphics || g->usesWindows) FG_UNPORTED("the natives of graphics and windows in the generated file");
+    if (g->usesGraphics) { if (marks) FG_UNPORTED("the natives of a split program"); AppendStandardNatives(g, &sb, "graphics"); }
+    if (g->usesWindows) { if (marks) FG_UNPORTED("the natives of a split program"); AppendStandardNatives(g, &sb, "windows"); }
     for (i = 0; i < g->packageImports->count; i++) {
         FgPkgImportKey* p = (FgPkgImportKey*)g->packageImports->items[i];
         FcList* texts;

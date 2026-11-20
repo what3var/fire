@@ -240,6 +240,7 @@ struct FgGen {
     FcList* packageImports;     /* FgPkgImportKey* (gen/packages.c) */
     FcStore* store;             /* the installed packages */
     FcDict* instImports;        /* FcPkgImport* -> FgInstImport* */
+    FcDict* bridgeCache;        /* "bridge\x01import" -> FcDict* */
     /* CppGenerator.CAbi.cs */
     FcDict* cRet;               /* FgFunc* -> int + 1 */
     FcDict* cAbiParams;         /* FgFunc* -> FgCAbi* (NULL value: none) */
