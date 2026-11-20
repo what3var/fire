@@ -394,6 +394,15 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
 
 1. Generator (`CppGenerator*`, 15 600 Zeilen - der größte Einzelposten). Prüfung: `fire_program.c`/`fire_natives.cpp` byte-gleich über den
    Korpus und die Optionen (Ziele, `linkage`, `stripping`, `#intwidth`, Debug, `optimize`).
+   **Zum größten Teil umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-1-der-generator)): `native/forge/gen/` (12 300 Zeilen C, Stand
+   808e9788) - `CppGenerator.cs` ganz (Run, Kopf, Dispatcher, Feldhelfer, Klassendeskriptoren, der Fluss, `StepCore` mit allen Opcodes), `Packed`,
+   `CAbi`, `CFields`, `Overloads` (Selektoren, Hinweise), die Dispatcher der Interfaces, die Natives der Pakete (Manifest, Plattformquellen,
+   Header, C und C++, typisierte Natives, Sperren) und die Brücken von graphics/windows. Maß: `forge cgen <optionen> <datei>` gegen
+   `forge-c cgen`, `tests/compare-frontend.sh ... native`: Standardoptionen **1036 von 1129** Fällen, **92 von 93** Paketen, **30 von 34**
+   Beispielen byte-gleich, **kein** Unterschied des Generators (die eine Abweichung, `Scene3D Models`, sind die Modelle als Ressourcen - der
+   Linker, Schritt 4) - der Rest ist noch nicht portiert (`unported: ...`): Reflection und Probes, JSON, Debug-Builds,
+   die geteilten Einheiten (`ProgramSplit`), `linkage` static/shared (Module, Plugins), Pointer-Calls, `--stats`. Weitere Optionssätze über eine
+   Stichprobe (504 Quellen) ebenso ohne Unterschied, siehe dort.
 2. NativeBuilder, Toolchains (gcc, clang, MSVC, tcc, Emscripten, ESP-IDF, Open Watcom), Linkage, `PackageLibrary`, Stats, Boot-Images, PE-Ressourcen.
 3. Projekt, Solution, Bauplan, Vorlagen, Beispiele; von der Paketverwaltung, was forge braucht (Manifest, Store, `.fpk`). ember bleibt bis Phase F das C#-Programm.
 4. Rest der Befehlszeile: Testläufer, `forge data`, Modellwandler (`.fmesh`, `.fblocks`, glTF), Packer.

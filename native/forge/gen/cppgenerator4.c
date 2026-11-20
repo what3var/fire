@@ -88,7 +88,6 @@ static FgCField CFieldAccess(FgGen* gg, FgFunc* ff, FgFlow* fs, const FgInstr* f
     FgCField none, field;
     const FcRtClass* rc;
     int dd = fs->depth;
-    const char* name;
     memset(&none, 0, sizeof none);
     if (!(!fgDebugBuild(gg) && (gg->program->intWidth == 32 || gg->program->intWidth == 64)) || fs->region) return none;
     if ((ff->kind == FK_Init || ff->kind == FK_Ctor) && fi->op != OP_GetField) return none;
