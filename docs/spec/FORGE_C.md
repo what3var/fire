@@ -1,9 +1,11 @@
 # forge in C (`native/forge`)
 
-Status: **Phase C, Schritte 1 bis 4** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-c---das-frontend-in-c) (19.11.2026): Lexer,
+Status: **Phase C, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-c---das-frontend-in-c) (20.11.2026): Lexer,
 Präprozessor mit `#if`, Diagnosen, AST und Parser (1, 2); Resolver, Typprüfer und `SetterClaims` mit dem, was sie vom Linker brauchen - die
 Direktiven eines Builds mit ihrer Wirkung, `#import` mit den Preludes und den Natives der installierten Pakete (3); der Bytecode-Compiler, was die
-Typprüfung ihm hinterlässt (mit der Herleitung von `defined`), der Rest des Linkers und der Schreiber der Programmdatei `.fbc` (4). Mechanischer Port 1:1 (L3): je C#-Datei eine C-Datei mit denselben Namen in derselben
+Typprüfung ihm hinterlässt (mit der Herleitung von `defined`), der Rest des Linkers und der Schreiber der Programmdatei `.fbc` (4); die
+Markup-Generatoren - `.fxml` (Oberflächen), `.biscuit` (Schaltpläne), `.fdata` (Datenmodelle), der Import von Falstads Schaltungen - hinter
+`#include` und als eigene Befehle (5). Mechanischer Port 1:1 (L3): je C#-Datei eine C-Datei mit denselben Namen in derselben
 Reihenfolge, im Kopf jeder Datei die C#-Datei und der Commit, dem sie entspricht. Kein globaler Zustand und kein `exit` (L6): alles hängt an
 `FcCtx`, Fehler kommen als Ausnahme auf dem Kontext beim Aufrufer an.
 
@@ -15,7 +17,10 @@ forge-c diagnostics x.fire                           (was `forge run` beim Über
 forge-c fbc debug|release|performance|default x.fire   (die Programmdatei, die `forge bytecode x.fire -m <modus>` schreibt; bei Fehlern `error` und die Diagnosen)
 forge-c bytecode x.fire -o x.fbc [-m DEBUG|RELEASE|PERFORMANCE]   (wie `forge bytecode`: die Warnungen und Fehler auf stderr; für tests/run-cases-vm.sh)
 forge-c tokens|ast|diagnostics --list <dateien.txt> --out <ordner>   (eine Ausgabe je Zeile der Liste: <ordner>/<n>.txt; ebenso `fbc <modus> --list ...`)
-tests/compare-frontend.sh <forge> <forge-c> [tokens|ast|both|diag|fbc|all] [<ordner>]   (FRONTEND_MUTANTS=n: dazu n beschädigte Kopien je Quelle;
+forge-c ui|biscuit|fdata x.fxml|x.biscuit|x.fdata    (das erzeugte Skript auf stdout, die Fehler des Markups auf stderr - wie `forge ui|biscuit|fdata`)
+forge-c falstad schaltung.txt                        (der Schaltplan auf stdout, die Warnungen auf stderr - wie `forge falstad`)
+forge-c markup --list <dateien.txt> --out <ordner>   (je Datei beide Ströme, der Befehl nach der Endung: .fxml, .biscuit, .fdata, sonst falstad)
+tests/compare-frontend.sh <forge> <forge-c> [tokens|ast|both|diag|fbc|markup|all] [<ordner>]   (FRONTEND_MUTANTS=n: dazu n beschädigte Kopien je Quelle;
                                                      FORGE_CS_CACHE=1: Ausgaben des C#-forge aus dem Ordner wiederverwenden;
                                                      FBC_MODES="release": nur diese Modi bei `fbc`)
 ```
@@ -72,21 +77,48 @@ verglichen werden die Bytes (`forge dump x.fbc` zeigt eine Programmdatei als Tex
 Dazu der Lauf über die VM in C: `tests/run-cases-vm.sh forge-c` (mit `FIRE_TABLES`, `FIRE_PACKAGES` und `FIRE_PKG_PATH` auf den Ordner des
 C#-forge, der die Bibliotheken der Pakete gebaut hat) übersetzt jeden Fall mit `forge-c bytecode` und lässt ihn von `fire` laufen.
 
+## Das Maß von Schritt 5: `forge ui|biscuit|fdata|falstad`
+
+Die Befehle gab es im C#-forge schon (`Program.cs`): `forge ui|biscuit|fdata <datei>` schreibt das erzeugte Skript
+(`MarkupFiles.GenerateScript`) auf stdout, bei Fehlern des Markups je Diagnose `<datei>: line n: ...` auf stderr; `forge falstad <datei>` die
+Warnungen auf stderr, den Schaltplan auf stdout. `forge-c` hat dieselben Befehle; `forge-c markup --list` schreibt je Datei beide Ströme in eine
+Ausgabe (der Befehl nach der Endung), `tests/compare-frontend.sh ... markup` ruft den C#-forge je Datei auf (`2>&1`) und vergleicht **byte-gleich**:
+
+* die Markup-Dateien des Repositorys (`docs/images/src`, Beispiele und Vorlagen in `src/fire.Project`, `src/fire.UI.Markup/CircuitSamples`): 12
+  `.fxml`, 14 `.biscuit` - `.fdata` und Falstads Schaltungen gibt es dort keine;
+* was `src/fire.Testing` inline schreibt (`tests/extract-markup.py`: die String-Literale - auch `"""`-Rohtexte und Verkettungen mit Konstanten -,
+  die nach Markup aussehen): 111 `.fxml` (Diagnosen, halb getipptes Markup der Completion-Tests, Generator), 7 `.biscuit`, 4 `.fdata`, 8 Falstad;
+* mit `FRONTEND_MUTANTS=n` n beschädigte Kopien jeder dieser Dateien - die Fehlerwege der Leser von XML und JSON (deren Meldungen samt Zeile und
+  Spalte .NET schreibt: `XmlException`, `JsonReaderException`).
+
+Und hinter `#include`: `FxmlBinding` (die letzte Abweichung von Schritt 1 bis 4) ist in `tokens`, `ast`, `diagnostics` und `fbc` (alle drei Modi,
+auch strikt) gleich.
+
 ## Stand gegen den Korpus
 
 | Teil | Dateien | `tokens` gleich | `ast` gleich | `diagnostics` gleich | `fbc` Debug | `fbc` Release | `fbc` Performance |
 |---|---|---|---|---|---|---|---|
 | `tests/cases` | 1129 | 1129 | 1129 | 1129 | 1129 | 1129 | 1129 |
 | `packages` | 93 | 93 | 93 | 93 | 93 | 93 | 93 |
-| `src/fire.Project` (Beispiele, Vorlagen) | 34 | 33 | 33 | 33 | 32 | 32 | 32 |
+| `src/fire.Project` (Beispiele, Vorlagen) | 34 | 34 | 34 | 34 | 33 | 33 | 33 |
 | beschädigte Kopien (`FRONTEND_MUTANTS=2`; `fbc`: `=1`) | 2512 | 2512 | 2512 | 2512 | - | 1256 von 1256 | - |
-| der Korpus strikt (jede Quelle mit `//# types: strict`) | 1256 | - | - | 1255 | - | 1254 | - |
+| der Korpus strikt (jede Quelle mit `//# types: strict`; seit Schritt 5 nur `FxmlBinding` neu geprüft) | 1256 | - | - | 1256 | - | 1255 | - |
+
+| Markup (Schritt 5, `markup`) | Dateien | gleich |
+|---|---|---|
+| Dateien des Repositorys (`.fxml`, `.biscuit`) | 26 | 26 |
+| inline in `src/fire.Testing` (`.fxml`, `.biscuit`, `.fdata`, Falstad) | 130 | 130 |
+| beschädigte Kopien (`FRONTEND_MUTANTS=3`) | 468 | 468 |
+| eigene Fälle der Fehlerwege und Umwandlungen (nicht im Skript) | 385 | 382 |
+
+(Die drei: `.fdata`, bei denen C# mit einer Ausnahme von System.Text.Json abbricht - `"values": [1]`, `"length": "x"`, `"format": "x"`; `forge-c`
+schreibt dieselbe erste Zeile `Unhandled exception. System.InvalidOperationException: ...`, nicht den Stack.)
 
 `fbc` über die Fälle: 957 der 1129 übersetzen (zu Programmdateien von 112 KB bis 1,8 MB - jede mit der ganzen Prelude und den Preludes ihrer
 Importe), 172 sind Fehler des Frontends oder des Compilers; von den beschädigten Kopien übersetzen 361. `tests/run-cases-vm.sh` mit `forge-c`:
 **1126 von 1128** richtig (1 nicht gelaufen) - dieselbe Zahl wie mit dem C#-forge ([VM_C.md](VM_C.md#stand-gegen-den-korpus)), die
-Programmdateien sind dieselben, also auch die zwei falschen (`native/3210`, `native/4110`: Textumbruch der UI). Die zwei Abweichungen von `fbc`: `FxmlBinding` (`.fxml`, Schritt 5) und
-`Scene3D Models`, das Modelle als Ressourcen einbindet (`new Resource("robot.gltf")`, `.fblocks`, `.fmesh`) - die macht der C#-Linker beim Einbinden
+Programmdateien sind dieselben, also auch die zwei falschen (`native/3210`, `native/4110`: Textumbruch der UI). Die eine Abweichung von `fbc`
+(`FxmlBinding` mit seiner `.fxml` ist seit Schritt 5 gleich): `Scene3D Models`, das Modelle als Ressourcen einbindet (`new Resource("robot.gltf")`, `.fblocks`, `.fmesh`) - die macht der C#-Linker beim Einbinden
 zu fire's Modelldatei (`ModelConverter`, Phase D Schritt 4), `forge-c` nimmt die Datei, wie sie ist.
 
 `diagnostics` über die Fälle: 472 der 1129 Ausgaben sind nicht leer (1333 Zeilen: TC005 320, TC020 301, TC004 145, TC019 111, TC001 90,
@@ -105,8 +137,8 @@ Geschwindigkeit: `diagnostics` über `tests/cases` und `packages` (1222 Dateien,
 Prozess) 17,7 s gegen 51,6 s des C#-forge. gcc und clang mit `-Wall -Wextra` ohne Warnung; ASan/UBSan ohne Befund über den Korpus, die
 beschädigten Kopien und den strikten Korpus.
 
-Die eine Abweichung: `Samples/Graphics and UI/FxmlBinding/main.fire` bindet mit `#include` eine `.fxml` ein - die Markup-Generatoren sind Phase C
-Schritt 5 (`forge-c` meldet dort `internal: ... markup files are not ported yet`). Die beschädigten Kopien (abgeschnitten, ein Zeichen weg, ein
+`Samples/Graphics and UI/FxmlBinding/main.fire`, das mit `#include` eine `.fxml` einbindet, war bis Schritt 4 die eine Abweichung - seit
+Schritt 5 ist es gleich. Die beschädigten Kopien (abgeschnitten, ein Zeichen weg, ein
 Stück wiederholt) laufen durch die Fehlerwege: 75 verschiedene Codes von Lexer, Präprozessor und Parser, alle gleich; ASan/UBSan ohne Befund.
 
 Die Diagnosen der Fälle (`.diagnostics`, von `forge run` festgehalten): jede, die aus Lexer, Präprozessor oder Parser kommt, gibt `forge-c ast`
@@ -144,7 +176,16 @@ Linksschieben einer negativen Zahl im Zickzack von `ProgramFile`, ist behoben).
 | `compiler.c`, `compiler2.c` | der Bytecode-Compiler, Methode für Methode in der Reihenfolge der C#-Datei: `RefParamTable`, die erklärten Typen, `Compile`, `StaticInitOrder`, die Klassen (`ClassMeta`, `ThisReads`, Spezialisierungen), die Prologe der Funktionen, die Anweisungen (1); die Ausdrücke, Lambdas, Argumente, Aufrufe, Zuweisungen, die Ankerregel (2); `ReadingMethods` | `Compiler.cs`, `ReadingMethods.cs` |
 | `compilertrees.c` | die Ausdrucksbäume (`lambda expression<T>`): der Bau-Lambda und `__Attach` | `Compiler.Trees.cs` |
 | `programfile.c` | der Schreiber von `.fbc` (Namen, Einheiten, Enums als Tabellen vor dem Programm; Funktionen und Chunks einmal, danach über ihre Nummer), SHA-256 der Quellen | `Bytecode/ProgramFile.cs` (`Writer`) |
-| `forge.c` | das Programm `forge-c` (`tokens`, `ast`, `diagnostics`, `fbc`, `bytecode`) | `FrontendDump.cs`, `CommandLine.cs` (`Bytecode`) |
+| `markupmodel.c` | `MarkupDiagnostic`, `MarkupException` (`FC_ERR_MARKUP`), die Werte der Attribute, `MarkupElement`, die Ressourcen, `MarkupDocument`; was .NET dem Markup tut (`OrdinalIgnoreCase`, `Trim`, `ToLowerInvariant`, `$` eines Regex) | `fire.UI.Markup/MarkupModel.cs` |
+| `markupschema.c` | die Elemente der Bibliothek `ui` mit Eigenschaften und Ereignissen (Tabellen; die Liste je Kontext: `FcCtx.markupSchema`), Konverter, `UIRoot.*`, reservierte Namen, die Muster | `MarkupSchema.cs` |
+| `xml.c` | was das Markup von System.Xml braucht: `XDocument.Load` mit Zeileninfo (Namespaces, Entities, CDATA, Kommentare, Normalisierung), die Meldungen von `XmlException` mit Zeile und Position, `XElement.ToString` | `System.Xml.Linq` |
+| `json.c` | was das Markup von System.Text.Json braucht: `JsonDocument.Parse` (Kommentare, Kommas am Ende, die Meldungen von `JsonReaderException`), die Anfänge der Token (`Utf8JsonReader`), `TryGetProperty` (die letzte gewinnt), `TryGetInt32`, `JsonSerializer.Serialize` (`UnsafeRelaxedJsonEscaping`) | `System.Text.Json` |
+| `markupparser.c` | der Leser des Markups, Validierung, Bindungen, Objektwerte `[Type ...]`, Namespaces (`NamespaceScope` als `FmScope` statt `[ThreadStatic]`) | `MarkupParser.cs` |
+| `fireuigenerator.c` | das Skript einer Oberfläche (Felder, Konstruktor, Ressourcen, Handler, Bindungen mit `undefined`, Run/Attach; die Vorschau mit `FmGen.preview` statt `[ThreadStatic]`); die Zahlenformate von .NET (`int.TryParse`, `double.TryParse`, `"0.0###..."`) | `FireUiGenerator.cs` |
+| `biscuitgenerator.c` | `MarkupFiles` (welcher Generator), der Leser und Generator der `.biscuit` | `BiscuitGenerator.cs` |
+| `datamodelgenerator.c` | der Generator der `.fdata` (mit `LineIndex`, `Plural`, `Snake`) | `DataModelGenerator.cs` |
+| `falstadimport.c` | Falstads Schaltungen (Text und `<cir>`) als `.biscuit` | `FalstadImport.cs` |
+| `forge.c` | das Programm `forge-c` (`tokens`, `ast`, `diagnostics`, `fbc`, `bytecode`, `ui`, `biscuit`, `fdata`, `falstad`, `markup`) | `FrontendDump.cs`, `CommandLine.cs` (`Bytecode`) |
 
 `native/base/fire_base.h` (Arena, geordnete Map) wird unverändert mitbenutzt.
 
@@ -165,7 +206,7 @@ Linksschieben einer negativen Zahl im Zickzack von `ProgramFile`, ist behoben).
   Einheiten, `m^1` ist `m`). Für `DefineUnits` (Fehler, Umrechnungsklassen) ist `Unit.Parse` mit Dimensionen und Faktoren portiert, die Namen
   zusammengesetzter Einheiten (`RenderTerms`, `SimplifyTerms`) nicht - sie kommen mit dem Resolver.
 * **Was das Frontend nicht braucht, fehlt**: `ProcessedSource.Qualify`/`Module`/`ImportNamespaces` der Bibliotheken (der Linker setzt sie, Schritt 4),
-  `Parser.SourceImportNamespaces` (für den Resolver), die Ressourcen von `new Resource("...")` (nur mit einer `ResourceTable`), Markup über `#include`.
+  `Parser.SourceImportNamespaces` (für den Resolver), die Ressourcen von `new Resource("...")` (nur mit einer `ResourceTable`).
   Wo C# an einer Stelle mit einer .NET-Ausnahme abbräche (eine Zahl mit nicht-ASCII-Ziffern, ein Hex-Literal über 64 Bit), meldet `forge-c`
   `internal: ...` (Code E9999).
 * **`unicode.inc`**: aus Pythons `unicodedata` (Unicode 15.1) - .NET 10 kennt eine neuere Version; Unterschiede gäbe es nur bei Zeichen, die seitdem
@@ -220,12 +261,35 @@ Linksschieben einer negativen Zahl im Zickzack von `ProgramFile`, ist behoben).
 * **Die Paketverwaltung**: gelesen wird der Ordner der installierten Pakete (`package.json` je Paket, die Preludes als Dateien); `.fpk` (packen,
   entpacken) braucht `forge bytecode` nicht - das ist Phase D Schritt 3.
 
+### Schritt 5
+
+* **Was portiert ist**: `MarkupModel.cs`, `MarkupSchema.cs`, `MarkupParser.cs`, `FireUiGenerator.cs` (mit `GeneratePreview`, das kein Befehl
+  zeigt), `BiscuitGenerator.cs` (mit `MarkupFiles`), `DataModelGenerator.cs`, `FalstadImport.cs` - Stand 7a594769. Nicht portiert, weil der
+  Generator sie nicht braucht: `DataModelDocument.cs` (das Modell des Designers in spark), `MarkupText.cs` und `MarkupCompletion.cs` (Editor,
+  Completion: mit `forge serve`, Schritt 6), `CircuitSamples.cs` (Beispiele des Editors). Die Dateien liegen flach in `native/forge` (nicht in
+  `markup/`), wie die übrigen.
+* **System.Xml und System.Text.Json** sind kein C# des Repositorys, also kein Port, sondern ihr Verhalten: `xml.c` und `json.c` lesen, was das Markup
+  braucht, und schreiben bei Fehlern die Meldungen von .NET samt Zeile und Position - abgeglichen an den beschädigten Kopien und eigenen Fällen
+  (abgeschnitten in Name, Attribut, Wert, Kommentar, CDATA, Endtag; falsche Token, Entities, Zeichenreferenzen; JSON: Literale - .NET zeigt den ganzen
+  Rest -, Zahlen, Kommas, Kommentare, Ende). Nicht nachgebaut: eine DTD mit eigenen Entities, Kodierungen außer UTF-8, die volle Klasse der
+  Namenszeichen von XML (Buchstaben, Ziffern, `_ - . :` und ab U+00C0).
+* **Texte**: das Markup wird als UTF-16 (`fcReadText`) gelesen, der XML-Leser arbeitet auf Einheiten (Spalten wie .NET), JSON auf UTF-8 (wie
+  `JsonDocument.Parse(string)`: `BytePositionInLine`), alle übrigen Texte sind fc8. Groß/klein (`OrdinalIgnoreCase`, `ToLowerInvariant`,
+  `char.IsUpper` von `Snake`) für ASCII und Latin-1; `char.IsLetter`/`IsDigit` wie bisher aus `unicode.inc`.
+* **Zahlen**: `double.ToString("0.0###############")` und `"0.######"` über 15 signifikante Stellen (wie .NET bei eigenen Formaten), aufgerundet
+  ab 5; `Math.Round(v, 6)` wie .NET (mal 10^6, gerade runden, geteilt); `(int)` eines double sättigend (.NET 9).
+* **Ausnahmen**: `MarkupException` ist `FC_ERR_MARKUP` mit den Diagnosen in `err.list`; `#include` macht daraus wie C# einen Fehler des
+  Präprozessors (`'x.fxml': line n: ...`). Was C# nicht fängt (`TryGetInt32`/`GetString` auf einem Wert anderer Art in `.fdata`) beendet
+  `forge-c` mit der ersten Zeile, die .NET schreibt (`Unhandled exception. System.InvalidOperationException: ...`), ohne Stack.
+* **Kein globaler Zustand**: `[ThreadStatic] s_scope` (die Namespaces beim Lesen) und `s_preview` (die Vorschau) gehen als Parameter durch.
+
 ## Nachziehen
 
 Ändert sich auf `master` eine der portierten C#-Dateien (`git log <commit>..master -- src/fire.Compiler/Lexer.cs` usw.; Schritt 3:
 `Resolver*.cs`, `TypeChecker*.cs`, `SetterClaims.cs`, `Linker.cs`, `ImportedPreludes.cs`, `Values/Unit.cs` - Stand c7f13d97; Schritt 4: `Compiler.cs`,
 `Compiler.Trees.cs`, `ReadingMethods.cs`, `Bytecode/ProgramFile.cs`, `Bytecode/Chunk.cs`, `Bytecode/FunctionProto.cs`, `Bytecode/RuntimeClass.cs`,
 `Bytecode/DeclaredType.cs`, `Bytecode/DeclaredKind.cs`, `Runtime/FloatNarrowing.cs`, `PackageImports.cs` und wieder `TypeChecker.cs`/`Linker.cs` -
-Stand 6bc618e7), wird die Änderung in die C-Datei übertragen und der Commit im Kopf nachgeführt; `tests/compare-frontend.sh` (mit
-`FRONTEND_MUTANTS=2`, und `fbc`) zeigt, ob beide wieder gleich sind.
+Stand 6bc618e7; Schritt 5: `src/fire.UI.Markup/*.cs` außer `DataModelDocument.cs`, `MarkupText.cs`, `MarkupCompletion.cs`, `CircuitSamples.cs` - Stand
+7a594769), wird die Änderung in die C-Datei übertragen und der Commit im Kopf nachgeführt; `tests/compare-frontend.sh` (mit
+`FRONTEND_MUTANTS=2`, und `fbc`; für das Markup `markup` mit `FRONTEND_MUTANTS=3`) zeigt, ob beide wieder gleich sind.
 Eine neue Knotenart oder ein neues Feld kommt in `ast.h` an dieselbe Stelle wie im Record und in `ast.c` in die Ausgabe.

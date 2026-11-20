@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 4 (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 5 (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -376,6 +376,15 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    `tests/run-cases-vm.sh` **1126 von 1128** - wie mit dem C#-forge. **Offen** (für Phase D): Projekte, Ziele, `-D`, Plugins (`ClassMeta`,
    `OwnImports`), das Packen eines Programms, `.fpk`, `ModelConverter`.
 5. Markup-Generatoren (`.fxml`, `.biscuit`, `.fdata`, Falstad). Prüfung: erzeugter fire-Text gleich.
+   **Umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#schritt-5)): `markupmodel.c`, `markupschema.c`, `markupparser.c`, `fireuigenerator.c` (mit den
+   `UIRoot.*`-Attributen, Bindungen samt dem `undefined` eines gebrochenen Pfads, Slider/Stepper, typisierten Lambdas), `biscuitgenerator.c`
+   (mit `MarkupFiles`), `datamodelgenerator.c`, `falstadimport.c` - je C#-Datei eine C-Datei, Stand 7a594769; dazu `xml.c` und `json.c`: was das
+   Markup von System.Xml und System.Text.Json braucht, mit den Fehlermeldungen von .NET samt Zeile und Position. `#include "x.fxml"` (und
+   `.biscuit`, `.fdata`) geht durch die Generatoren. Das Maß: `forge ui|biscuit|fdata|falstad` (gab es schon) gegen `forge-c` mit denselben
+   Befehlen, `tests/compare-frontend.sh ... markup`: die 26 Markup-Dateien des Repositorys, 130 Stücke Markup, die `src/fire.Testing` inline
+   schreibt (`tests/extract-markup.py`), 468 beschädigte Kopien (`FRONTEND_MUTANTS=3`) - **alle byte-gleich**; `FxmlBinding` ist jetzt in
+   `tokens`/`ast`/`diagnostics`/`fbc` gleich (der Korpus: tokens/ast/diagnostics 1256 von 1256, `fbc` 1255 von 1256 - offen nur die Modelle als
+   Ressourcen, Phase D). Nicht portiert (Editor): `DataModelDocument`, `MarkupText`, `MarkupCompletion` (mit Schritt 6), `CircuitSamples`.
 
 6. `forge serve` (L4) auf dem C-Frontend; spark stellt `Language/` (4 300 Zeilen) darauf um, die Completion-Tests wandern auf Protokollebene.
 

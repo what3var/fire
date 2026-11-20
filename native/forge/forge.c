@@ -7,6 +7,9 @@
  *   forge-c diagnostics <file.fire>                 what `forge run` writes to stderr while it compiles, up to the type check (Phase C 3;
  *                                                   the prelude from FIRE_TABLES, the installed packages from FIRE_PACKAGES)
  *   forge-c tokens|ast|diagnostics --list <files.txt> --out <folder>   one output per line of the list: <folder>/<n>.txt
+ *   forge-c ui|biscuit|fdata <file>                 the script generated from a markup file (Phase C 5), as `forge ui|biscuit|fdata`
+ *   forge-c falstad <circuit.txt>                   a circuit of Falstad's simulator as a schematic, as `forge falstad`
+ *   forge-c markup --list <files.txt> --out <folder>   per file what forge writes for it (both streams; the command by the extension)
  *
  * The output is byte for byte what `forge tokens` / `forge ast` / `forge diagnostics` of the C# compiler prints (src/fire.Compiler/FrontendDump.cs);
  * tests/compare-frontend.sh compares the two over the corpus. */
@@ -54,6 +57,58 @@ static const char* fcBaseName(const char* path) {
 static int fcCmpOrdinal(const void* a, const void* b) { return strcmp(*(const char* const*)a, *(const char* const*)b); }
 
 #include "linker.c"
+
+/* the markup generators (Phase C 5) */
+#include "markupmodel.c"
+#include "markupschema.c"
+#include "xml.c"
+#include "json.c"
+#include "markupparser.c"
+#include "fireuigenerator.c"
+#include "biscuitgenerator.c"
+#include "datamodelgenerator.c"
+#include "falstadimport.c"
+
+/* `ui|biscuit|fdata <file>` (Program.cs: MarkupFiles.GenerateScript, the script on stdout, the diagnostics of a MarkupException on stderr) and
+ * `falstad <file>` (FalstadImport.Convert: the warnings on stderr, the schematic on stdout); `out` and `err` get what forge writes there */
+static int fcMarkupRun(const char* command, const char* path, FcBuf* out, FcBuf* err) {
+    FcCtx ctx;
+    FcU16 text = {0};
+    volatile int result = 0;
+    int i;
+    fcCtxInit(&ctx);
+    if (!fcReadText(path, &text)) {
+        fcBufFmt(err, "Could not find file '%s'.\n", path);
+        fcCtxFree(&ctx);
+        return 1;
+    }
+    FC_TRY(&ctx) {
+        if (strcmp(command, "falstad") == 0) {
+            FmFalstadResult r = fmFalstadConvert(&ctx, fc8FromU16(&ctx, text.p, text.len), "");
+            for (i = 0; i < r.warnings->count; i++) { fcOut8(err, fcBaseName(path)); fcBufStr(err, ": "); fcOut8(err, (const char*)r.warnings->items[i]); fcBufChar(err, '\n'); }
+            fcOut8(out, r.biscuit);
+        } else fcOut8(out, fmGenerateScript(&ctx, path, text.p, text.len));
+    } FC_CATCH(&ctx) {
+        if (ctx.err.kind == FC_ERR_MARKUP) {
+            for (i = 0; i < ctx.err.list->count; i++) {
+                fcOut8(err, fcBaseName(path));
+                fcBufStr(err, ": ");
+                fcOut8(err, fmDiagText(&ctx, (const FmDiag*)ctx.err.list->items[i]));
+                fcBufChar(err, '\n');
+            }
+        } else {
+            /* (an exception C# does not catch there: its first line - "Unhandled exception. ..." - without the stack) */
+            if (!ctx.err.message || !fcStartsWith(ctx.err.message, "Unhandled exception.")) fcBufStr(err, "internal: ");
+            fcOut8(err, ctx.err.message ? ctx.err.message : "?");
+            fcBufChar(err, '\n');
+        }
+        result = 1;
+    } FC_END_TRY;
+    fcU16Free(&text);
+    fcCtxFree(&ctx);
+    return result;
+}
+static bool fcIsMarkupCommand(const char* s) { return strcmp(s, "ui") == 0 || strcmp(s, "biscuit") == 0 || strcmp(s, "fdata") == 0 || strcmp(s, "falstad") == 0; }
 
 /* FrontendDump.Token */
 static void fcDumpToken(FcBuf* o, const FcToken* t) {
@@ -273,7 +328,21 @@ int main(int argc, char** argv) {
         }
     }
     if (argc == 3 && fcIsCommand(argv[1])) return fcDump(argv[1], argv[2], stdout, prelude, store);
-    if (argc == 6 && fcIsCommand(argv[1]) && strcmp(argv[2], "--list") == 0 && strcmp(argv[4], "--out") == 0) {
+    if (argc == 3 && fcIsMarkupCommand(argv[1])) {
+        FcBuf out = {0}, err = {0};
+        int result;
+        fcBufStr(&out, "");
+        fcBufStr(&err, "");
+        result = fcMarkupRun(argv[1], argv[2], &out, &err);
+        fwrite(err.p, 1, err.len, stderr);
+        fwrite(out.p, 1, out.len, stdout);
+        fcBufFree(&out);
+        fcBufFree(&err);
+        return result;
+    }
+    /* `markup --list <files.txt> --out <folder>`: per file what `forge ui|biscuit|fdata|falstad <file> 2>&1` writes (the command by the extension:
+     * .fxml, .biscuit, .fdata, else falstad) - the measure of Phase C 5 */
+    if (argc == 6 && (fcIsCommand(argv[1]) || strcmp(argv[1], "markup") == 0) && strcmp(argv[2], "--list") == 0 && strcmp(argv[4], "--out") == 0) {
         size_t len = 0;
         uint8_t* list = fbReadFile(argv[3], &len);
         char* p;
@@ -296,7 +365,18 @@ int main(int argc, char** argv) {
             if (*p) {
                 snprintf(outPath, sizeof outPath, "%s/%d.txt", argv[5], n);
                 f = fopen(outPath, "wb");
-                if (f) { fcDump(argv[1], p, f, prelude, store); fclose(f); }
+                if (f && strcmp(argv[1], "markup") == 0) {
+                    FcBuf out = {0}, err = {0};
+                    const char* command = fmIsUiMarkup(p) ? "ui" : fmIsBiscuit(p) ? "biscuit" : fmIsDataModel(p) ? "fdata" : "falstad";
+                    fcBufStr(&out, "");
+                    fcBufStr(&err, "");
+                    fcMarkupRun(command, p, &out, &err);
+                    fwrite(err.p, 1, err.len, f);
+                    fwrite(out.p, 1, out.len, f);
+                    fcBufFree(&out);
+                    fcBufFree(&err);
+                    fclose(f);
+                } else if (f) { fcDump(argv[1], p, f, prelude, store); fclose(f); }
             }
             if (!e) break;
             p = e + 1;

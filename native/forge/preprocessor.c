@@ -1,6 +1,6 @@
 /* native/forge/preprocessor.c - port of src/fire.Compiler/Preprocessor.cs (commit df5ad3c3): Preprocessor, DirectiveRegistry (the default one:
  * `#include` and the directives Linker registers, with their numbers of parameters - without their effects), ProcessedSource. Not ported: the resources of `new Resource("path")` (only with a ResourceTable, which
- * the frontend dumps do not have) and markup files included with `#include` (Phase C 5: an internal error). */
+ * the frontend dumps do not have). A markup file included with `#include` (.fxml, .biscuit, .fdata) is the script its generator makes (Phase C 5). */
 
 typedef struct FcProcessed {
     const uint16_t* source;
@@ -144,6 +144,15 @@ static bool fcFileExists(const char* path) {
 }
 
 static void fcProcessInner(FcPreprocessor* pp, const uint16_t* source, int length, const char* basePath, FcU16* out);
+/* the markup generators (MarkupFiles in biscuitgenerator.c, after the frontend in forge.c) */
+static bool fmIsGenerated(const char* path);
+static const char* fmGenerateScript(FcCtx* c, const char* path, const uint16_t* text, int n);
+static const char* fmBaseNameOf(const char* path) {
+    const char* last = path;
+    const char* p;
+    for (p = path; *p; p++) if (*p == '/' || *p == '\\') last = p + 1;
+    return last;
+}
 
 /* Preprocessor.ProcessFileRecursive */
 static void fcProcessFileRecursive(FcPreprocessor* pp, const char* fullPath, FcU16* out) {
@@ -159,14 +168,25 @@ static void fcProcessFileRecursive(FcPreprocessor* pp, const char* fullPath, FcU
         fcPreError(c, fcFmt(c, "Circular include of '%s' (chain: %s -> %s).", fullPath, fcBufDone(c, &chain), fullPath));
     }
     if (!fcReadText(fullPath, &text)) fcPreError(c, fcFmt(c, "'%s' could not be read: %s", fullPath, "the file cannot be opened"));
-    if (fcEndsWith(fullPath, ".fxml") || fcEndsWith(fullPath, ".biscuit") || fcEndsWith(fullPath, ".fdata")) {
-        fcU16Free(&text);
-        fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "'%s': markup files are not ported yet (Phase C 5)", fullPath));
-    }
     n = text.len;
     copy = (const uint16_t*)fcAlloc(c, sizeof(uint16_t) * (size_t)(n + 1));
     if (n) memcpy((void*)copy, text.p, sizeof(uint16_t) * (size_t)n);
     fcU16Free(&text);
+    /* a markup file of a user interface (docs/ui/markup.md) or a schematic (`.biscuit`, docs/circuits/README.md) is included as the script generated from it */
+    if (fmIsGenerated(fullPath)) {
+        const char* volatile script = NULL;
+        FcU16 generated = {0};
+        FC_TRY(c) {
+            script = fmGenerateScript(c, fullPath, copy, n);
+        } FC_CATCH(c) {
+            if (c->err.kind != FC_ERR_MARKUP) fcRethrow(c);
+            fcPreError(c, fcFmt(c, "'%s': %s", fmBaseNameOf(fullPath), c->err.message));
+        } FC_END_TRY;
+        n = fcU16FromFc8(script, &generated);
+        copy = (const uint16_t*)fcAlloc(c, sizeof(uint16_t) * (size_t)(n + 1));
+        if (n) memcpy((void*)copy, generated.p, sizeof(uint16_t) * (size_t)n);
+        fcU16Free(&generated);
+    }
     fcListAdd(c, pp->includeChain, (void*)fullPath);
     fcProcessInner(pp, copy, n, fcDirectoryName(c, fullPath), out);
     pp->includeChain->count--;
