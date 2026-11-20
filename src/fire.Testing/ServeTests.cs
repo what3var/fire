@@ -114,10 +114,10 @@ static class ServeTests
             string.Join(" | ", undo.Select(g => $"v{g.Version}: {g.Items.Count}")));
 
         // a slow analysis overtaken while it runs: its result still comes (stale), then the newest - in the order of the versions
-        string big = string.Concat(Enumerable.Range(0, 1500).Select(i => $"class C{i} {{ int f{i}\n M{i}(int x) {{ return x + f{i} }} }}\n"));
+        string big = string.Concat(Enumerable.Range(0, 12000).Select(i => $"class C{i} {{ int f{i}\n M{i}(int x) {{ return x + f{i} }} }}\n"));
         string slow = Path.Combine(Folder, "slow.fire");
         s.Client.Open(slow, 1, big + "var z = nothing1\n");
-        Thread.Sleep(400);   // (past the debounce: the analysis runs)
+        Thread.Sleep(220);   // (past the debounce of 150 ms: the analysis runs - some 400 ms for this text)
         s.Client.ChangeText(slow, 2, big + "var z = nothing2\n");
         var both = s.Until(slow, 2, 60000);
         bool ordered = both.Zip(both.Skip(1)).All(p => p.First.Version < p.Second.Version);

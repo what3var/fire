@@ -931,6 +931,7 @@ namespace fire.Editor
         private void OnDocumentClosed(OpenDocument doc)
         {
             doc.Script?.CancelChecks();
+            if (doc.Script != null) ServeDocuments.Close(ServeDocuments.PathOf(doc.Script.FilePath, doc.Script));   // (forge serve forgets its copy)
             OnScriptClosed(doc);
             if (ReferenceEquals(_highlightedDoc, doc)) _highlightedDoc = null;
             doc.Trace?.Detach();

@@ -183,7 +183,8 @@ namespace fire.Editor
                         return LiveDiagnostics.Remembered("document:" + self, source, others.Concat(libraries).ToList(), settings, () =>
                         {
                             using var analyze = EditorTiming.Measure($"  analyze in project ({others.Count} other files, {others.Sum(o => o.Text.Length) / 1024} KB)");
-                            return LiveDiagnostics.AnalyzeInProject(source, others, baseDirectory, plan);
+                            // over `forge serve` (the plan's files and libraries as the project of the analysis), else in this process
+                            return ServeDocuments.AnalyzeInProject(self, source, baseDirectory, plan, others) ?? LiveDiagnostics.AnalyzeInProject(source, others, baseDirectory, plan);
                         });
                     }
                     // the files cannot be read right now (or the workspace changed under the plan): the file alone

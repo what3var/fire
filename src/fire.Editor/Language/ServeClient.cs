@@ -442,4 +442,122 @@ namespace fire.Editor
         public string Code { get; }
         public ServeException(string code, string message) : base($"forge serve: {code}: {message}") => Code = code;
     }
+
+    /// <summary>
+    /// What the editors of spark ask the shared server (<see cref="ServeClient.Shared"/>): it keeps the server's copy of each document in step with the editor's text (one edit
+    /// per sync: the changed middle between the common start and end), the context of the symbol index (the other files of the project, `#include`d scripts) and the projects of
+    /// the analyses (a BuildPlan's files and libraries, sent again only when one of them changed). Every method returns null when the language services run in this process
+    /// (<c>FIRE_SPARK_LANG=inproc</c>) or the server is not available - the caller then does it itself (ScriptSymbolIndex, CompletionEngine, LiveDiagnostics).
+    /// </summary>
+    public static class ServeDocuments
+    {
+        private sealed class Doc
+        {
+            public int Version;
+            public string? Text;
+            public object? Includes;     // (the list of context files last sent: by reference)
+            public string? Project;
+            public ServeClient? Client;  // (the server it was opened on: a new server knows nothing of it)
+        }
+
+        private static readonly Dictionary<string, Doc> Docs = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, (long Hash, ServeClient Client)> Projects = new(StringComparer.Ordinal);
+
+        /// <summary>The path a document has on the server: its file, or a name of its own for an unsaved one.</summary>
+        public static string PathOf(string? filePath, object owner) =>
+            filePath != null ? Path.GetFullPath(filePath) : Path.Combine(Path.GetTempPath(), $"untitled-{Environment.ProcessId}-{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(owner)}.fire");
+
+        /// <summary>The server has the document with this text (and these context files, this project).</summary>
+        private static ServeClient? Sync(string path, string text, IReadOnlyList<(string Path, string Text)>? includes, string? project, string? baseDirectory)
+        {
+            var client = ServeClient.Shared;
+            if (client == null) return null;
+            lock (Docs)
+            {
+                if (!Docs.TryGetValue(path, out var doc) || doc.Client != client) { doc = new Doc { Client = client }; Docs[path] = doc; }
+                IEnumerable<ServeFile>? files = includes != null && !ReferenceEquals(includes, doc.Includes) ? includes.Select(f => new ServeFile(f.Path, f.Text)).ToList() : null;
+                if (doc.Text == null || (project != null && project != doc.Project))
+                {
+                    doc.Version++;
+                    client.Open(path, doc.Version, text, project ?? doc.Project, files ?? (doc.Includes as IReadOnlyList<(string Path, string Text)>)?.Select(f => new ServeFile(f.Path, f.Text)), baseDirectory: baseDirectory);
+                }
+                else if (!string.Equals(doc.Text, text, StringComparison.Ordinal) || files != null)
+                {
+                    doc.Version++;
+                    string old = doc.Text;
+                    int start = 0, max = Math.Min(old.Length, text.Length);
+                    while (start < max && old[start] == text[start]) start++;
+                    int end = 0;
+                    while (end < max - start && old[old.Length - 1 - end] == text[text.Length - 1 - end]) end++;
+                    client.ChangeEdits(path, doc.Version, new[] { (start, old.Length - start - end, text.Substring(start, text.Length - start - end)) }, files);
+                }
+                doc.Text = text;
+                if (includes != null) doc.Includes = includes;
+                if (project != null) doc.Project = project;
+                return client;
+            }
+        }
+
+        /// <summary>The suggestions at `offset` over the protocol, the best first; null: not available (do it in this process).</summary>
+        public static List<CompletionItem>? Complete(string path, string text, int offset, IReadOnlyList<(string Path, string Text)> context)
+        {
+            try { return Sync(path, text, context, null, null)?.Completion(path, offset, out _); }
+            catch (Exception ex) when (ex is IOException or ServeException) { return null; }
+        }
+
+        /// <summary>The diagnostics of a document alone over the protocol; null: not available.</summary>
+        public static List<Diagnostic>? Analyze(string path, string text, string? baseDirectory)
+        {
+            try { return Sync(path, text, null, "", baseDirectory)?.Diagnose(path).Items; }
+            catch (Exception ex) when (ex is IOException or ServeException) { return null; }
+        }
+
+        /// <summary>The diagnostics of a document of a project over the protocol (the context of the plan: its other files and libraries); null: not available.</summary>
+        public static List<Diagnostic>? AnalyzeInProject(string path, string text, string? baseDirectory, fire.Projects.BuildPlan plan, IReadOnlyList<(string Path, string Text)> others)
+        {
+            var client = ServeClient.Shared;
+            if (client == null) return null;
+            try
+            {
+                string key = "document:" + path;
+                var libraries = plan.Libraries.Values.Distinct().Select(l => new ServeLibrary(
+                    plan.Libraries.Where(e => ReferenceEquals(e.Value, l)).Select(e => e.Key).ToList(), l.ImportName, l.Name,
+                    l.Project.Project.Standard ? null : l.ImportName, l.Requires, l.Sources.Select(f => new ServeFile(f.Path, f.Text)).ToList())).ToList();
+                var files = others.Select(f => new ServeFile(f.Path, f.Text)).ToList();
+                string? ownImport = plan.Type == fire.Projects.OutputType.Library ? plan.Project.Project.ImportName : null;
+                long hash = 17;
+                foreach (var f in files) hash = hash * 31 + f.Path.GetHashCode() * 7 + (f.Text?.GetHashCode() ?? 0);
+                foreach (var l in libraries) { hash = hash * 31 + l.Import.GetHashCode(); foreach (var f in l.Files) hash = hash * 31 + (f.Text?.GetHashCode() ?? 0); }
+                hash = hash * 31 + (plan.Settings?.TypeChecking ?? "").GetHashCode() + (ownImport ?? "").GetHashCode();
+                lock (Projects)
+                {
+                    if (!Projects.TryGetValue(key, out var known) || known.Hash != hash || known.Client != client)
+                    {
+                        client.Project(key, files, libraries, plan.Settings?.TypeChecking, ownImport);
+                        Projects[key] = (hash, client);
+                    }
+                }
+                return Sync(path, text, null, key, baseDirectory)?.Diagnose(path).Items;
+            }
+            catch (Exception ex) when (ex is IOException or ServeException) { return null; }
+        }
+
+        /// <summary>The editor of a document closed.</summary>
+        public static void Close(string path)
+        {
+            lock (Docs)
+            {
+                if (!Docs.Remove(path, out var doc) || doc.Client == null || !doc.Client.IsAlive) return;
+                try { doc.Client.Close(path); } catch (IOException) { }
+            }
+        }
+
+        /// <summary>The installed packages or the workspace changed.</summary>
+        public static void Invalidate()
+        {
+            if (ServeClient.InProcess) return;
+            try { ServeClient.Shared?.Invalidate(); } catch (IOException) { }
+            lock (Projects) Projects.Clear();
+        }
+    }
 }

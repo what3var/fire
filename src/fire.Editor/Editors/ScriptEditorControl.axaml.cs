@@ -176,7 +176,8 @@ namespace fire.Editor
         {
             InitializeComponent();
 
-            DiagnosticsJob = source => { string? dir = BaseDirectory; return _ => LiveDiagnostics.Analyze(source, dir); };
+            // over `forge serve` (docs/spec/FORGE_SERVE.md) unless FIRE_SPARK_LANG=inproc or the server is not there; then in this process
+            DiagnosticsJob = source => { string? dir = BaseDirectory; string path = ServeDocuments.PathOf(FilePath, this); return _ => ServeDocuments.Analyze(path, source, dir) ?? LiveDiagnostics.Analyze(source, dir); };
             void Post(Action action) => Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
             _highlight = new BackgroundCheck<(List<HighlightSpan>, long)>(Post) { DeliverSuperseded = true };
             _highlight.Completed += (r, _) => OnHighlighted(r.Spans, r.Version);
@@ -748,9 +749,14 @@ namespace fire.Editor
                 return;
             }
 
-            var index = IndexFor(source, wordEdit: _completionWindow != null);   // (the list is open: the letters of the word typed on)
-            List<CompletionItem> items;
-            using (EditorTiming.Measure("  suggestions")) items = CompletionEngine.GetSuggestions(source, offset, index);
+            List<CompletionItem>? items;
+            // over `forge serve` (the server keeps the document's index and the indexes of the other files), else in this process
+            using (EditorTiming.Measure("  suggestions (forge serve)")) items = ServeDocuments.Complete(ServeDocuments.PathOf(FilePath, this), source, offset, ContextFiles(source));
+            if (items == null)
+            {
+                var index = IndexFor(source, wordEdit: _completionWindow != null);   // (the list is open: the letters of the word typed on)
+                using (EditorTiming.Measure("  suggestions")) items = CompletionEngine.GetSuggestions(source, offset, index);
+            }
 
             if (items.Count == 0)
             {
@@ -825,6 +831,7 @@ namespace fire.Editor
         {
             LiveDiagnostics.Invalidate();
             ScriptSymbolIndex.ForgetImports();
+            ServeDocuments.Invalidate();
             _contextFiles = null;
             RequestDiagnostics(TimeSpan.FromMilliseconds(50));
         }
