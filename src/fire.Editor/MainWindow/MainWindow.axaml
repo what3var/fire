@@ -270,6 +270,8 @@
 					<MenuItem Header="_Publish" Click="Publish_Click"/>
 					<MenuItem Header="Publish Solution" x:Name="mnuPublishSolution" Click="PublishSolution_Click"/>
 					<MenuItem Header="Cancel Bui_ld" Click="CancelBuild_Click" InputGesture="Ctrl+Pause"/>
+					<MenuItem Header="_Quick Build (for tests: -O0, split)" ToggleType="CheckBox" x:Name="mnuQuickBuild" Click="QuickBuild_Click"
+					          ToolTip.Tip="Schnell bauen: -O0 und in Einheiten geteilt – für Testbuilds, nicht für Releases (the hare of the build tool strip)"/>
 					<Separator/>
 					<MenuItem x:Name="miStep" Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
 					<MenuItem x:Name="miStepInto" Header="Step _Into" Click="StepInto_Click" InputGesture="F11"/>
@@ -440,6 +442,9 @@
 						<TextBlock local:ToolStrip.HorizontalOnly="True" local:ToolStripPanel.KeepWithNext="True" Text="Target:" VerticalAlignment="Center" Margin="4,0,6,0"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbTarget" Width="170" SelectionChanged="cmbTarget_SelectionChanged" MinHeight="26" Padding="8,2"
 						          ToolTip.Tip="The target of a native build (Build, Build Solution). Default: the target of the project or of the native build settings"/>
+						<!-- the hare: native builds and publishes as quick builds for tests (forge with quick: O0, the program in units; the icon is set in MainWindow, ToolIcons "Hare") -->
+						<local:ToolStripButton x:Name="tbQuickBuild" Classes="hare" Click="QuickBuild_Click"
+						                       ToolTip.Tip="Schnell bauen: -O0 und in Einheiten geteilt – für Testbuilds, nicht für Releases"/>
 						<local:ToolStripButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build: a native build of the project of the active file (Build Solution: Ctrl+Shift+B)" IconData="{StaticResource IconBuild}"/>
 						<local:ToolStripButton Label="Publish" Click="PublishSolution_Click" ToolTip.Tip="Publish: every project with publishing on (Project Properties > Publish) is built again where something changed and copied into its publish folders" IconData="{StaticResource IconPublish}"/>
 						<local:ToolStripButton x:Name="tbBuildStats" Click="BuildStats_Click" IconData="{StaticResource IconStats}"

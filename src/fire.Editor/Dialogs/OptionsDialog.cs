@@ -13,7 +13,7 @@ namespace fire.Editor
     /// <summary>
     /// The options of spark for this machine (Tools > Options; docs/tools/spark.md "Options"), in the look of the project properties: pages at the left - General (start, the
     /// engine of a single script, the assistant, the MCP server, the ESP-IDF folder) and Compilers (the grid of <see cref="CompilerGrid"/>: the compiler for Build and the one
-    /// for Publish, and the download of missing ones). The dialog works on copies; Apply puts them into <see cref="Settings"/> and <see cref="Compilers"/> - the caller saves them
+    /// for Publish, and the download of missing ones; the level of the quick build). The dialog works on copies; Apply puts them into <see cref="Settings"/> and <see cref="Compilers"/> - the caller saves them
     /// and starts the downloads (<see cref="CompilerChoiceModel.PlanItems"/>). `ShowDialog` returns true on Apply.
     /// </summary>
     internal sealed class OptionsDialog : Window
@@ -24,6 +24,7 @@ namespace fire.Editor
         private bool _assistant;
         private bool _mcp;
         private string? _idfPath;
+        private int _quickLevel;
 
         public EditorSettings Settings { get; }
         public CompilerChoiceModel Compilers { get; }
@@ -39,6 +40,7 @@ namespace fire.Editor
             _assistant = settings.Assistant;
             _mcp = settings.McpServer;
             _idfPath = settings.IdfPath;
+            _quickLevel = settings.QuickBuildLevel == 1 ? 1 : 0;
 
             Title = "Options";
             Width = 900; Height = 640; MinWidth = 760; MinHeight = 520;
@@ -101,8 +103,15 @@ namespace fire.Editor
 
         private Control CompilersPage()
         {
+            var quick = new Segmented("-O0 (the shortest build)", "-O1 (a faster program)");
+            quick.SelectedIndex = _quickLevel;
+            quick.SelectionChanged += (_, _) => _quickLevel = quick.SelectedIndex == 1 ? 1 : 0;
             return Page("Compilers", "Which C/C++ compiler a native build uses: one for building (Build, Run, Debug, Build Solution, forge build), one for publishing (Publish, forge publish).",
-                new CompilerGrid(Compilers));
+                new CompilerGrid(Compilers),
+                Group("Quick build (the hare)",
+                    Row("Optimisation", quick),
+                    Hint("The hare of the build tool strip (Run > Quick Build) makes every native build and publish a quick build for tests: the C compiler with this level (msvc /Od or /O1) and " +
+                         "the program in units built side by side (gcc, clang, MinGW, Emscripten). -O1 takes a little longer and the program runs faster. Not for releases.")));
         }
 
         private void Accept()
@@ -112,6 +121,7 @@ namespace fire.Editor
             Settings.Assistant = _assistant;
             Settings.McpServer = _mcp;
             Settings.IdfPath = _idfPath;
+            Settings.QuickBuildLevel = _quickLevel;
             Close(true);
         }
     }

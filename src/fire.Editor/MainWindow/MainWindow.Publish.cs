@@ -60,6 +60,7 @@ namespace fire.Editor
             var args = new List<string> { "publish" };
             if (single != null) args.AddRange(ForgeProjectArgs(single));
             else args.Add(_workspace.FilePath ?? projects[0].FilePath);
+            AddQuickBuild(args);   // (the hare: a quick publish - forge marks it in the log, the summary and the publish folder)
             ForgeOutcome result;
             try { result = await RunForgeAsync(job, args, overlays); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)

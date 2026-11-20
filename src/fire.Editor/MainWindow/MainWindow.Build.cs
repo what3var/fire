@@ -398,6 +398,7 @@ namespace fire.Editor
             args.AddRange(new[] { "--engine", "native", "-t", target.Name, "-m", ForgeMode(mode), "-o", output });
             if (config.Path != null) args.AddRange(new[] { "--config", config.Path });
             if (_settings.BuildStats) args.Add("--stats");   // (the Statistics switch: the report next to the program, shown below)
+            AddQuickBuild(args);
             ForgeOutcome result;
             try
             {
@@ -421,7 +422,7 @@ namespace fire.Editor
             if (result.Ok && result.Output("program", "folder") is { } built)
             {
                 EndBuildJob(job, BuildOutcome.Succeeded);
-                UpdateStatus($"Built {built} (native, {target.Name}).");
+                UpdateStatus($"Built {built} (native, {target.Name}{QuickBuildNote}).");
                 if (_settings.BuildStats) ShowBuildStats(built + ".stats.json");
                 return;
             }
@@ -429,6 +430,36 @@ namespace fire.Editor
             UpdateStatus("The native build failed.");
             if (!FailureShown(job)) await Dialogs.Message(this, BuildErrorText(result), "Build Native");
         }
+
+        /// <summary>The hare of the build tool strip (and Run > Quick Build): every native build and publish spark starts is a quick build for tests (`forge --quick`; kept in
+        /// the settings of spark). It glows while it is on - a quick build is no release.</summary>
+        private void QuickBuild_Click(object? sender, RoutedEventArgs e)
+        {
+            _settings.QuickBuild = !_settings.QuickBuild;
+            _settings.Save();
+            ShowQuickBuild();
+            UpdateStatus(_settings.QuickBuild
+                ? $"Quick builds for tests: native builds and publishes with -O{_settings.QuickBuildLevel}, the program in units built side by side - not for releases."
+                : "Normal builds: native builds and publishes with the toolchain's optimisation.");
+        }
+
+        /// <summary>The hare and the menu item as the setting is.</summary>
+        private void ShowQuickBuild()
+        {
+            tbQuickBuild.IconData ??= ToolIcons.Geometry("Hare");
+            tbQuickBuild.IsChecked = _settings.QuickBuild;
+            mnuQuickBuild.IsChecked = _settings.QuickBuild;
+            mnuQuickBuild.Header = $"_Quick Build (for tests: -O{(_settings.QuickBuildLevel == 1 ? 1 : 0)}, split)";
+        }
+
+        /// <summary>`--quick` (with the level of Tools > Options > Compilers) when the hare is on: for forge build (native) and forge publish.</summary>
+        private void AddQuickBuild(List<string> args)
+        {
+            if (_settings.QuickBuild) args.Add(_settings.QuickBuildLevel == 1 ? "--quick=1" : "--quick");
+        }
+
+        /// <summary>", Schnellbuild -O0" in the status of a build while the hare is on.</summary>
+        private string QuickBuildNote => _settings.QuickBuild ? $", Schnellbuild -O{_settings.QuickBuildLevel}" : "";
 
         /// <summary>The Statistics switch of the build tool strip: native builds write their statistics and show them in a tab (kept in the settings of spark).</summary>
         private void BuildStats_Click(object? sender, RoutedEventArgs e)

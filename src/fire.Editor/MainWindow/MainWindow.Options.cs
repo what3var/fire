@@ -43,6 +43,7 @@ namespace fire.Editor
                 mnuMcpServer.IsChecked = _settings.McpServer;
             }
             RefreshEngineMenu();
+            ShowQuickBuild();   // (the level of the quick build: the menu item names it)
 
             var plan = compilers.PlanItems();
             string summary = $"{compilers.Summary(ToolchainPurpose.Build)}; {compilers.Summary(ToolchainPurpose.Publish)}";

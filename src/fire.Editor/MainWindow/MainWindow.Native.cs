@@ -263,6 +263,7 @@ namespace fire.Editor
             if (config.Path != null) args.AddRange(new[] { "--config", config.Path });
             if (toolchainName != null) args.AddRange(new[] { "--toolchain", toolchainName });
             if (debug && toolchainName == null) args.Add("--debug-info");
+            if (toolchainName == null) AddQuickBuild(args);   // (the hare; not for the component of ESP-IDF, which idf.py builds with its own flags)
             await EnsureToolchainAsync(toolchain);
             var result = await RunForgeAsync(job, args, overlays);
             job.Feed.Drain();

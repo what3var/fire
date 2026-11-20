@@ -104,6 +104,13 @@ namespace fire.Projects
         /// <summary>Native builds write their statistics (`--stats`) and open them in a viewer afterwards (the Statistics button of the build tool strip).</summary>
         public bool BuildStats { get; set; }
 
+        /// <summary>The hare of the build tool strip (Run > Quick Build): every native build and publish spark starts is a quick build for tests (`forge --quick`: the C compiler
+        /// without optimisation, the program in units built side by side; docs/tools/spark.md). Off: normal builds.</summary>
+        public bool QuickBuild { get; set; }
+
+        /// <summary>The optimisation level of a quick build (Tools > Options > Compilers): 0 (-O0, the default: the shortest build) or 1 (-O1: a little longer, a faster program).</summary>
+        public int QuickBuildLevel { get; set; }
+
         /// <summary>Runs in the VM are profiled (the Profile switch of the run tool strip): afterwards a tab shows how often each line ran and which never did.</summary>
         public bool Profile { get; set; }
 
