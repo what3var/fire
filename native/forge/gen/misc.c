@@ -243,7 +243,150 @@ static bool ProgramEnumKnown(FgGen* g, const char* name, const FcEnumType** type
 }
 
 /* ---- the C signatures of `Library.Get` ---- */
-static const char* LibraryThunks(FgGen* g) { FG_UNPORTED("Library.Get"); }
+/* LibraryMethods.Normalize: without white space */
+static const char* fgLibNormalize(FcCtx* c, const char* text) {
+    FcBuf b = {0};
+    const unsigned char* p = (const unsigned char*)text;
+    fcBufStr(&b, "");
+    while (*p) { const unsigned char* q = p; uint16_t u = fc8Next(&p); if (!fcIsWhiteSpace(u)) fcBufPut(&b, (const char*)q, (size_t)(p - q)); }
+    return fcBufDone(c, &b);
+}
+/* LibraryMethods.Parse: a C signature - the result type (NULL: void) and the parameter types; false when it is not one */
+static FcTypeRef* fgLibType(FcCtx* c, const char* s, int* pos, bool allowVoid, bool* isVoid, bool* bad) {
+    int start = *pos, width = -1, depth = 0;
+    const char* name;
+    FcTypeRef* t;
+    bool ok;
+    *isVoid = false; *bad = false;
+    while (s[*pos] >= 'a' && s[*pos] <= 'z') (*pos)++;
+    name = fcStrN(c, s + start, (size_t)(*pos - start));
+    if (s[*pos] == '[') {
+        const char* close = strchr(s + *pos, ']');
+        char* end;
+        long w;
+        if (!close || close == s + *pos + 1) { *bad = true; return NULL; }
+        w = strtol(s + *pos + 1, &end, 10);
+        if (end != close) { *bad = true; return NULL; }
+        width = (int)w;
+        *pos = (int)(close - s) + 1;
+    }
+    while (s[*pos] == '*') { depth++; (*pos)++; }
+    if (streq0(name, "void")) {
+        if (width != -1) { *bad = true; return NULL; }
+        if (depth == 0) { *isVoid = allowVoid; if (!allowVoid) *bad = true; return NULL; }
+        ok = true;
+    }
+    else if (streq0(name, "bool") || streq0(name, "char") || streq0(name, "string")) ok = width == -1;
+    else if (streq0(name, "int")) ok = width == -1 || width == 8 || width == 16 || width == 32 || width == 64;
+    else if (streq0(name, "float")) ok = width == -1 || width == 32 || width == 64;
+    else ok = false;
+    if (!ok) { *bad = true; return NULL; }
+    t = (FcTypeRef*)fcAlloc(c, sizeof *t);
+    t->baseName = name; t->bitWidth = width < 0 ? 0 : width; t->pointerDepth = depth;
+    return t;
+}
+static bool fgLibParse(FcCtx* c, const char* text, FcTypeRef** ret, FcList** params) {
+    const char* s = fgLibNormalize(c, text);
+    int pos = 0;
+    bool retVoid, bad;
+    FcList* ps = fcListNew(c);
+    *ret = fgLibType(c, s, &pos, true, &retVoid, &bad);
+    if (!*ret && !retVoid) return false;
+    if (s[pos] != '(') return false;
+    pos++;
+    if (s[pos] == ')') pos++;
+    else
+        for (;;) {
+            bool pVoid;
+            FcTypeRef* t = fgLibType(c, s, &pos, ps->count == 0, &pVoid, &bad);
+            if (pVoid && s[pos] == ')') { pos++; break; }
+            if (!t) return false;
+            fcListAdd(c, ps, t);
+            if (s[pos] == ',') { pos++; continue; }
+            if (s[pos] == ')') { pos++; break; }
+            return false;
+        }
+    *params = ps;
+    return s[pos] == 0;
+}
+static void fgLibScan(FgGen* g, FcChunk* chunk, FcDict* seen, FcDict* signatures) {
+    int i;
+    if (!chunk || !fcSetAdd(seen, chunk)) return;
+    for (i = 0; i < chunk->constants->count; i++) {
+        const FcConst* k = (const FcConst*)chunk->constants->items[i];
+        FcTypeRef* r;
+        FcList* ps;
+        int n;
+        if (k->kind != CK_String) continue;
+        n = fc8Units(k->s);
+        if (n > 2 && n < 200 && strchr(k->s, '(') && fgLibParse(g->c, k->s, &r, &ps)) fcSetAdd(signatures, fgLibNormalize(g->c, k->s));
+    }
+    for (i = 0; i < chunk->functions->count; i++) fgLibScan(g, ((FcProto*)chunk->functions->items[i])->chunk, seen, signatures);
+}
+static void fgLibScanProto(FgGen* g, FcProto* p, FcDict* seen, FcDict* signatures) {
+    int i;
+    fgLibScan(g, p->chunk, seen, signatures);
+    for (i = 0; p->paramDefaults && i < p->paramDefaults->count; i++) if (p->paramDefaults->items[i]) fgLibScanProto(g, (FcProto*)p->paramDefaults->items[i], seen, signatures);
+}
+/* LibraryThunks: the thunks of the C signatures that are texts of the program (`Library.Get`) */
+static const char* LibraryThunks(FgGen* g) {
+    FcDict* signatures = fcDictNew(g->c, FC_KEY_STR);
+    FcDict* seen = fcDictNew(g->c, FC_KEY_PTR);
+    FcList* sigs;
+    FcList* rows = fcListNew(g->c);
+    FcBuf sb = {0};
+    int k, i;
+    fgLibScan(g, g->program->program->topLevel, seen, signatures);
+    FC_DICT_EACH(g->program->program->classes, e) {
+        FcRtClass* rc = (FcRtClass*)e->value;
+        FC_DICT_EACH(rc->methods, m) { FcList* protos = (FcList*)m->value; for (i = 0; i < protos->count; i++) fgLibScanProto(g, (FcProto*)protos->items[i], seen, signatures); }
+        for (i = 0; i < rc->ctorProtos->count; i++) fgLibScanProto(g, (FcProto*)rc->ctorProtos->items[i], seen, signatures);
+        for (i = 0; i < rc->extraConstructors->count; i++) fgLibScanProto(g, (FcProto*)rc->extraConstructors->items[i], seen, signatures);
+        if (rc->destructor) fgLibScanProto(g, rc->destructor, seen, signatures);
+    }
+    sigs = fgSortedKeys(g->c, signatures, true);
+    fcBufStr(&sb, "/* ---- Library.Get: the thunks of the C signatures that are texts of the program ---- */\n");
+    for (k = 0; k < sigs->count; k++) {
+        const char* sig = (const char*)sigs->items[k];
+        FcTypeRef* ret;
+        FcList* ps;
+        FcBuf locs = {0};
+        FcList* frees = fcListNew(g->c);
+        FcList* args = fcListNew(g->c);
+        FcList* ctypes = fcListNew(g->c);
+        const char* retC;
+        const char* call;
+        const char* body;
+        fgLibParse(g->c, sig, &ret, &ps);
+        fcBufStr(&locs, "");
+        for (i = 0; i < ps->count; i++) {
+            const FcTypeRef* t = (const FcTypeRef*)ps->items[i];
+            const char* ctype = ExternCType(g, t, sig);
+            fcListAdd(g->c, ctypes, (void*)ctype);
+            if (t->pointerDepth > 0) { fcBufFmt(&locs, "ExternPtr p%d; externPtrInit(&p%d, a[%d]); ", i, i, i); fcListAdd(g->c, args, (void*)fcFmt(g->c, "p%d.raw", i)); fcListInsert(g->c, frees, 0, (void*)fcFmt(g->c, "externPtrFree(&p%d); ", i)); }
+            else if (streq0(t->baseName, "string")) { fcBufFmt(&locs, "ExternString p%d; externStringInit(&p%d, a[%d]); ", i, i, i); fcListAdd(g->c, args, (void*)fcFmt(g->c, "p%d.p", i)); fcListInsert(g->c, frees, 0, (void*)fcFmt(g->c, "externStringFree(&p%d); ", i)); }
+            else if (streq0(t->baseName, "float")) fcListAdd(g->c, args, (void*)fcFmt(g->c, "(%s)externFloat(a[%d])", ctype, i));
+            else fcListAdd(g->c, args, (void*)fcFmt(g->c, "(%s)externInt(a[%d])", ctype, i));
+        }
+        retC = !ret ? "void" : ExternCType(g, ret, sig);
+        call = fcFmt(g->c, "((%s (*)(%s))fn_)(%s)", retC, ctypes->count == 0 ? "void" : fgJoin(g->c, ctypes, ", "), fgJoin(g->c, args, ", "));
+        if (!ret) body = fcFmt(g->c, "%s; %sreturn Undef();", call, fgJoin(g->c, frees, ""));
+        else {
+            const char* conv = ret->pointerDepth > 0 ? "Int((int64_t)(intptr_t)r_)" : streq0(ret->baseName, "bool") ? "Bool(r_ != 0)" : streq0(ret->baseName, "float") ? "Float((Real)r_)"
+                : streq0(ret->baseName, "char") ? "Char((uint32_t)r_)" : streq0(ret->baseName, "string") ? "externResultString(r_, list); if (release_ && r_) ((void (*)(void*))release_)((void*)(uintptr_t)r_)" : "Int((int64_t)r_)";
+            body = fcFmt(g->c, "%s r_ = %s; Value v_; %sv_ = %s; return v_;", retC, call, fgJoin(g->c, frees, ""), conv);
+        }
+        fcBufFmt(&sb, "static Value fire_lt_%d(void* fn_, const Value* a, void* release_, OwnList* list) { (void)a; (void)release_; (void)list; %s%s }   /* %s */\n", k, fcBufDone(g->c, &locs), body, sig);
+        fcListAdd(g->c, rows, (void*)fcFmt(g->c, "{%s, fire_lt_%d}", CString(g, sig), k));
+    }
+    fcBufStr(&sb, "FireLibThunk fire_libThunk(const char* signature) {\n");
+    fcListAdd(g->c, rows, (void*)"{NULL, NULL}");
+    fcBufFmt(&sb, "    static const struct { const char* sig; FireLibThunk fn; } k[] = {%s};\n", fgJoin(g->c, rows, ", "));
+    fcBufFmt(&sb, "    int i;\n    for (i = 0; i < %d; i++) if (strcmp(k[i].sig, signature) == 0) return k[i].fn;\n", rows->count - 1);
+    fcBufStr(&sb, "    return NULL;\n");
+    fcBufStr(&sb, "}\n");
+    return fcBufDone(g->c, &sb);
+}
 
 /* ---- CppGenerator.PointerCalls.cs (only the PC targets of Open Watcom) ---- */
 static bool PointerCallsOnOf(FgGen* g) { return g->target->pointerCalls && !DebugBuild && !Wrapped && !Modular && !g->openWorld; }
