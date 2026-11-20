@@ -61,13 +61,16 @@ namespace fire.Compiler
                 {
                     int len = BitConverter.ToInt32(file, at);
                     uint type = BitConverter.ToUInt32(file, at + 4);
-                    if (at + 8 + len > file.Length) throw new InvalidDataException("The .glb file is cut off.");
+                    // (a negative length would walk back and never end; the sum in long: a huge one does not wrap around)
+                    if (len < 0) throw new InvalidDataException("A chunk of the .glb file has a negative length.");
+                    if ((long)at + 8 + len > file.Length) throw new InvalidDataException("The .glb file is cut off.");
                     if (type == 0x4E4F534A) json = Encoding.UTF8.GetString(file, at + 8, len);
                     else if (type == 0x004E4942) glbBin = file.AsSpan(at + 8, len).ToArray();
                     at += 8 + len;
                 }
                 if (json == null) throw new InvalidDataException("The .glb file has no JSON.");
-                root = JsonDocument.Parse(json).RootElement;
+                try { root = JsonDocument.Parse(json).RootElement; }
+                catch (JsonException e) { throw new InvalidDataException("Not glTF (" + e.Message + ")."); }
             }
             else
             {
@@ -109,19 +112,25 @@ namespace fire.Compiler
                 bool normalized = acc.TryGetProperty("normalized", out var nz) && nz.GetBoolean();
                 int n = type switch { "SCALAR" => 1, "VEC2" => 2, "VEC3" => 3, "VEC4" => 4, "MAT4" => 16, _ => throw new InvalidDataException("Accessor type " + type + " is not read.") };
                 int size = comp switch { 5120 or 5121 => 1, 5122 or 5123 => 2, 5125 or 5126 => 4, _ => throw new InvalidDataException("Component type " + comp + " is not read.") };
+                if (count < 0) throw new InvalidDataException("An accessor has a negative count.");
                 var result = new double[count][];
                 if (!acc.TryGetProperty("bufferView", out var bvEl)) { for (int i = 0; i < count; i++) result[i] = new double[n]; return result; }
                 var bv = views[bvEl.GetInt32()];
-                byte[] buf = buffers[bv.GetProperty("buffer").GetInt32()];
-                int start = (bv.TryGetProperty("byteOffset", out var bo) ? bo.GetInt32() : 0) + (acc.TryGetProperty("byteOffset", out var ao) ? ao.GetInt32() : 0);
+                int bufferIndex = bv.GetProperty("buffer").GetInt32();
+                if (bufferIndex < 0 || bufferIndex >= buffers.Count) throw new InvalidDataException($"A buffer view names the buffer {bufferIndex}, which does not exist.");
+                byte[] buf = buffers[bufferIndex];
+                // (the places in long: offsets and strides of any size, also negative ones, give an error, not a wrapped place)
+                long start = (long)(bv.TryGetProperty("byteOffset", out var bo) ? bo.GetInt32() : 0) + (acc.TryGetProperty("byteOffset", out var ao) ? ao.GetInt32() : 0);
                 int stride = bv.TryGetProperty("byteStride", out var st) ? st.GetInt32() : n * size;
                 for (int i = 0; i < count; i++)
                 {
                     var v = new double[n];
                     for (int k = 0; k < n; k++)
                     {
-                        int at = start + i * stride + k * size;
-                        if (at + size > buf.Length) throw new InvalidDataException("An accessor reaches past its buffer.");
+                        long place = start + (long)i * stride + k * size;
+                        if (place < 0) throw new InvalidDataException("An accessor reaches before the start of its buffer.");
+                        if (place + size > buf.Length) throw new InvalidDataException("An accessor reaches past its buffer.");
+                        int at = (int)place;
                         v[k] = comp switch
                         {
                             5126 => BitConverter.ToSingle(buf, at),

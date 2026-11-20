@@ -702,10 +702,12 @@ und `fbc` (mit dem Modus `native`) für Projekte.
   Projektdatei (`InstalledPackage.BuildDirectory`/`DescriptionFile`); ihre Quellen haben absolute Pfade (`fgPkgFile`, wie `InstalledImport.FullPath`).
 * **`github:`**: forge liest nur die Lock-Datei (`ember install github:...` schreibt sie, mit dem Netz - das bleibt ember). Gemessen mit einer von Hand geschriebenen
   Lock-Datei und einem lokal gepackten und installierten Paket, ohne Netz.
-* **Fehler, die das C#-forge nicht fängt** (C#-Fehler, gemeldet): eine Paketreferenz, die fehlt oder zu alt ist, wirft in `Linker.CheckPackageReferences` eine
-  `System.Exception` - `forge build` endet mit "Unhandled exception" (Exitcode 134); forge-c meldet `error E6000: ...` mit Exitcode 1 (derselbe Text; `fbc` druckt darum
-  `internal: Exception: ...` gegen `error E6000`). Ebenso eine Bibliothek eines Pakets, die sich nicht bauen lässt (`PackageException`), und eine VM, die sich nicht bauen
-  lässt (`InvalidOperationException`), beim Build einer Datei: forge-c gibt die Meldung aus, Exitcode 1.
+* **Fehler einer Paketreferenz, einer Bibliothek, der VM** (früher C#-Fehler, behoben): eine Paketreferenz, die fehlt oder zu alt ist, ist in
+  `Linker.CheckPackageReferences` eine `PackageReferenceException` (ein Fehler des Programms, `IsCompileError`) - beide forges melden `error E6000: ...` mit Exitcode 1,
+  `fbc` ebenso (vorher warf das C#-forge eine `System.Exception`: "Unhandled exception", 134, in `fbc` `internal: Exception: ...`). Eine Bibliothek eines Pakets, die sich
+  nicht bauen lässt (`PackageException`), und eine VM, die sich nicht haben lässt (`VmUnavailableException` von `CVm.Locate`: FIRE_VM_EXE nennt nichts, kein
+  C-Compiler), sind beim Build einer Datei und eines Projekts die Meldung mit Exitcode 1 (das C#-forge stürzte beim Build einer Datei ab). `tests/compare-commands.sh`
+  misst die Paketreferenz (`build`, `build --report json`, `bytecode` eines Projekts).
 * **`--types`**: `forge-c build` nahm die Markierung `//# types: strict` der Testfälle (die des Testläufers, nicht von forge) - jetzt `--types lax|strict` wie forge.
 * **Standardpakete**: dieselben Fingerabdrücke und Stempel wie in C# (was das eine installiert hat, installiert das andere nicht noch einmal). Gesperrt wird mit einer
   Sperrdatei (`flock` auf `<store>/.source-lock`); das C#-forge nimmt einen benannten Mutex - ein C#-forge und ein forge-c, die zur selben Sekunde zum ersten Mal starten,
@@ -760,7 +762,8 @@ Projekten, `-p`, `BuildPlan` mit `testing/`). Die Tests laufen in der VM in C (`
 C#-forge nimmt seine VM im Prozess - die VM in C gibt dasselbe aus, eine unbehandelte Ausnahme als dieselbe Zeile "Unhandled exception of type ..."), mit
 `--engine native` als natives Programm für diese Maschine (`nbBuild` mit dem Treiber, dann gestartet). Die Bibliotheken der Pakete des Programms und der eigenen
 Natives eines Projekts (die Überlagerung des Stores) baut `forge-c test` wie die Engine `vm` und gibt ihre Ordner der VM in FIRE_PKG_PATH; im nativen Build kommen
-die C++-Natives eines Projekts über die Überlagerung in den Store des Generators. Mehrere Dateien sind Texte (`RuntimeSession.Build` ohne Pfade).
+die C++-Natives eines Projekts über die Überlagerung in den Store des Generators. Dateien werden wie bei `forge build <datei>` als Dateien übersetzt (`RuntimeSession.Build`
+und `NativeBuilder.Build` mit ihren Pfaden, `tcTestFilesPlan`): `#include` vom Ordner der Datei, eine Meldung nennt die Datei.
 
 **Die Befehlszeile.** `CommandLineParser.Parse` (`tools/commands.c`) liest die Befehlszeile von `build`, `publish`, `test`, `run`, `native`, `bytecode`, `dump` wie
 das C#-forge, ein Fehler ist seine Meldung mit der Hilfe (`Usage`, `tools/usage.inc`) und 2. Was die Builds der Schritte 2 und 3 schon nehmen, geht weiter an sie
@@ -786,9 +789,9 @@ Ergebnis. Die Zeilen der Werkzeuge kommen, wenn sie gelaufen sind, das Protokoll
 | `fbc release` / `cgen default` / `buildplan default` und `tc:gcc+quick` über `tests/cases` / `packages` / `src/fire.Project` nach dem Modellwandler | 1129 / 93 / 34 | fbc 1129 / 93 / 34, cgen und buildplan 1119 / 93 / 34 | 10 (Reflection, Schritt 1) / 0 / 0 | 0 (`Scene3D Models` gleich) |
 | `projectbuild` (gcc): die 25 Programmprojekte von `src/fire.Project` | 25 | 22 Programme byte-gleich, darunter `Scene3D Models` (Protokoll gleich) | 3 | 0 (ein Protokoll mit den Zeilen "Installing the standard package ..." des ersten Starts des C#-forge) |
 | `test` (VM): jedes Paketprojekt von `packages` | 54 | 54 (`graphics`, `windows` ohne die Zeile "Building the native part of graphics and windows ..." des C#-forge, die vom Cache abhängt) | 0 | 0 |
-| `test --engine native`: jedes Paketprojekt von `packages` | 54 | 52 | 0 | 2: `tls` (das C#-forge findet mit tcc `fire_net_c.h` nicht - gemeldet, unten), `windows` (beide scheitern an tcc, in verschiedenen Zeilen des C) |
+| `test --engine native`: jedes Paketprojekt von `packages` | 54 | 53 (`tls` - das C#-forge fand mit tcc `fire_net_c.h` nicht, behoben, unten - nach der Behebung einzeln nachgemessen) | 0 | 1: `windows` (beide scheitern an tcc, in verschiedenen Zeilen des C) |
 | `dump` jeder Quelle von `tests/cases` und `packages` (aus ihrem Ordner) | 1222 | 1222 (vor dem Wechsel zu `fgRoundTrip`: 7 nur in der Schreibweise von Zahlen) | 0 | 0 |
-| `tests/compare-commands.sh`: `build|publish|bytecode --report json` (Dateien, VM und nativ, Fehler, `--overlay`, `--config`, `-t`, `--debug-info`, Projekt, Bibliothek, `--check`, `--all`, Publish), `run`, `native`, `bytecode` von Projekten und mehreren Dateien, `build` mit `-D`/`-i`/`--global-jobs`, `test` mit mehreren Dateien, `-D`, `-f`, `-i`, `data` (migrate, status, diff, import mit memory: und sqlite:), `dump`, `stats` (zwei Berichte eines C#-Builds mit `--stats`, kaputte Berichte), Fehler der Befehlszeile | 95 | 95 | 0 | 0 |
+| `tests/compare-commands.sh`: `build|publish|bytecode --report json` (Dateien, VM und nativ, Fehler, `--overlay`, `--config`, `-t`, `--debug-info`, Projekt, Bibliothek, `--check`, `--all`, Publish), `run`, `native`, `bytecode` von Projekten und mehreren Dateien, `build` mit `-D`/`-i`/`--global-jobs`, `test` mit mehreren Dateien, `-D`, `-f`, `-i`, `#include` vom Ordner der Datei und Meldungen mit ihrem Namen, eine Paketreferenz, die fehlt, `data` (migrate, status, diff, import mit memory: und sqlite:), `dump`, `stats` (zwei Berichte eines C#-Builds mit `--stats`, kaputte Berichte), Fehler der Befehlszeile | 103 | 103 | 0 | 0 |
 | `test` (VM und `--engine native`): die Quellen von `src/fire.Testing/TestingTests.cs` und weitere (Parameter mit Bereichen und Texten, Phasen, `[CleanTest]` wirft, `[PrepareTesting]` wirft, generische Klasse, Ausgaben mit Zeilenumbrüchen und Markern, `leave`, eine Ausnahme in einem Thread, keine Tests, ein Übersetzungsfehler, eine Solution aus Bibliothek und Programm, `-p`, `--filter` mit `*`, `-m debug`, eine fehlende Datei, ein Projekt mit fehlender Referenz) | 15 (VM) / 9 (native) | 15 / 9 | 0 | 0 |
 
 (Verglichen werden stdout, stderr und Exitcode; die Sekunden der Summenzeile sind ausgenommen, ebenso auf der Seite von C# die Zeilen "Building the native part of
@@ -815,9 +818,12 @@ nach ihrem Bruchteil falsch endet ("Expected 'E' or 'e'.", wie .NET - vorher "Ex
 ### Entscheidungen
 
 * **Ausnahmen von .NET**: eine Ausnahme des Wandlers ist in C ein `FcError` mit dem Namen der .NET-Ausnahme und ihrer Meldung; die Aufrufer fangen wie in C# nur
-  IOException, InvalidDataException, FormatException, KeyNotFoundException, InvalidOperationException und IndexOutOfRangeException. Eine andere (eine kaputte
-  `.glb`: `JsonReaderException`; ein Puffer außerhalb der Liste: `ArgumentOutOfRangeException`) beendet `forge model` wie das C#-forge mit "Unhandled exception. ..."
-  und 134, im Präprozessor ist sie das `internal: <typ>: <meldung>` von FrontendDump. Die Meldungen von .NET sind nachgeschrieben; gemessen sind die, die das Korpus
+  IOException, InvalidDataException, FormatException, KeyNotFoundException, InvalidOperationException und IndexOutOfRangeException. Eine andere beendete `forge model`
+  wie das C#-forge mit "Unhandled exception. ..." und 134 (im Präprozessor das `internal: <typ>: <meldung>` von FrontendDump) - die bekannten Fälle sind jetzt in beiden
+  eine `InvalidDataException` mit Grund: eine `.glb` mit kaputtem JSON ist wie bei `.gltf` "Not glTF (...)", ein Puffer-Index außerhalb "A buffer view names the
+  buffer N, which does not exist.", ein Accessor vor dem Anfang seines Puffers (ein negativer Offset oder Stride; die Stellen in 64 Bit) "An accessor reaches before the
+  start of its buffer.", eine negative `count` "An accessor has a negative count.", eine negative Länge eines Chunks der `.glb` (die Schleife endete sonst nicht)
+  "A chunk of the .glb file has a negative length." - das Korpus erreicht keine unbehandelte Ausnahme mehr. Die Meldungen von .NET sind nachgeschrieben; gemessen sind die, die das Korpus
   erreicht.
 * **Zahlen**: die Rechnungen stehen in der Reihenfolge von C# (kein FMA, `float` wo C# `float` rechnet: die Quantisierung der Ecken); `Math.Round` ist `nearbyint`.
 * **Die VM für `forge test`**: FIRE_VM_EXE, sonst `fire` (`fire-i32`, ...) neben forge-c, wie `CVm.Locate` sie findet. Eine VM in den Cache zu bauen, wenn keine da
@@ -836,14 +842,15 @@ nach ihrem Bruchteil falsch endet ("Expected 'E' or 'e'.", wie .NET - vorher "Ex
   `-D`, `-i`, `--types`, `--global-jobs` ebenso, `--host` (linkage plugin) auch. `stats` liest die Berichte wie `JsonSerializer.Deserialize<Report>` (die Namen
   genau, was nicht passt, ist kein Bericht); die Zahlen von `Compare` sind aus ihren genauen Dezimalstellen gerundet, die Hälfte von der Null weg (die Formate von
   .NET). `dump` schreibt die Zahlen wie `double.ToString("R")` (`fgRoundTrip` des Generators).
-* **Beobachtet am C#-forge** (gemeldet): `forge test packages/tls/tls.fireproj --engine native` mit tcc scheitert: `fire_net_c.h` wird nicht gefunden (der Header
-  des Pakets `net`, das `tls` über `native.uses` nimmt, kommt nicht in den Ordner des Builds; forge-c legt ihn dazu). Das Protokoll eines nativen Builds mit einem
+* **Beobachtet am C#-forge** (behoben): `forge test packages/tls/tls.fireproj --engine native` mit tcc scheiterte: `fire_net_c.h` wurde nicht gefunden (ein Header des
+  Projekts wird eingesetzt, wo er eingebunden wird - `NativeHeaders.Inline` -, sein `#include` des Headers von `net`, das `tls` über `native.uses` nimmt, zeigte nicht
+  auf `pkg/net/`). `InstalledImport.ReadNativeSources` richtet jetzt auch die eingesetzten Header aus (`NativeHeaders.Point`); forge-c legt den Header dazu. Das Protokoll eines nativen Builds mit einem
   Übersetzungsfehler ist `CompileErrors.Describe` (`publish`, `build --all`): forge-c schrieb dort `DescribeErrors` - jetzt wie C#.
-* **Beobachtet am C#-forge** (portiert wie es ist, gemeldet): eine `.glb` mit kaputtem JSON beendet `forge model` und den Build eines Programms, das sie einbindet, mit
-  einer unbehandelten Ausnahme (`JsonReaderException` steht nicht in den gefangenen Arten, bei `.gltf` wird sie zu "Not glTF (...)"); ebenso ein Puffer-Index außerhalb
-  (`ArgumentOutOfRangeException`) und ein negativer Offset eines Accessors; eine Chunk-Länge kleiner 0 einer unbekannten Art ließe die Schleife über die `.glb` nicht
-  enden (forge-c bricht dort ab). `forge test <datei>` übersetzt die Datei als Text (`RuntimeSession.Build` ohne Pfad): ihr `#include` geht vom aktuellen Ordner aus,
-  nicht von dem der Datei, und eine Meldung nennt die Datei nicht (forge-c macht es ebenso).
+* **Beobachtet am C#-forge** (behoben, in beiden forges gleich): eine `.glb` mit kaputtem JSON, ein Puffer-Index außerhalb, ein negativer Offset eines Accessors und
+  eine negative Chunk-Länge endeten in einer unbehandelten Ausnahme oder (eine unbekannte Art) einer Schleife ohne Ende - jetzt Fehler mit Grund ("Ausnahmen von .NET",
+  oben). `forge test <datei>` übersetzte die Datei als Text (`RuntimeSession.Build` ohne Pfad): ihr `#include` ging vom aktuellen Ordner aus, nicht von dem der Datei,
+  und eine Meldung nannte die Datei nicht - jetzt wie `forge build <datei>` (C#: `TestRunner.RunInVm`/`RunNative` mit `sourcePaths`; forge-c: `tcTestFilesPlan`, die
+  Meldungen behalten ihren Dateinamen).
 
 ### Der Rest der Befehlszeile
 

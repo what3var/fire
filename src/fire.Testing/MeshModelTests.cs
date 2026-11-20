@@ -1,3 +1,4 @@
+using System.Text;
 using fire.Compiler;
 
 /// <summary>The mesh models of spark's CAD editor (`.fmesh`, docs/graphics/models.md): the text, the bodies to start from, extruding, mirroring, deleting,
@@ -163,8 +164,50 @@ static class MeshModelTests
             string.Join(" ", Enumerable.Range(0, 6).Select(i => BitConverter.ToSingle(f3d, 12 + 4 * i))));
         Check("forge: ConvertFile nimmt .fmesh", ModelConverter.IsModelSource("a.fmesh") && ModelConverter.ConvertMesh(House()).SequenceEqual(f3d));
 
+        GltfErrors();
+
         Console.WriteLine(_failures == 0 ? "Alle Netzmodell-Pruefungen bestanden." : $"FEHLER: {_failures} Netzmodell-Pruefung(en) fehlgeschlagen.");
         return _failures;
+    }
+
+    /// <summary>The model converter of glTF on broken files: each is an InvalidDataException with the reason (what `forge model` and a resource report), never another
+    /// exception or a loop without end.</summary>
+    private static void GltfErrors()
+    {
+        // a triangle: three VEC3 floats in a data URI
+        string bin = Convert.ToBase64String(new float[] { 0, 0, 0, 1, 0, 0, 0, 1, 0 }.SelectMany(BitConverter.GetBytes).ToArray());
+        string Gltf(string view, string accessorOffset = "") =>
+            "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"uri\":\"data:application/octet-stream;base64," + bin + "\",\"byteLength\":36}],\"bufferViews\":[" + view + "],"
+            + "\"accessors\":[{\"bufferView\":0," + accessorOffset + "\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}],"
+            + "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0}}]}],\"nodes\":[{\"mesh\":0}]}";
+        string Error(byte[] file)
+        {
+            var work = Task.Run(() =>
+            {
+                try { ModelConverter.Convert(file, _ => throw new IOException("no external buffers")); return "no error"; }
+                catch (InvalidDataException ex) { return "InvalidData: " + ex.Message; }
+                catch (Exception ex) { return ex.GetType().Name + ": " + ex.Message; }
+            });
+            return work.Wait(TimeSpan.FromSeconds(20)) ? work.Result : "no end";
+        }
+        byte[] Glb(params (uint Type, byte[] Data, int Length)[] chunks)
+        {
+            var o = new MemoryStream();
+            var w = new BinaryWriter(o);
+            w.Write(0x46546C67u); w.Write(2u); w.Write(0u);
+            foreach (var (type, data, length) in chunks) { w.Write(length); w.Write(type); w.Write(data); }
+            return o.ToArray();
+        }
+        string ok = Error(Encoding.UTF8.GetBytes(Gltf("{\"buffer\":0,\"byteLength\":36}")));
+        Check("glTF: das Dreieck selbst geht", ok == "no error", ok);
+        string e = Error(Encoding.UTF8.GetBytes(Gltf("{\"buffer\":5,\"byteLength\":36}")));
+        Check("glTF: ein Puffer-Index ausserhalb ist ein Fehler mit Grund", e == "InvalidData: A buffer view names the buffer 5, which does not exist.", e);
+        e = Error(Encoding.UTF8.GetBytes(Gltf("{\"buffer\":0,\"byteLength\":36}", "\"byteOffset\":-8,")));
+        Check("glTF: ein negativer Offset eines Accessors ist ein Fehler mit Grund", e == "InvalidData: An accessor reaches before the start of its buffer.", e);
+        e = Error(Glb((0x4E4F534A, Encoding.UTF8.GetBytes("{\"a\": 1,"), 8)));
+        Check("glb: kaputtes JSON ist wie bei .gltf \"Not glTF (...)\"", e.StartsWith("InvalidData: Not glTF (", StringComparison.Ordinal), e);
+        e = Error(Glb((0x4E4F534A, Encoding.UTF8.GetBytes(Gltf("{\"buffer\":0,\"byteLength\":36}")), Gltf("{\"buffer\":0,\"byteLength\":36}").Length), (0x12345678, Array.Empty<byte>(), -16)));
+        Check("glb: eine negative Laenge eines unbekannten Chunks endet mit einem Fehler", e == "InvalidData: A chunk of the .glb file has a negative length.", e);
     }
 
     /// <summary>Every directed edge once and its reverse once: a closed surface whose faces agree on their side.</summary>

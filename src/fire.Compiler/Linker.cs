@@ -20,6 +20,12 @@ namespace fire.Compiler
         public LibraryEntryPointException(string message) : base(message) { }
     }
 
+    /// <summary>A package that the project references is not installed, or older than the version it names: an error of the program (E6000), not of the compiler.</summary>
+    public sealed class PackageReferenceException : Exception
+    {
+        public PackageReferenceException(string message) : base(message) { }
+    }
+
     public class Linker
     {
         /// <summary>Base directory for relative `#include`/`#extern` paths.
@@ -289,9 +295,9 @@ namespace fire.Compiler
             {
                 var installed = Package.Manager.PackageStore.Default.FindBySpec(package.Package!);   // (a name, or github:owner/repo through the lock file)
                 if (installed == null)
-                    throw new Exception($"The project '{Plan.Name}' references the package '{package.Package}', which is not installed (`ember install {package.Package}`).");
+                    throw new PackageReferenceException($"The project '{Plan.Name}' references the package '{package.Package}', which is not installed (`ember install {package.Package}`).");
                 if (package.Version != null && Package.Manager.SemanticVersion.TryParse(package.Version, out var wanted) && Package.Manager.SemanticVersion.TryParse(installed.Version, out var have) && have.CompareTo(wanted) < 0)
-                    throw new Exception($"The project '{Plan.Name}' needs the package '{package.Package}' {package.Version} or newer, {installed.Version} is installed.");
+                    throw new PackageReferenceException($"The project '{Plan.Name}' needs the package '{package.Package}' {package.Version} or newer, {installed.Version} is installed.");
             }
         }
 

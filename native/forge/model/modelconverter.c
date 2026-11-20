@@ -568,7 +568,8 @@ static MdVec* mdRead(MdGltf* g, int index, int* countOut) {
     const char* type = mdStr(c, mdGet(c, acc, "type"));
     FjValue* nz = mdTry(c, acc, "normalized");
     bool normalized = nz && mdBool(c, nz);
-    int n, size, i, k, start, stride;
+    int n, size, i, k, stride;
+    int64_t start;
     FjValue *bvEl, *bv, *bo, *ao, *st;
     MdVec* result;
     MdBytes buf;
@@ -578,34 +579,30 @@ static MdVec* mdRead(MdGltf* g, int index, int* countOut) {
     if (n == 0) mdInvalidData(c, fcFmt(c, "Accessor type %s is not read.", type));
     size = comp == 5120 || comp == 5121 ? 1 : comp == 5122 || comp == 5123 ? 2 : comp == 5125 || comp == 5126 ? 4 : 0;
     if (size == 0) mdInvalidData(c, fcFmt(c, "Component type %d is not read.", comp));
-    if (count < 0) mdThrow(c, "System.OverflowException", "Arithmetic operation resulted in an overflow.");
+    if (count < 0) mdInvalidData(c, "An accessor has a negative count.");
     result = (MdVec*)fcAlloc(c, sizeof(MdVec) * (size_t)(count > 0 ? count : 1));
     *countOut = count;
     bvEl = mdTry(c, acc, "bufferView");
     if (!bvEl) { for (i = 0; i < count; i++) { result[i] = mdVec(c, n); memset(result[i].v, 0, sizeof(double) * (size_t)n); } return result; }
     bv = mdAt(c, g->views, mdInt(c, bvEl));
     bufIndex = mdInt(c, mdGet(c, bv, "buffer"));
-    if (bufIndex < 0 || bufIndex >= g->bufferCount) mdListIndexOut(c);
+    if (bufIndex < 0 || bufIndex >= g->bufferCount) mdInvalidData(c, fcFmt(c, "A buffer view names the buffer %d, which does not exist.", bufIndex));
     buf = g->buffers[bufIndex];
     bo = mdTry(c, bv, "byteOffset");
+    /* (the places in 64 bits: offsets and strides of any size, also negative ones, give an error, not a wrapped place) */
     start = bo ? mdInt(c, bo) : 0;
     ao = mdTry(c, acc, "byteOffset");
-    start = (int)((uint32_t)start + (uint32_t)(ao ? mdInt(c, ao) : 0));
+    start += ao ? mdInt(c, ao) : 0;
     st = mdTry(c, bv, "byteStride");
     stride = st ? mdInt(c, st) : n * size;
     for (i = 0; i < count; i++) {
         MdVec v = mdVec(c, n);
         for (k = 0; k < n; k++) {
-            int at = (int)((uint32_t)start + (uint32_t)i * (uint32_t)stride + (uint32_t)(k * size));
-            int end = (int)((uint32_t)at + (uint32_t)size);
+            int64_t place = start + (int64_t)i * stride + k * size;
             const uint8_t* b;
-            if ((int64_t)end > (int64_t)buf.n) mdInvalidData(c, "An accessor reaches past its buffer.");
-            if (at < 0 || (size_t)at + (size_t)size > buf.n) {
-                /* (a negative place: buf[at] - IndexOutOfRangeException -, BitConverter - ArgumentOutOfRangeException) */
-                if (size == 1) mdIndexOut(c);
-                mdThrow(c, "System.ArgumentOutOfRangeException", "Index was out of range. Must be non-negative and less than the size of the collection. (Parameter 'startIndex')");
-            }
-            b = buf.p + at;
+            if (place < 0) mdInvalidData(c, "An accessor reaches before the start of its buffer.");
+            if (place + size > (int64_t)buf.n) mdInvalidData(c, "An accessor reaches past its buffer.");
+            b = buf.p + place;
             switch (comp) {
                 case 5126: { float f; memcpy(&f, b, 4); v.v[k] = f; break; }
                 case 5125: v.v[k] = mdU32(b); break;
@@ -728,9 +725,11 @@ static const uint8_t* mdConvert(FcCtx* c, const uint8_t* file, size_t fileLen, c
         while ((int64_t)at + 8 <= (int64_t)fileLen) {
             int len = (int)mdU32(file + at);
             uint32_t type = mdU32(file + at + 4);
-            int end = (int)((uint32_t)at + 8u + (uint32_t)len);
-            if ((int64_t)end > (int64_t)fileLen) mdInvalidData(c, "The .glb file is cut off.");
-            if (len < 0) mdThrow(c, "System.ArgumentOutOfRangeException", "Specified argument was out of the range of valid values. (Parameter 'count')");
+            int end;
+            /* (a negative length would walk back and never end; the sum in 64 bits: a huge one does not wrap around) */
+            if (len < 0) mdInvalidData(c, "A chunk of the .glb file has a negative length.");
+            if ((int64_t)at + 8 + len > (int64_t)fileLen) mdInvalidData(c, "The .glb file is cut off.");
+            end = at + 8 + len;
             if (type == 0x4E4F534A) {
                 /* Encoding.UTF8.GetString (a BOM stays a character: a BOM put before it is the one fcDecodeText takes away) */
                 FcU16 u = {0};
@@ -751,7 +750,7 @@ static const uint8_t* mdConvert(FcCtx* c, const uint8_t* file, size_t fileLen, c
         if (!json) mdInvalidData(c, "The .glb file has no JSON.");
         json = mdNative(c, json);
         root = fjParseStrict(c, (const unsigned char*)json, strlen(json), &jerr);
-        if (!root) mdThrow(c, "System.Text.Json.JsonReaderException", jerr.message);   /* (JsonException: not caught there) */
+        if (!root) mdInvalidData(c, fcFmt(c, "Not glTF (%s).", jerr.message));
     } else {
         root = fjParseStrict(c, file, fileLen, &jerr);
         if (!root) mdInvalidData(c, fcFmt(c, "Not glTF (%s).", jerr.message));

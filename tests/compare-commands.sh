@@ -38,6 +38,14 @@ printf '{ "name": "Bad", "type": "exe", "references": [ { "project": "../Core/Co
 printf 'print(nothere)\n' > "$F/sol/Bad/main.fire"
 printf 'class A {\n    [Test]\n    undefined One() { assert(1 == 1) }\n#if X\n    [Test]\n    undefined WithX() { assert(false) }\n#endif\n}\n' > "$F/tests/a.fire"
 printf 'class B {\n    [Test]\n    undefined Two() { float f = 0.1\n print(f * 3) }\n}\nwarn 3: "w3"\n' > "$F/tests/b.fire"
+# (a file is compiled as a file: `#include` from its folder, a message names the file)
+mkdir -p "$F/tests/sub" "$F/sol/Pkg"
+printf 'class Inc { static int Two() { return 2 } }\n' > "$F/tests/sub/inc.fire"
+printf '#import "testing"\n#include "inc.fire"\nclass I {\n    [Test]\n    undefined Two() { Testing.Assert.AreEqual(2, Inc.Two()) }\n}\n' > "$F/tests/sub/i.fire"
+printf 'class C {\n    [Test]\n    undefined T() { int x = 1 + }\n}\n' > "$F/tests/sub/c.fire"
+# (a package that is not installed: E6000)
+printf '{ "name": "Pkg", "references": [ { "package": "no-such-package-xyz" } ] }\n' > "$F/sol/Pkg/Pkg.fireproj"
+printf 'print(1)\n' > "$F/sol/Pkg/p.fire"
 mkdir -p "$F/stats"
 printf 'print("a")\n' > "$F/stats/a.fire"
 printf 'class K { int x\n string Name() { return "k" + x } }\nvar k = new K()\nfor (int i = 0; i < 10; i++) print(k.Name() + i)\nprint(Math.Sqrt(2.0))\n' > "$F/stats/b.fire"
@@ -94,7 +102,9 @@ for a in "run All.firesln" "run All.firesln -p Core" "native All.firesln" "bytec
          "build All.firesln -D EXTRA --engine native" "build All.firesln --all -D EXTRA" "test All.firesln" "test All.firesln -D EXTRA"; do one sol $a; done
 # test
 for a in "test a.fire" "test a.fire b.fire" "test a.fire b.fire -D X" "test b.fire -f 32" "test a.fire -i 32" "test a.fire b.fire --engine native -D X" \
-         "test a.fire --types strict" "test a.fire -o x" "test a.fire nope.fire" "test b.fire --engine native -f 32 --keep-all"; do one tests $a; done
+         "test a.fire --types strict" "test a.fire -o x" "test a.fire nope.fire" "test b.fire --engine native -f 32 --keep-all" \
+         "test sub/i.fire" "test sub/i.fire -D X" "test sub/i.fire --engine native" "test sub/c.fire" "test sub/c.fire a.fire"; do one tests $a; done
+for a in "build Pkg/Pkg.fireproj" "build Pkg/Pkg.fireproj --report json" "bytecode Pkg/Pkg.fireproj"; do one sol $a; done
 # data
 for a in "data status app.fire --url memory:" "data migrate app.fire --url sqlite:x.db" "data import --url sqlite:x.db" "data migrate --url memory:" "data" "data frob" \
          "data status app.fire" "data status app.fire --url foo:x" "data status app.fire --url memory: --to 3"; do one data $a; done

@@ -337,8 +337,9 @@ static PjPlan* tcFilesPlan(FcCtx* c, const TcOptions* o, FcList* paths, FcList* 
     plan->baseFolder = baseFolder;
     return plan;
 }
-/* the files as texts without paths (RuntimeSession.Build of `forge test`: from the current folder, unnamed) - each File.ReadAllText */
-static PjPlan* tcTextsPlan(FcCtx* c, FcList* paths, FcList* defines, int types) {
+/* the files of `forge test` (RuntimeSession.Build/NativeBuilder.Build with their paths, as `forge build <file>`: each `#include` from the folder of its file, a
+ * message names its file) - each File.ReadAllText */
+static PjPlan* tcTestFilesPlan(FcCtx* c, FcList* paths, FcList* defines, int types) {
     TcOptions o;
     FcList* texts = fcListNew(c);
     int i;
@@ -351,7 +352,7 @@ static PjPlan* tcTextsPlan(FcCtx* c, FcList* paths, FcList* defines, int types) 
         fcListAdd(c, texts, (void*)fc8FromU16(c, t.p, t.len));
         fcU16Free(&t);
     }
-    return tcFilesPlan(c, &o, paths, texts, 2, NULL);
+    return tcFilesPlan(c, &o, paths, texts, 1, NULL);
 }
 /* a project's plan with the defines and the type checking of the command line (Linker.Defines with the project's, ProcessDefaultTypeChecking before its own) */
 static void tcPlanOptions(FcCtx* c, const TcOptions* o, PjPlan* plan) {
