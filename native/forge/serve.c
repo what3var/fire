@@ -57,6 +57,11 @@ static void svThreadStart(SvThread* t, void* (*fn)(void*), void* arg) { pthread_
 #define SV_THREAD_RET return NULL
 #endif
 
+/* the markup schema (markupschema.c, Phase C step 5) is part of the program: the completion of markup files, too */
+#ifdef FM_P
+#define SV_HAVE_MARKUP
+#endif
+
 #include "serve_index.c"
 #include "serve_types.c"
 #include "serve_complete.c"
@@ -932,3 +937,6 @@ static int svServe(int argc, char** argv, const char* prelude, const char* store
 }
 
 #include "serve_nav.c"
+#ifdef SV_HAVE_MARKUP
+#include "serve_markup.c"
+#endif

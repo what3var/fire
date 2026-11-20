@@ -54,7 +54,6 @@ static const char* fcBaseName(const char* path) {
 static int fcCmpOrdinal(const void* a, const void* b) { return strcmp(*(const char* const*)a, *(const char* const*)b); }
 
 #include "linker.c"
-#include "serve.c"
 
 /* FrontendDump.Token */
 static void fcDumpToken(FcBuf* o, const FcToken* t) {
@@ -208,6 +207,9 @@ static const char* fcFindStore(const char* exe, char* buf, size_t n) {
     if (slash) snprintf(buf, n, "%.*s/Packages", (int)(slash - exe), exe); else snprintf(buf, n, "Packages");
     return buf;
 }
+
+/* forge serve: the language services (docs/spec/FORGE_SERVE.md) - after everything they use, the markup schema included */
+#include "serve.c"
 
 static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0 || strncmp(s, "fbc:", 4) == 0; }
 
