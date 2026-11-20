@@ -387,6 +387,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     arr = (FcProcessed**)fcAlloc(c, sizeof(FcProcessed*) * (size_t)processed->count);
     for (i = 0; i < processed->count; i++) arr[i] = (FcProcessed*)processed->items[i];
     program = fcParseMultiple(c, arr, processed->count);
+    if (c->testDriver && fcTestDriverApply(c, program, processed, firstUserSource)) fcListAdd(c, sourceModules, NULL);   /* (`forge test`, Phase D 4) */
     /* CheckLibraryHasNoEntryPoint */
     if (plan->project->project->type == PJ_LIBRARY) {
         FcList* errors = fcListNew(c);
@@ -420,7 +421,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     for (i = 0; i < c->resourcePaths->count; i++) {
         FcResourceEntry* r = (FcResourceEntry*)fcAlloc(c, sizeof *r);
         size_t n = 0;
-        uint8_t* data = fbReadFile((const char*)c->resourcePaths->items[i], &n);
+        uint8_t* data = fcResourceRead(c, (const char*)c->resourcePaths->items[i], &n);   /* (a model: its model file, Phase D 4) */
         r->name = (const char*)c->resourceNames->items[i];
         r->data = (uint8_t*)fcAlloc(c, n + 1);
         if (data && n) memcpy((void*)r->data, data, n);

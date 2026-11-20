@@ -35,8 +35,11 @@
 # `build --all` (PROJECT_ALL_FLAGS, default --engine native) and `publish` on a copy of each solution folder of PROJECT_COPY, comparing what they print.
 # `pkglib` (Phase D 2) compares what PackageLibrary would build for the VM (`forge pkglibplan <import>`) for every import with natives of the store.
 # `vmbuild` (Phase D 3) builds programs that carry the VM (`build` without --engine) with both forges: every VMBUILD_EVERY-th case and the samples as projects.
+# `model` (Phase D 4) converts every file of the model corpus (tests/model-corpus.py: the models of the repository, random glTF/.glb/.fblocks/.fmesh, their
+# error paths, damaged copies) with `forge model <file> -o <out>` of both - exit code, output, the first line of the errors and the .f3d byte for byte -, and
+# compiles a program for each that embeds it (`new Resource("<file>")`, `fbc release`: the model file in the program, or the error of the preprocessor).
 set -u
-if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|buildplan|build|project|projectbuild|pkglib|vmbuild|all] [work folder]" >&2; exit 2; fi
+if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|buildplan|build|project|projectbuild|pkglib|vmbuild|model|all] [work folder]" >&2; exit 2; fi
 FORGE_CS=$1
 FORGE_C=$2
 WHAT=${3:-both}
@@ -85,6 +88,7 @@ planKinds=(); for o in ${BUILDPLAN_OPTIONS:-default tc:gcc+quick}; do planKinds+
 [ "$WHAT" = build ] && kinds=()
 [ "$WHAT" = project ] && kinds=()
 [ "$WHAT" = projectbuild ] && kinds=()
+[ "$WHAT" = model ] && kinds=()
 
 # ---- build (Phase D 2): real native builds of a sample of tests/cases with both forges, their logs and what the programs print ----
 if [ "$WHAT" = build ]; then
@@ -299,6 +303,35 @@ if [ "$WHAT" = vmbuild ]; then
   bytes=0 n=0
   while IFS= read -r p; do n=$((n + 1)); cmp -s "$WORK/vmbuild/cs/$p" "$WORK/vmbuild/c/$p" && bytes=$((bytes + 1)); done < <(cd "$WORK/vmbuild/cs" && find . -path '*/bin/vm-*' -type f | LC_ALL=C sort)
   echo "vmbuild projects: $same of $total print the same, $bytes of $n programs byte-identical"
+fi
+
+# ---- model (Phase D 4): the model converter - `forge model` of every file of the corpus, and the model as a resource of a program ----
+if [ "$WHAT" = model ]; then
+  rm -rf "$WORK/models"
+  python3 -I tests/model-corpus.py "$WORK/models" "$ROOT" > /dev/null
+  mkdir -p "$WORK/models/out"
+  same=0; total=0; embedSame=0; diffs=()
+  while IFS= read -r f; do
+    total=$((total + 1))
+    m="$WORK/models/$f"; o="$WORK/models/out/$total"
+    (cd "$WORK/models" && $FORGE_CS model "$f" -o "out/$total.cs.f3d" > "out/$total.cs.out" 2> "out/$total.cs.err") 2> /dev/null; e1=$?   # (the shell's "Aborted" of an unhandled exception)
+    (cd "$WORK/models" && "$FORGE_C" model "$f" -o "out/$total.c.f3d" > "out/$total.c.out" 2> "out/$total.c.err"); e2=$?
+    ok=1
+    [ $e1 = $e2 ] || ok=0
+    [ "$(sed 's/\.cs\.f3d/.f3d/' "$o.cs.out")" = "$(sed 's/\.c\.f3d/.f3d/' "$o.c.out")" ] || ok=0
+    [ "$(head -1 "$o.cs.err")" = "$(head -1 "$o.c.err")" ] || ok=0
+    if [ -e "$o.cs.f3d" ] || [ -e "$o.c.f3d" ]; then cmp -s "$o.cs.f3d" "$o.c.f3d" || ok=0; fi
+    # the model embedded in a program
+    printf 'var model = new Resource("%s")\nprint(model)\n' "$f" > "$WORK/models/out/embed$total.fire"
+    $FORGE_CS fbc release "$WORK/models/out/embed$total.fire" > "$o.cs.fbc" 2>&1
+    "$FORGE_C" fbc release "$WORK/models/out/embed$total.fire" > "$o.c.fbc" 2>&1
+    if cmp -s "$o.cs.fbc" "$o.c.fbc"; then embedSame=$((embedSame + 1)); else ok=0; fi
+    if [ $ok = 1 ]; then same=$((same + 1)); else diffs+=("$f"); fi
+  done < "$WORK/models/list.txt"
+  echo "model: $same of $total identical (as a resource of a program: $embedSame)"
+  if [ ${#diffs[@]} -gt 0 ]; then status=1; for d in "${diffs[@]:0:8}"; do echo "  differs: $d"; done; fi
+  echo "outputs: $WORK"
+  exit $status
 fi
 [ "$WHAT" = all ] && kinds=(tokens ast diagnostics "${fbcKinds[@]}")
 

@@ -29,6 +29,7 @@ typedef struct FjReader {
     FjError error;
     FcList* tokens;       /* (DataModelGenerator.LineIndex) the tokens in order: FjToken* */
     FcBuf* pending;       /* the text being read: freed when the reader fails */
+    bool strict;          /* JsonDocument.Parse without options (ModelConverter, glTF): no comments, no trailing commas, no BOM skipped */
 } FjReader;
 
 /* a token as Utf8JsonReader.Read gives them, for LineIndex */
@@ -63,7 +64,7 @@ static void fjToken(FjReader* r, FjTokenType type, size_t start, const char* nam
 static void fjSkip(FjReader* r) {
     for (;;) {
         while (r->i < r->n && (r->s[r->i] == ' ' || r->s[r->i] == '\t' || r->s[r->i] == '\n' || r->s[r->i] == '\r')) r->i++;
-        if (r->i < r->n && r->s[r->i] == '/') {
+        if (r->i < r->n && r->s[r->i] == '/' && !r->strict) {
             size_t at = r->i;
             if (r->i + 1 >= r->n) fjFailAt(r, at, "'/' is an invalid start of a value.");
             if (r->s[r->i + 1] == '/') {
@@ -154,6 +155,7 @@ static bool fjDelimiter(unsigned char b) { return b == ',' || b == '}' || b == '
 /* a number (the reader stands on '-' or a digit) */
 static const char* fjNumber(FjReader* r) {
     size_t start = r->i;
+    bool fraction = false, exponent = false;
     if (r->s[r->i] == '-') {
         r->i++;
         if (r->i >= r->n) fjFailAt(r, r->n, "Expected a digit ('0'-'9'), but instead reached end of data.");
@@ -170,8 +172,10 @@ static const char* fjNumber(FjReader* r) {
         if (!(r->s[r->i] >= '0' && r->s[r->i] <= '9'))
             fjFailAt(r, r->i, fcFmt(r->c, "'%s' is invalid within a number, immediately after a decimal point ('.'). Expected a digit ('0'-'9').", fjPrintable(r->c, r->s[r->i])));
         while (r->i < r->n && r->s[r->i] >= '0' && r->s[r->i] <= '9') r->i++;
+        fraction = true;
     }
     if (r->i < r->n && (r->s[r->i] == 'e' || r->s[r->i] == 'E')) {
+        exponent = true;
         r->i++;
         if (r->i < r->n && (r->s[r->i] == '+' || r->s[r->i] == '-')) r->i++;
         if (r->i >= r->n) fjFailAt(r, r->n, "Expected a digit ('0'-'9'), but instead reached end of data.");
@@ -179,8 +183,9 @@ static const char* fjNumber(FjReader* r) {
             fjFailAt(r, r->i, fcFmt(r->c, "'%s' is invalid within a number, immediately after a sign character ('+' or '-'). Expected a digit ('0'-'9').", fjPrintable(r->c, r->s[r->i])));
         while (r->i < r->n && r->s[r->i] >= '0' && r->s[r->i] <= '9') r->i++;
     }
-    if (r->i < r->n && !fjDelimiter(r->s[r->i]))
-        fjFailAt(r, r->i, fcFmt(r->c, "'%s' is an invalid end of a number. Expected a delimiter.", fjPrintable(r->c, r->s[r->i])));
+    if (r->i < r->n && !fjDelimiter(r->s[r->i]))   /* (after the fraction the reader still takes an exponent) */
+        fjFailAt(r, r->i, fcFmt(r->c, fraction && !exponent ? "'%s' is an invalid end of a number. Expected 'E' or 'e'." : "'%s' is an invalid end of a number. Expected a delimiter.",
+            fjPrintable(r->c, r->s[r->i])));
     /* (a number that ends with the data inside an object or array: the reader cannot know it ended) */
     if (r->i >= r->n && r->depth > 0)
         fjFailAt(r, r->n, fcFmt(r->c, "'%s' is an invalid end of a number. Expected a delimiter.", fjPrintable(r->c, r->s[r->n - 1])));
@@ -210,6 +215,8 @@ static void fjAfterComma(FjReader* r) {
     if (r->i >= r->n) fjFailAt(r, at, "Expected start of a property name or value, but instead reached end of data.");
     fjSkip(r);
     if (r->i >= r->n) fjFailAt(r, r->n, "Expected start of a property name or value, but instead reached end of data.");
+    if (r->strict && r->s[r->i] == '}') fjFailAt(r, r->i, "The JSON object contains a trailing comma at the end which is not supported in this mode. Change the reader options.");
+    if (r->strict && r->s[r->i] == ']') fjFailAt(r, r->i, "The JSON array contains a trailing comma at the end which is not supported in this mode. Change the reader options.");
 }
 
 static FjValue* fjNew(FjReader* r, FjKind kind) {
@@ -314,6 +321,25 @@ static FjValue* fjParse(FcCtx* c, const char* text, FjError* error, FcList* toke
     }
     /* (a UTF-8 BOM at the start is skipped) */
     if (r->n >= 3 && r->s[0] == 0xEF && r->s[1] == 0xBB && r->s[2] == 0xBF) r->i = 3;
+    root = fjValue(r);
+    fjSkip(r);
+    if (r->i < r->n)
+        fjFailAt(r, r->i, fcFmt(c, "'%s' is invalid after a single JSON value. Expected end of data.", fjPrintable(c, r->s[r->i])));
+    return root;
+}
+
+/* JsonDocument.Parse(bytes) without options (src/fire.Compiler/ModelConverter.cs reads glTF so): the root, or NULL and the JsonReaderException in `error` */
+static FjValue* fjParseStrict(FcCtx* c, const unsigned char* bytes, size_t n, FjError* error) {
+    FjReader* r = (FjReader*)fcAlloc(c, sizeof *r);
+    FjValue* volatile root;
+    r->c = c;
+    r->s = bytes;
+    r->n = n;
+    r->strict = true;
+    if (setjmp(r->fail) != 0) {
+        *error = r->error;
+        return NULL;
+    }
     root = fjValue(r);
     fjSkip(r);
     if (r->i < r->n)

@@ -82,11 +82,23 @@ struct FcCtx {
     /* the ResourceTable of `new Resource("path")` (Preprocessor.ResolveResources): the full paths, a resource's id is its index; NULL: none */
     FcList* resourcePaths;
     FcList* resourceNames;   /* the names as written (ResourceEntry.Name), parallel to resourcePaths */
+    void* modelResources;    /* (Phase D 4, model/command.c) the model files of the model resources converted so far */
+    /* Linker.TestDriver (`forge test`, Phase D 4, tools/testdriver.c): the source of the test driver for the parsed program; NULL: none */
+    const char* (*testDriver)(struct FcCtx* c, void* state, FcList* program, int firstUserSource);
+    void* testDriverState;
     /* the markup generators (Phase C 5): the schema of the elements, made on first use (markupschema.c) */
     void* markupSchema;
 };
 
 void fcCtxInit(FcCtx* c);
+
+/* the model resources (Phase D 4, model/command.c): ResourceTable.Add converts a glTF, .fblocks or .fmesh resource into fire's model file when it is
+ * added (an error is the preprocessor's); the linker reads every resource through fcResourceRead (malloc'd: the model file of a model, else the file) */
+void fcResourceAdded(FcCtx* c, const char* fullPath, const char* name);
+uint8_t* fcResourceRead(FcCtx* c, const char* fullPath, size_t* n);
+/* `forge test` (Phase D 4, tools/testdriver.c): after ParseMultiple, with c->testDriver set - the top level of the program's files is left out, the driver is
+ * parsed as the last source "<tests>" (appended to `processed`); true when it was */
+bool fcTestDriverApply(FcCtx* c, FcList* program, FcList* processed, int firstUserSource);
 void fcCtxFree(FcCtx* c);
 
 void* fcAlloc(FcCtx* c, size_t n);

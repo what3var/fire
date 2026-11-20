@@ -4,7 +4,8 @@ Status: **Phase C, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.
 **Phase D Schritt 1**, der Generator Bytecode -> C ([unten](#phase-d-schritt-1-der-generator); mit Reflection, Probes, Debug-Builds, `--stats` - offen nur die
 Module für linkage static/shared/plugin), der größte Teil von **Schritt 2**, dem Builder ([unten](#phase-d-schritt-2-der-builder): `forge-c build` mit linkage
 `source`, `--stats`), und **Schritt 3**, Projekte, Solutions und das Paketformat `.fpk`
-([unten](#phase-d-schritt-3-projekte-solutions-pakete): `forge-c build`/`publish` eines Projekts oder einer Solution, die Engine `vm`, die Standardpakete): Lexer,
+([unten](#phase-d-schritt-3-projekte-solutions-pakete): `forge-c build`/`publish` eines Projekts oder einer Solution, die Engine `vm`, die Standardpakete), und aus **Schritt 4** der Modellwandler und
+`forge test` ([unten](#phase-d-schritt-4-der-rest-der-befehlszeile)): Lexer,
 Präprozessor mit `#if`, Diagnosen, AST und Parser (1, 2); Resolver, Typprüfer und `SetterClaims` mit dem, was sie vom Linker brauchen - die
 Direktiven eines Builds mit ihrer Wirkung, `#import` mit den Preludes und den Natives der installierten Pakete (3); der Bytecode-Compiler, was die
 Typprüfung ihm hinterlässt (mit der Herleitung von `defined`), der Rest des Linkers und der Schreiber der Programmdatei `.fbc` (4); die
@@ -653,6 +654,105 @@ und `fbc` (mit dem Modus `native`) für Projekte.
   Projekts lassen ihn aus. Die Vorlagen selbst sind als Projekte gemessen (`Templates`, oben).
 * **Nur POSIX**, wie der Builder.
 
+## Phase D Schritt 4: der Rest der Befehlszeile
+
+Der Rest der Befehlszeile ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-d---backend-und-werkzeuge-in-c), Schritt 4): der **Modellwandler** in `native/forge/model/`
+(Stand 6c1b0f0e von `src/fire.Compiler/ModelConverter.cs`, `BlockModel.cs`, `MeshModel.cs`) und **`forge test`** in `native/forge/tools/` (Stand b833e71b von
+`TestDriver.cs`, `TestFilter.cs`, `TestRunner.cs`, `CommandLine.Test`), 1:1 (L3) wie die Schritte davor.
+
+```
+forge-c model <datei.gltf|.glb|.fblocks|.fmesh> [-o <datei.f3d>] [--fps n]   (wie `forge model`: die Modelldatei, "<aus> (<n> bytes)"; Fehler: "<datei>: <meldung>", 1)
+forge-c test [<datei> | <projekt.fireproj> | <solution.firesln>] [-p <projekt>] [--engine vm|native] [-m <modus>] [--filter A.B,C] [--toolchain <name>] [--config <datei>]
+                                                     (wie `forge test`: die Tests in der VM in C oder als natives Programm, die Liste und die Summen; Exitcode 0/1/2)
+tests/compare-frontend.sh <forge> <forge-c> model [<ordner>]   (tests/model-corpus.py: jede Datei mit `model` beider forges - Exitcode, Ausgabe, erste Zeile der
+                                                     Fehler, die .f3d Byte für Byte - und als Ressource eines Programms, `fbc release`)
+```
+
+**Der Modellwandler.** `ModelConverter` (glTF 2.0: `.gltf` mit Puffern als data-URI oder Datei daneben, `.glb`; die Knoten Eltern vor Kindern, die Meshes, die
+Materialfarbe, die Clips mit 30 Bildern je Sekunde, LINEAR/STEP/CUBICSPLINE), `BlockModel` (Raster, die sichtbaren Flächen gierig zu Rechtecken, Teile, Pivots,
+Animationen) und `MeshModel` (Polygone als Fächer, Newells Normale) - von den beiden Modellen der Teil, den ein Build braucht (`Parse`, `ToF3d`, `PoseOf`,
+`Rotation`; das Bearbeiten ist spark). Eine Ressource `new Resource("x.gltf")` (auch `.glb`, `.fblocks`, `.fmesh`) wird beim Einfügen (`ResourceTable.Add`) zur
+Modelldatei, ein Fehler ist der des Präprozessors ("The model '...' cannot be converted: ..."); der Linker liest jede Ressource über `fcResourceRead`. Damit ist die
+eine bekannte Abweichung der Schritte 1 bis 3, `Scene3D Models`, weg.
+
+**`forge test`.** Der Treiber (`TestDriver.Generate`: je Klasse mit `[Test]` ein Objekt, `[PrepareTesting]`, je Test und Satz von `[Parameters]` mit Bereichen
+`[PrepareTest]`/Test/`[CleanTest]`, `[CleanTesting]`, die Probleme der Attribute mit Datei und Zeile), der Filter, der Teil des Linkers (`Linker.TestDriver`:
+die Anweisungen der obersten Ebene der Dateien fallen weg, der Treiber ist die letzte Quelle "<tests>" - in den drei Wegen des Linkers in C über
+`fcTestDriverApply`), `TestProtocol` (die Zeilen `##fire-test##S|P|F|E|C|X|D`), `WriteSummary` und `CommandLine.Test` (Datei, Projekt, Solution mit allen
+Projekten, `-p`, `BuildPlan` mit `testing/`). Die Tests laufen in der VM in C (`fire run <tests.fbc>` aus einem Ordner `fire-test-<guid>` des Temp-Ordners; das
+C#-forge nimmt seine VM im Prozess - die VM in C gibt dasselbe aus, eine unbehandelte Ausnahme als dieselbe Zeile "Unhandled exception of type ..."), mit
+`--engine native` als natives Programm für diese Maschine (`nbBuild` mit dem Treiber, dann gestartet).
+
+### Stand
+
+| Messung | Dateien | gleich | noch nicht portiert | verschieden |
+|---|---|---|---|---|
+| `model`: das Korpus von `tests/model-corpus.py` (die Modelle des Repositorys, der Roboter als `.glb` und mit externem Puffer, 60 zufällige glTF mit jeder Komponentenart, `normalized`, Strides, Offsets, Matrizen, Bäumen, Szenen, Materialien, Animationen; 50 `.fblocks`, 40 `.fmesh`; 70 Fehlerpfade - fehlende Schlüssel, falsche Arten, Indizes außerhalb, kaputtes Base64, Fehler des JSON-Lesers, abgeschnittene `.glb` -; 270 beschädigte Kopien): Exitcode, Ausgabe, Fehler, `.f3d` | 576 | 576 (252 Modelle, 324 Fehler) | 0 | 0 |
+| dasselbe Korpus als Ressource eines Programms (`fbc release`: die Modelldatei im Programm oder der Fehler des Präprozessors) | 576 | 576 | 0 | 0 |
+| `fbc release` / `cgen default` / `buildplan default` und `tc:gcc+quick` über `tests/cases` / `packages` / `src/fire.Project` nach dem Modellwandler | 1129 / 93 / 34 | fbc 1129 / 93 / 34, cgen und buildplan 1119 / 93 / 34 | 10 (Reflection, Schritt 1) / 0 / 0 | 0 (`Scene3D Models` gleich) |
+| `projectbuild` (gcc): die 25 Programmprojekte von `src/fire.Project` | 25 | 22 Programme byte-gleich, darunter `Scene3D Models` (Protokoll gleich) | 3 | 0 (ein Protokoll mit den Zeilen "Installing the standard package ..." des ersten Starts des C#-forge) |
+| `test` (VM): jedes Paketprojekt von `packages` | 53 | 47 | 6 (die eigenen Natives eines Projekts, siehe unten) | 0 |
+| `test --engine native`: jedes Paketprojekt von `packages` | 53 | 25 | 28 (die C++-Natives eines Projekts in einem nativen Build, Schritt 3) | 0 |
+| `test` (VM und `--engine native`): die Quellen von `src/fire.Testing/TestingTests.cs` und weitere (Parameter mit Bereichen und Texten, Phasen, `[CleanTest]` wirft, `[PrepareTesting]` wirft, generische Klasse, Ausgaben mit Zeilenumbrüchen und Markern, `leave`, eine Ausnahme in einem Thread, keine Tests, ein Übersetzungsfehler, eine Solution aus Bibliothek und Programm, `-p`, `--filter` mit `*`, `-m debug`, eine fehlende Datei, ein Projekt mit fehlender Referenz) | 15 (VM) / 9 (native) | 15 / 9 | 0 | 0 |
+
+(Verglichen werden stdout, stderr und Exitcode; die Sekunden der Summenzeile sind ausgenommen, ebenso auf der Seite von C# die Zeilen "Building the native part of
+the package ..." - sie hängen vom Cache der Bibliotheken ab.)
+
+### Dateien
+
+| Datei | Inhalt | Gegenstück in C# |
+|---|---|---|
+| `model/modelconverter.c` | was die C#-Dateien von .NET nehmen (die Operationen von `JsonElement` mit ihren Ausnahmen, `Math.Round` gerade, die sättigenden Umwandlungen, `Math.Min/Max` mit NaN und -0, `Enumerable.Min/Max`, `Array.BinarySearch`, `Convert.FromBase64String`, `Uri.UnescapeDataString`, `File.ReadAllBytes`), `Part`, `Write`, `QuatOf`, `PoseMatrix`, `Decompose`, `Read`, `Convert`, `ConvertFile` | `ModelConverter.cs` |
+| `model/blockmodel.c` | `Parse` (mit `ParseParts`, `ParseAnimations`, `ParseColor`), `Set`, `FaceVisible`, `Quads`, `ToF3d`, `Rotation`, `PoseOf` | `BlockModel.cs` (Teile) |
+| `model/meshmodel.c` | `CreateDefault`, `Parse`, `Normal`, `ToF3d` | `MeshModel.cs` (Teile) |
+| `model/command.c` | `ResourceTable.Add` für Modelle, `fcResourceRead`, `forge-c model` | `Preprocessor.cs` (`ResourceTable`), `Program.cs` (`model`) |
+| `tools/testdriver.c` | `TestFilter`, `TestDriver.Generate`, `fcTestDriverApply` (der Teil des Linkers) | `TestDriver.cs`, `TestFilter.cs`, `Linker.cs` (`TestDriver`) |
+| `tools/testrunner.c` | `TestProtocol`, `RunInVm`, `RunNative`, `Driver`, `WriteSummary`, `forge-c test` | `TestRunner.cs`, `CommandLine.cs` (`Test`) |
+
+`json.c` hat dafür einen strengen Modus (`JsonDocument.Parse` ohne Optionen, wie glTF gelesen wird: keine Kommentare, keine Kommas am Ende) und die Meldung einer Zahl, die
+nach ihrem Bruchteil falsch endet ("Expected 'E' or 'e'.", wie .NET - vorher "Expected a delimiter.").
+
+### Entscheidungen
+
+* **Ausnahmen von .NET**: eine Ausnahme des Wandlers ist in C ein `FcError` mit dem Namen der .NET-Ausnahme und ihrer Meldung; die Aufrufer fangen wie in C# nur
+  IOException, InvalidDataException, FormatException, KeyNotFoundException, InvalidOperationException und IndexOutOfRangeException. Eine andere (eine kaputte
+  `.glb`: `JsonReaderException`; ein Puffer außerhalb der Liste: `ArgumentOutOfRangeException`) beendet `forge model` wie das C#-forge mit "Unhandled exception. ..."
+  und 134, im Präprozessor ist sie das `internal: <typ>: <meldung>` von FrontendDump. Die Meldungen von .NET sind nachgeschrieben; gemessen sind die, die das Korpus
+  erreicht.
+* **Zahlen**: die Rechnungen stehen in der Reihenfolge von C# (kein FMA, `float` wo C# `float` rechnet: die Quantisierung der Ecken); `Math.Round` ist `nearbyint`.
+* **Die VM für `forge test`**: FIRE_VM_EXE, sonst `fire` (`fire-i32`, ...) neben forge-c, wie `CVm.Locate` sie findet. Eine VM in den Cache zu bauen, wenn keine da
+  ist, gehört zu `CVm` (die Engine `vm`, Schritt 3) und fehlt hier (`unported: ...`). Die Bibliotheken der Pakete des Stores findet die VM neben sich (`Packages/`).
+* **Die eigenen Natives eines Projekts** (ein Paketprojekt mit `native`, getestet als Projekt): das C#-forge baut ihre Bibliothek für seine VM (die Überlagerung des
+  Stores, `PackageLibrary`); forge-c nicht - braucht ein Test sie, sagt forge-c `unported: the natives of a project in the VM ...` (6 der 53 Paketprojekte; die übrigen
+  rufen sie in ihren Tests nicht auf). Die native Engine hat dieselbe Lücke aus Schritt 3 (die C++-Natives eines Projekts in einem nativen Build).
+* **Nicht portiert** (`forge-c test` sagt es): mehrere Dateien auf einmal, `-D`, `-f`, der Kreisel einer Konsole (`[\] ...` - nur in einem Terminal), das Abbrechen.
+* **Beobachtet am C#-forge** (portiert wie es ist, gemeldet): eine `.glb` mit kaputtem JSON beendet `forge model` und den Build eines Programms, das sie einbindet, mit
+  einer unbehandelten Ausnahme (`JsonReaderException` steht nicht in den gefangenen Arten, bei `.gltf` wird sie zu "Not glTF (...)"); ebenso ein Puffer-Index außerhalb
+  (`ArgumentOutOfRangeException`) und ein negativer Offset eines Accessors; eine Chunk-Länge kleiner 0 einer unbekannten Art ließe die Schleife über die `.glb` nicht
+  enden (forge-c bricht dort ab). `forge test <datei>` übersetzt die Datei als Text (`RuntimeSession.Build` ohne Pfad): ihr `#include` geht vom aktuellen Ordner aus,
+  nicht von dem der Datei, und eine Meldung nennt die Datei nicht (forge-c macht es ebenso).
+
+### Der Rest der Befehlszeile
+
+Die Befehle des C#-forge (`Program.cs`, `CommandLine*.cs`) und was davon in forge-c ist:
+
+| Befehl | forge-c |
+|---|---|
+| `tokens`, `ast`, `diagnostics`, `fbc`, `cgen`, `buildplan`, `projectplan`, `fpk`, `pkglibplan`, `bootimage`, `peres`, `toolchaintest` (Messungen) | ja |
+| `ui`, `biscuit`, `fdata`, `falstad` | ja, ohne `-o` |
+| `model` | ja (Schritt 4) |
+| `test` | ja (Schritt 4), ohne mehrere Dateien, `-D`, `-f` |
+| `build` | Datei und Projekt/Solution, nur `--engine native` (die Engine `vm`: Schritt 3), ohne `--report json`, `--overlay`, `--debug-info`, `-D`, `-i`, linkage static/shared/plugin, `--stats` |
+| `publish` | ja (Schritt 3), Programme nativ |
+| `bytecode` | eine Datei (`-o`, `-m`), ohne Projekte, `--report json`, `-D` |
+| `serve` | ja (Phase C 6) |
+| `data migrate\|status\|diff\|import` | **nein** - läuft wie `test` als Treiber in der VM (`DataCommand.RunDriver`); braucht dazu einen Link mit mehreren Quellen (die Dateien, eine Quelle mit `#import "data"` und dem Treiber des Schemas der URL) |
+| `run` | **nein** (übersetzen und in der VM starten: der Weg von `test` ohne Treiber) |
+| `native` (das C nach `out.c`), `dump` (ein Programm als Text) | **nein** (`cgen` und `fbc` messen dasselbe) |
+| `stats` (zwei Berichte von `--stats`) | **nein** (mit `--stats`, Schritt 2) |
+| `prebuild-standard`, `install-standard`, `build-vm`, `tables` | **nein** (Werkzeuge des Baus der Solution; `pkglib --all` baut die Bibliotheken) |
+| der Packer | `fire.Runtime.Packer` packt nur noch mit `FIRE_VM_ENGINE=dotnet` die .NET-Einzeldatei - in C entfällt er; das Packen mit der VM in C (`CVm.Pack`, `FIREVMP1`) ist die Engine `vm` von Schritt 3 |
+
 ## Nachziehen
 
 Ändert sich auf `master` eine der portierten C#-Dateien (`git log <commit>..master -- src/fire.Compiler/Lexer.cs` usw.; Schritt 3:
@@ -680,3 +780,7 @@ Projekte, Solutions, Pakete (Phase D Schritt 3, `native/forge/project/`): `src/f
 `tests/compare-frontend.sh ... project` (mit `PROJECT_EXTRA`) und `... projectbuild` (mit `PROJECT_COPY`). Dazu `src/fire.Compiler/CVm.cs`, `src/fire.Runtime/CVmPayload.cs`,
 `GraphicsLibrary.cs` (`Locate`), `StandardSources.cs`, von `src/fire.Package.Manager` `PackageLock.cs`, `GitHubSource.cs` (`GitHubSpec`), `PackageStore.cs` (`FindBySpec`,
 `Install`) - Stand de45e7e4; das Maß ist `... vmbuild`, `install-standard` auf beiden Seiten.
+Der Rest der Befehlszeile (Phase D Schritt 4): der Modellwandler (`native/forge/model/`) `src/fire.Compiler/ModelConverter.cs`, `BlockModel.cs`, `MeshModel.cs`,
+`Preprocessor.cs` (`ResourceTable.Add`) - Stand 6c1b0f0e, das Maß ist `tests/compare-frontend.sh ... model`; `forge test` (`native/forge/tools/`) `TestDriver.cs`,
+`TestFilter.cs`, `TestRunner.cs`, `CommandLine.cs` (`Test`), `Linker.cs` (`TestDriver`) - Stand b833e71b, gemessen mit `forge test` beider forges (Ausgabe ohne die
+Sekunden, Fehler, Exitcode) an den Paketprojekten und den Quellen von `src/fire.Testing/TestingTests.cs`.
