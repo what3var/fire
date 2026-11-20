@@ -98,6 +98,7 @@ static bool fcStrictTag(const char* path);
 #include "build/peres.c"
 #include "build/bootimage.c"
 #include "build/tools.c"
+#include "build/cvm.c"   /* the engine vm (Phase D 3) */
 #endif
 
 /* the markup generators (Phase C 5) */
@@ -378,6 +379,7 @@ int main(int argc, char** argv) {
         return nbBuildMain(argc, argv, prelude, store);   /* Phase D 2 */
     }
     if (argc >= 2 && strcmp(argv[1], "publish") == 0) return pjPublishCommand(argc, argv, prelude, store);   /* Phase D 3 */
+    if (argc >= 2 && strcmp(argv[1], "build-vm") == 0) return nvBuildVmMain(argc, argv, store);   /* Phase D 3: the VM in C into a folder (build/cvm.c) */
     if (argc == 3 && strcmp(argv[1], "projectplan") == 0) return pjProjectPlanDump(argv[2], stdout);
     if (argc == 3 && strcmp(argv[1], "fpk") == 0) return pjPackageDump(argv[2], stdout);
     { int r = nbToolsMain(argc, argv, prelude, store); if (r >= 0) return r; }   /* Phase D 2: pkglib and the measures of the tools (build/tools.c) */

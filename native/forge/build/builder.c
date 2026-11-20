@@ -223,7 +223,7 @@ static void nbPackageHeadersWriteTo(FcCtx* c, FcStore* store, FcDict* instImport
         nbMkdirs(c, dir);
         for (k = 0; k < imp->native->headers->count; k++) {
             const char* h = (const char*)imp->native->headers->items[k];
-            const char* text = fgReadText(c, fcFmt(c, "%s/%s", imp->dir, h));
+            const char* text = fgReadText(c, fgPkgFile(c, imp->dir, h));
             FcBuf out = {0};
             const char* p;
             if (!text) continue;
@@ -1104,6 +1104,8 @@ typedef struct NbBuild {
     /* a project (Phase D 3, project/): the link of its plan instead of the one file `path` (NULL: the file) */
     FcLinked* (*link)(FcCtx* c, const struct NbBuild* b, const FgOptions* o, FcNatives** registry, const char* kind);
     void* project;
+    /* the store of the generator gets the natives of the project (ProjectNativeOverlay, project/): NULL none */
+    void (*overlay)(FcCtx* c, const struct NbBuild* b, FcStore* store);
 } NbBuild;
 static int nbUnitOrderCmp(const void* a, const void* b);
 static bool nbUnitOrderNatives;
@@ -1114,10 +1116,12 @@ static const char* nbTempPath(FcCtx* c) {
 }
 static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output);
 /* The plan of a dry run: the commands with the folder of the build and the program in neutral form, the key, the files of the folder with their hashes. */
+static const char* nbPlanNote;   /* the line of the C++ fallback (CppFallback) before the log of the plan, NULL: none */
 static void nbWritePlan(FcCtx* c, FcBuf* plan, const NbToolchain* t, const char* log, FcList* commands, const char* key, const char* workDir, const char* exe) {
     FcList* files = nbSortedFiles(c, workDir, true);
     int i;
     fcBufFmt(plan, "toolchain %s\n", nbKind(t));
+    if (nbPlanNote) log = fcFmt(c, "%s\n%s", nbPlanNote, log);
     if (*log) { fcBufStr(plan, "log\n"); fcOut8(plan, fgReplace(c, log, workDir, "<build>")); }
     for (i = 0; i < commands->count; i++) {
         NbCommand* k = (NbCommand*)commands->items[i];
@@ -1181,10 +1185,14 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
     linked = b->link ? b->link(c, b, &o, &registry, kind) : fgLinkNativeKind(c, b->path, b->prelude, b->storeRoot, b->strict, &o, &registry, kind);
     memset(&store, 0, sizeof store);
     store.root = b->storeRoot;
+    if (b->overlay) b->overlay(c, b, &store);
     program = fgGenerateSources(c, linked, registry->names, target, o.stripping, nbQuickSplitOf(config, kind), kind, &store);
     /* natives in C++, and the machine's compiler is C only (TinyCC): the next compiler builds it, the log says so in one line */
     if (program.natives && (cppToolchain = nbCppFallback(c, toolchain)) != NULL) {
-        NbResult inner = nbBuild(c, b, config, target, cppToolchain, output);
+        NbResult inner;
+        nbPlanNote = nbCppFallbackNote(c, toolchain, cppToolchain, program.natives);   /* (a dry run: the plan the inner build writes has the line too) */
+        inner = nbBuild(c, b, config, target, cppToolchain, output);
+        nbPlanNote = NULL;
         inner.log = fcFmt(c, "%s\n%s", nbCppFallbackNote(c, toolchain, cppToolchain, program.natives), inner.log);
         return inner;
     }

@@ -368,6 +368,7 @@ static int pjProjectBuildPlanHook(FcCtx* c, const char* path, NbBuild* b, NbConf
     if (!*toolchainName) *toolchainName = plan->settings->toolchain;
     pjApplyBuildSettings(c, config, plan);
     b->link = pjNbLink;
+    b->overlay = pjNbOverlay;
     b->project = plan;
     return 1;
 }

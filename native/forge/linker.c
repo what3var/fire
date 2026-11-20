@@ -118,6 +118,9 @@ typedef struct FcPkgImport {
     const char* packageName;      /* the "name" of the package */
     const char* packageVersion;   /* its "version" (a project's reference to it, Phase D 3) */
     bool overlay;                 /* the natives of a project (ProjectNativeOverlay, Phase D 3): no package on the disk */
+    const void* overlayNative;    /* (an overlay) its natives as the manifest of a package has them (FgPkgNativeM*) */
+    const char* overlayBuildDir;  /* (an overlay) InstalledPackage.BuildDirectory: <project>/obj/native */
+    const char* overlayFile;      /* (an overlay) InstalledPackage.DescriptionFile: the project file */
 } FcPkgImport;
 
 typedef struct FcStore { const char* root; FcList* imports; bool loaded; } FcStore;
@@ -590,7 +593,12 @@ static void fcPackageNativesOf(FcLinker* L, FcList** names, FcList** libraries) 
 }
 
 /* Linker.CompileAndLink for one file (as `forge bytecode <file> [-m <mode>]`): the linked program. modeOverride: -1 none */
+static FcLinked* fcLinkFileFe(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, int modeOverride, FcFrontend** frontend);
 static FcLinked* fcLinkFile(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, int modeOverride) {
+    return fcLinkFileFe(c, path, preludePath, storeRoot, strict, modeOverride, NULL);
+}
+/* (frontend: gets the frontend of the link - its store and its natives, for the engine vm of build/cvm.c) */
+static FcLinked* fcLinkFileFe(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, int modeOverride, FcFrontend** frontend) {
     FcFrontend* fe = fcCompileFrontend(c, path, preludePath, storeRoot, strict);
     FcLinker* L = fe->linker;
     FcCompiled* compiled = fcCompile(c, fe->program, fe->resolved, &L->registry, false);
@@ -635,5 +643,6 @@ static FcLinked* fcLinkFile(FcCtx* c, const char* path, const char* preludePath,
         linked->sourceFiles->items[total - 1] = (void*)fcFullPath(c, ".", path);
         linked->sourceHashes->items[total - 1] = (void*)fcSha256OfText(c, fc8FromU16(c, fe->userText, fe->userLength));
     }
+    if (frontend) *frontend = fe;
     return linked;
 }
