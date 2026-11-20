@@ -452,7 +452,15 @@ static const char* Run(FgGen* g) {
         g->isOfWritten = fcDictNew(g->c, FC_KEY_STR);
         for (i = 0; i < isOfTypes->count; i++) fcSetAdd(g->isOfWritten, isOfTypes->items[i]);
     }
-    if (g->usesReflection) FG_UNPORTED("reflection");
+    if (g->usesReflection) {
+        FC_DICT_EACH(g->selectorPaths, e) {
+            const FgSelectorPath* sp = (const FgSelectorPath*)e->value;
+            FcList* texts = fcListNew(g->c);
+            for (k = 0; k < sp->path->count; k++) fcListAdd(g->c, texts, (void*)CString(g, (const char*)sp->path->items[k]));
+            fcBufFmt(&sb, "static const char* const %s[] = {%s};\n", sp->name, fgJoin(g->c, texts, ", "));
+        }
+        fcBufFmt(&sb, "%s\n", ReflectionCode(g));   /* (ShareReflection: a module shares the functions - the modules are not ported) */
+    }
     fcBufFmt(&sb, "%s\n", IndexHelpers(g));
     if (g->usesJson) fcBufFmt(&sb, "%s\n", JsonCode(g));
     fcBufFmt(&sb, "%s\n", RuntimeHooks(g));

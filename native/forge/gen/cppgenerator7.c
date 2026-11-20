@@ -12,7 +12,6 @@ static bool fgTreeNodeClass(const char* n) {
     for (i = 0; i < sizeof t / sizeof t[0]; i++) if (streq0(n, t[i])) return true;
     return false;
 }
-static bool fgIsReflectionHelperClass(const FcRtClass* rc) { return rc && fcIsReflectionHelper(rc->name); }
 static bool fgIsMemberName(const char* text) {
     const unsigned char* p = (const unsigned char*)text;
     uint16_t u = fc8Next(&p);
@@ -38,10 +37,6 @@ static void NoteReflectionLiterals(FgGen* g, FgFunc* f) {
         if (fgClassOf(g, text)) { if (fcSetAdd(g->literalClasses, text)) g->version++; }
         else if (fgIsMemberName(text) && fcSetAdd(g->literalMembers, text)) g->version++;
     }
-}
-static const char* ReflectionCallerAssign(FgGen* g, FgFunc* f) {
-    if (g->usesReflection && CheckAccess && !fgIsReflectionHelperClass(f->chunk->ownerClass)) FG_UNPORTED("reflection");
-    return "";
 }
 static const char* fgTrimCommaSpace(const char* s) { while (*s == ',' || *s == ' ') s++; return s; }
 static const FcExternSig* fgExternSig(FgGen* g, const char* name) {

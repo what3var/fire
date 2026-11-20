@@ -214,8 +214,8 @@ static FgGen* fgGenNew(FcCtx* c, FcLinked* program, FcList* natives, const FgTar
     g->objTypeNames = fcListNew(c); FG_D(objTypeIndex); FG_D(narrowEligible); FG_P(layouts); FG_D(probeTargets); FG_D(varType); FG_D(fieldAddressTaken);
     FG_D(typeIsOfIds); FG_D(externDecls); FG_D(restrictedMethods); FG_D(restrictedFields); g->errorClasses = fcListNew(c); FG_D(pkgLocks); FG_D(arrClasses);
     FG_D(lineFiles); FG_D(standardNativesWritten); FG_D(knownArrayElem); FG_D(needsDefaults); FG_D(nativeThunks); FG_D(packageNatives); g->packageImports = fcListNew(c);
-    FG_P(cRet); FG_P(cAbiParams); FG_P(funcDebug); FG_D(globalNames); FG_D(overloadSelectors); FG_D(ovClassNames); FG_D(ovGenericTests); FG_D(rawType); FG_P(rawLayouts);
-    FG_D(literalClasses); FG_D(literalMembers); FG_P(literalChunks); FG_P(instImports); FG_D(bridgeCache); FG_P(jsonFields); FG_D(pointerFuncs); FG_P(rtNames); FG_P(rtIndex); FG_D(rtCands); FG_D(specCache); FG_D(condCache); FG_D(nativeImportOf);
+    FG_P(cRet); FG_P(cAbiParams); FG_P(funcDebug); FG_D(dbgLines); FG_D(globalNames); FG_D(overloadSelectors); FG_D(ovClassNames); FG_D(ovGenericTests); FG_D(rawType); FG_P(rawLayouts);
+    FG_D(literalClasses); FG_D(reflNativesUsed); FG_D(literalMembers); FG_P(literalChunks); FG_P(instImports); FG_D(bridgeCache); FG_P(jsonFields); FG_D(pointerFuncs); FG_P(rtNames); FG_P(rtIndex); FG_D(rtCands); FG_D(specCache); FG_D(condCache); FG_D(nativeImportOf);
 #undef FG_D
 #undef FG_P
     g->splitMode = -1;
@@ -247,19 +247,20 @@ static int fgSplitFromEnvironment(void) {
 static bool fgSplitToolchainCan(const char* kind) { return kind && (streq0(kind, "gcc") || streq0(kind, "clang") || streq0(kind, "tcc") || streq0(kind, "emscripten") || streq0(kind, "files")); }
 static bool fgSplitAutoToolchain(const char* kind) { return kind && (streq0(kind, "gcc") || streq0(kind, "clang") || streq0(kind, "emscripten")); }
 
-/* CppGenerator.GenerateSources: the program in C, its natives in C++ (NULL: none), the units of a split program (NULL: one file). split: FG_SPLIT_*, -1: null;
- * toolchainKind: NULL: none */
-typedef struct FgSources { const char* program; const char* natives; FcList* units; } FgSources;
-static FgSources fgGenerateSources(FcCtx* c, FcLinked* program, FcList* natives, const FgTarget* target, int stripping, int split, const char* toolchainKind, FcStore* store) {
+/* CppGenerator.GenerateSources: the program in C, its natives in C++ (NULL: none), the units of a split program (NULL: one file), with `stats` what the
+ * generator made of each function (FgFuncStat*, NULL otherwise). split: FG_SPLIT_*, -1: null; toolchainKind: NULL: none */
+typedef struct FgSources { const char* program; const char* natives; FcList* units; FcList* funcs; } FgSources;
+static FgSources fgGenerateSources(FcCtx* c, FcLinked* program, FcList* natives, const FgTarget* target, int stripping, bool stats, int split, const char* toolchainKind, FcStore* store) {
     FgGen* g = fgGenNew(c, program, natives, target);
     FgSources r;
     const char* text;
     int env = fgSplitFromEnvironment(), mode = env >= 0 ? env : split >= 0 ? split : FG_SPLIT_OFF;
     /* EffectiveStripping: a debug build keeps everything, otherwise what is asked for, by default level 3 */
     g->strip = program->mode == 0 ? 0 : stripping >= 0 ? stripping : 3;
-    /* (the units, docs/spec/NATIVE_SPLIT.md: FIRE_SPLIT goes before the configuration; a toolchain that cannot build units stays one file; `auto` decides by the
-     * size of the C once it is made) (gen.h: splitMode -1 null, 0 Off, 1 On, 2 Auto) */
-    if (mode != FG_SPLIT_OFF && (env == FG_SPLIT_ON ? !toolchainKind || fgSplitToolchainCan(toolchainKind)
+    g->collectStats = stats;
+    /* (the units, docs/spec/NATIVE_SPLIT.md: FIRE_SPLIT goes before the configuration; a toolchain that cannot build units and `--stats` stay one file; `auto`
+     * decides by the size of the C once it is made) (gen.h: splitMode -1 null, 0 Off, 1 On, 2 Auto) */
+    if (mode != FG_SPLIT_OFF && !stats && (env == FG_SPLIT_ON ? !toolchainKind || fgSplitToolchainCan(toolchainKind)
             : mode == FG_SPLIT_ON ? fgSplitToolchainCan(toolchainKind) : fgSplitAutoToolchain(toolchainKind)))
         g->splitMode = mode == FG_SPLIT_ON ? 1 : 2;
     g->store = store;
@@ -268,6 +269,7 @@ static FgSources fgGenerateSources(FcCtx* c, FcLinked* program, FcList* natives,
     r.program = g->splitUnits ? ((FgSplitUnit*)g->splitUnits->items[1])->text : text;
     r.natives = g->nativesCode;
     r.units = g->splitUnits;
+    r.funcs = stats ? FuncStats(g) : NULL;
     return r;
 }
 
@@ -302,7 +304,7 @@ static void fgDumpNative(FcCtx* c, const char* options, const char* path, const 
     linked = fgLinkNative(c, path, prelude, storeRoot, fcStrictTag(path), &o, &registry);
     memset(&store, 0, sizeof store);
     store.root = storeRoot;
-    s = fgGenerateSources(c, linked, registry->names, o.target, o.stripping, o.split ? FG_SPLIT_ON : FG_SPLIT_AUTO, "files", &store);
+    s = fgGenerateSources(c, linked, registry->names, o.target, o.stripping, false, o.split ? FG_SPLIT_ON : FG_SPLIT_AUTO, "files", &store);
     fcOut8(out, s.program);
     if (s.natives) { fcBufStr(out, "//==== fire_natives.cpp\n"); fcOut8(out, s.natives); }
     if (s.units)

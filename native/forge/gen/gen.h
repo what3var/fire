@@ -66,6 +66,7 @@ struct FgCAbi {
     int retType;
 };
 typedef struct FgFuncStat FgFuncStat;
+typedef struct FgFuncDebug FgFuncDebug;
 
 typedef struct FgFunc {
     const char* name;           /* Name: fire_main, the export, or {Prefix}f{Index} */
@@ -183,7 +184,7 @@ struct FgGen {
     FcDict* targOfs;            /* SortedSet<(string Cls, int Index)> */
     const char* pendingNewTArgs;
     const char* pendingLambdaTArgs;
-    FcDict* selectorPaths;      /* joined path -> name */
+    FcDict* selectorPaths;      /* the path joined by \x01 -> FgSelectorPath* (Dictionary<string[], string>: insertion order) */
     FcDict* fieldNames;         /* SortedSet<string> ordinal */
     FcDict* staticFields;       /* "class\x01field" -> index + 1 */
     FcDict* varRef;             /* key -> 1 */
@@ -253,6 +254,7 @@ struct FgGen {
     FcDict* globalNames;        /* int -> name */
     FcDict* hiddenProtos;
     FcDict* protoNames;
+    FcDict* dbgLines;           /* SortedSet<(int Src, int Line)>: "src,line" (sorted when written) */
     /* CppGenerator.Json.cs */
     bool usesJson, callsJsonEngine;
     /* CppGenerator.Overloads.cs */
@@ -271,6 +273,7 @@ struct FgGen {
     FcDict* literalChunks;      /* HashSet<FcChunk*> */
     FcDict* reflectionMethodNames;   /* NULL until made */
     int rfListIndex;
+    FcDict* reflNativesUsed;    /* SortedSet<string> ordinal (CppGenerator.Modules.cs: the reflection natives a module calls) */
     /* CppGenerator.Split.cs */
     int splitMode;              /* SplitMode?: -1 null, 0 Off, 1 On, 2 Auto */
     FcList* splitUnits;         /* FgSplitUnit*, NULL: one file */
@@ -295,6 +298,7 @@ struct FgGen {
     FbArena flowArena;
 };
 
+typedef struct FgSelectorPath { const char* name; FcList* path; } FgSelectorPath;
 typedef struct FgUnitConv { int index; FgFunc* to; FgFunc* from; } FgUnitConv;
 
 /* an exception of the generator: NativeNotSupportedException (FC_ERR_NOTSUPPORTED with the message) */

@@ -92,7 +92,7 @@ static FcJson* fcJsonValue(FcJsonReader* j) {
     else if (strncmp(j->p, "true", 4) == 0) { v->kind = FJ_BOOL; v->b = true; j->p += 4; }
     else if (strncmp(j->p, "false", 5) == 0) { v->kind = FJ_BOOL; j->p += 5; }
     else if (strncmp(j->p, "null", 4) == 0) { v->kind = FJ_NULL; j->p += 4; }
-    else { char* end; v->kind = FJ_NUM; v->n = strtod(j->p, &end); if (end == j->p) j->bad = true; j->p = end; }
+    else { char* end; v->kind = FJ_NUM; v->n = strtod(j->p, &end); if (end == j->p) j->bad = true; v->s = fcStrN(j->c, j->p, (size_t)(end - j->p)); j->p = end; }   /* (s: the number as written) */
     return v;
 }
 static FcJson* fcJsonGet(const FcJson* o, const char* key) {

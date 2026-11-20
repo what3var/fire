@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 größtenteils, Schritt 2 teilweise, Schritt 3 größtenteils (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 bis auf die Module, Schritt 2 teilweise, Schritt 3 größtenteils (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -402,16 +402,15 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
 
 1. Generator (`CppGenerator*`, 15 600 Zeilen - der größte Einzelposten). Prüfung: `fire_program.c`/`fire_natives.cpp` byte-gleich über den
    Korpus und die Optionen (Ziele, `linkage`, `stripping`, `#intwidth`, Debug, `optimize`).
-   **Zum größten Teil umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-1-der-generator)): `native/forge/gen/` (12 300 Zeilen C, Stand
-   808e9788) - `CppGenerator.cs` ganz (Run, Kopf, Dispatcher, Feldhelfer, Klassendeskriptoren, der Fluss, `StepCore` mit allen Opcodes), `Packed`,
+   **Umgesetzt bis auf die Module** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-1-der-generator)): `native/forge/gen/` (Stand 808e9788) -
+   `CppGenerator.cs` ganz (Run, Kopf, Dispatcher, Feldhelfer, Klassendeskriptoren, der Fluss, `StepCore` mit allen Opcodes), `Packed`,
    `CAbi`, `CFields`, `Overloads` (Selektoren, Hinweise), die Dispatcher der Interfaces, die Natives der Pakete (Manifest, Plattformquellen,
-   Header, C und C++, typisierte Natives, Sperren), die Brücken von graphics/windows, JSON, `Library.Get` und die Zeigerkonvention der
-   Open-Watcom-Ziele. Maß: `forge cgen <optionen> <datei>` gegen
-   `forge-c cgen`, `tests/compare-frontend.sh ... native`: Standardoptionen **1056 von 1129** Fällen, **92 von 93** Paketen, **30 von 34**
-   Beispielen byte-gleich, **kein** Unterschied des Generators (die eine Abweichung, `Scene3D Models`, sind die Modelle als Ressourcen - der
-   Linker, Schritt 4) - der Rest ist noch nicht portiert (`unported: ...`): Reflection und Probes (alle 73 übrigen Fälle), Debug-Builds,
-   die geteilten Einheiten (`ProgramSplit`; seit Schritt 2 portiert), `linkage` static/shared (Module, Plugins), `--stats`. Weitere Optionssätze über eine
-   Stichprobe (504 Quellen) ebenso ohne Unterschied, siehe dort.
+   Header, C und C++, typisierte Natives, Sperren), die Brücken von graphics/windows, JSON, `Library.Get`, die Zeigerkonvention der
+   Open-Watcom-Ziele, die Reflection (`__refl_*`, Tabellen, Selektoren der Lambdas, Probes), Debug-Builds, die Teilung in Einheiten (`ProgramSplit`) und
+   `--stats`. Maß: `forge cgen <optionen> <datei>` gegen `forge-c cgen`, `tests/compare-frontend.sh ... native` mit `NATIVE_STRICT=1`: Standardoptionen
+   **1129 von 1129** Fällen, **93 von 93** Paketen, **33 von 34** Beispielen byte-gleich (die eine Abweichung, `Scene3D Models`, sind die Modelle als
+   Ressourcen - der Linker, Schritt 4), ebenso mit `debug` und mit `split`; die Reflection auch mit `strip0`-`strip2`. **Offen**: `linkage` static/shared/plugin (`CppGenerator.Modules.cs`,
+   `ModuleDispatch.cs`, `StaticLinkage.cs`, `Plugins.cs`: ein Generator je Bibliotheksmodul, die Exporte, die Tabellen der Laufzeit) und `FIRE_MODULES=1`.
 2. NativeBuilder, Toolchains (gcc, clang, MSVC, tcc, Emscripten, ESP-IDF, Open Watcom), Linkage, `PackageLibrary`, Stats, Boot-Images, PE-Ressourcen.
    **Teilweise umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-2-der-builder)): `native/forge/build/` (Stand 6f21d1a4) - `forge-c build` mit linkage
    `source`: `ToolchainDef`, `ToolchainDetector`, `MachineToolchains`, `NativeConfig` (fire.native.json, eigene Ziele), die Befehlszeilen aller Arten (gcc,
@@ -423,7 +422,8 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    Bibliotheken byte-gleich mit denen des C#-forge, beide VMs laden sie), das Boot-Image von bios16 (Fat12, nach dem Link; gemessen mit `bootimage`), die
    PE-Ressourcen (Version, Icon, Subsystem: der Inhalt wie in C#; geschrieben werden sie wie dort nur unter Windows) mit `#noconsole` (`-mwindows`),
    `ToolchainProvider`/`TestToolchain`, `"globalJobs"` und Kommentare in fire.native.json. Offen: linkage static/shared/plugin (braucht die Module des
-   Generators), `--stats` (NativeStats), Windows als Host (dort auch das Schreiben der PE-Ressourcen), das Herunterladen von Toolchains (Schritt 5).
+   Generators), Windows als Host (dort auch das Schreiben der PE-Ressourcen), das Herunterladen von Toolchains (Schritt 5). Seither
+   portiert: `--stats` (NativeStats: die Map, der Bericht als Text und JSON).
 3. Projekt, Solution, Bauplan, Vorlagen, Beispiele; von der Paketverwaltung, was forge braucht (Manifest, Store, `.fpk`). ember bleibt bis Phase F das C#-Programm.
    **Zum größten Teil umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-3-projekte-solutions-pakete)): `native/forge/project/` (Stand de45e7e4) - das Laden von
    `.fireproj`/`.firesln`, die Dateien, Ordner (mit `.gitignore`) und Build-Aktionen eines Projekts, Bauordnung und Startprojekt, der `BuildPlan` mit Bibliotheken und
