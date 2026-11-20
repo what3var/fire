@@ -111,6 +111,13 @@ static bool fcStrictTag(const char* path);
 #include "datamodelgenerator.c"
 #include "falstadimport.c"
 
+/* the model converter (Phase D 4, model/): glTF, .fblocks, .fmesh -> .f3d, after json.c */
+#include <sys/stat.h>
+#include "model/modelconverter.c"
+#include "model/blockmodel.c"
+#include "model/meshmodel.c"
+#include "model/command.c"
+
 /* projects and solutions, the package file (Phase D 3, project/): POSIX, with the builder */
 #ifndef _WIN32
 #include <fcntl.h>
@@ -304,6 +311,13 @@ static int fcDump(const char* command, const char* path, FILE* out, const char* 
         if (strcmp(command, "ast") == 0) o.len = 0, o.p[0] = 0;   /* (the tree is written only when the parse is done) */
         if (strcmp(command, "diagnostics") == 0) { o.len = 0; o.p[0] = 0; for (i = 0; i < ctx.diags->count; i++) fcDiagLogLine(&o, (const FcDiagnostic*)ctx.diags->items[i]); }
         if (strncmp(command, "fbc:", 4) == 0) { o.len = 0; fcBufStr(&o, "error\n"); }
+        if ((strncmp(command, "fbc:", 4) == 0 || strncmp(command, "cgen:", 5) == 0 || strncmp(command, "buildplan:", 10) == 0) && ctx.err.kind == FC_ERR_INTERNAL && ctx.err.message
+            && fcStartsWith(ctx.err.message, "unhandled: ")) {
+            /* (an exception of .NET the C# code does not catch - a model resource, Phase D 4: `internal: <type>: <message>`) */
+            o.len = 0; fcBufStr(&o, "internal: "); fcOut8(&o, ctx.err.message + 11); fcBufChar(&o, '\n');
+            fwrite(o.p, 1, o.len, out); fcBufFree(&o); fcCtxFree(&ctx);
+            return 1;
+        }
         if (strncmp(command, "cgen:", 5) == 0 || strncmp(command, "buildplan:", 10) == 0) {
             /* (FrontendDump.DumpNative: a program the backend refuses, a part of the generator in C that is not ported yet, a compile error) */
             o.len = 0;
@@ -382,6 +396,7 @@ int main(int argc, char** argv) {
     if (argc == 3 && strcmp(argv[1], "fpk") == 0) return pjPackageDump(argv[2], stdout);
     { int r = nbToolsMain(argc, argv, prelude, store); if (r >= 0) return r; }   /* Phase D 2: pkglib and the measures of the tools (build/tools.c) */
 #endif
+    if (argc >= 3 && strcmp(argv[1], "model") == 0) return mdModelCommand(argc, argv);   /* Phase D 4: `forge model` (model/command.c) */
     /* `fbc <mode> ...`: the mode is part of the command */
     if (argc >= 4 && (strcmp(argv[1], "fbc") == 0 || strcmp(argv[1], "cgen") == 0 || strcmp(argv[1], "buildplan") == 0) && strlen(argv[2]) < 200) {
         snprintf(fbcCommand, sizeof fbcCommand, "%s:%s", argv[1], argv[2]);
