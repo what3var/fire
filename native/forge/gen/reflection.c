@@ -128,6 +128,7 @@ static void KeepConstructors(FgGen* g, const FcRtClass* rc) {
     FcList* all;
     int i, argc;
     RegisterClass(g, rc->name);
+    if (Modular && !LibraryRole && !IsOwnClass(g, rc)) return;   /* (a library keeps the constructors of its classes and makes their objects for Reflect.New) */
     all = fgAllConstructors(g->c, rc);
     for (i = 0; i < all->count; i++) {
         FcProto* ctor = (FcProto*)all->items[i];
@@ -165,6 +166,7 @@ static void RegisterReflectionTargets(FgGen* g) {
         count = g->classList->count;   /* (_classList.ToList(): the classes so far) */
         for (i = 0; i < count; i++)
             for (c = ((FgClassInfo*)g->classList->items[i])->rc; c; c = c->base) {
+                if (Modular && !IsOwnClass(g, c)) continue;   /* (a library keeps its API itself) */
                 FC_DICT_EACH(c->ownFieldInfo, e) if (fcDictHas(g->literalMembers, e->key)) AddFieldName(g, (const char*)e->key);
                 FC_DICT_EACH(c->methods, e) {
                     const char* name = (const char*)e->key;
@@ -175,11 +177,15 @@ static void RegisterReflectionTargets(FgGen* g) {
             }
     }
     if (!g->reflMembers && !g->reflCall) return;
+    /* (modules: Get/Set by name go through the tables of the runtime - the program's tables list every field and property of its classes, a library's all of its
+     * members; Reflect.Call the methods that are there, like with one file) */
+    if (Modular && !g->tablesAll) { g->tablesAll = true; g->version++; }
     count = g->classList->count;
     for (i = 0; i < count; i++) {
         FgClassInfo* cls = (FgClassInfo*)g->classList->items[i];
         if (g->reflMembers && !Modular) FC_DICT_EACH(FG_INDEX(cls->rc), e) AddFieldName(g, (const char*)e->key);
-        for (c = cls->rc; c; c = c->base)
+        for (c = cls->rc; c; c = c->base) {
+            if (Modular && !IsOwnClass(g, c)) continue;   /* (the table of a library's class names all its members) */
             FC_DICT_EACH(c->methods, e) {
                 const char* name = (const char*)e->key;
                 FcList* protos = (FcList*)e->value;
@@ -191,6 +197,7 @@ static void RegisterReflectionTargets(FgGen* g) {
                     else if (!Modular && (fcStartsWith(name, "get_") || fcStartsWith(name, "set_"))) AddFieldName(g, name + 4);   /* (RegisterTargets makes the accessors of the names) */
                 }
             }
+        }
     }
 }
 
@@ -202,6 +209,12 @@ static void RegisterKeptTargets(FgGen* g) {
     FC_DICT_EACH(g->program->program->classes, e) fcListAdd(g->c, classes, e->value);
     for (i = 0; i < classes->count; i++) {
         FcRtClass* rc = (FcRtClass*)classes->items[i];
+        /* (modules: a library keeps all of its classes itself - the program only makes the kept classes of the libraries known) */
+        if (Modular && !IsOwnClass(g, rc)) {
+            if (g->strip <= 2 || KeptClass(g, rc)) KeepConstructors(g, rc);
+            else if (rc->keptMembers) RegisterClass(g, rc->name);
+            continue;
+        }
         if (g->strip == 0 || KeptClass(g, rc)) {
             FcDict* index = FG_INDEX(rc);
             KeepConstructors(g, rc);
@@ -237,7 +250,7 @@ static int StrippedMethod(FgGen* g, const FcRtClass* rc, const FcMemberMeta* m) 
     if (g->strip == 0 || LibraryRole || !streq0(m->kind, "method") || !(protos = (FcList*)fcDictGet(rc->methods, m->name))) return -1;
     for (i = 0; i < protos->count; i++) {
         FcProto* p = (FcProto*)protos->items[i];
-        if (p->paramCount != m->paramNames->count || p->isStatic != m->isStatic) continue;
+        if (p->paramCount != m->paramNames->count || p->isStatic != m->isStatic || (Modular && !OwnsProto(g, p))) continue;
         mine++;
         if (fcDictHas(g->funcByProto, p)) return -1;
     }
@@ -413,12 +426,55 @@ static FcList* NewCases(FgGen* g, const FcRtClass* rc, const FgClassInfo* info) 
     return byArgc;
 }
 
+static const char* NewFunctionName(FgGen* g, const char* module, const FcRtClass* rc) { return fcFmt(g->c, "fire_new_%s_%s", module, Mangle(g, rc->name)); }
+/* The name of the reflection row of a class (modules: every module writes those of its classes). */
+static const char* RfRowName(FgGen* g, const char* module, const FcRtClass* rc) { return fcFmt(g->c, "fire_rf_%s_%s", module, Mangle(g, rc->name)); }
+
+/* A library module of a program with reflection: the rows of all of its classes (the program lists those its tables have). */
+static const char* LibraryReflectionRows(FgGen* g) {
+    FcBuf sb = {0};
+    FcList* own;
+    FcList* rows;
+    FcList* byName;
+    int i, k;
+    if (!g->usesReflection) return "";
+    fcBufStr(&sb, "");
+    own = fcListNew(g->c);
+    byName = fgClassesByName(g);
+    for (i = 0; i < byName->count; i++) if (IsOwnClass(g, (const FcRtClass*)byName->items[i])) fcListAdd(g->c, own, byName->items[i]);
+    rows = ReflectionRows(g, &sb, own);
+    /* (a plugin: Reflect.New of the program makes the objects of its classes through their rows) */
+    if (g->plugin)
+        for (i = 0; i < own->count; i++) {
+            const char* row = (const char*)rows->items[i];
+            const char* fn = NewFunctionName(g, ModId(g), (const FcRtClass*)own->items[i]);
+            fcBufFmt(&sb, "Value %s(int argc, const Value* items, OwnList* list, uint32_t caller);\n", fn);
+            rows->items[i] = (void*)fcFmt(g->c, "%s%s}", fcStrN(g->c, row, strlen(row) - strlen("NULL}")), fn);
+        }
+    for (i = 0; i < own->count; i++) fcBufFmt(&sb, "const RfClass %s = %s;\n", RfRowName(g, ModId(g), (const FcRtClass*)own->items[i]), (const char*)rows->items[i]);
+    /* Reflect.New of its classes (the program's rf_new calls them by the name of the class) */
+    for (i = 0; i < own->count; i++) {
+        const FcRtClass* rc = (const FcRtClass*)own->items[i];
+        FcList* cases;
+        fcBufFmt(&sb, "Value %s(int argc, const Value* items, OwnList* list, uint32_t caller) {\n", NewFunctionName(g, ModId(g), rc));
+        fcBufStr(&sb, "    (void)items; (void)list; (void)caller;\n");
+        fcBufStr(&sb, "    switch (argc) {\n");
+        cases = NewCases(g, rc, RegisterClass(g, rc->name));
+        for (k = 0; k < cases->count; k++) fcBufFmt(&sb, "%s\n", (const char*)cases->items[k]);
+        fcBufStr(&sb, "        default: break;\n");
+        fcBufStr(&sb, "    }\n");
+        fcBufFmt(&sb, "    { char t[300]; snprintf(t, sizeof t, \"'%%s' has no constructor with %%d parameter(s).\", %s, argc); return rfFail(t); }\n", CString(g, rc->name));
+        fcBufStr(&sb, "}\n");
+    }
+    return fcBufDone(g->c, &sb);
+}
+
 /* ---- the code ---- */
 static const char* ProbeCode(FgGen* g, FcList* fieldNames);
 static const char* ReflectionCode(FgGen* g) {
     FcBuf sb = {0};
     FcList* classes = ReflectionTableClasses(g);
-    const char* rfAt = "&kRfClasses[i]";
+    const char* rfAt = Modular ? "kRfClassList[i]" : "&kRfClasses[i]";
     FcList* strippedClasses;
     FcList* fieldNames;
     FcBuf get = {0}, set = {0}, callSb = {0}, newSb = {0};
@@ -428,7 +484,22 @@ static const char* ReflectionCode(FgGen* g) {
 
     fcBufStr(&sb, "");
     /* ---- tables ---- */
-    {
+    /* (modules: the rows of the classes of a library are in its file, the program lists them) */
+    if (Modular) {
+        FcList* own = fcListNew(g->c);
+        FcList* ownRows;
+        FcList* refs = fcListNew(g->c);
+        for (i = 0; i < classes->count; i++) if (IsOwnClass(g, (const FcRtClass*)classes->items[i])) fcListAdd(g->c, own, classes->items[i]);
+        ownRows = ReflectionRows(g, &sb, own);
+        for (i = 0; i < own->count; i++) fcBufFmt(&sb, "static const RfClass %s = %s;\n", RfRowName(g, "prog", (const FcRtClass*)own->items[i]), (const char*)ownRows->items[i]);
+        for (i = 0; i < classes->count; i++) {
+            const FcRtClass* rc = (const FcRtClass*)classes->items[i];
+            if (!IsOwnClass(g, rc)) fcBufFmt(&sb, "extern const RfClass %s;\n", RfRowName(g, ModIdOf(g, rc), rc));
+        }
+        for (i = 0; i < classes->count; i++) { const FcRtClass* rc = (const FcRtClass*)classes->items[i]; fcListAdd(g->c, refs, (void*)fcFmt(g->c, "&%s", RfRowName(g, ModIdOf(g, rc), rc))); }
+        if (refs->count == 0) fcListAdd(g->c, refs, (void*)"NULL");
+        fcBufFmt(&sb, "static const RfClass* const kRfClassList[] = {%s};\n", fgJoin(g->c, refs, ", "));
+    } else {
         FcList* classRows = ReflectionRows(g, &sb, classes);
         fcBufFmt(&sb, "static const RfClass kRfClasses[] = {%s};\n", fgJoin(g->c, classRows, ",\n    "));
     }
@@ -614,7 +685,13 @@ static const char* ReflectionCode(FgGen* g) {
     /* ---- get / set / call / new ---- */
     fieldNames = fgSortedKeys(g->c, g->fieldNames, true);
     fcBufStr(&get, ""); fcBufStr(&set, ""); fcBufStr(&callSb, ""); fcBufStr(&newSb, "");
-    for (i = 0; i < fieldNames->count; i++) {
+    if (Modular) {
+        fcBufStr(&get, "    { char n_[200]; strToUtf8(name, n_, sizeof n_); return fireGetField(obj, n_, list, caller); }\n");
+        /* (an object with probes: they hear of it - the member is written by its name) */
+        fcBufFmt(&set, "    { char n_[200]; strToUtf8(name, n_, sizeof n_);%s fireSetField(obj, value, n_, list, caller); return Undef(); }\n",
+            g->usesProbes ? " if (FIRE_UNLIKELY(asObj(obj)->h.flags & 2)) { probedSet(obj, n_, value, NULL, NULL, caller); return Undef(); }" : "");
+    }
+    for (i = 0; i < (Modular ? 0 : fieldNames->count); i++) {
         const char* name = (const char*)fieldNames->items[i];
         const char* tail = fcFmt(g->c, "%s%s", FieldHasList(g, name) ? ", list" : "", FieldHasCaller(g, name) ? ", caller" : "");
         FcBuf arms = {0};
@@ -679,7 +756,13 @@ static const char* ReflectionCode(FgGen* g) {
         "}\n", fcBufDone(g->c, &set));
 
     /* calls: one entry per (name, number of arguments) that some class has */
-    dispatchers = fgSortedNameArgc(g, g->dispatchers);
+    if (Modular)
+        fcBufStr(&callSb, "    { char n_[200]; uint32_t k_; const FireMethod* m_; const RfMember* sm_; strToUtf8(name, n_, sizeof n_);\n"
+            "      m_ = fireFindMethod(asObj(obj)->cls, n_, argc, &k_);\n"
+            "      if (m_) return m_->fn(k_, obj, items, list, caller);\n"
+            "      sm_ = rf_member(rf_classOf(asObj(obj)->cls), name, \"method\");\n"
+            "      if (sm_ && (sm_->flags & 1) && sm_->pcount == (uint32_t)argc) { char u[400]; snprintf(u, sizeof u, \"'%s' is a static method - Reflect.Call only calls instance methods.\", n_); return rfFail(u); } }\n");
+    dispatchers = Modular ? fcListNew(g->c) : fgSortedNameArgc(g, g->dispatchers);
     for (i = 0; i < dispatchers->count; i++) {
         const FgNameArgc* na = (const FgNameArgc*)dispatchers->items[i];
         FcBuf inst = {0}, stat = {0}, items = {0};
@@ -724,6 +807,13 @@ static const char* ReflectionCode(FgGen* g) {
         FcList* byArgc;
         /* (without Reflect.New the constructors are not kept: rf_new is not called) */
         if (!g->reflNew || !(info = (FgClassInfo*)fcDictGet(g->classes, rc->name))) continue;
+        /* (modules: the class of a library makes its objects in its own file) */
+        if (Modular && !IsOwnClass(g, rc)) {
+            const char* fn = NewFunctionName(g, ModIdOf(g, rc), rc);
+            fgBufInsert0(&sb, fcFmt(g->c, "Value %s(int argc, const Value* items, OwnList* list, uint32_t caller);\n", fn));
+            fcBufFmt(&newSb, "    if (strIs(cname, %s)) return %s(argc, items, list, caller);\n", CString(g, rc->name), fn);
+            continue;
+        }
         byArgc = NewCases(g, rc, info);
         if (byArgc->count == 0) continue;
         fcBufFmt(&newSb, "    if (strIs(cname, %s)) {\n", CString(g, rc->name));

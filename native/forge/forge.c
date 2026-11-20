@@ -83,6 +83,10 @@ static bool fcStrictTag(const char* path);
 #include "gen/cppgenerator6.c"
 #include "gen/cppgenerator7.c"
 #include "gen/cppgenerator8.c"
+#include "gen/modules.c"      /* the library modules (linkage static/shared/plugin, FIRE_MODULES=1) */
+#include "gen/moddispatch.c"
+#include "gen/staticlinkage.c"
+#include "gen/plugins.c"
 #include "gen/native.c"
 
 /* the native builder (Phase D 2, build/): POSIX for now */
@@ -95,6 +99,7 @@ static bool fcStrictTag(const char* path);
 #include <sys/wait.h>
 #include "build/toolchain.c"
 #include "build/builder.c"
+#include "build/linkage.c"   /* linkage static/shared/plugin */
 #include "build/stats.c"
 #include "build/command.c"
 #include "build/pkglib.c"

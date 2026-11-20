@@ -15,6 +15,55 @@ typedef struct PjLinker {
 } PjLinker;
 
 /* ProjectLibraries.NamespaceOf: the import name, none for a standard library */
+static FcList* svFindImportNames(FcCtx* c, const uint16_t* s, int n);   /* (serve_index.c: ImportedPreludes.FindImportNames) */
+/* Linker.ModuleDependencies with a plan: a library of the project needs the libraries it requires and those its sources import (else ImportedPreludes.WithDependencies) */
+static FcDict* pjModuleDependencies(FcLinker* L, const PjPlan* plan, FcList* processed) {
+    FcCtx* c = L->c;
+    FcDict* deps = fcDictNew(c, FC_KEY_STR);
+    FcList* modules = fcListNew(c);
+    int i, k, m;
+    for (i = 1; i < processed->count; i++) {
+        const char* mod = ((FcProcessed*)processed->items[i])->module;
+        if (mod && !fcListHasStr(modules, mod)) fcListAdd(c, modules, (void*)mod);
+    }
+    for (i = 0; i < modules->count; i++) {
+        const char* module = (const char*)modules->items[i];
+        FcList* needs = fcListNew(c);
+        FcList* kept = fcListNew(c);
+        const PjLibrary* library = pjPlanLibrary(plan, module);
+#define PJ_NEED(key) do { const char* k_ = (key); if (!streq0(k_, module) && !fcListHasStr(needs, k_)) fcListAdd(c, needs, (void*)k_); } while (0)
+        if (library) {
+            for (k = 0; library->requires && k < library->requires->count; k++) { const PjLibrary* lib = pjPlanLibrary(plan, (const char*)library->requires->items[k]); if (lib) PJ_NEED(lib->importName); }
+            for (k = 0; k < library->sources->count; k++) {
+                const PjSource* s = (const PjSource*)library->sources->items[k];
+                FcU16 u = {0};
+                FcList* names;
+                fcU16FromFc8(s->text, &u);
+                names = svFindImportNames(c, u.p, u.len);
+                fcU16Free(&u);
+                for (m = 0; m < names->count; m++) {
+                    const char* name = (const char*)names->items[m];
+                    const PjLibrary* lib = pjPlanLibrary(plan, name);
+                    FcList* keys = fcListNew(c);
+                    int j;
+                    if (lib) { PJ_NEED(lib->importName); continue; }
+                    FC_TRY(c) { fcWithDependencies(L, fcParseImportName(L, name), fcDictNew(c, FC_KEY_STR), keys); }
+                    FC_CATCH(c) { } FC_END_TRY;
+                    for (j = 0; j < keys->count; j++) PJ_NEED((const char*)keys->items[j]);
+                }
+            }
+        } else {
+            FcList* keys = fcListNew(c);
+            FC_TRY(c) { fcWithDependencies(L, module, fcDictNew(c, FC_KEY_STR), keys); }
+            FC_CATCH(c) { } FC_END_TRY;
+            for (k = 0; k < keys->count; k++) PJ_NEED((const char*)keys->items[k]);
+        }
+#undef PJ_NEED
+        for (k = 0; k < needs->count; k++) if (fcListHasStr(modules, (const char*)needs->items[k])) fcListAdd(c, kept, needs->items[k]);
+        fcDictPut(deps, module, kept);
+    }
+    return deps;
+}
 static const char* pjLibraryNamespace(const PjLibrary* lib) { return lib->project->project->standard ? NULL : lib->importName; }
 /* ProjectNativeOverlay.KeyOf */
 static const char* pjOverlayKey(FcCtx* c, const char* importName) { return fcFmt(c, "pkg:%s", pjLower(c, importName)); }
@@ -484,6 +533,8 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     }
     linked->optimize = in->o ? (in->o->optimize >= 0 ? in->o->optimize : t->optimize) : 0;
     linked->sourceModules = sourceModules;
+    linked->moduleDeps = pjModuleDependencies(L, plan, processed);
+    linked->sourceTextHashes = fgSourceTextHashes(c, processed);
     if (registry) *registry = &L->registry;
     if (in->storeOut) *in->storeOut = &L->store;
     return linked;

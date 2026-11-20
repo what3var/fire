@@ -26,6 +26,7 @@ static void nbDumpBuildPlan(FcCtx* c, const char* options, const char* path, con
         else if (streq0(w, "performance")) b.mode = 2;
         else if (streq0(w, "split")) config->split = FG_SPLIT_ON;
         else if (streq0(w, "nosplit")) config->split = FG_SPLIT_OFF;
+        else if (streq0(w, "static") || streq0(w, "shared")) config->linkage = w;   /* (FrontendDump.DumpStaticPlan: build/linkage.c) */
         else if (streq0(w, "quick")) config->quick = 0;
         else if (streq0(w, "quick1")) config->quick = 1;
         else if (streq0(w, "speed")) { config->optimize = 0; config->optimizeFromCommandLine = true; }

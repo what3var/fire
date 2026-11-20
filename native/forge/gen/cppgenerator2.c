@@ -71,20 +71,36 @@ static const char* Run(FgGen* g) {
     const char* prelude;
     const char* programText;
     FcList* splitKeys;
+    FcBuf libraryThunks = {0};
     bool marks, natSources = false;
     int round, i, k;
     main = g->main = fgFuncNew(g, NULL, g->program->program->topLevel, FK_Main, 0);
     if (DebugBuild) UseExceptions(g);
     FC_DICT_EACH(g->program->program->classes, e) if (((FcRtClass*)e->value)->isActor) { g->usesActors = true; UseThreads(g); break; }
+    ApplyForcedFlags(g);
+    AddLibraryNeeds(g);
 
     /* Fixpoint: generating code can create classes, functions and method calls, and can show that a variable may hold a reference; all of that changes
      * what the code generated before it has to look like. */
     for (round = 0;; round++) {
         int before = g->version;
-        GenerateChunk(g, main);
-        for (i = 0; i < g->funcs->count; i++) GenerateChunk(g, (FgFunc*)g->funcs->items[i]);
+        if (LibraryRole) KeepOwnModule(g);
+        else GenerateChunk(g, main);
+        for (i = 0; i < g->funcs->count; i++) {
+            FgFunc* f = (FgFunc*)g->funcs->items[i];
+            if (!LibraryRole) { GenerateChunk(g, f); continue; }
+            /* a library module keeps every member: one the target cannot translate (fire threads on wasm) becomes a function that fails when it is called */
+            FC_TRY(g->c) { GenerateChunk(g, f); }
+            FC_CATCH(g->c) {
+                if (g->c->err.kind != FC_ERR_NATIVE || f->kind == FK_Main) fcRethrow(g->c);
+                f->code = UnsupportedStub(g, f, g->c->err.message);
+            } FC_END_TRY;
+        }
         RegisterTargets(g);
-        {
+        if (g->role == FG_ROLE_PROGRAM) ReachLibraryClasses(g);   /* (the classes of the libraries the code reached so far can make) */
+        /* (made once more when the file is put together: the strings, units and type arguments they use are registered by now) */
+        if (Modular) ModularHelpers(g);   /* (modules: all of its helpers - their checks register strings, units, `is of` tests, type arguments and functions) */
+        else {
             FcList* names = fgSortedKeys(g->c, g->fieldNames, true);
             for (i = 0; i < names->count; i++) FieldHelpers(g, (const char*)names->items[i]);
             TArgTables(g, true);
@@ -99,6 +115,7 @@ static const char* Run(FgGen* g) {
     }
 
     g->initCode.len = 0;
+    if (LibraryRole) return LibraryBody(g);
     fcBufStr(&sb, HeadDefines(g));
     /* The units a text may name (`"5mm".ToFloat()`, Unit.ParseKnown): those of fire without a prefix, then those of the program by symbol and name */
     textUnits = fcListNew(g->c);
@@ -132,6 +149,7 @@ static const char* Run(FgGen* g) {
     /* (OrderBy is a stable sort: equal keys keep the order of Distinct) */
     for (i = 1; i < dimNames->count; i++)
         for (k = i; k > 0 && fgCultureCmp((const char*)dimNames->items[k - 1], (const char*)dimNames->items[k]) > 0; k--) { void* t = dimNames->items[k]; dimNames->items[k] = dimNames->items[k - 1]; dimNames->items[k - 1] = t; }
+    if (g->separate && dimNames->count > FG_SEPARATE_DIMS) FG_NOTSUP("the program uses %d dimensions of units; with linkage \"static\" at most %d", dimNames->count, FG_SEPARATE_DIMS);
     fcBufStr(&sb, HeadTail(g, dimNames->count));
     prelude = fcStrN(g->c, sb.p, sb.len);
     /* the system libraries that packages need on this platform (`linkLibraries`): the build links them */
@@ -147,6 +165,11 @@ static const char* Run(FgGen* g) {
         for (i = 0; i < libs->count; i++) fcBufFmt(&sb, "// fire-link: %s\n", (const char*)libs->items[i]);
     }
     if (DebugBuild && DebugAgent && streq0(g->target->platform, "windows")) fcBufStr(&sb, "// fire-link: ws2_32\n");
+    if (g->separate) {
+        /* the head of the file of each library module: the same configuration of the runtime, without its state (that lives in the program's file) */
+        g->libraryHead = LibraryHeadOf(g, prelude);
+        if (g->dll) g->runtimeKey = RuntimeDllKey(g, g->libraryHead, g->toolchainStamp);
+    }
     fcBufFmt(&sb, "#define FIRE_PLATFORM_HEADER \"platform/%s/fire_platform.h\"\n", g->target->platform);
     if (!g->dll) fcBufStr(&sb, "#define FIRE_RT_IMPLEMENTATION 1   // the runtime's global state lives in this file\n");
     else fcBufStr(&sb, "// (the runtime's global state lives in its DLL)\n");
@@ -159,13 +182,14 @@ static const char* Run(FgGen* g) {
     if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, "head-end"));
 
     /* The natives in C of the packages ("language": "c") and the bridges of graphics and windows: part of this file, after the runtime - a C compiler is enough
-     * (TinyCC, a board without C++). Their platform layers come with them (platformSources, ROADMAP 13.3b). (the bridges of graphics and windows: not ported yet) */
-    if (g->usesGraphics) { if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, fcFmt(g->c, "natives %s", SplitNativesGroup(g, "graphics")))); AppendStandardNatives(g, &sb, "graphics"); }
-    if (g->usesWindows) { if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, fcFmt(g->c, "natives %s", SplitNativesGroup(g, "windows")))); AppendStandardNatives(g, &sb, "windows"); }
+     * (TinyCC, a board without C++). Their platform layers come with them (platformSources, ROADMAP 13.3b).
+     * (linkage "static": the natives of an import that is a library module live in the file of that module) */
+    if (g->usesGraphics && !NativesOwner(g, "graphics")) { if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, fcFmt(g->c, "natives %s", SplitNativesGroup(g, "graphics")))); AppendStandardNatives(g, &sb, "graphics"); }
+    if (g->usesWindows && !NativesOwner(g, "windows")) { if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, fcFmt(g->c, "natives %s", SplitNativesGroup(g, "windows")))); AppendStandardNatives(g, &sb, "windows"); }
     for (i = 0; i < g->packageImports->count; i++) {
         FgPkgImportKey* p = (FgPkgImportKey*)g->packageImports->items[i];
         FcList* texts;
-        if (!(p->import->native && p->import->native->isC) || fcDictHas(g->standardNativesWritten, fcAsciiLower(g->c, p->import->name))) continue;
+        if (!(p->import->native && p->import->native->isC) || fcDictHas(g->standardNativesWritten, fcAsciiLower(g->c, p->import->name)) || NativesOwner(g, p->key)) continue;
         if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, fcFmt(g->c, "natives %s", SplitNativesGroup(g, p->key))));
         texts = fgReadNativeSources(g->c, g->instImports, g->store, p->import, fgPlatformKeys(g));
         for (k = 0; k < texts->count; k++) {
@@ -176,6 +200,14 @@ static const char* Run(FgGen* g) {
         }
     }
     if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, "program"));
+
+    /* linkage "static": the natives in C live in this file only (their state once); the library modules call them through these */
+    fcBufStr(&sb, SharedNativeThunks(g));
+    /* the library modules (ROADMAP 9, one file): their code after the runtime and the natives in C, before the program's own (the program defines what they declare) */
+    if (g->moduleBodies) {
+        if (g->usesJson) fcBufStr(&sb, "#define FIRE_JSON_IMPLEMENTATION 1\n#include \"fire_json.h\"\n");
+        fcBufStr(&sb, g->moduleBodies);
+    }
 
     /* The natives in C++ (the packages that are still C++): a file of their own, built with a C++ compiler and linked with the program. */
     fcBufStr(&nat, fgReplace(g->c, prelude, "// Generated by fire.Native from the bytecode - do not edit.", "// Generated by fire.Native: the natives in C++ of the program fire_natives.cpp belongs to - do not edit."));
@@ -196,7 +228,8 @@ static const char* Run(FgGen* g) {
             natSources = true;
         }
     }
-    if (natSources || fcDictCount(g->nativeThunks) > 0) {
+    if (g->libraries) for (i = 0; i < g->libraries->count; i++) fcBufStr(&libraryThunks, ((FgModuleOutput*)g->libraries->items[i])->nativeThunks);
+    if (natSources || fcDictCount(g->nativeThunks) > 0 || libraryThunks.len > 0) {
         FcList* thunks = fcListNew(g->c);
         fcBufStr(&nat, "\n");
         fcBufStr(&sb, "// the natives in C++ (fire_natives.cpp)\n");
@@ -213,13 +246,15 @@ static const char* Run(FgGen* g) {
             fcBufFmt(&nat, "extern \"C\" fire::Value fire_nat_%s%d(%s) { using namespace fire; return %s(%s); }\n", Px, t->index,
                 fgReplace(g->c, fgReplace(g->c, ps, "Value", "fire::Value"), "OwnList", "fire::OwnList"), (const char*)e->key, fgJoin(g->c, args, ", "));
         }
+        if (libraryThunks.len) fcBufPut(&nat, libraryThunks.p, libraryThunks.len);
         g->nativesCode = fcBufDone(g->c, &nat);
     } else { g->nativesCode = NULL; fcBufFree(&nat); }
     fcBufStr(&sb, "\n");
     {
         FcList* dimTexts = fcListNew(g->c);
+        int pad = g->separate ? FG_SEPARATE_DIMS - dimNames->count : dimNames->count == 0 ? 1 : 0;
         for (i = 0; i < dimNames->count; i++) fcListAdd(g->c, dimTexts, (void*)CString(g, (const char*)dimNames->items[i]));
-        if (dimNames->count == 0) fcListAdd(g->c, dimTexts, (void*)"\"\"");
+        for (i = 0; i < pad; i++) fcListAdd(g->c, dimTexts, (void*)"\"\"");
         fcBufFmt(&sb, "const char* g_dimNames[] = {%s};   /* (not const: a plugin puts the dimensions of its units into the free places) */\n", fgJoin(g->c, dimTexts, ", "));
     }
     fcBufStr(&sb, "static const UnitInit kUnitInit[] = {\n");
@@ -324,7 +359,11 @@ static const char* Run(FgGen* g) {
         for (i = 0; i < byIndex->count; i++) {
             FcDictEntry* e = (FcDictEntry*)byIndex->items[i];
             FcList* parts = fgSplit(g->c, (const char*)e->key, '\x01');
-            fcBufFmt(&sb, "static Value SF%d = FIRE_UNDEF_INIT; // %s.%s\n", FC_VALI(e->value) - 1, (const char*)parts->items[0], (const char*)parts->items[1]);
+            const char* cls = (const char*)parts->items[0];
+            const char* field = (const char*)parts->items[1];
+            if (!Modular) fcBufFmt(&sb, "static Value SF%d = FIRE_UNDEF_INIT; // %s.%s\n", FC_VALI(e->value) - 1, cls, field);
+            else if (IsOwnClass(g, FindClass(g, cls))) fcBufFmt(&sb, "Value %s = FIRE_UNDEF_INIT; // %s.%s\n", StaticFieldVar(g, cls, field), cls, field);
+            else fcBufFmt(&sb, "extern Value %s; // %s.%s\n", StaticFieldVar(g, cls, field), cls, field);
         }
         if (byIndex->count > 0) fcBufStr(&sb, "\n");
         if (g->usesThreads && !Modular) {
@@ -342,6 +381,7 @@ static const char* Run(FgGen* g) {
             fcBufStr(&sb, "#endif\n");
         }
     }
+    fcBufStr(&sb, ModuleTables(g));
     {
         /* SortedSet<(int, int)> of the unit factor caches */
         FcList* keys = fgKeys(g->c, g->unitFactorCaches);
@@ -358,7 +398,9 @@ static const char* Run(FgGen* g) {
     }
     /* Prototypes of everything, then the helpers (they call functions), then the functions (they call helpers). */
     FunctionPrototypes(g, &sb);
-    {
+    /* (modules, ROADMAP 9 B2: the helpers serve the program's own classes; the others go through the tables of the runtime) */
+    if (Modular) fcBufStr(&sb, ModularHelpers(g));
+    else {
         FcList* fieldNames = fgSortedKeys(g->c, g->fieldNames, true);
         FcList* fieldHelperCode = fcListNew(g->c);
         FcList* dispatcherCode = fcListNew(g->c);
@@ -459,12 +501,12 @@ static const char* Run(FgGen* g) {
             for (k = 0; k < sp->path->count; k++) fcListAdd(g->c, texts, (void*)CString(g, (const char*)sp->path->items[k]));
             fcBufFmt(&sb, "static const char* const %s[] = {%s};\n", sp->name, fgJoin(g->c, texts, ", "));
         }
-        fcBufFmt(&sb, "%s\n", ReflectionCode(g));   /* (ShareReflection: a module shares the functions - the modules are not ported) */
+        fcBufFmt(&sb, "%s\n", ShareReflection(g, ReflectionCode(g)));
     }
-    fcBufFmt(&sb, "%s\n", IndexHelpers(g));
+    if (!Modular) fcBufFmt(&sb, "%s\n", IndexHelpers(g));
     if (g->usesJson) fcBufFmt(&sb, "%s\n", JsonCode(g));
     fcBufFmt(&sb, "%s\n", RuntimeHooks(g));
-    if (g->usesLibCall) fcBufStr(&sb, LibraryThunks(g));
+    if (g->usesLibCall || Modular) fcBufStr(&sb, LibraryThunks(g));
 
     splitKeys = fcListNew(g->c);
     for (i = 0; i < g->funcs->count; i++) {
@@ -498,7 +540,11 @@ static const char* Run(FgGen* g) {
         fcBufFmt(&g->initCode, "    g_arrClasses = %skArrClasses;\n", Px);
     }
     if (DebugBuild) fcBufStr(&sb, DebugProgramTables(g));
+    fcBufStr(&sb, SharedLibraryChecks(g));
+    fcBufStr(&sb, HostTable(g, fcStrN(g->c, sb.p, sb.len)));
+    fcBufStr(&sb, PluginHostCode(g));
     fcBufStr(&sb, "static void fire_init(void) {\n");
+    fcBufStr(&sb, SharedLibraryCheckCalls(g));   /* (linkage "shared": the libraries first) */
     if (g->usesThreads) fcBufStr(&sb, "    fire_threadsInit();   // the locks of the threads, before anything else\n");
     fcBufPut(&sb, g->initCode.p ? g->initCode.p : "", g->initCode.len);
     fcBufStr(&sb, "}\n");
@@ -544,6 +590,8 @@ static const char* Run(FgGen* g) {
     }
     programText = fcBufDone(g->c, &sb);
     if (PointerCallsOn) programText = PointerCallsPass(g, programText);
+    /* (a program that loads plugins: the classes from its first own id up to this are its own - a plugin's come after them) */
+    if (g->openWorld) programText = InsertAfterRuntime(g, programText, fcFmt(g->c, "#define FIRE_PROG_END %du   // the end of the program's class ids (the classes of plugins come after)\n", g->nextClassId));
     if (marks) {
         /* `auto`: a small program stays one file - the marks go, and the text is the one of a build without them */
         if (g->splitMode == 2 && fc8Units(programText) < 2 * 1024 * 1024) programText = WithoutSplitMarks(g, programText);
@@ -578,6 +626,7 @@ static const char* HeadDefines(FgGen* g) {
         else fcBufFmt(&sb, "#define %s %s\n", fcStrN(g->c, define, (size_t)eq), define + eq + 1);
     }
     if (g->usesExceptions) fcBufStr(&sb, "#define FIRE_EXCEPTIONS 1\n");
+    if (Modular) fcBufStr(&sb, "#define FIRE_MODULES 1   // modules (ROADMAP 9): the members of the classes of other modules by name, through the class descriptors\n");
     if (DebugBuild) fcBufStr(&sb, "#define FIRE_DEBUG 1   // a debug build: the shadow stack and the hooks of the debugger (fire_debug.h)\n");
     if (DebugBuild && DebugAgent) fcBufStr(&sb, "#define FIRE_DEBUG_AGENT 1   // the debug agent (docs/spec/NATIVE_DEBUG_PROTOCOL.md; the desktop: FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T)\n");
     if (DebugBuild && DebugAgent) {
@@ -597,11 +646,23 @@ static const char* HeadDefines(FgGen* g) {
     return fcBufDone(g->c, &sb);
 }
 
+/* The head of the file of a library module (linkage "static"/"shared", a plugin): the configuration of the runtime, without its state. */
+static const char* LibraryHeadOf(FgGen* g, const char* prelude) {
+    FcBuf head = {0};
+    fcBufStr(&head, prelude);
+    fcBufFmt(&head, "#define FIRE_PLATFORM_HEADER \"platform/%s/fire_platform.h\"\n", g->target->platform);
+    if (g->dll) fcBufStr(&head, DllHead(g));
+    fcBufStr(&head, "#include \"fire_rt.h\"\n");
+    fcBufStr(&head, "#if defined(__GNUC__) || defined(__clang__)\n#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n");
+    if (g->usesJson) fcBufStr(&head, "#include \"fire_json.h\"\n");
+    return fcBufDone(g->c, &head);
+}
+
 /* The lines of the head after the units: their dimensions, the headers of the target, DLLs. */
 static const char* HeadTail(FgGen* g, int dimCount) {
     FcBuf sb = {0};
     int i;
-    fcBufFmt(&sb, "#define FIRE_NDIMS %d\n", dimCount > 1 ? dimCount : 1);
+    fcBufFmt(&sb, "#define FIRE_NDIMS %d\n", g->separate ? FG_SEPARATE_DIMS : dimCount > 1 ? dimCount : 1);
     for (i = 0; i < g->target->includeCount; i++) fcBufFmt(&sb, "#include <%s>\n", g->target->includes[i]);
     if (g->dll) fcBufStr(&sb, "#define FIRE_DLL 1   // linkage \"shared\" on Windows: the runtime and the modules are DLLs (fire_rt.h)\n");
     return fcBufDone(g->c, &sb);
@@ -615,6 +676,7 @@ static FcList* fgClassListCopy(FgGen* g) { return fcListCopy(g->c, g->classList)
 static void RegisterTargets(FgGen* g) {
     FcList* classes;
     int i, k;
+    if (LibraryRole) { RegisterServedTargets(g); return; }   /* (a library module keeps its own members; its dispatchers pull in those of the classes of other modules it serves) */
     if (g->classList->count > 0 || fcDictCount(g->dispatchers) > 0) {
         classes = fgClassListCopy(g);
         for (i = 0; i < classes->count; i++) {
@@ -646,6 +708,16 @@ static void RegisterTargets(FgGen* g) {
             if (!fcListHasStr(g->errorClasses, "CancelledException")) fcListAdd(g->c, g->errorClasses, (void*)"CancelledException");
             if (!fcListHasStr(g->errorClasses, "TimeoutException")) fcListAdd(g->c, g->errorClasses, (void*)"TimeoutException");
         }
+        /* (a program that loads plugins: `fireError("X", ...)` of a plugin's code may name any exception class of the libraries) */
+        if (g->openWorld) {
+            FcList* byName = fgClassesByName(g);
+            for (i = 0; i < byName->count; i++) {
+                FcRtClass* rc = (FcRtClass*)byName->items[i];
+                FcProto* one;
+                if (!ModuleOf(g, rc) || !ClassIs(rc, "Exception")) continue;
+                if ((one = fgFindConstructor(rc, 1)) && one->paramCount == 1 && !fcListHasStr(g->errorClasses, rc->name)) fcListAdd(g->c, g->errorClasses, (void*)rc->name);
+            }
+        }
         for (i = 0; i < g->errorClasses->count; i++) {
             const char* name = (const char*)g->errorClasses->items[i];
             if (!fcDictHas(g->program->program->classes, name)) continue;
@@ -654,7 +726,7 @@ static void RegisterTargets(FgGen* g) {
         }
     }
     {
-        FcList* fields = fgSortedKeys(g->c, g->fieldNames, true);
+        FcList* fields = Modular ? fcListNew(g->c) : fgSortedKeys(g->c, g->fieldNames, true);
         for (i = 0; i < fields->count; i++) {
             const char* field = (const char*)fields->items[i];
             classes = fgClassListCopy(g);
@@ -704,7 +776,7 @@ static void RegisterTargets(FgGen* g) {
         }
     }
     {
-        FcList* dispatchers = fgSortedNameArgc(g, g->dispatchers);
+        FcList* dispatchers = Modular ? fcListNew(g->c) : fgSortedNameArgc(g, g->dispatchers);
         for (i = 0; i < dispatchers->count; i++) {
             FgNameArgc* d = (FgNameArgc*)dispatchers->items[i];
             FcList* extensions;
@@ -735,6 +807,7 @@ static void RegisterTargets(FgGen* g) {
     RegisterReflectionTargets(g);
     RegisterKeptTargets(g);
     RegisterJsonTargets(g);
+    if (Modular) RegisterServedTargets(g);
     classes = fgClassListCopy(g);
     for (i = 0; i < classes->count; i++) {
         const FcRtClass* rc;
@@ -1238,9 +1311,12 @@ static const char* EnumerateItemsFunction(FgGen* g) {
         const char* unwound = g->usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return false;\n" : "";
         const char* unwound2 = g->usesExceptions ? "        if (FIRE_UNLIKELY(g_unwind.active)) return false;\n" : "";
         fcBufStr(&sb, "    if (obj.kind != K_Class || !leafAlive(obj)) return false;\n");
-        fcBufStr(&sb, "    switch (asObj(obj)->cls) { ");
-        for (i = 0; i < ids->count; i++) fcBufFmt(&sb, "case %d: ", FC_VALI(ids->items[i]));
-        fcBufStr(&sb, "break; default: return false; }\n");
+        if (Modular) fcBufStr(&sb, "    if (!fireIsOf(asObj(obj)->cls, \"IEnumerable\")) return false;\n");
+        else {
+            fcBufStr(&sb, "    switch (asObj(obj)->cls) { ");
+            for (i = 0; i < ids->count; i++) fcBufFmt(&sb, "case %d: ", FC_VALI(ids->items[i]));
+            fcBufStr(&sb, "break; default: return false; }\n");
+        }
         fcBufFmt(&sb, "    Value e = call_GetEnumerator_0(obj%s);\n", DispatchTail(g, "GetEnumerator", 0, "list", "0xFFFFFFFFu"));
         fcBufStr(&sb, "    adopt(e, list);\n");
         fcBufStr(&sb, unwound);
@@ -1672,13 +1748,14 @@ static const char* RuntimeHooks(FgGen* g) {
 static const char* DescFlags(const FcRtClass* rc) { return fgIsNoCopy(rc) ? "1u" : "0u"; }
 static const char* RecordFunctions(FgGen* g, const FgClassInfo* cls, int id, FcBuf* sb);
 /* The descriptor of a class (a row of FireClassDesc) */
-static const char* DescRow(FgGen* g, const FgClassInfo* cls, int id, FcBuf* sb, bool excTypes) {
+static const char* DescRow(FgGen* g, const FgClassInfo* cls, int id, FcBuf* sb, FcBuf* columns, bool excTypes) {
     FcList* chain = fcListNew(g->c);
     const FcRtClass* rc;
     const char* destroy = "NULL";
     const char* toString;
     const char* types = "NULL";
     const char* record;
+    const char* modular;
     FcProto* m;
     int message = -1, ticks = -1, i, slot, half;
     for (rc = cls->rc; rc; rc = rc->base)
@@ -1699,22 +1776,51 @@ static const char* DescRow(FgGen* g, const FgClassInfo* cls, int id, FcBuf* sb, 
             fcBufFmt(sb, "static const int32_t %s[] = {%s, -1};\n", types, fgJoin(g->c, ids, ", "));
         }
     }
+    modular = Modular ? ModularDescColumns(g, cls->rc, columns, id) : "";
     record = cls->rc->isRecord ? RecordFunctions(g, cls, id, sb) : ", NULL, NULL, NULL";
-    return fcFmt(g->c, "{%s, %d, %d, %d, %s, %s, %s, %s%s}", CString(g, cls->rc->name), FG_NAMES(cls->rc)->count, message, ticks, destroy, toString, types, DescFlags(cls->rc), record);
+    return fcFmt(g->c, "{%s, %d, %d, %d, %s, %s, %s%s, %s%s}", CString(g, cls->rc->name), FG_NAMES(cls->rc)->count, message, ticks, destroy, toString, types, modular, DescFlags(cls->rc), record);
 }
 /* The descriptors of the classes (FireClassDesc in fire_rt.h, one row per class id) */
 static const char* ClassDescTable(FgGen* g) {
     FcBuf sb = {0};
     FcList* rows = fcListNew(g->c);
+    FcBuf columns = {0};
+    FcDict* byId = fcDictNew(g->c, FC_KEY_STR);
+    FcDict* nameOfId = fcDictNew(g->c, FC_KEY_STR);
     int count = 0, id, i;
     fcBufStr(&sb, "");
-    for (i = 0; i < g->classList->count; i++) { int cid = ((FgClassInfo*)g->classList->items[i])->id; if (cid + 1 > count) count = cid + 1; }
-    for (id = 0; id < count; id++) {
-        FgClassInfo* cls = NULL;
-        for (i = 0; i < g->classList->count; i++) if (((FgClassInfo*)g->classList->items[i])->id == id) { cls = (FgClassInfo*)g->classList->items[i]; break; }
-        if (!cls) { fcListAdd(g->c, rows, (void*)"{\"?\", 0, -1, -1, NULL, NULL, NULL, 0, NULL, NULL, NULL}"); continue; }
-        fcListAdd(g->c, rows, (void*)DescRow(g, cls, id, &sb, true));
+    fcBufStr(&columns, "");
+    for (i = 0; i < g->classList->count; i++) {
+        FgClassInfo* c = (FgClassInfo*)g->classList->items[i];
+        if (c->id + 1 > count) count = c->id + 1;
+        fgIMapPut(g->c, byId, c->id, c);
     }
+    /* (modules: every class of the libraries has a row - its chain answers the access checks of its code) */
+    if (Modular && g->progBase > count) count = g->progBase;
+    if (g->fixedIds) FC_DICT_EACH(g->fixedIds, e) fgIMapPut(g->c, nameOfId, FC_VALI(e->value) - 1, (void*)e->key);
+    for (id = 0; id < count; id++) {
+        void* found;
+        FgClassInfo* cls = fgIMapTry(byId, id, &found) ? (FgClassInfo*)found : NULL;
+        /* (an id without a class: a class of a library module that nothing makes objects of) */
+        if (!cls) {
+            void* unmade;
+            FcRtClass* unmadeRc;
+            if (Modular && fgIMapTry(nameOfId, id, &unmade) && (unmadeRc = fgClassOf(g, (const char*)unmade)) != NULL) {
+                FcBuf c = {0};
+                const FcRtClass* b;
+                fcBufStr(&c, "");
+                for (b = unmadeRc; b; b = b->base) fcBufFmt(&c, "%s, ", CString(g, b->name));
+                fcBufFmt(&columns, "static const char* const kIsa%d[] = {%sNULL};\n", id, fcBufDone(g->c, &c));
+                fcListAdd(g->c, rows, (void*)fcFmt(g->c, "{%s, %d, -1, -1, NULL, NULL, NULL, kIsa%d, NULL, NULL, NULL, %s, NULL, NULL, NULL}", CString(g, (const char*)unmade), FG_NAMES(unmadeRc)->count, id, DescFlags(unmadeRc)));
+            }
+            else fcListAdd(g->c, rows, (void*)(Modular ? "{\"?\", 0, -1, -1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL}" : "{\"?\", 0, -1, -1, NULL, NULL, NULL, 0, NULL, NULL, NULL}"));
+            continue;
+        }
+        fcListAdd(g->c, rows, (void*)DescRow(g, cls, id, &sb, &columns, true));
+    }
+    if (g->libraryTablesCode.len) fcBufPut(&sb, g->libraryTablesCode.p, g->libraryTablesCode.len);
+    if (columns.len) fcBufPut(&sb, columns.p, columns.len);
+    fcBufFree(&columns);
     if (rows->count > 0) {
         FcBuf init = {0};
         fcBufFmt(&sb, "static const FireClassDesc kClassDescs[] = {\n    %s\n};\n", fgJoin(g->c, rows, ",\n    "));

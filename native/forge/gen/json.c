@@ -257,7 +257,7 @@ static const char* fgRawPlaceOf(FgGen* g, const FcRtClass* rc, int index) {
     type = RawTypeAt(g, rc, index);
     return fcFmt(g->c, "%s, %d", KindOfType(type) == KindFloat ? "FIRE_RAW_REAL" : KindOfType(type) == KindBool ? "FIRE_RAW_BOOL" : KindOfType(type) == KindWord ? "FIRE_RAW_WORD" : "FIRE_RAW_INT", l->off[index]);
 }
-static const char* JsonRow(FgGen* g, FgClassInfo* ci, const char* fieldTable, int flags, FcBuf* sb) {
+static const char* JsonRow(FgGen* g, FgClassInfo* ci, const char* fieldTable, int flags, FcBuf* sb, FcList* unitFixups) {
     const FcRtClass* rc = ci->rc;
     FcDict* index = FG_INDEX(rc);
     FcList* all = JsonFieldsOf(g, rc);
@@ -285,7 +285,7 @@ static const char* JsonRow(FgGen* g, FgClassInfo* ci, const char* fieldTable, in
     }
     if (rows->count > 0) {
         FcDict* derivedNames = DerivedFieldNames(g);
-        fcBufFmt(sb, "static const JsonFieldInfo %s[] = {", fieldTable);
+        fcBufFmt(sb, "static %sJsonFieldInfo %s[] = {", unitFixups ? "" : "const ", fieldTable);
         for (i = 0; i < rows->count; i++) {
             FgJsonField* f = (FgJsonField*)rows->items[i];
             int fi = FC_VALI(fcDictGet(index, f->name)) - 1, slot, half, slot2, unit, arrClass = 0;
@@ -296,7 +296,7 @@ static const char* JsonRow(FgGen* g, FgClassInfo* ci, const char* fieldTable, in
             int reqArray;
             FieldPlace(g, rc, fi, &slot, &half);
             tn = CString(g, f->type);
-            unit = UnitId(g, f->unit);
+            unit = unitFixups ? 0 : UnitId(g, f->unit);
             reqArray = !fgFieldRequiredUnit(rc, f->name) ? fgFieldRequiredArray(rc, f->name) : 0;
             defined = DefinedTypeOf(g, rc, f->name);
             if (!defined) defined = DefinedKindOf(g, fgFieldRequiredKind(rc, f->name), fcDictHas(derivedNames, f->name) && !streq0(fgFieldWhat(g->c, rc, f->name), fcFmt(g->c, "Field '%s'", f->name)));
@@ -306,6 +306,11 @@ static const char* JsonRow(FgGen* g, FgClassInfo* ci, const char* fieldTable, in
             fcBufFmt(sb, "%s{%s, %d, %s, %d, %d, %s, %s, %d, %d}", i ? ", " : "", jn, slot > 0 ? slot : 0, tn, unit, reqArray, defined, raw, half, arrClass);
         }
         fcBufStr(sb, ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1, 0}};\n");
+        if (unitFixups)
+            for (i = 0; i < rows->count; i++) {
+                int u = UnitId(g, ((FgJsonField*)rows->items[i])->unit);
+                if (u != 0) fcListAdd(g->c, unitFixups, (void*)fcFmt(g->c, "%s[%d].unit = %s;", fieldTable, i, UnitC(g, u)));
+            }
     }
     else fieldTable = "NULL";
     if (rc->isActor) flags |= 1;
@@ -326,8 +331,17 @@ static const char* JsonCode(FgGen* g) {
     int jsonIds = 0, jsonId, i, half;
     FcList* targs;
     FcList* excluded;
-    fcBufStr(&sb, "#define FIRE_JSON_IMPLEMENTATION 1\n");
-    fcBufStr(&sb, "#include \"fire_json.h\"\n");
+    /* (with library modules in one file it is included before their code; linkage "static": the engine is in the file of the module that calls it) */
+    {
+        bool inLibrary = false;
+        if (g->separate && g->libraries) for (i = 0; i < g->libraries->count; i++) if (((FgModuleOutput*)g->libraries->items[i])->jsonEngine) inLibrary = true;
+        if (!g->moduleBodies && !inLibrary) {
+            fcBufStr(&sb, "#define FIRE_JSON_IMPLEMENTATION 1\n");
+            fcBufStr(&sb, "#include \"fire_json.h\"\n");
+        }
+        else if (!g->moduleBodies) fcBufStr(&sb, "#include \"fire_json.h\"   // (the engine: in the library of the module that calls it)\n");
+        else fcBufStr(&sb, "");
+    }
     for (i = 0; i < g->classList->count; i++) if (((FgClassInfo*)g->classList->items[i])->id + 1 > jsonIds) jsonIds = ((FgClassInfo*)g->classList->items[i])->id + 1;
     for (jsonId = 0; jsonId < jsonIds; jsonId++) {
         FgClassInfo* ci = NULL;
@@ -360,7 +374,7 @@ static const char* JsonCode(FgGen* g) {
             FieldPlace(g, rc, FC_VALI(v2) - 1, &objValues, &half);
             JsonCountPlace(g, rc, FC_VALI(v3) - 1, &objCount, &objCountHalf);
         }
-        fcListAdd(g->c, rows, (void*)JsonRow(g, ci, fcFmt(g->c, "kJsonF%d", ci->id), flags, &sb));
+        fcListAdd(g->c, rows, (void*)JsonRow(g, ci, fcFmt(g->c, "kJsonF%d", ci->id), flags, &sb, NULL));
     }
     fcBufFmt(&sb, "static const JsonClassInfo kJsonClasses[] = {%s};\n", rows->count == 0 ? "{\"\", \"\", 0, NULL, 0, 0, 0, 0}" : fgJoin(g->c, rows, ",\n    "));
     fcBufFmt(&sb, "static const uint32_t kJsonClassCount = %d;\n", rows->count);

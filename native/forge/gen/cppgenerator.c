@@ -1,7 +1,7 @@
 /* native/forge/gen/cppgenerator.c - src/fire.Native/CppGenerator.cs (commit 808e9788), part 1: the registries, the specialisations of generic
  * methods, classes, fields and their layout, the static types, the guards of declarations, the type arguments, `inline c`, access, the natives of
- * the packages, the units of a demand (the C# file's lines 146-1970, in its order). Only the role of a single program (ModuleRole.Single) is
- * ported: linkage "source" - Modular and LibraryRole are false, Px is "" (the modules are CppGenerator.Modules.cs, linkage "static"). */
+ * the packages, the units of a demand (the C# file's lines 146-1970, in its order). The roles of the modules (Modular, LibraryRole, Px) as in C#:
+ * gen/modules.c. */
 
 #define FG_SPEC(text) fgParseSpec(g->c, g->specCache, g->condCache, (text))
 #define FG_NAMES(rc) fgFlattenedFieldNames(g->c, g->rtNames, (rc))
@@ -17,10 +17,11 @@ enum { TypeUnknown = 0, NullableBit = 0x10, TypeUndefined = 0x10, TypeNone = 0x2
 enum { FunctionScope = -1, GlobalScope = -2 };
 #define TempBase (1 << 24)
 
-/* the properties of the single program */
-#define Modular false
-#define LibraryRole false
-#define Px ""
+/* the role of the generator (CppGenerator.Modules.cs): Modular - the program is made of modules (linkage "static", FIRE_MODULES=1); LibraryRole - this
+ * generator makes a library module; Px - the prefix of the names a library module keeps to itself (`core_`) */
+#define Modular (g->role != 0)
+#define LibraryRole (g->role == 1)
+#define Px (g->self ? g->self->idPx : "")
 #define HelperStorage "static "
 #define HelperInline "static inline "
 static bool fgDebugBuild(FgGen* g) { return g->program->mode == 0; }
@@ -33,6 +34,52 @@ static bool fgCheckAccess(FgGen* g) { return g->program->mode != 2; }
 #define WrapDispatchers (g->usesActors || g->usesThreads)
 
 /* forward declarations of what the other parts define */
+/* (the modules: gen/modules.c, gen/moddispatch.c, gen/staticlinkage.c, gen/plugins.c) */
+static FgModuleSpec* ModuleOf(FgGen* g, const FcRtClass* rc);
+static bool IsOwnClass(FgGen* g, const FcRtClass* rc);
+static bool ProtoKey(FgGen* g, const FcProto* proto, FgModuleSpec** module, const char** key);
+static const char* ExportName(FgGen* g, const FgModuleSpec* module, const char* key);
+static const char* ModuleBase(FgGen* g, const FgModuleSpec* m);
+typedef struct FgClassInfo FgClassInfoT;
+static FgClassInfo* ForeignClass(FgGen* g, const char* name, FcRtClass* rc);
+static const char* DbgSrcOf(FgGen* g, int src);
+static void NoteMadeBy(FgGen* g, const char* cls);
+static const char* DemandOwnerOf(const FcChunk* chunk);
+static uint32_t CurrentFlags(FgGen* g);
+static void ApplyForcedFlags(FgGen* g);
+static void AddLibraryNeeds(FgGen* g);
+static void ReachLibraryClasses(FgGen* g);
+static void KeepOwnModule(FgGen* g);
+static bool KeepsPrivate(FgGen* g, const FcRtClass* rc, const char* name);
+static const char* ModuleTables(FgGen* g);
+static const char* ShareReflection(FgGen* g, const char* code);
+static const char* LibraryBody(FgGen* g);
+static const char* UnsupportedStub(FgGen* g, FgFunc* f, const char* why);
+static const char* ModId(FgGen* g);
+static const char* ModIdOf(FgGen* g, const FcRtClass* rc);
+static bool OwnsProto(FgGen* g, const FcProto* p);
+static void RegisterServedTargets(FgGen* g);
+static const char* ModTArgOf(FgGen* g, const char* cls, int k);
+static const char* ModIsOf(FgGen* g, const char* typeName);
+static const char* ModClassScore(FgGen* g, const char* name);
+static const char* ModularHelpers(FgGen* g);
+static const char* ModularDescColumns(FgGen* g, const FcRtClass* rc, FcBuf* decls, int id);
+static void fgBufInsert0(FcBuf* b, const char* text);
+static FcList* fgClassesByName(FgGen* g);
+static const char* LibraryHeadOf(FgGen* g, const char* prelude);
+#define NativesOwner(g, import) (NativesOwnerSpec((g), (import)) != NULL)
+static FgModuleSpec* NativesOwnerSpec(FgGen* g, const char* import);
+static bool NativeIsHere(FgGen* g, const char* import);
+static const char* SharedNative(FgGen* g, const char* function, int argc, bool needsList, const char* import);
+static const char* SharedNativeThunks(FgGen* g);
+static const char* SharedLibraryChecks(FgGen* g);
+static const char* SharedLibraryCheckCalls(FgGen* g);
+static const char* HostTable(FgGen* g, const char* programC);
+static const char* PluginHostCode(FgGen* g);
+static const char* InsertAfterRuntime(FgGen* g, const char* text, const char* insert);
+static const char* RuntimeDllKey(FgGen* g, const char* head, const char* toolchainStamp);
+static const char* DllHead(FgGen* g);
+#define FG_SEPARATE_DIMS 16
 static void UseExceptions(FgGen* g);
 static void UseThreads(FgGen* g);
 static int UnitId(FgGen* g, const FcU* unit);
@@ -55,8 +102,9 @@ static const char* ArrClassIdText(FgGen* g, const char* text);
 static int ArrClassId(FgGen* g, const char* text);
 static const char* IsANames(FgGen* g, const char* cls, const char* name, FcBuf* sb);
 static const char* LineFileLiteral(FgGen* g, int sourceIndex);
-static const char* UnitC(FgGen* g, int unit) { (void)g; return fcFmt(g->c, "%d", unit); }
-static const char* EnumC(FgGen* g, int index) { return fcFmt(g->c, "%d", index); }
+/* CppGenerator.Modules.cs: the C of a unit id and of an enum number in code (a library: through the tables of the program) */
+static const char* UnitC(FgGen* g, int unit) { return LibraryRole && unit != 0 ? fcFmt(g->c, "fire_units_%s[%d]", g->self->id, unit) : fcFmt(g->c, "%d", unit); }
+static const char* EnumC(FgGen* g, int index) { return LibraryRole && index != 0 ? fcFmt(g->c, "fire_enums_%s[%d]", g->self->id, index) : fcFmt(g->c, "%d", index); }
 static const char* ClassIdExpr(FgGen* g, const FgClassInfo* cls) { return cls->idText ? cls->idText : fcFmt(g->c, "%d", cls->id); }
 static int EnumIndex(FgGen* g, const FcEnumType* type);
 static const FcU* DemandUnit(FgGen* g, const char* demand);
@@ -797,9 +845,13 @@ static int DeclaredResultType(int declared) {
 }
 
 static FgFunc* GetFunc(FgGen* g, FcProto* proto, FgFuncKind kind, int captureCount) {
-    FgFunc* existing = (FgFunc*)fcDictGet(g->funcByProto, proto);
+    FgFunc* existing;
     FgFunc* func;
+    FgModuleSpec* module;
+    const char* key;
     static const char* const kindNames[] = { "Main", "Static", "Method", "Ctor", "Init", "Dtor", "Lambda", "FireBody" };
+    if (g->demandOwner && !g->keeping) NoteMadeBy(g, DemandOwnerOf(proto->chunk));   /* (a library: the class whose code this calls is reached with the caller's) */
+    existing = (FgFunc*)fcDictGet(g->funcByProto, proto);
     if (existing) {
         if (existing->kind != kind) FG_NOTSUP("a function is used both as %s and as %s: %s", kindNames[existing->kind], kindNames[kind], Describe(g, proto));
         if (existing->captureCount != captureCount) FG_NOTSUP("a lambda is created with different numbers of captures");
@@ -807,6 +859,12 @@ static FgFunc* GetFunc(FgGen* g, FcProto* proto, FgFuncKind kind, int captureCou
     }
     func = fgFuncNew(g, proto, proto->chunk, kind, g->funcs->count);
     func->captureCount = captureCount;
+    if (Modular && ProtoKey(g, proto, &module, &key) && module) {
+        /* a member of a class of a library module: called by its exported name - generated by its module, declared everywhere else */
+        func->exportName = ExportName(g, module, key);
+        func->external = module != g->self;
+        if (kind != FK_Main) func->name = func->exportName;
+    }
     fcListAdd(g->c, g->funcs, func);
     fcDictPut(g->funcByProto, proto, func);
     g->version++;
@@ -831,13 +889,21 @@ static const FcConst* ConstantStatic(FgGen* g, const char* className, const char
 }
 
 static FgClassInfo* RegisterClass(FgGen* g, const char* name) {
-    FgClassInfo* info = (FgClassInfo*)fcDictGet(g->classes, name);
+    FgClassInfo* info;
+    FgClassInfo* foreign;
     FcRtClass* rc;
+    void* fixedId;
+    int id;
+    if (LibraryRole && !g->keeping && g->self && g->classList->count >= g->self->classes->count) { fcSetAdd(g->demandedClasses, name); NoteMadeBy(g, name); }
+    info = (FgClassInfo*)fcDictGet(g->classes, name);
     if (info) return info;
     rc = FindClass(g, name);
+    if ((foreign = ForeignClass(g, name, rc)) != NULL) return foreign;
+    id = !g->fixedIds ? g->classList->count : fcDictTry(g->fixedIds, name, &fixedId) ? FC_VALI(fixedId) - 1 : g->nextClassId++;
     info = (FgClassInfo*)fcAlloc(g->c, sizeof *info);
     info->rc = rc;
-    info->id = g->classList->count;
+    info->id = id;
+    info->idText = LibraryRole ? fcFmt(g->c, "(%s + %du)", ModuleBase(g, g->self), id) : NULL;
     fcDictPut(g->classes, rc->name, info);
     fcListAdd(g->c, g->classList, info);
     g->version++;
@@ -857,8 +923,20 @@ static int StaticFieldIndex(FgGen* g, const char* className, const char* field) 
     g->version++;
     return index;
 }
-/* The C variable of a static field: `SF{n}` */
-static const char* StaticFieldVar(FgGen* g, const char* className, const char* field) { return fcFmt(g->c, "SF%d", StaticFieldIndex(g, className, field)); }
+/* The C variable of a static field: `SF{n}`, or with modules (ROADMAP 9) a name every module knows - defined by the module of the class, declared by the
+ * others; it can hold anything (other modules write it). */
+static const char* StaticFieldVar(FgGen* g, const char* className, const char* field) {
+    int index = StaticFieldIndex(g, className, field);
+    const FcRtClass* owner;
+    FgModuleSpec* m;
+    const char* name;
+    if (!Modular) return fcFmt(g->c, "SF%d", index);
+    owner = fgFindStaticFieldOwner(FindClass(g, className), field);
+    m = ModuleOf(g, owner);
+    name = fcFmt(g->c, "SFx_%s_%s_%s", m ? m->id : "prog", Mangle(g, owner->name), Mangle(g, field));
+    if (!VarRef(g, name)) { MarkVarRef(g, name); JoinVarType(g, name, TypeUnknown); }
+    return name;
+}
 
 /* ---- fields ---- */
 static bool RestrictedField(FgGen* g, const char* name);
@@ -1420,6 +1498,7 @@ static const char* TArgTables(FgGen* g, bool withTargOf) {
         FcList* caseIds = fcListNew(g->c);
         FcList* caseExprs = fcListNew(g->c);
         FcList* groups = fcListNew(g->c);
+        if (Modular) { fcBufStr(&targOfCode, ModTArgOf(g, cls, k)); continue; }
         for (ci = 0; ci < g->classList->count; ci++) {
             FgClassInfo* info = (FgClassInfo*)g->classList->items[ci];
             FcList* args = NULL;
@@ -1726,6 +1805,8 @@ static const char* AllowedExpr(FgGen* g, const FcRtClass* declaring, int access)
     FcList* ids;
     int i;
     if (access == ACC_Public) return "";
+    /* (with modules a caller may be a class of another module: private is the declaring class, protected a class derived from it - asked at run time) */
+    if (Modular) return access == ACC_Private ? fcFmt(g->c, "(caller == %s)", ClassIdExpr(g, RegisterClass(g, declaring->name))) : fcFmt(g->c, "fireClassIsSub(caller, %s)", CString(g, declaring->name));
     ids = fcListNew(g->c);
     for (i = 0; i < g->classList->count; i++) {
         FgClassInfo* c = (FgClassInfo*)g->classList->items[i];
@@ -1791,6 +1872,11 @@ static bool OwnMethodIsTry(const char* name) { return fcStartsWith(name, "tryTak
 static int OwnMethodBaseArgs(const char* ownId) { return streq0(ownId, "OM_TakeTo") ? 1 : 0; }
 static bool AnyClassHasMethod(FgGen* g, const char* name, int argc) {
     int i;
+    if (LibraryRole) {
+        /* (a library: the classes it sees - an ownership method of a class of the program goes unnoticed) */
+        FC_DICT_EACH(g->program->program->classes, e) if (FG_FIND((FcRtClass*)e->value, name, argc).proto) return true;
+        return false;
+    }
     for (i = 0; i < g->classList->count; i++) if (FG_FIND(((FgClassInfo*)g->classList->items[i])->rc, name, argc).proto) return true;
     return false;
 }
@@ -2065,7 +2151,7 @@ static const char* ArrClassTable(FgGen* g) {
         for (i = 0; i < types->count; i++) {
             const char* typeName = (const char*)types->items[i];
             if (fcDictHas(g->isOfWritten, typeName)) continue;
-            fcBufStr(&sb, IsOfFunction(g, typeName));
+            fcBufStr(&sb, Modular ? ModIsOf(g, typeName) : IsOfFunction(g, typeName));
             fcSetAdd(g->isOfWritten, typeName);
         }
     }

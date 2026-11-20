@@ -1,9 +1,9 @@
 # forge in C (`native/forge`)
 
 Status: **Phase C, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-c---das-frontend-in-c) (20.11.2026), dazu
-**Phase D Schritt 1**, der Generator Bytecode -> C ([unten](#phase-d-schritt-1-der-generator); mit Reflection, Probes, Debug-Builds, `--stats` - offen nur die
-Module für linkage static/shared/plugin), der größte Teil von **Schritt 2**, dem Builder ([unten](#phase-d-schritt-2-der-builder): `forge-c build` mit linkage
-`source`, `--stats`), und **Schritt 3**, Projekte, Solutions und das Paketformat `.fpk`
+**Phase D Schritt 1**, der Generator Bytecode -> C ([unten](#phase-d-schritt-1-der-generator); mit Reflection, Probes, Debug-Builds, `--stats`, den Modulen für
+linkage static/shared und `FIRE_MODULES=1` - offen nur der Generator eines Plugins), der größte Teil von **Schritt 2**, dem Builder ([unten](#phase-d-schritt-2-der-builder):
+`forge-c build` mit linkage `source`, `static`, `shared`, `--stats`; offen linkage `plugin`), und **Schritt 3**, Projekte, Solutions und das Paketformat `.fpk`
 ([unten](#phase-d-schritt-3-projekte-solutions-pakete): `forge-c build`/`publish` eines Projekts oder einer Solution, die Engine `vm`, die Standardpakete), und
 **Schritt 4**, der Rest der Befehlszeile ([unten](#phase-d-schritt-4-der-rest-der-befehlszeile): der Modellwandler, `forge test`, `build|publish|bytecode
 --report json` - der Bericht, den spark liest -, `run`, `native`, `data`, `dump`, `stats`, `bytecode` von Projekten, mehrere Dateien, `-D`, `-i`, `--overlay`,
@@ -374,10 +374,54 @@ mit Attributen und den weggelassenen Membern, `Reflect.Get/Set/Call/New`, die Se
 `RuntimeClass.ComputedSources`), Debug-Builds (`CppGenerator.Debug.cs` in `gen/debug.c`: Schattenstapel, `FIRE_DBG_L/J`, Ebenen der Gültigkeitsbereiche,
 die Tabellen des Programms), `--stats` (`CppGenerator.Stats.cs` in `gen/stats.c`, [unten](#phase-d-schritt-2-der-builder) der Bericht). Dabei gefunden: `RegisterJsonTargets`
 las in C den Code einer Funktion, die in dieser Runde erst angelegt, noch nicht erzeugt war (C#: `Func.Decoded` ist bis dahin leer) - in ruhrpott-raser
-(`Raser.Viewer`, `Raser.Game`) vertauschte das die Nummern zweier Klassen. Noch nicht portiert: `linkage` static/shared/plugin (`CppGenerator.Modules.cs`,
-`ModuleDispatch.cs`, `StaticLinkage.cs`, `Plugins.cs`: der Generator in C kennt nur die eine Rolle des ganzen Programms - `Modular`, `LibraryRole` sind `false`;
-ein Generator je Bibliotheksmodul mit seiner Sicht des Programms, die Runden über die gemeinsamen Schalter, die Exporte `fx_`, die Tabellen der Laufzeit, die
-Bibliotheken im Cache, die DLLs und Plugins) und `FIRE_MODULES=1` (`GenerateModular`). `forge cgen`/`buildplan` (FrontendDump) haben dafür auch noch kein Wort.
+(`Raser.Viewer`, `Raser.Game`) vertauschte das die Nummern zweier Klassen.
+
+### Die Module (linkage static/shared, `FIRE_MODULES=1`)
+
+Portiert (Stand 661e55b3): `CppGenerator.Modules.cs` (`gen/modules.c`: `ModulesOf`, `LibraryView`, `GenerateModular`, `GenerateLibrary`, `SetModules`,
+`ReachLibraryClasses`, `CollectNeeds`/`AddLibraryNeeds`, `ModuleTables`, `LibraryDeclarations`, `KeepOwnModule`, `ShareReflection`, `LibraryBody`,
+`UnsupportedStub`), `CppGenerator.ModuleDispatch.cs` (`gen/moddispatch.c`: die Dispatcher `disp_`/`miss_`/`call_`/`mt_` je Modul, die Feldhelfer
+`fget_`/`fset_`/`fptr_`, `is of`, Operatoren, Klassenpunkte, Typargumente, die Tabellen `FireMembers`, die Spalten der Deskriptoren, `ModularHelpers`; dazu
+`TableSlotOf` aus `Packed.cs`), `StaticLinkage.cs` im Generator (`gen/staticlinkage.c`: die Natives in C im File ihres Moduls, `fire_cn_`, `LibraryKey`,
+`AbiHash` = `ModuleInterface.Hash`, die Schnittstellendateien `.fireiface` - geschrieben wie `System.Text.Json`, gelesen beim Treffer im Cache -,
+`GenerateStatic`, die DLLs von Windows: `HostDecl`, `HostArray`, die Link-Funktionen, `HostTable`, `RuntimeDllC`) und von `Plugins.cs` die Seite des
+Programms (`gen/plugins.c`: `PluginHostCode`, `HostInfo`/`.firehost`). Die Rolle (`Modular`, `LibraryRole`, `Px`) ist jetzt die des Generators, die Zweige
+der Module in den Schritt-Dateien, der Reflection (`rf_classes`, `rf_new`, `rf_find` mit `kRfClassList` und den Klassen der Plugins der offenen Welt),
+`Packed.cs` (`RawTypeAt` nach der Deklaration), `Overloads.cs`, `Json.cs` (die Engine im File eines Moduls) und `Debug.cs` (`DbgSrc`) wie in C#. Der Linker
+gibt dem Programm `ModuleDeps` (ohne und mit Plan) und `SourceTextHashes` mit. Offen: der Generator eines Plugins (`GeneratePlugin`, `PluginDeclarations`,
+`RegisterPluginTargets`, `PluginTrailer`, `PluginNativesCpp` - `forge-c` sagt `unported: linkage "plugin"`).
+
+```
+forge cgen modules|static|shared <optionen> x.fire  (FrontendDump.DumpModules: `modules` - GenerateModular, die eine Datei; `static`/`shared` - GenerateStatic
+                                                     in einen leeren Cache: das Programm, seine Natives, je Bibliotheksmodul `//==== library <modul> <name> <schlüssel>`
+                                                     mit seinem C und `//==== interface` mit seiner Schnittstelle, `//==== log`, bei shared `//==== host`)
+forge-c cgen modules|static|shared <optionen> x.fire (dasselbe aus dem Generator in C)
+tests/compare-frontend.sh ... native                 (NATIVE_OPTIONS="modules static shared debug+static ..."; FRONTEND_LIST=<liste>: nur diese Quellen)
+```
+
+Die Schlüssel des Caches nennen den Generator (C#: `GeneratorIdentity`, die Version seiner Assembly; forge-c: die Zeit, zu der es übersetzt wurde): bei den Messungen
+ist es der feste Text `cgen` auf beiden Seiten, sonst hat jedes forge seine eigenen Bibliotheken im Cache (wie zwei Versionen des C#-forge).
+
+| Messung (mit `NATIVE_STRICT=1`) | Quellen | gleich | verschieden |
+|---|---|---|---|
+| `cgen modules`, `static`, `shared`: die Stichprobe (jeder 10. Fall von `tests/cases`, die ersten 32 von `packages`, alle von `src/fire.Project`) | 179 je Wort | 179 / 179 / 179 | 0 |
+| `cgen modules`, `static`: `packages` (vor zwei Korrekturen: `CollectPackages` jedes Generators, die JSON-Engine im File eines Moduls) | 93 | 93 | 0 |
+| `tests/cases/smoke` mit `debug+static`, `strip0+static`, `i32+modules`, `t:esp32+static`, `performance+shared` | 58 je Satz | 58 | 0 |
+| `buildplan static`, `shared`, `tc:gcc+static`, `tc:gcc+shared`, `tc:gcc+quick+static` (jede zweite Quelle der Stichprobe bis 58 und jedes dritte Paket) | 40 je Satz | 40 | 0 |
+
+Echte Builds (beide forges, eigener Cache je forge über `FIRE_NATIVE_CACHE`; Protokoll nach dem Normalisieren von Zeiten, Schlüsseln und Pfaden, Ausgabe der Programme): das
+CLI-Programm von LinkageTests (json, linq, hash, compression) mit gcc static (zweimal - der zweite Bau nimmt jede Bibliothek aus dem Cache) und shared (die `.so` und
+`.firehost` neben dem Programm), mit tcc shared (Rückfall auf static mit der Zeile im Protokoll), die Solution von LinkageTests (zwei Bibliotheken, eine Klasse des Programms
+erbt von einer der Bibliothek; dann eine Änderung des Codes und der Schnittstelle von `Lib`) - die Programme byte-gleich -, der Rückfall eines Programms mit eigener Klasse
+`Exception` auf source, das kleine JSON-Programm mit tcc static, `--stats`, `-m DEBUG`, `--quick`, `--toolchain files` (der Ordner gleich), MinGW für Windows static und
+shared (die DLLs der Laufzeit und der Module; die `.exe` bis auf den Zeitstempel des PE-Kopfs gleich - Wine startet hier auch die des C#-forge nicht): Protokoll und Ausgabe
+gleich. Dazu jeder 40. Fall von `tests/cases` mit gcc static (28): Protokoll und Ausgabe gleich, 21 drucken die `.expected`, 4 übersetzen in beiden nicht (wie verlangt),
+3 weichen in beiden forges gleich von der `.expected` ab (zwei Fehler des C#-Generators mit Modulen, unten; `vm-sc/0280-einheiten-...` erwartet das Präfix `UNBEHANDELT:` des Läufers der VM - auch mit linkage source).
+
+Gefunden (Fehler im C#, nicht korrigiert - beide forges verhalten sich gleich): mit den Modulen (static, shared, `FIRE_MODULES=1`; mit linkage source richtig)
+`tests/cases/.../3360-circuits-potentiometer-transformator-jk-flipflop.fire` (`ArgumentException: An element of an array of Expression must be an Expression (or undefined),
+not String`), `.../4140-data-sqlite-execute-query-zeilen-nacheinander-ro.fire` (`An index must be an int, not String`);
+das CLI-Programm von LinkageTests stürzt mit TinyCC und linkage static beim Start ab (Segfault; mit gcc, mit source und mit `FIRE_MODULES=1` unter tcc richtig).
 
 ### Dateien
 
@@ -396,7 +440,11 @@ Bibliotheken im Cache, die DLLs und Plugins) und `FIRE_MODULES=1` (`GenerateModu
 | `gen/stats.c` | `--stats`: `FuncStat`, `StatOf`, `NoCAbiReason`, `FuncStats` | `CppGenerator.Stats.cs`, `NativeStats.cs` (`FuncStat`) |
 | `gen/json.c` | JSON: die Ziele des Lesens, die Tabellen der Klassen und Felder, die Typargumente | `CppGenerator.Json.cs`, `Standard/JsonMethods.cs` (`JsonFieldsOf`) |
 | `gen/cppgenerator4.c` ... `gen/cppgenerator8.c` | `StepCore`: seine lokalen Funktionen über dem Zustand eines Schritts (`FgSC`), `CFields`, dann der `switch` in der Reihenfolge der C#-Datei (Stapel, Variablen, Natives; Rechnen, Einheiten, Vergleiche, Sprünge; Aufrufe, Felder, `new`; Lambdas, Wächter, Arrays, Besitz, Zeiger, Ausnahmen, Threads) | `CppGenerator.cs` 4680-8555, `CppGenerator.CFields.cs` |
-| `gen/native.c` | die Ziele, `NativeBuilder.GenerateLinked` mit `files` (das Linken mit den Symbolen des Ziels), `forge-c cgen` | `NativeConfig.cs`, `Runtime/TargetProfile.cs`, `NativeBuilder` (Teil), `FrontendDump.cs` (`DumpNative`) |
+| `gen/native.c` | die Ziele, `NativeBuilder.GenerateLinked` mit `files` (das Linken mit den Symbolen des Ziels, `ModuleDependencies`, `SourceTextHashes`), `forge-c cgen` (auch `modules`/`static`/`shared`) | `NativeConfig.cs`, `Runtime/TargetProfile.cs`, `NativeBuilder` (Teil), `Linker.cs` (Teil), `FrontendDump.cs` (`DumpNative`, `DumpModules`) |
+| `gen/modules.c` | die Module: Rolle, `ModuleOf`, `ProtoKey`, `ExportName`, `ForeignClass`, `DbgSrc`, `CurrentFlags`/`ApplyForcedFlags`, `ModulesOf`, `LibraryView`, `GenerateModular`, `GenerateLibrary`, `SetModules`, `ReachLibraryClasses`, `CollectNeeds`, `AddLibraryNeeds`, `ModuleTables`, `LibraryDeclarations`, `KeepOwnModule`, `KeepsPrivate`, `ShareReflection`, `LibraryBody`, `UnsupportedStub` | `CppGenerator.Modules.cs` |
+| `gen/moddispatch.c` | jedes Modul bedient seine Klassen: `Served`, `ExtServed`, die Tabellen, `RegisterServedTargets`, `ModDispatcher`, `ModFieldHelpers`, `ModIsOf`, `ModOperator`, `ModClassScore`, `ModTArgOf`, `MemberTables`, `ModularDescColumns`, `LibraryClassTable`, `ModularHelpers`; `TableSlotOf` | `CppGenerator.ModuleDispatch.cs`, `CppGenerator.Packed.cs` (`TableSlotOf`) |
+| `gen/staticlinkage.c` | linkage static/shared im Generator: `NativesOwner`, `LibraryNativesC`, `CnFunction`, `SharedNative(Thunks)`, `AbiHash`, `NativeSourcesHash`, `LibraryKey`, die Schnittstellendatei (schreiben, lesen, `ProgramFile.WriteUnit`/`ReadUnit`), `GenerateStatic`, die Prüfung der Bibliotheken beim Start, DLLs | `StaticLinkage.cs`, `src/fire/Runtime/ModuleInterface.cs` (`Hash`), `NativeCTypes.cs` (`ValueWrapper`) |
+| `gen/plugins.c` | die Seite des Programms: `PluginHeadKey`, `PluginHostCode`, `HostInfo` (`.firehost`, eingerückt wie `System.Text.Json`); der Generator eines Plugins ist offen | `CppGenerator.Plugins.cs` (Teil) |
 
 ### Entscheidungen
 
@@ -413,7 +461,12 @@ Bibliotheken im Cache, die DLLs und Plugins) und `FIRE_MODULES=1` (`GenerateModu
 * **Die Pakete**: das Manifest wird für den Generator noch einmal gelesen (`linker.c` behält nur, was der Linker braucht); die regulären Ausdrücke von
   `NativeHeaders` und `PackageStore` sind Zeile für Zeile ausgeschrieben. Jedes Paket des Stores liegt im Store (`IsInStore`): seine Header werden
   nach `pkg/<import>/` gezeigt, nicht eingesetzt.
-* **Warnungen**: einige Helfer (vor allem der Module) sind schon da und noch unbenutzt (`-Wunused-function`).
+* **Warnungen**: einige Helfer sind schon da und noch unbenutzt (`-Wunused-function`).
+* **Die Identität des Generators** in den Schlüsseln des Caches (`LibraryKey`, `RuntimeDllKey`, `PluginHeadKey`): in C# `GeneratorIdentity` (die Version der Assembly,
+  für die Messung ein fester Text), in forge-c `fgGeneratorIdentity` (`"forge-c " __DATE__ " " __TIME__`). Ein forge nimmt so nie eine Bibliothek des anderen
+  aus dem Cache - ihr C ist gleich, aber die Schnittstellendatei (mit dem Schlüssel) gehört zu ihrem Generator.
+* **Die Mengen der Module** (`SortedSet` mit Tupeln und dem Standardvergleich) sortieren Texte in der Ordnung der Kultur, die mit `StringComparer.Ordinal` ordinal
+  (`fgSortedNameArgc`, `fgSortedStaticFieldKeys`, `fgSortedKeys`); `MadeBy` (ein `SortedDictionary`) wird nach dem Besitzer geordnet in die Schnittstelle geschrieben.
 * **Die Natives der Reflection** werden in der Reihenfolge der C#-`switch`-Arme ausgewertet: `S(...)` nur im passenden Arm, die Liste (`OwnerList`) davor.
 
 ## Phase D Schritt 2: der Builder
@@ -491,6 +544,7 @@ Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge
 | `gen/split.c` | die Teilung in Einheiten: Scan der C-Teile, Gruppen `#if`, Namen und Benutzungen, die Deklarationen im Header, die Einheiten (Laufzeit, Helfer, Funktionen nach Modul und Kosten, Natives in C), `SplitKeyOf`, `SplitNatives`, `NativesStandAlone` | `ProgramSplit.cs`, `CppGenerator.Split.cs`, `CppGenerator.Stats.cs` (`ModuleOfStat`), `StaticLinkage.cs` (Teil) |
 | `build/toolchain.c` | `ToolchainDef` (die eingebauten, `WithBase`, `CCompilerFor`), `ToolchainDetector`, `ToolchainSetup` (`FindProgram`, `Detect`), `MachineToolchains` (toolchain.json), Open Watcom (Befehl, Ort, Umgebung, Startcode), `NativeConfig` (fire.native.json mit `TargetDef.Apply`, `ResolveTarget`, `ResolveToolchain`), `OptimizingToolchain` | `Toolchain.cs`, `ToolchainSetup.cs`, `MachineToolchains.cs`, `Toolchains/*.cs`, `NativeConfig.cs`, `PackageLibrary.cs` (Teil) |
 | `build/builder.c` | `QuickBuild`, `WithDirection`, `NativeRuntimeFiles.WriteTo`, `PackageHeaders.WriteTo`, `WriteFiles`, `Run` (fork/exec, die Argumente wie .NET sie teilt), `CompilerCommand`, `BuildCommands`, `SplitCommands`, `CompileUnits`, `ToolchainStamp`, `ArchiveCommand`, `CppFallback`, `ProgramCache`, `Build` (linkage source) | `NativeBuilder.cs`, `NativeBuilder.Quick.cs`, `NativeBuilder.ProgramCache.cs`, `NativeRuntimeFiles.cs`, `Package.Manager/PackageStore.cs` (`PackageHeaders`), `NativeLibraryCache.cs` (`Root`) |
+| `build/linkage.c` | linkage static/shared: die Wahl in `Build` (shared, wo gcc/clang es kann, sonst static; static mit `files`), `QuickNotApplied`, `BuildStatic`, `LinkDlls`, `WriteStaticFiles`; der Plan von `buildplan static|shared`; linkage plugin ist `unported` | `NativeBuilder.cs`, `FrontendDump.cs` (`DumpStaticPlan`) |
 | `build/command.c` | `forge-c build`, `forge-c buildplan` | `CommandLine.Report.cs` (`ReportBuildFiles`, `NativeOutcome`), `FrontendDump.cs` (`DumpBuildPlan`) |
 | `build/pkglib.c` | die Bibliotheken der Pakete für die VM: `Rid`, `HostPlatformKeys`, `FileNameFor`, `Prebuilt`, `BuiltDirectories`, `NewestSource`, `Fingerprint`, `RuntimeKey`, `NativeHashOf` (die Funktionen als JSON wie `System.Text.Json`), die Wrapper in C, C++ und der von graphics und windows, `Locate`, `Ensure`, `EnsureGraphics`; `forge-c pkglib`, `pkglibplan` | `PackageLibrary.cs`, `NativeRuntimeFiles.cs` (`Fingerprint`), `StandardSources.cs` (`NativeHashOf`), `CppGenerator.cs` (`DisplayLibraries`) |
 | `build/provider.c` | `ToolchainProvider.Require`, `ToolchainRequest.Message`, die Frage der Befehlszeile, `TestToolchain`; `toolchaintest` | `ToolchainSetup.cs` (`ToolchainProvider`, `ToolchainRequest`), `ConsoleToolchainPrompt.cs`, `NativeBuilder.cs` (`TestToolchain`) |
@@ -505,7 +559,12 @@ Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge
 * **Die Argumente** gehen als eine Zeile in `ProcessStartInfo`; forge-c teilt sie wie .NET (Anführungszeichen, Backslashes) - die Zeilen im Protokoll sind dieselben.
 * **Zeitstempel**: `FileInfo` einer symbolischen Verknüpfung (`/usr/bin/gcc -> /etc/alternatives/gcc`) hat Größe und Zeit der Verknüpfung selbst - die
   Stempel von Toolchain und Cache nehmen darum `lstat`; sonst wäre der Schlüssel für gcc ein anderer als in C#.
-* **Was fehlt, sagt es**: linkage `static`/`shared`/`plugin` (der Generator hat noch keine Module) ist `unported: ...`.
+* **Was fehlt, sagt es**: linkage `plugin` (der Generator eines Plugins ist nicht portiert) ist `unported: ...`.
+* **Linkage static/shared** (`build/linkage.c`: die Wahl in `Build`, `BuildStatic`, `LinkDlls`, `WriteStaticFiles`): die Bibliotheken, die nicht im Cache sind, übersetzt
+  forge-c nacheinander (C#: nebeneinander mit `Parallel.For`) - das Protokoll ist dasselbe, die Zeilen jeder Bibliothek beisammen in der Reihenfolge des Plans.
+  `buildplan static|shared` (FrontendDump.DumpStaticPlan) zeigt, was `BuildStatic` ausführen würde: der Plan in einen leeren Cache (`<cache>`), die Befehle jeder
+  Bibliothek (die temporäre Datei heißt dort `TEMP.a`/`TEMP.so`) und des Programms, die Dateien des Builds, das C jeder Bibliothek mit seinem Hash und bei shared
+  die Beschreibung für Plugins. Ein Rückfall auf linkage source (kein Compiler, `files`, ein Programm, das sich nicht teilen lässt) ist dort der Plan von source.
 * **`ToolchainProvider`**: der Host von forge-c ist die Befehlszeile - gefragt wird nur, wenn jemand da ist (Ein- und Ausgabe ein Terminal), und dann wie das C#-forge
   hier: w64devkit lädt fire nur unter Windows, also steht der Text da und die Antwort ist "abbrechen"; Open Watcom ließe sich unter Linux x64 laden, das
   Herunterladen ist aber Schritt 5 - forge-c zeigt den Text und sagt das.

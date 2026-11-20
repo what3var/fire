@@ -197,6 +197,46 @@ namespace fire.Compiler
         /// configuration without a file). The options are words joined by `+`: `default`; `debug`, `release`, `performance` (`-m`); `split` (`--split on`); `strip0` ...
         /// `strip3` (`--stripping`); `speed`, `size` (`--optimize`); `i16`, `i32` (`-i`); `f32` (`-f 32`); `t:<target>` (`-t`). A failed compile gives `error` and the
         /// errors, a program the backend refuses `unsupported: <message>`, any other exception `internal: <type>: <message>`. `//# types: strict` as with `fbc`.</summary>
+        /// <summary>`cgen` with the library modules (Phase D 1/2 of the C port, docs/spec/FORGE_C.md): `modules` - the program from modules in one file (FIRE_MODULES=1,
+        /// CppGenerator.GenerateModular); `static`/`shared` - CppGenerator.GenerateStatic into an empty cache of its own (every module new): the program's C, its natives,
+        /// then per library module its C file and its interface, the log and (shared) the description for plugins. The keys of the cache name the generator by a fixed
+        /// text here (GeneratorIdentity), not by the version of its assembly - forge-c writes the same.</summary>
+        private static void DumpModules(string linkage, string path, string full, fire.Runtime.TargetProfile target, fire.Runtime.VmExecutionMode? mode, int? floatWidth, fire.Native.NativeConfig config, StringBuilder o)
+        {
+            var linked = new Linker { BasePath = Path.GetDirectoryName(full), Engine = "native", ToolchainKind = "files", SourcePaths = new string?[] { full }, GlobalJobsDefault = config.GlobalJobsValue,
+                Optimize = NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target) }.CompileAndLink(new[] { File.ReadAllText(path) }, null, null, mode, floatWidth, target);
+            if (linkage == "modules")
+            {
+                var sources = fire.Native.CppGenerator.GenerateModular(linked, target, config.Stripping);
+                o.Append(sources.Program);
+                if (sources.Natives != null) o.Append("//==== ").Append(NativeBuilder.NativesName).Append('\n').Append(sources.Natives);
+                return;
+            }
+            string identity = fire.Native.CppGenerator.GeneratorIdentity;
+            string cache = Path.Combine(Path.GetTempPath(), "fire-cgen-cache-" + Guid.NewGuid().ToString("N"));
+            fire.Native.CppGenerator.GeneratorIdentity = "cgen";
+            try
+            {
+                var plan = fire.Native.CppGenerator.GenerateStatic(linked, target, "cgen", config.Stripping, cache, shared: linkage == "shared");
+                o.Append(plan.ProgramC);
+                if (plan.Natives != null) o.Append("//==== ").Append(NativeBuilder.NativesName).Append('\n').Append(plan.Natives);
+                foreach (var library in plan.Libraries)
+                {
+                    o.Append("//==== library ").Append(library.Module).Append(' ').Append(library.LibraryName).Append(' ').Append(library.Key).Append(library.Cached ? " cached" : "").Append('\n');
+                    if (File.Exists(library.CFile)) o.Append(File.ReadAllText(library.CFile));
+                    o.Append("//==== interface ").Append(library.Module).Append('\n');
+                    if (File.Exists(library.InterfaceFile + ".new")) o.Append(File.ReadAllText(library.InterfaceFile + ".new")).Append('\n');
+                }
+                o.Append("//==== log\n").Append(plan.Log);
+                if (plan.Host != null) o.Append("//==== host\n").Append(plan.Host.ToJson()).Append('\n');
+            }
+            finally
+            {
+                fire.Native.CppGenerator.GeneratorIdentity = identity;
+                try { Directory.Delete(cache, true); } catch (IOException) { }
+            }
+        }
+
         private static int DumpNative(string options, string path, Stream output)
         {
             var lines = File.Exists(path) ? File.ReadAllLines(path) : Array.Empty<string>();
@@ -204,6 +244,7 @@ namespace fire.Compiler
             fire.Runtime.VmExecutionMode? mode = null;
             int? floatWidth = null, intWidth = null;
             string? targetName = null;
+            string? linkage = null;   // (the library modules: `modules` - FIRE_MODULES=1, `static`, `shared` - GenerateStatic)
             var config = new fire.Native.NativeConfig();
             foreach (var word in options.Split('+', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -218,6 +259,7 @@ namespace fire.Compiler
                     case "i16": intWidth = 16; break;
                     case "i32": intWidth = 32; break;
                     case "f32": floatWidth = 32; break;
+                    case "modules": case "static": case "shared": linkage = word; break;
                     default:
                         if (word.StartsWith("strip", StringComparison.Ordinal) && int.TryParse(word.AsSpan(5), out int level)) { config.Stripping = (fire.Native.StrippingLevel)level; config.StrippingFromCommandLine = true; }
                         else if (word.StartsWith("t:", StringComparison.Ordinal)) targetName = word.Substring(2);
@@ -235,11 +277,13 @@ namespace fire.Compiler
             {
                 string full = Path.GetFullPath(path);
                 var target = config.ResolveTarget(targetName);
+                if (linkage != null) { DumpModules(linkage, path, full, target, mode, floatWidth, config, o); goto dumped; }
                 var program = NativeBuilder.GenerateLinked(new[] { File.ReadAllText(path) }, target, mode, floatWidth, Path.GetDirectoryName(full), null, sourcePaths: new string?[] { full },
                     stripping: config.Stripping, globalJobs: config.GlobalJobsValue, optimize: NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target), toolchainKind: "files", split: config.SplitValue);
                 o.Append(program.C);
                 if (program.Natives != null) o.Append("//==== ").Append(NativeBuilder.NativesName).Append('\n').Append(program.Natives);
                 if (program.Units != null) foreach (var unit in program.Units) o.Append("//==== ").Append(unit.Name).Append(' ').Append(unit.Kind).Append(' ').Append(unit.Cost).Append('\n').Append(unit.Text);
+                dumped:;
             }
             catch (Exception ex) when (CommandLineRunner.IsCompileError(ex))
             {
@@ -273,6 +317,104 @@ namespace fire.Compiler
         /// ProgramCache (`none`: not cached) and every file of the folder of the build with its SHA-256. The options are those of `cgen` (`split` is `"split": "on"`) and
         /// `nosplit` (`"split": "off"`), `tc:<toolchain>` (`--toolchain`; default: the machine's compiler for building), `quick`, `quick1` (`--quick`, `--quick=1`).
         /// The toolchain `files` writes into a temporary folder (`<build>`). Errors as with `cgen`.</summary>
+        /// <summary>`buildplan static|shared` (Phase D 2 of the C port, docs/spec/FORGE_C.md): what NativeBuilder.BuildStatic would run - the plan of the library modules
+        /// (GenerateStatic into an empty cache of its own, the generator named by a fixed text), the commands of every library and of the program (the cache as
+        /// `<cache>`, the temporary file of a library as `<temp>`), the files of the folder of the build and the C file of every library with its hash. False: the build
+        /// is one with linkage "source" (no compiler, a program that cannot be split - the log says so, then the plan of that build follows).</summary>
+        private static bool DumpStaticPlan(string path, string full, fire.Runtime.TargetProfile target, fire.Native.ToolchainDef toolchain, string exe, fire.Runtime.VmExecutionMode? mode, int? floatWidth,
+            fire.Native.NativeConfig config, StringBuilder o, StringBuilder log)
+        {
+            bool shared = string.Equals(config.Linkage, "shared", StringComparison.OrdinalIgnoreCase);
+            toolchain = NativeBuilder.WithDirection(toolchain, NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target));
+            if (shared && !(toolchain.EffectiveKind is "gcc" or "clang" && (target.Native.Platform == "posix" && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) && target.Name == fire.Runtime.TargetProfile.Host.Name
+                || target.Native.Platform == "windows")))
+            {
+                if (toolchain.EffectiveKind is "files" or "custom") { config.Linkage = "source"; return false; }
+                log.AppendLine($"Linkage \"shared\" is only available on Linux and macOS with gcc or clang and on Windows with MinGW (not for the target '{target.Name}' with '{toolchain.EffectiveKind}'): built with linkage \"static\".");
+                shared = false;
+                config.Linkage = "static";
+            }
+            if (toolchain.EffectiveKind is "files" or "custom" || fire.Native.ToolchainDetector.Find(toolchain) == null) { config.Linkage = "source"; return false; }
+            if (config.Quick is { } level) log.AppendLine($"{NativeBuilder.QuickBuild.Label(level)}: only with linkage \"source\" - linkage \"{config.Linkage}\" builds as without it.");
+            var linked = new Linker { BasePath = Path.GetDirectoryName(full), Engine = "native", ToolchainKind = toolchain.EffectiveKind, SourcePaths = new string?[] { full }, GlobalJobsDefault = config.GlobalJobsValue,
+                Optimize = NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target) }.CompileAndLink(new[] { File.ReadAllText(path) }, null, null, mode, floatWidth, target);
+            string identity = fire.Native.CppGenerator.GeneratorIdentity;
+            string cache = Path.Combine(Path.GetTempPath(), "fire-plan-cache-" + Guid.NewGuid().ToString("N"));
+            string workDir = Path.Combine(Path.GetTempPath(), "fire-native-" + Guid.NewGuid().ToString("N"));
+            fire.Native.CppGenerator.GeneratorIdentity = "cgen";
+            try
+            {
+                fire.Native.StaticBuildPlan staticPlan;
+                while (true)
+                {
+                    try { staticPlan = fire.Native.CppGenerator.GenerateStatic(linked, target, NativeBuilder.ToolchainStamp(toolchain), NativeBuilder.StrippingOf(config, null), cache, shared: shared, stats: config.Stats && !shared); }
+                    catch (fire.Native.NativeNotSupportedException ex)
+                    {
+                        log.AppendLine($"Linkage \"static\" is not possible for this program ({ex.Message}): built with linkage \"source\".");
+                        config.Linkage = "source";
+                        return false;
+                    }
+                    if (staticPlan.Natives != null && NativeBuilder.CppFallback(toolchain) is { } cppToolchain)
+                    {
+                        log.AppendLine(NativeBuilder.CppFallbackNote(toolchain, cppToolchain, staticPlan.Natives));
+                        toolchain = NativeBuilder.WithDirection(cppToolchain, NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target));
+                        continue;
+                    }
+                    break;
+                }
+                log.Append(staticPlan.Log);
+                string cFile = NativeBuilder.WriteFiles(workDir, staticPlan.ProgramC, target, NativeBuilder.SourceName, null, staticPlan.Natives);
+                string? nativesFile = staticPlan.Natives != null ? Path.Combine(workDir, NativeBuilder.NativesName) : null;
+                bool dll = shared && target.Native.Platform == "windows";
+                string ext = dll ? ".dll" : shared ? (OperatingSystem.IsMacOS() ? ".dylib" : ".so") : toolchain.EffectiveKind == "msvc" ? ".lib" : ".a";
+                var commands = new List<(string Executable, string Arguments)>();
+                foreach (var library in staticPlan.Libraries.Where(l => !l.Cached))
+                {
+                    string obj = Path.Combine(workDir, library.LibraryName + (toolchain.EffectiveKind == "msvc" ? ".obj" : ".o"));
+                    string temp = Path.Combine(library.Directory, "TEMP" + ext);
+                    if (dll) commands.Add(NativeBuilder.CompilerCommand(toolchain, target, library.CFile, workDir, obj, language: "c", compileOnly: true));
+                    else if (shared)
+                    {
+                        var link = NativeBuilder.CompilerCommand(toolchain, target, library.CFile, workDir, temp, sharedLibrary: true, language: "c");
+                        string so = library.LibraryFile(ext);
+                        string soName = OperatingSystem.IsMacOS() ? $" -Wl,-install_name,@rpath/{Path.GetFileName(so)} -undefined dynamic_lookup" : $" -Wl,-soname,{Path.GetFileName(so)}";
+                        commands.Add((link.Executable, link.Arguments + soName + " -lm"));
+                    }
+                    else
+                    {
+                        commands.Add(NativeBuilder.CompilerCommand(toolchain, target, library.CFile, workDir, obj, language: "c", compileOnly: true, sections: true));
+                        commands.Add(NativeBuilder.ArchiveCommand(toolchain, temp, obj));
+                    }
+                }
+                var libraries = staticPlan.Libraries.AsEnumerable().Reverse().Select(l => l.LibraryFile(ext)).ToList();
+                var programCommands = NativeBuilder.BuildCommands(toolchain, target, cFile, nativesFile, workDir, exe, linked.GuiSubsystem, libraries);
+                for (int c = 0; c < programCommands.Count; c++)
+                {
+                    var (exeName, arguments) = programCommands[c];
+                    if (shared && !dll && c == programCommands.Count - 1) arguments += OperatingSystem.IsMacOS() ? " -Wl,-export_dynamic -Wl,-rpath,@executable_path" : " -rdynamic -Wl,-rpath,$ORIGIN";
+                    commands.Add((exeName, arguments));
+                }
+                string Neutral(string text) => text.Replace(exe, "<program>", StringComparison.Ordinal).Replace(workDir, "<build>", StringComparison.Ordinal).Replace(cache, "<cache>", StringComparison.Ordinal);
+                o.Append("toolchain ").Append(toolchain.EffectiveKind).Append('\n');
+                if (log.Length > 0) o.Append("log\n").Append(Neutral(log.ToString()));
+                foreach (var (executable, arguments) in commands) o.Append("command ").Append(executable).Append(' ').Append(Neutral(arguments)).Append('\n');
+                o.Append("key none\n");
+                foreach (var file in Directory.EnumerateFiles(workDir, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(workDir, f).Replace('\\', '/')).OrderBy(f => f, StringComparer.Ordinal))
+                    o.Append("file ").Append(file).Append(' ').Append(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(workDir, file)))).ToLowerInvariant()).Append('\n');
+                foreach (var library in staticPlan.Libraries)
+                    o.Append("library ").Append(library.Module).Append(' ').Append(library.LibraryName).Append(library.Cached ? " cached " : " ")
+                        .Append(File.Exists(library.CFile) ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(library.CFile))).ToLowerInvariant() : "-").Append('\n');
+                if (staticPlan.Host != null) o.Append("host\n").Append(staticPlan.Host.ToJson()).Append('\n');
+                return true;
+            }
+            finally
+            {
+                fire.Native.CppGenerator.GeneratorIdentity = identity;
+                try { Directory.Delete(cache, true); } catch (IOException) { }
+                try { Directory.Delete(workDir, true); } catch (IOException) { }
+            }
+        }
+
         private static int DumpBuildPlan(string options, string path, Stream output)
         {
             var lines = File.Exists(path) ? File.ReadAllLines(path) : Array.Empty<string>();
@@ -291,6 +433,7 @@ namespace fire.Compiler
                     case "performance": mode = fire.Runtime.VmExecutionMode.Performance; break;
                     case "split": config.Split = "on"; break;
                     case "nosplit": config.Split = "off"; break;
+                    case "static": case "shared": config.Linkage = word; break;
                     case "quick": config.Quick = 0; break;
                     case "quick1": config.Quick = 1; break;
                     case "speed": case "size": config.Optimize = word; config.OptimizeFromCommandLine = true; break;
@@ -327,6 +470,7 @@ namespace fire.Compiler
                 var toolchain = config.ResolveToolchain(target, toolchainName ?? plan?.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
                 string exe = Path.GetFullPath("plan-out" + target.ProgramExtension);
                 var log = new StringBuilder();
+                if (config.Linkage != null && plan == null && DumpStaticPlan(path, full, target, toolchain, exe, mode, floatWidth, config, o, log)) goto written;
                 NativeBuilder.NativeProgram program;
                 while (true)
                 {

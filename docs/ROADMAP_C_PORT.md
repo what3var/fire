@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 bis auf die Module, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard` (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 bis auf den Generator eines Plugins, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard` (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -402,15 +402,18 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
 
 1. Generator (`CppGenerator*`, 15 600 Zeilen - der größte Einzelposten). Prüfung: `fire_program.c`/`fire_natives.cpp` byte-gleich über den
    Korpus und die Optionen (Ziele, `linkage`, `stripping`, `#intwidth`, Debug, `optimize`).
-   **Umgesetzt bis auf die Module** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-1-der-generator)): `native/forge/gen/` (Stand 808e9788) -
+   **Umgesetzt bis auf den Generator eines Plugins** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-1-der-generator)): `native/forge/gen/` (Stand 808e9788) -
    `CppGenerator.cs` ganz (Run, Kopf, Dispatcher, Feldhelfer, Klassendeskriptoren, der Fluss, `StepCore` mit allen Opcodes), `Packed`,
    `CAbi`, `CFields`, `Overloads` (Selektoren, Hinweise), die Dispatcher der Interfaces, die Natives der Pakete (Manifest, Plattformquellen,
    Header, C und C++, typisierte Natives, Sperren), die Brücken von graphics/windows, JSON, `Library.Get`, die Zeigerkonvention der
    Open-Watcom-Ziele, die Reflection (`__refl_*`, Tabellen, Selektoren der Lambdas, Probes), Debug-Builds, die Teilung in Einheiten (`ProgramSplit`) und
    `--stats`. Maß: `forge cgen <optionen> <datei>` gegen `forge-c cgen`, `tests/compare-frontend.sh ... native` mit `NATIVE_STRICT=1`: Standardoptionen
    **1129 von 1129** Fällen, **93 von 93** Paketen, **33 von 34** Beispielen byte-gleich (die eine Abweichung, `Scene3D Models`, sind die Modelle als
-   Ressourcen - der Linker, Schritt 4), ebenso mit `debug` und mit `split`; die Reflection auch mit `strip0`-`strip2`. **Offen**: `linkage` static/shared/plugin (`CppGenerator.Modules.cs`,
-   `ModuleDispatch.cs`, `StaticLinkage.cs`, `Plugins.cs`: ein Generator je Bibliotheksmodul, die Exporte, die Tabellen der Laufzeit) und `FIRE_MODULES=1`.
+   Ressourcen - der Linker, Schritt 4), ebenso mit `debug` und mit `split`; die Reflection auch mit `strip0`-`strip2`. Dazu (20.11.2026) die **Module**
+   ([FORGE_C.md](spec/FORGE_C.md#die-module-linkage-staticshared-fire_modules1)): `CppGenerator.Modules.cs`, `ModuleDispatch.cs`, `StaticLinkage.cs` und die Seite des
+   Programms von `Plugins.cs` (`gen/modules.c`, `moddispatch.c`, `staticlinkage.c`, `plugins.c`: ein Generator je Bibliotheksmodul mit seiner Sicht des Programms, die
+   Runden über die gemeinsamen Schalter, die Exporte `fx_`, die Tabellen der Laufzeit, die Schnittstellen im Cache, die offene Welt von linkage shared), `FIRE_MODULES=1`;
+   gemessen mit `cgen modules|static|shared` (FrontendDump) - `modules`/`static`/`shared` 179 von 179 Quellen der Stichprobe, alle 93 Pakete, die Optionssätze `debug`, `strip0`, `i32`, `t:esp32`, `performance` gleich. **Offen**: der Generator eines Plugins (`GeneratePlugin`).
 2. NativeBuilder, Toolchains (gcc, clang, MSVC, tcc, Emscripten, ESP-IDF, Open Watcom), Linkage, `PackageLibrary`, Stats, Boot-Images, PE-Ressourcen.
    **Teilweise umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-2-der-builder)): `native/forge/build/` (Stand 6f21d1a4) - `forge-c build` mit linkage
    `source`: `ToolchainDef`, `ToolchainDetector`, `MachineToolchains`, `NativeConfig` (fire.native.json, eigene Ziele), die Befehlszeilen aller Arten (gcc,
@@ -421,8 +424,9 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    die VM mit ihren Wrappern in C und C++ und `libfire_gfx`, `Locate`/`Ensure` mit denselben Schlüsseln - 27 von 27 Plänen gleich, die 25 gebauten
    Bibliotheken byte-gleich mit denen des C#-forge, beide VMs laden sie), das Boot-Image von bios16 (Fat12, nach dem Link; gemessen mit `bootimage`), die
    PE-Ressourcen (Version, Icon, Subsystem: der Inhalt wie in C#; geschrieben werden sie wie dort nur unter Windows) mit `#noconsole` (`-mwindows`),
-   `ToolchainProvider`/`TestToolchain`, `"globalJobs"` und Kommentare in fire.native.json. Offen: linkage static/shared/plugin (braucht die Module des
-   Generators), Windows als Host (dort auch das Schreiben der PE-Ressourcen), das Herunterladen von Toolchains (Schritt 5). Seither
+   `ToolchainProvider`/`TestToolchain`, `"globalJobs"` und Kommentare in fire.native.json. Dazu (20.11.2026) linkage `static` und `shared` (`build/linkage.c`:
+   `BuildStatic`, der Cache der Bibliotheken, `LinkDlls`, `WriteStaticFiles`; gemessen mit `buildplan static|shared` und echten Builds - `buildplan` 40 von 40 Quellen je Satz, echte Builds mit gcc, tcc und MinGW: Protokoll und Programm gleich; zwei Fehler des C#-Generators mit Modulen und einer mit TinyCC gefunden, siehe FORGE_C.md).
+   Offen: linkage plugin (braucht den Generator eines Plugins), Windows als Host (dort auch das Schreiben der PE-Ressourcen), das Herunterladen von Toolchains (Schritt 5). Seither
    portiert: `--stats` (NativeStats: die Map, der Bericht als Text und JSON).
 3. Projekt, Solution, Bauplan, Vorlagen, Beispiele; von der Paketverwaltung, was forge braucht (Manifest, Store, `.fpk`). ember bleibt bis Phase F das C#-Programm.
    **Umgesetzt bis auf Windows** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-3-projekte-solutions-pakete)): `native/forge/project/` (Stand de45e7e4) - das Laden von

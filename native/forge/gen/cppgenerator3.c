@@ -72,6 +72,7 @@ static const char* SectionEnd(FgGen* g, const char* variable) { return *SectionF
 
 static const char* GlobalVar(FgGen* g, int slot, FcDict* locals) {
     FgFunc* f = g->cur;
+    if (LibraryRole) FG_NOTSUP("the library module '%s' uses a global variable of the program", g->self->name);
     if (f->kind != FK_FireBody || slot < f->globalSlotCount) { fgISetAdd(g->c, g->globals, slot); return fcFmt(g->c, "G%d", slot); }
     fgISetAdd(g->c, f->threadVars, slot);
     fcSetAdd(locals, fcFmt(g->c, "T%d", slot));
@@ -152,8 +153,15 @@ static const char* DebugCatchWrapper(FgGen* g, FgFunc* f, const char* catchName)
 /* (gen/stats.c) */
 static FgFuncStat* StatOf(FgGen* g, FgFunc* f, int valueLocals, int cLocals);
 static void GenerateChunk(FgGen* g, FgFunc* f) {
-    if (f->external) return;
-    GenerateChunkCore(g, f);
+    const char* owner;
+    if (f->external) return;   /* (a member of another module: that module generates it) */
+    /* (a library: what this function makes and calls counts for its class - the program follows only the classes it reaches, CollectNeeds MadeBy) */
+    owner = g->demandOwner;
+    g->demandOwner = LibraryRole ? DemandOwnerOf(f->chunk) : NULL;
+    FC_TRY(g->c) { GenerateChunkCore(g, f); }
+    FC_CATCH(g->c) { g->demandOwner = owner; fcRethrow(g->c); }
+    FC_END_TRY;
+    g->demandOwner = owner;
 }
 
 static FgStep StepFn(FgGen* g, FgFunc* f, FcChunk* chunk, FgInstr* ins, FgFlow* st, FcBuf* sb, FcDict* locals);
@@ -533,7 +541,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         if (framed) fgMemberAdd(g, members, "Handler", fcFmt(g->c, "H%d", region->template_), NULL); else fcBufFmt(&decl, "    Handler H%d;\n", region->template_);
         if (region->catchCount > 0) for (k = fgRegionDepthBase(region); k < region->out->maxDepth; k++) fgMemberAdd(g, members, "Value", fcFmt(g->c, "c%d_%d", region->template_, k), NULL);
     }
-    if (f->kind == FK_Main && g->usesThreads) fcBufStr(&post, "    gilAcquire();\n    g_domainRoot = &OG;\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif\n#ifdef FIRE_NO_GIL\n    fire_pkgLocksInit();\n#endif\n");
+    if (f->kind == FK_Main && g->usesThreads) fcBufStr(&post, Modular ? "    gilAcquire();\n    g_domainRoot = &OG;\n" : "    gilAcquire();\n    g_domainRoot = &OG;\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif\n#ifdef FIRE_NO_GIL\n    fire_pkgLocksInit();\n#endif\n");
     if (fgIsTop(f) && (g->usesGlobalOwn || f->kind == FK_FireBody)) fcBufStr(&post, "    g_globalOwn = &OG;\n");
     if (f->kind == FK_FireBody) {
         fcBufStr(&post, "    adoptTravel(&OG);\n");
@@ -560,7 +568,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         FcList* types = fcListNew(g->c);
         for (k = 0; k < region->catchCount; k++) fcListAdd(g->c, types, (void*)fcFmt(g->c, "%d", ExcTypeId(g, region->catches[k].type)));
         fcBufFmt(&sb, "static const int32_t HT_%s_%d[] = {%s};\n", name, region->template_, types->count == 0 ? "0" : fgJoin(g->c, types, ", "));
-        fcBufFmt(&sb, "static const HandlerInfo HI_%s_%d = {%d, HT_%s_%d, %d, %s};\n", name, region->template_, region->catchCount, name, region->template_, region->hasFinally ? 1 : 0, "NULL");
+        fcBufFmt(&sb, "static const HandlerInfo HI_%s_%d = {%d, HT_%s_%d, %d, %s};\n", name, region->template_, region->catchCount, name, region->template_, region->hasFinally ? 1 : 0, LibraryRole ? fcFmt(g->c, "fire_exct_%s", g->self->id) : "NULL");
     }
     frame = fcFmt(g->c, "FR_%s", f->name);
     fcBufStr(&catchCode, "");
@@ -846,7 +854,8 @@ static void HaltCode(FgGen* g, FgFunc* f, FgEmit* emit) {
     {
         FcList* byIndex = fgByValue(g, g->staticFields);
         for (i = 0; i < byIndex->count; i++) {
-            const char* sfv = fcFmt(g->c, "SF%d", FC_VALI(((FcDictEntry*)byIndex->items[i])->value) - 1);
+            FcList* parts = fgSplit(g->c, (const char*)((FcDictEntry*)byIndex->items[i])->key, '\x01');
+            const char* sfv = StaticFieldVar(g, (const char*)parts->items[0], (const char*)parts->items[1]);
             if (VarRef(g, sfv)) EMIT(emit, "release(%s);", sfv);
         }
     }
@@ -1232,7 +1241,7 @@ static bool TypedNativeCall(FgGen* g, const FgInstr* ins) {
     const char* native;
     int i;
     if (ins->op != OP_CallNative || ins->a[0] >= g->natives->count || !(pn = (FgPkgNative*)fcDictGet(g->packageNatives, (native = (const char*)g->natives->items[ins->a[0]]))) || pn->argc != ins->a[1]) return false;
-    if (!fgNativeIsTyped(pn->fn, pn->isC)) return false;   /* (NativeIsHere: one file) */
+    if (!fgNativeIsTyped(pn->fn, pn->isC) || !NativeIsHere(g, fcDictGet(g->nativeImportOf, native) ? (const char*)fcDictGet(g->nativeImportOf, native) : "")) return false;
     if (PkgLock(g, native) >= 0) return false;   /* (its call is a statement between the package's lock) */
     for (i = 0; i < pn->argc; i++) if (!fgNativeParamCType(pn->fn, i)) return false;
     return true;

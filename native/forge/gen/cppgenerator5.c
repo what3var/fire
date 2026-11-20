@@ -684,7 +684,7 @@ static FgStep StepCoreNative(FgSC* x) {
             {
                 const char* t = T(first);
                 OwnerList();   /* (the C# asks `args.EndsWith("&" + OwnerList())`: the list of the temporaries is used) */
-                E("%s = fire_win_%s(%s);", t, name, args);
+                E("%s = %s(%s);", t, SharedNative(g, fcFmt(g->c, "fire_win_%s", name), argc, needsList, "windows"), args);
             }
             CheckNative();
             d = first + 1; SetR(first, winNative->needsList); return Next();
@@ -703,7 +703,7 @@ static FgStep StepCoreNative(FgSC* x) {
             {
                 const char* args = fgJoin(g->c, argl, ", ");
                 const char* t = T(first);
-                E("%s = fire_gfx_%s(%s);", t, name, args);
+                E("%s = %s(%s);", t, SharedNative(g, fcFmt(g->c, "fire_gfx_%s", name), argc, grphNative->needsList, "graphics"), args);
             }
             CheckNative();
             d = first + 1; SetR(first, grphNative->needsList); return Next();
@@ -712,7 +712,8 @@ static FgStep StepCoreNative(FgSC* x) {
     if (fcDictHas(g->packageNatives, native) && ((FgPkgNative*)fcDictGet(g->packageNatives, native))->argc == argc) {
         /* a native of a package (C++ in the generated file): `Value cpp(Value a, ...)`, with the list of the scope as the last argument if it asks for it */
         FgPkgNative* pn = (FgPkgNative*)fcDictGet(g->packageNatives, native);
-        const char* cFunction = pn->isC ? pn->function : "";   /* (SharedNative: one file) */
+        const char* nativeImport = (const char*)fcDictGet(g->nativeImportOf, native);
+        const char* cFunction = pn->isC ? SharedNative(g, pn->function, argc, pn->needsList, nativeImport ? nativeImport : "") : "";
         bool typed = fgNativeIsTyped(pn->fn, pn->isC) && streq0(cFunction, pn->function), awayWrapped = false;
         FcList* argl = fcListNew(g->c);
         const char* args;

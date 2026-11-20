@@ -731,9 +731,12 @@ static FgStep StepCore2(FgSC* x) {
             const char* s;
             Need(1);
             memberName = Str(ins->a[0]);
-            fcSetAdd(g->hasMembers, memberName);
-            s = S(d - 1);
-            E("%s = Bool(%shasm_%s(%s));", s, Px, Mangle(g, memberName), s);
+            if (Modular) { s = S(d - 1); E("%s = Bool(fire_hasMemberDyn(%s, %s));", s, s, CString(g, memberName)); }
+            else {
+                fcSetAdd(g->hasMembers, memberName);
+                s = S(d - 1);
+                E("%s = Bool(%shasm_%s(%s));", s, Px, Mangle(g, memberName), s);
+            }
             SetR(d - 1, false);
             return Next();
         }

@@ -88,8 +88,8 @@ static int DebugLevelOf(FgGen* g, FgFunc* f, FgFuncDebug* d, FgFlow* st, FcDict*
     return parent;
 }
 
-/* the source of a line (CppGenerator.Modules.cs DbgSrc: a library's own sources by its table - the modules are not ported) */
-static const char* DbgSrc(FgGen* g, int src) { return fcFmt(g->c, "%d", src); }
+/* the source of a line (CppGenerator.Modules.cs DbgSrc: a library's own sources by its table, gen/modules.c) */
+#define DbgSrc DbgSrcOf
 
 /* Before instruction `i` (pass 2): the position where a line begins (or a jump lands), else the scope state where it changed. */
 static void DebugBeforeInstruction(FgGen* g, FgFunc* f, FgFuncDebug* d, FcChunk* chunk, FgInstr* ins, int i, FgFlow* st, FgOut* o, bool isTarget, FcDict* locals) {

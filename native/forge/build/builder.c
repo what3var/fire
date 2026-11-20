@@ -1121,6 +1121,7 @@ static const char* nbTempPath(FcCtx* c) {
     return "/tmp/";
 }
 static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output);
+static bool nbBuildLinkage(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output, NbResult* r);
 /* The plan of a dry run: the commands with the folder of the build and the program in neutral form, the key, the files of the folder with their hashes. */
 static const char* nbPlanNote;   /* the line of the C++ fallback (CppFallback) before the log of the plan, NULL: none */
 static void nbWritePlan(FcCtx* c, FcBuf* plan, const NbToolchain* t, const char* log, FcList* commands, const char* key, const char* workDir, const char* exe) {
@@ -1176,8 +1177,8 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
     NbToolchain* cppToolchain;
     toolchain = nbWithDirection(c, toolchain, nbOptimizeOf(config, target));
     kind = nbKind(toolchain);
-    if (config->linkage && !fcAsciiIEq(config->linkage, "source"))
-        fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: linkage \"%s\" (the library modules of the generator, Phase D 2)", config->linkage));
+    /* (linkage static, shared, plugin: build/linkage.c) */
+    if (nbBuildLinkage(c, b, config, target, toolchain, output, &r)) return r;
     /* (a quick build, `--quick`: the units forced on where the toolchain splits; its optimisation level is set below, when the compiler is known) */
     memset(&o, 0, sizeof o);
     o.target = target;
