@@ -388,10 +388,310 @@ static const char* LibraryThunks(FgGen* g) {
     return fcBufDone(g->c, &sb);
 }
 
-/* ---- CppGenerator.PointerCalls.cs (only the PC targets of Open Watcom) ---- */
+/* ---- CppGenerator.PointerCalls.cs (only the PC targets of Open Watcom): the Values of a fire function by address; the regular expressions written out ---- */
 static bool PointerCallsOnOf(FgGen* g) { return g->target->pointerCalls && !DebugBuild && !Wrapped && !Modular && !g->openWorld; }
-static const char* PointerFunction(FgGen* g, const char* name, const char* code, const char* signature) { (void)name; (void)code; (void)signature; FG_UNPORTED("pointer calls"); }
-static const char* PointerCallsPass(FgGen* g, const char* text) { (void)text; FG_UNPORTED("pointer calls"); }
+typedef struct FgPDecl { const char* decl; const char* name; bool isValue; } FgPDecl;
+typedef struct FgPFunc { FcList* names; bool* byAddress; int count; } FgPFunc;
+static bool fgPcWord(char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || (unsigned char)ch >= 0x80; }
+static bool fgPcSpace(char ch) { return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' || ch == '\v'; }
+/* ParamDecls: the parameters of a C parameter list */
+static FcList* fgParamDecls(FgGen* g, const char* list) {
+    FcList* r = fcListNew(g->c);
+    FcList* parts;
+    const char* t = fgTrim(g->c, list);
+    int i;
+    if (!*t || streq0(t, "void")) return r;
+    parts = fgSplit(g->c, list, ',');
+    for (i = 0; i < parts->count; i++) {
+        const char* d = fgTrim(g->c, (const char*)parts->items[i]);
+        const char* sp = NULL;
+        const char* q;
+        FgPDecl* p = (FgPDecl*)fcAlloc(g->c, sizeof *p);
+        for (q = d; *q; q++) if (*q == ' ' || *q == '*') sp = q;
+        p->decl = d; p->name = sp ? sp + 1 : d; p->isValue = fcStartsWith(d, "Value ");
+        fcListAdd(g->c, r, p);
+    }
+    return r;
+}
+static const char* fgPointerParams(FgGen* g, FcList* ps) {
+    FcList* l = fcListNew(g->c);
+    int i;
+    for (i = 0; i < ps->count; i++) { FgPDecl* p = (FgPDecl*)ps->items[i]; fcListAdd(g->c, l, (void*)(p->isValue ? fcFmt(g->c, "const Value* %s_p", p->name) : p->decl)); }
+    return fgJoin(g->c, l, ", ");
+}
+/* `^\s*(?:=(?!=)|\+=|-=|\*=|/=|\|=|&=|\+\+|--)` */
+static bool fgPcAssignOp(const char* p) {
+    while (fgPcSpace(*p)) p++;
+    if (p[0] == '=' && p[1] != '=') return true;
+    if ((p[0] == '+' || p[0] == '-' || p[0] == '*' || p[0] == '/' || p[0] == '|' || p[0] == '&') && p[1] == '=') return true;
+    return (p[0] == '+' && p[1] == '+') || (p[0] == '-' && p[1] == '-');
+}
+/* ReadOnlyAddressCall: `\b(?:leafAliveP|...)\(\s*&\s*$` on the text before (trimmed at its end) */
+static bool fgPcReadOnlyAddressCall(const char* before, size_t n) {
+    static const char* const names[] = { "leafAliveP", "destroyedErrorP", "retainP", "releaseP", "truthyP", "objAtP", "adoptP", "ctorEndP", "hoistFromP", "transferTreeP", "finishArgsP", "claimToListP" };
+    size_t k, end;
+    if (n == 0 || before[n - 1] != '&') return false;
+    end = n - 1;
+    while (end > 0 && fgPcSpace(before[end - 1])) end--;
+    if (end == 0 || before[end - 1] != '(') return false;
+    end--;
+    for (k = 0; k < sizeof names / sizeof names[0]; k++) {
+        size_t len = strlen(names[k]);
+        if (end >= len && strncmp(before + end - len, names[k], len) == 0 && (end == len || !fgPcWord(before[end - len - 1]))) return true;
+    }
+    return false;
+}
+/* WritesParam: a store, `++`/`--`, a member store, or its address given to anything but a runtime function that only reads */
+static bool fgWritesParam(const char* body, const char* p) {
+    size_t plen = strlen(p), blen = strlen(body), at;
+    for (at = 0; at + plen <= blen; at++) {
+        size_t afterAt, bStart, bLen;
+        char after[65];
+        if (strncmp(body + at, p, plen) != 0) continue;
+        if (at > 0 && (fgPcWord(body[at - 1]) || body[at - 1] == '.' || body[at - 1] == '>')) continue;
+        if (at + plen < blen && fgPcWord(body[at + plen])) continue;
+        afterAt = at + plen;
+        { size_t n = blen - afterAt < 64 ? blen - afterAt : 64; memcpy(after, body + afterAt, n); after[n] = 0; }
+        if (fgPcAssignOp(after)) return true;
+        {
+            const char* q = after;
+            while (fgPcSpace(*q)) q++;
+            if (*q == '.') {
+                q++;
+                while (fgPcSpace(*q)) q++;
+                if (fgPcWord(*q) && !((unsigned char)*q >= 0x80)) {
+                    while (fgPcWord(*q)) q++;
+                    if (fgPcAssignOp(q)) return true;
+                }
+            }
+        }
+        bStart = at >= 64 ? at - 64 : 0;
+        bLen = at - bStart;
+        while (bLen > 0 && fgPcSpace(body[bStart + bLen - 1])) bLen--;
+        if (bLen >= 2 && ((body[bStart + bLen - 2] == '+' && body[bStart + bLen - 1] == '+') || (body[bStart + bLen - 2] == '-' && body[bStart + bLen - 1] == '-'))) return true;
+        if (bLen >= 1 && body[bStart + bLen - 1] == '&' && !(bLen >= 2 && body[bStart + bLen - 2] == '&') && !fgPcReadOnlyAddressCall(body + bStart, bLen)) return true;
+    }
+    return false;
+}
+/* PointerFunction: the function `name` in `code` with its Value parameters by address, or the text unchanged when it cannot have it */
+static const char* PointerFunction(FgGen* g, const char* name, const char* code, const char* signature) {
+    const char* openP;
+    const char* sigP;
+    const char* endP;
+    FcList* decls;
+    FcList* ps;
+    FcDict* written;
+    int i, open, sigAt, bodyAt, endAt;
+    size_t slen = strlen(signature);
+    const char* body;
+    const char* rest;
+    const char* head;
+    const char* newSignature;
+    const char* brace;
+    FcBuf copies = {0};
+    FcBuf sb = {0};
+    FgPFunc* pf;
+    fcDictRemove(g->pointerFuncs, name);
+    openP = strstr(signature, fcFmt(g->c, "%s(", name));
+    sigP = strstr(code, fcFmt(g->c, "%s\n", signature));
+    if (!openP || !sigP || slen == 0 || signature[slen - 1] != ')') return code;
+    open = (int)(openP - signature); sigAt = (int)(sigP - code);
+    decls = fgParamDecls(g, fcStrN(g->c, signature + open + strlen(name) + 1, slen - (size_t)open - strlen(name) - 2));
+    ps = fcListNew(g->c);
+    for (i = 0; i < decls->count; i++) if (((FgPDecl*)decls->items[i])->isValue) fcListAdd(g->c, ps, (void*)((FgPDecl*)decls->items[i])->name);
+    if (ps->count == 0) return code;
+    bodyAt = sigAt + (int)slen + 1;
+    endP = strstr(code + bodyAt - 1, "\n}\n");
+    if (!endP) return code;
+    endAt = (int)(endP - code);
+    body = fcStrN(g->c, code + bodyAt, (size_t)(endAt + 3 - bodyAt));
+    rest = code + endAt + 3;
+    written = fcDictNew(g->c, FC_KEY_STR);
+    for (i = 0; i < ps->count; i++) if (fgWritesParam(body, (const char*)ps->items[i])) fcSetAdd(written, ps->items[i]);
+    head = fcStrN(g->c, signature, (size_t)open);
+    newSignature = fcFmt(g->c, "%s%s_p(%s)", head, name, fgPointerParams(g, decls));
+    if (!(brace = strstr(body, "{\n"))) return code;
+    fcBufStr(&copies, "");
+    for (i = 0; i < ps->count; i++) if (fcDictHas(written, ps->items[i])) fcBufFmt(&copies, "    Value %s = *%s_p;\n", (const char*)ps->items[i], (const char*)ps->items[i]);
+    body = fcFmt(g->c, "%s%s%s", fcStrN(g->c, body, (size_t)(brace - body + 2)), fcBufDone(g->c, &copies), brace + 2);
+    fcBufPut(&sb, code, (size_t)sigAt);
+    for (i = 0; i < ps->count; i++) if (!fcDictHas(written, ps->items[i])) fcBufFmt(&sb, "#define %s (*%s_p)\n", (const char*)ps->items[i], (const char*)ps->items[i]);
+    fcBufFmt(&sb, "%s\n%s", newSignature, body);
+    for (i = 0; i < ps->count; i++) if (!fcDictHas(written, ps->items[i])) fcBufFmt(&sb, "#undef %s\n", (const char*)ps->items[i]);
+    fcBufStr(&sb, rest);
+    pf = (FgPFunc*)fcAlloc(g->c, sizeof *pf);
+    pf->names = fcListNew(g->c); pf->count = decls->count;
+    pf->byAddress = (bool*)fcAlloc(g->c, sizeof(bool) * (size_t)(decls->count + 1));
+    for (i = 0; i < decls->count; i++) { fcListAdd(g->c, pf->names, (void*)((FgPDecl*)decls->items[i])->name); pf->byAddress[i] = ((FgPDecl*)decls->items[i])->isValue; }
+    fcDictPut(g->pointerFuncs, name, pf);
+    return fcBufDone(g->c, &sb);
+}
+/* AddressableArg: `^(?!(?:G|SF)\d+$)(?!g_)[A-Za-z_]\w*(?:\[\d+\])?$` */
+static bool fgAddressableArg(const char* a) {
+    const char* p = a;
+    const char* d;
+    if (a[0] == 'G' || (a[0] == 'S' && a[1] == 'F')) {
+        d = a + (a[0] == 'G' ? 1 : 2);
+        if (*d) { const char* q = d; while (*q >= '0' && *q <= '9') q++; if (!*q) return false; }
+    }
+    if (a[0] == 'g' && a[1] == '_') return false;
+    if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_')) return false;
+    while (fgPcWord(*p)) p++;
+    if (*p == '[') {
+        const char* q = p + 1;
+        while (*q >= '0' && *q <= '9') q++;
+        if (q == p + 1 || *q != ']') return false;
+        p = q + 1;
+    }
+    return *p == 0;
+}
+static int fgSkipLiteral(const char* s, int at) {
+    char q = s[at];
+    int i = at + 1, n = (int)strlen(s);
+    while (i < n && s[i] != q) i += s[i] == '\\' ? 2 : 1;
+    return i + 1 < n ? i + 1 : n;
+}
+static int fgMatchingParen(const char* s, int open) {
+    int depth = 0, i;
+    for (i = open; s[i]; i++) {
+        char c = s[i];
+        if (c == '"' || c == '\'') { i = fgSkipLiteral(s, i) - 1; continue; }
+        if (c == '(' || c == '[' || c == '{') depth++;
+        else if (c == ')' || c == ']' || c == '}') { if (--depth == 0) return c == ')' ? i : -1; }
+    }
+    return -1;
+}
+static FcList* fgSplitArgs(FgGen* g, const char* s) {
+    FcList* r = fcListNew(g->c);
+    int depth = 0, start = 0, i;
+    if (!*fgTrim(g->c, s)) return r;
+    for (i = 0; s[i]; i++) {
+        char c = s[i];
+        if (c == '"' || c == '\'') { i = fgSkipLiteral(s, i) - 1; continue; }
+        if (c == '(' || c == '[' || c == '{') depth++;
+        else if (c == ')' || c == ']' || c == '}') depth--;
+        else if (c == ',' && depth == 0) { fcListAdd(g->c, r, (void*)fgTrim(g->c, fcStrN(g->c, s + start, (size_t)(i - start)))); start = i + 1; }
+    }
+    fcListAdd(g->c, r, (void*)fgTrim(g->c, s + start));
+    return r;
+}
+/* RewriteCalls: one line - its calls of functions with the convention by address where every argument can be */
+static const char* fgRewriteCalls(FgGen* g, const char* line, FcDict* needsValues) {
+    const char* t = line;
+    FcBuf sb = {0};
+    bool any = false;
+    int copied = 0, pos = 0, n = (int)strlen(line);
+    while (*t == ' ' || *t == '\t') t++;
+    if (*t == '#' && !fcStartsWith(t, "#line")) return line;
+    while (pos < n) {
+        char c = line[pos];
+        int end, open, close, k;
+        const char* fn;
+        FgPFunc* pf;
+        FcList* args;
+        bool ok;
+        if (c == '"' || c == '\'') { pos = fgSkipLiteral(line, pos); continue; }
+        if (c == '/' && pos + 1 < n && line[pos + 1] == '/') break;
+        if (!(fgPcWord(c) && !(c >= '0' && c <= '9')) || (pos > 0 && fgPcWord(line[pos - 1]))) { pos++; continue; }
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') || (pos > 0 && (line[pos - 1] == '.' || line[pos - 1] == '>'))) { pos++; continue; }
+        for (end = pos; end < n && fgPcWord(line[end]); end++) {}
+        fn = fcStrN(g->c, line + pos, (size_t)(end - pos));
+        if (!(pf = (FgPFunc*)fcDictGet(g->pointerFuncs, fn))) { pos = end; continue; }
+        open = end;
+        while (open < n && line[open] == ' ') open++;
+        if (open >= n || line[open] != '(') { fcSetAdd(needsValues, fn); pos = end; continue; }
+        close = fgMatchingParen(line, open);
+        if (close < 0) { fcSetAdd(needsValues, fn); pos = end; continue; }
+        args = fgSplitArgs(g, fcStrN(g->c, line + open + 1, (size_t)(close - open - 1)));
+        ok = args->count == pf->count;
+        for (k = 0; ok && k < args->count; k++) if (pf->byAddress[k] && !fgAddressableArg((const char*)args->items[k])) ok = false;
+        if (!ok) { fcSetAdd(needsValues, fn); pos = open + 1; continue; }
+        if (!any) { fcBufStr(&sb, ""); any = true; }
+        fcBufPut(&sb, line + copied, (size_t)(pos - copied));
+        fcBufFmt(&sb, "%s_p(", fn);
+        for (k = 0; k < args->count; k++) {
+            const char* a = (const char*)args->items[k];
+            if (k) fcBufStr(&sb, ", ");
+            if (pf->byAddress[k]) fcBufFmt(&sb, "&%s", a);
+            else fcBufStr(&sb, fgRewriteCalls(g, a, needsValues));
+        }
+        fcBufChar(&sb, ')');
+        copied = pos = close + 1;
+    }
+    if (!any) return line;
+    fcBufStr(&sb, line + copied);
+    return fcBufDone(g->c, &sb);
+}
+/* protoLine: `^((?:FIRE_MAYBE_UNUSED )?(?:FIRE_ALWAYS_INLINE )?static (?:inline )?[A-Za-z_]\w* )([A-Za-z_]\w*)\((.*)\);$` */
+static bool fgProtoLine(FgGen* g, const char* l, const char** prefix, const char** fn, const char** params) {
+    const char* p = l;
+    const char* s;
+    size_t n = strlen(l);
+    if (fcStartsWith(p, "FIRE_MAYBE_UNUSED ")) p += 18;
+    if (fcStartsWith(p, "FIRE_ALWAYS_INLINE ")) p += 19;
+    if (!fcStartsWith(p, "static ")) return false;
+    p += 7;
+    if (fcStartsWith(p, "inline ")) {
+        /* (`inline` may also be the type: the regular expression tries the optional word first) */
+        const char* q = p + 7;
+        if ((*q >= 'a' && *q <= 'z') || (*q >= 'A' && *q <= 'Z') || *q == '_') p = q;
+    }
+    if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_')) return false;
+    while (fgPcWord(*p)) p++;
+    if (*p != ' ') return false;
+    p++;
+    *prefix = fcStrN(g->c, l, (size_t)(p - l));
+    if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_')) return false;
+    for (s = p; fgPcWord(*p); p++) {}
+    *fn = fcStrN(g->c, s, (size_t)(p - s));
+    if (*p != '(' || n < 2 || l[n - 1] != ';' || l[n - 2] != ')' || (size_t)(p - l) + 1 > n - 2) return false;
+    *params = fcStrN(g->c, p + 1, n - 2 - (size_t)(p + 1 - l));
+    return true;
+}
+/* PointerCallsPass: the calls of the whole program (not the C of the packages) to the functions with the convention */
+static const char* PointerCallsPass(FgGen* g, const char* text) {
+    FcList* lines;
+    bool* ours;
+    bool inPackage = false;
+    FcDict* needsValues;
+    int i;
+    if (fcDictCount(g->pointerFuncs) == 0) return text;
+    lines = fgSplit(g->c, text, '\n');
+    ours = (bool*)fcAlloc(g->c, sizeof(bool) * (size_t)(lines->count + 1));
+    for (i = 0; i < lines->count; i++) {
+        const char* l = (const char*)lines->items[i];
+        if (fcStartsWith(l, "// ---- end of ")) { inPackage = false; ours[i] = false; continue; }
+        if (fcStartsWith(l, "// ---- ") && strstr(l, "import \"")) { inPackage = true; ours[i] = false; continue; }
+        ours[i] = !inPackage;
+    }
+    needsValues = fcDictNew(g->c, FC_KEY_STR);
+    for (i = 0; i < lines->count; i++) {
+        const char* prefix;
+        const char* fn;
+        const char* params;
+        if (!ours[i]) continue;
+        if (fgProtoLine(g, (const char*)lines->items[i], &prefix, &fn, &params) && fcDictHas(g->pointerFuncs, fn)) continue;
+        lines->items[i] = (void*)fgRewriteCalls(g, (const char*)lines->items[i], needsValues);
+    }
+    for (i = 0; i < lines->count; i++) {
+        const char* prefix;
+        const char* fn;
+        const char* params;
+        FcList* decls;
+        const char* proto;
+        if (!ours[i] || !fgProtoLine(g, (const char*)lines->items[i], &prefix, &fn, &params) || !fcDictHas(g->pointerFuncs, fn)) continue;
+        decls = fgParamDecls(g, params);
+        proto = fcFmt(g->c, "%s%s_p(%s);", prefix, fn, fgPointerParams(g, decls));
+        if (fcDictHas(needsValues, fn)) {
+            FcList* args = fcListNew(g->c);
+            int k;
+            for (k = 0; k < decls->count; k++) { FgPDecl* p = (FgPDecl*)decls->items[k]; fcListAdd(g->c, args, (void*)(p->isValue ? fcFmt(g->c, "&%s", p->name) : p->name)); }
+            proto = fcFmt(g->c, "%s\nFIRE_MAYBE_UNUSED %s%s(%s) { return %s_p(%s); }", proto, fgReplace(g->c, prefix, "FIRE_MAYBE_UNUSED ", ""), fn, params, fn, fgJoin(g->c, args, ", "));
+        }
+        lines->items[i] = (void*)proto;
+    }
+    return fgJoin(g->c, lines, "\n");
+}
 
 /* ---- CppGenerator.Split.cs ---- */
 #define SplitMarkPrefix "//@@fire-split "
