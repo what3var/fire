@@ -82,7 +82,7 @@ if [ "$WHAT" = build ]; then
   sample=$(awk -v e="$every" 'NR % e == 1' "$WORK/cases.lst")
   normalize() { sed -E -e 's#/tmp/fire-native-[0-9a-f]{32}#<build>#g' -e "s#$1#<program>#g" -e 's#taken from the cache \([0-9a-f]{16}\)#taken from the cache (<key>)#'; }
   for tc in ${BUILD_TOOLCHAINS:-gcc tcc}; do
-    total=0 sameLog=0 sameRun=0 expected=0 skipped=0 failedBoth=0
+    total=0 sameLog=0 sameRun=0 expected=0 skipped=0 failedBoth=0 unported=0
     diffs=()
     mkdir -p "$WORK/build-$tc"
     n=0
@@ -96,6 +96,8 @@ if [ "$WHAT" = build ]; then
       d="$WORK/build-$tc/$n"; rm -rf "$d"; mkdir -p "$d"
       FIRE_PROGRAM_CACHE=0 $FORGE_CS build "$ROOT/$file" --engine native -o "$d/p-cs" --toolchain "$tc" "${modeArgs[@]}" ${BUILD_FLAGS:-} 2> "$d/err-cs.txt" | normalize "$d/p-cs" > "$d/log-cs.txt"
       FIRE_PROGRAM_CACHE=0 "$FORGE_C" build "$ROOT/$file" --engine native -o "$d/p-c" --toolchain "$tc" "${modeArgs[@]}" ${BUILD_FLAGS:-} 2> "$d/err-c.txt" | normalize "$d/p-c" > "$d/log-c.txt"
+      # (a part of the generator in C that is not ported yet: counted apart)
+      if grep -q '^forge-c: unported: ' "$d/err-c.txt"; then unported=$((unported + 1)); continue; fi
       if cmp -s "$d/log-cs.txt" "$d/log-c.txt"; then sameLog=$((sameLog + 1)); else diffs+=("$n:$file (log)"); fi
       if [ ! -x "$d/p-cs" ] && [ ! -x "$d/p-c" ]; then failedBoth=$((failedBoth + 1)); continue; fi
       (cd "$(dirname "$ROOT/$file")" && timeout 60 "$d/p-cs" < /dev/null > "$d/run-cs.txt" 2>&1; echo "exit $?" >> "$d/run-cs.txt")
@@ -103,7 +105,7 @@ if [ "$WHAT" = build ]; then
       if cmp -s "$d/run-cs.txt" "$d/run-c.txt"; then sameRun=$((sameRun + 1)); else diffs+=("$n:$file (run)"); fi
       head -n -1 "$d/run-c.txt" | cmp -s - "$base.expected" && expected=$((expected + 1))
     done
-    echo "build $tc: $total cases ($skipped of the sample not run): the log identical $sameLog, the program prints the same $sameRun, as expected $expected (both builds failed: $failedBoth)"
+    echo "build $tc: $total cases ($skipped of the sample not run): the log identical $sameLog, the program prints the same $sameRun, as expected $expected (not ported yet: $unported, both builds failed: $failedBoth)"
     if [ ${#diffs[@]} -gt 0 ]; then
       status=1
       for x in "${diffs[@]:0:5}"; do

@@ -1,7 +1,8 @@
 # forge in C (`native/forge`)
 
 Status: **Phase C, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-c---das-frontend-in-c) (20.11.2026), dazu der größte
-Teil von **Phase D Schritt 1**, dem Generator Bytecode -> C ([unten](#phase-d-schritt-1-der-generator)): Lexer,
+Teil von **Phase D Schritt 1**, dem Generator Bytecode -> C ([unten](#phase-d-schritt-1-der-generator)), und von **Schritt 2**, dem Builder
+([unten](#phase-d-schritt-2-der-builder): `forge-c build` mit linkage `source`): Lexer,
 Präprozessor mit `#if`, Diagnosen, AST und Parser (1, 2); Resolver, Typprüfer und `SetterClaims` mit dem, was sie vom Linker brauchen - die
 Direktiven eines Builds mit ihrer Wirkung, `#import` mit den Preludes und den Natives der installierten Pakete (3); der Bytecode-Compiler, was die
 Typprüfung ihm hinterlässt (mit der Herleitung von `defined`), der Rest des Linkers und der Schreiber der Programmdatei `.fbc` (4); die
@@ -225,7 +226,7 @@ Parser und Resolver ihren Zustand vom Kontext einer Übersetzung lösen); Highli
 | `biscuitgenerator.c` | `MarkupFiles` (welcher Generator), der Leser und Generator der `.biscuit` | `BiscuitGenerator.cs` |
 | `datamodelgenerator.c` | der Generator der `.fdata` (mit `LineIndex`, `Plural`, `Snake`) | `DataModelGenerator.cs` |
 | `falstadimport.c` | Falstads Schaltungen (Text und `<cir>`) als `.biscuit` | `FalstadImport.cs` |
-| `forge.c` | das Programm `forge-c` (`tokens`, `ast`, `diagnostics`, `fbc`, `bytecode`, `ui`, `biscuit`, `fdata`, `falstad`, `markup`, `serve`) | `FrontendDump.cs`, `CommandLine.cs` (`Bytecode`) |
+| `forge.c` | das Programm `forge-c` (`tokens`, `ast`, `diagnostics`, `fbc`, `bytecode`, `ui`, `biscuit`, `fdata`, `falstad`, `markup`, `serve`, `cgen`, `buildplan`, `build`) | `FrontendDump.cs`, `CommandLine.cs` (`Bytecode`) |
 | `serve.c` ... `serve_markup.c` | `forge serve` (siehe [oben](#forge-serve)) | `Language/` von spark, `MarkupCompletion.cs` |
 
 `native/base/fire_base.h` (Arena, geordnete Map) wird unverändert mitbenutzt.
@@ -362,7 +363,7 @@ Die Optionen sind Wörter, mit `+` verbunden: `default`, `debug`/`release`/`perf
 
 Noch nicht portiert (`unported: ...`, über die Fälle mit Standardoptionen): die Reflection (`CppGenerator.Reflection.cs`: `__refl_*`, die Selektoren
 der Lambdas, die Probes - alle 73 noch nicht portierten Fälle und das eine Paket, `fire-reflection`), Debug-Builds (`CppGenerator.Debug.cs`), die Teilung in
-Einheiten (`ProgramSplit.cs`, `CppGenerator.Split.cs`), `linkage` static/shared (`CppGenerator.Modules.cs`, `ModuleDispatch.cs`, `StaticLinkage.cs`,
+Einheiten (`ProgramSplit.cs`, `CppGenerator.Split.cs` - seit Schritt 2 portiert, [unten](#phase-d-schritt-2-der-builder)), `linkage` static/shared (`CppGenerator.Modules.cs`, `ModuleDispatch.cs`, `StaticLinkage.cs`,
 `Plugins.cs`: der Generator in C kennt nur die eine Rolle des ganzen Programms - `Modular`, `LibraryRole` sind `false`) und `--stats`.
 
 ### Dateien
@@ -398,6 +399,64 @@ Einheiten (`ProgramSplit.cs`, `CppGenerator.Split.cs`), `linkage` static/shared 
   nach `pkg/<import>/` gezeigt, nicht eingesetzt.
 * **Warnungen**: die Helfer der noch nicht portierten Teile (Reflection, JSON, Debug) sind schon da und noch unbenutzt (`-Wunused-function`).
 
+## Phase D Schritt 2: der Builder
+
+Der native Builder ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-d---backend-und-werkzeuge-in-c), Schritt 2) in `native/forge/build/`, Stand 6f21d1a4 von
+`src/fire.Compiler/NativeBuilder*.cs` und `src/fire.Native`: was `forge build <datei> --engine native` mit linkage `source` tut, 1:1 (L3) - die Toolchain der
+Maschine oder der Konfiguration, die Richtung (`WithDirection`), das Programm für die Art der Toolchain (ihr Symbol für `#if`), der C++-Ersatz für TinyCC, die
+Dateien des Builds (Laufzeit, Plattformpaket mit dem, was es einbindet, die Header der Pakete unter `pkg/`), die Befehlszeilen, die geteilten Einheiten
+nebeneinander (pthreads, `FIRE_BUILD_JOBS`), der Schnellbuild (`--quick[=0|1]`: das Programm mit -O0/-O1, die Natives der Pakete in eigenen Einheiten mit
+dem -O2 der Toolchain) und der Programm-Cache (`ProgramCache`: derselbe Schlüssel wie in C#, ein Programm, das das C#-forge gebaut hat, nimmt forge-c aus dem
+Cache und umgekehrt). Dazu im Generator die Teilung in Einheiten (`ProgramSplit.cs`, `CppGenerator.Split.cs`, `gen/split.c`) - ohne sie gibt es keinen
+Schnellbuild und keinen großen Build mit gcc/clang (`auto` teilt ab 2 MB C).
+
+```
+forge-c build x.fire [--engine native] [-o <programm>] [-t <ziel>] [--toolchain <name>] [--quick[=0|1]] [-m <modus>] [--split auto|on|off]
+        [--optimize speed|size] [--stripping 0-3] [--keep-all] [--keep] [--config <fire.native.json>] [-f 32]
+                                                     (wie `forge build ... --engine native`: das Protokoll auf stdout, die Warnungen und Fehler auf stderr)
+forge buildplan <optionen> x.fire                    (C#, FrontendDump.DumpBuildPlan: was der Build ausführen würde)
+forge-c buildplan <optionen> x.fire                  (dasselbe aus dem Builder in C; `--list <dateien.txt> --out <ordner>` wie bei `cgen`)
+tests/compare-frontend.sh <forge> <forge-c> buildplan [<ordner>]   (BUILDPLAN_OPTIONS="default tc:gcc+quick ...")
+tests/compare-frontend.sh <forge> <forge-c> build [<ordner>]       (echte Builds einer Stichprobe: BUILD_EVERY=25, BUILD_TOOLCHAINS="gcc tcc", BUILD_FLAGS)
+```
+
+`buildplan` druckt die Toolchain (nach dem C++-Ersatz), die Zeilen des Protokolls vor den Befehlen (Ersatz, Schnellbuild), jeden Befehl (der Ordner des Builds
+als `<build>`, das Programm als `<programm>`), den Schlüssel des Programm-Caches (`none`: nicht gecacht) und jede Datei des Ordners mit ihrem SHA-256 - also
+Befehlszeilen, Dateimenge und Cache-Schlüssel. Die Optionen sind die von `cgen` und `tc:<toolchain>` (sonst der Build-Compiler der Maschine), `quick`, `quick1`,
+`nosplit`. forge-c findet die Dateien der Laufzeit, die das C#-forge als Ressourcen trägt, in `native/` (`FIRE_NATIVE_ROOT`, sonst neben dem Ordner der
+Tabellen), `Toolchain/` (toolchain.json, portable Compiler) neben sich wie forge.
+
+### Stand
+
+| Messung | Quellen | gleich | noch nicht portiert | verschieden |
+|---|---|---|---|---|
+| `cgen split`, `tests/cases` / `packages` / `src/fire.Project` | 1129 / 93 / 34 | 1056 / 92 / 30 | 73 / 1 / 3 | 0 / 0 / 1 (`Scene3D Models`, wie oben) |
+| `buildplan default` (Linux, Build-Compiler der Maschine: tcc), `tests/cases` / `packages` / `src/fire.Project` | 1129 / 93 / 34 | 1056 / 92 / 30 | 73 / 1 / 3 | 0 / 0 / 1 (`Scene3D Models`) |
+| `buildplan tc:gcc+quick` (geteilt, -O0), dieselben | 1129 / 93 / 34 | 1056 / 92 / 30 | 73 / 1 / 3 | 0 / 0 / 1 (`Scene3D Models`) |
+| `build`, Stichprobe (jeder 10. Fall, 72 mit `.expected`), gcc / tcc / gcc `--quick` / clang `--quick` | 72 je Toolchain | 63 (Protokoll und Ausgabe) | 9 (Reflection) | 0 |
+
+(`build`: das Protokoll beider forges ist nach dem Normalisieren der Pfade gleich, die beiden Programme geben dasselbe aus; 61 davon genau die
+`.expected` - die zwei anderen enden, wie verlangt, mit einer unbehandelten Ausnahme. `buildplan tc:gcc+quick` teilt jedes Programm: das ist auch das Maß der
+Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge-c aus dem Cache - gleicher Schlüssel, geprüft mit tcc, gcc und `--quick`.)
+
+### Dateien
+
+| Datei | Inhalt | Gegenstück in C# |
+|---|---|---|
+| `gen/split.c` | die Teilung in Einheiten: Scan der C-Teile, Gruppen `#if`, Namen und Benutzungen, die Deklarationen im Header, die Einheiten (Laufzeit, Helfer, Funktionen nach Modul und Kosten, Natives in C), `SplitKeyOf`, `SplitNatives`, `NativesStandAlone` | `ProgramSplit.cs`, `CppGenerator.Split.cs`, `CppGenerator.Stats.cs` (`ModuleOfStat`), `StaticLinkage.cs` (Teil) |
+| `build/toolchain.c` | `ToolchainDef` (die eingebauten, `WithBase`, `CCompilerFor`), `ToolchainDetector`, `ToolchainSetup` (`FindProgram`, `Detect`), `MachineToolchains` (toolchain.json), Open Watcom (Befehl, Ort, Umgebung, Startcode), `NativeConfig` (fire.native.json mit `TargetDef.Apply`, `ResolveTarget`, `ResolveToolchain`), `OptimizingToolchain` | `Toolchain.cs`, `ToolchainSetup.cs`, `MachineToolchains.cs`, `Toolchains/*.cs`, `NativeConfig.cs`, `PackageLibrary.cs` (Teil) |
+| `build/builder.c` | `QuickBuild`, `WithDirection`, `NativeRuntimeFiles.WriteTo`, `PackageHeaders.WriteTo`, `WriteFiles`, `Run` (fork/exec, die Argumente wie .NET sie teilt), `CompilerCommand`, `BuildCommands`, `SplitCommands`, `CompileUnits`, `ToolchainStamp`, `ArchiveCommand`, `CppFallback`, `ProgramCache`, `Build` (linkage source) | `NativeBuilder.cs`, `NativeBuilder.Quick.cs`, `NativeBuilder.ProgramCache.cs`, `NativeRuntimeFiles.cs`, `Package.Manager/PackageStore.cs` (`PackageHeaders`), `NativeLibraryCache.cs` (`Root`) |
+| `build/command.c` | `forge-c build`, `forge-c buildplan` | `CommandLine.Report.cs` (`ReportBuildFiles`, `NativeOutcome`), `FrontendDump.cs` (`DumpBuildPlan`) |
+
+### Entscheidungen
+
+* **Nur POSIX** (Linux, macOS): `Run` startet die Werkzeuge mit `fork`/`execve`, `CompileUnits` mit pthreads. Unter Windows baut forge-c `build/` nicht ein.
+* **Die Argumente** gehen als eine Zeile in `ProcessStartInfo`; forge-c teilt sie wie .NET (Anführungszeichen, Backslashes) - die Zeilen im Protokoll sind dieselben.
+* **Zeitstempel**: `FileInfo` einer symbolischen Verknüpfung (`/usr/bin/gcc -> /etc/alternatives/gcc`) hat Größe und Zeit der Verknüpfung selbst - die
+  Stempel von Toolchain und Cache nehmen darum `lstat`; sonst wäre der Schlüssel für gcc ein anderer als in C#.
+* **Was fehlt, sagt es**: linkage `static`/`shared`/`plugin` (der Generator hat noch keine Module), `--stats`, `"globalJobs"` und Kommentare in fire.native.json
+  sind `unported: ...`; ohne Compiler meldet der Build es statt eines Installationsangebots (`ToolchainProvider`).
+
 ## Nachziehen
 
 Ändert sich auf `master` eine der portierten C#-Dateien (`git log <commit>..master -- src/fire.Compiler/Lexer.cs` usw.; Schritt 3:
@@ -411,4 +470,8 @@ Eine neue Knotenart oder ein neues Feld kommt in `ast.h` an dieselbe Stelle wie 
 Der Generator (Phase D Schritt 1, `native/forge/gen/`): `src/fire.Native/CppGenerator*.cs`, `NativeCTypes.cs`, `NativeConfig.cs`,
 `src/fire/Bytecode/Overloads.cs` (`OverloadHint`), `src/fire/Standard/JsonMethods.cs`, `LibraryMethods.cs` und von `src/fire.Package.Manager`
 `Manifest.cs`, `NativeSources.cs`, `PackageStore.cs` - Stand 808e9788; das Maß ist `tests/compare-frontend.sh ... native` mit den
-Optionssätzen der Tabelle oben.
+Optionssätzen der Tabelle oben. Der Builder (Phase D Schritt 2, `native/forge/build/`, `gen/split.c`): `src/fire.Compiler/NativeBuilder.cs`,
+`NativeBuilder.Quick.cs`, `NativeBuilder.ProgramCache.cs`, `PackageLibrary.cs` (`OptimizingToolchain`), `CommandLine.Report.cs` (`ReportBuildFiles`),
+`src/fire.Native/Toolchain.cs`, `ToolchainSetup.cs`, `MachineToolchains.cs`, `NativeConfig.cs`, `NativeRuntimeFiles.cs`, `ProgramSplit.cs`, `CppGenerator.Split.cs`,
+`Toolchains/*.cs`, `src/fire/Runtime/TargetProfile*.cs`, `PackageStore.cs` (`PackageHeaders`) - Stand 6f21d1a4; das Maß ist
+`tests/compare-frontend.sh ... buildplan` und `... build`.
