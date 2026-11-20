@@ -88,6 +88,10 @@ namespace fire.Native
         private string? _split;
         /// <summary><see cref="Split"/> as a mode (auto when it is not given).</summary>
         [JsonIgnore] public SplitMode SplitValue => SplitModes.Parse(_split) ?? SplitMode.Auto;
+        /// <summary>`--quick` (spark's hare switch): a quick build for tests - the C compiler's optimisation level (0: -O0, 1: -O1) instead of the toolchain's, and the units
+        /// forced on where the toolchain splits (gcc, clang, Emscripten); the mode of the program (asserts, checks) stays. Null: a normal build. Not saved
+        /// (docs/spec/NATIVE_SPLIT.md "Schnellbuild").</summary>
+        [JsonIgnore] public int? Quick { get; set; }
         /// <summary>`--linkage plugin`: the program the plugin is built for (its path, or its `.firehost` file) - its switches and the interfaces of its libraries.</summary>
         public string? Host { get; set; }
         public Dictionary<string, TargetDef> Targets { get; set; } = new();

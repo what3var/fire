@@ -423,7 +423,7 @@ die eigene Zeile zurück. gcc warnt in einer Einheit über die Wächter, die der
 (auch MinGW) und Emscripten, wenn das C mindestens 2 MB hat (`ProgramSplit.AutoMinBytes`, etwa 50 000 Zeilen); TinyCC, Open Watcom, `custom` und kleine
 Programme bleiben eine Datei. `on` teilt, wo die Toolchain es kann (gcc, clang, TinyCC, Emscripten, `files` - dann listet die ESP-IDF-Komponente alle
 Einheiten); msvc noch nicht (hier nicht zu prüfen). **Publish** (`ProjectPublisher`) bleibt eine Datei, wenn `fire.native.json` nichts sagt: kleiner, und der
-Compiler sieht das ganze Programm (siehe Größe). Nie geteilt: linkage `static`/`shared`/`plugin`, `FIRE_MODULES=1`, die Zeigerkonvention (Watcom), `--stats`.
+Compiler sieht das ganze Programm (siehe Größe) - außer als [Schnellbuild](#schnellbuild) (`--quick`, der Hase in spark). Nie geteilt: linkage `static`/`shared`/`plugin`, `FIRE_MODULES=1`, die Zeigerkonvention (Watcom), `--stats`.
 `forge native` schreibt die Einheiten nur mit `on`/`FIRE_SPLIT=1` (`auto` kennt den Compiler nicht).
 
 Der Builder übersetzt jede Einheit mit `-c` (die teuersten zuerst, `FIRE_BUILD_JOBS` zugleich, sonst die Kerne), dann ein Befehl, der bindet (mit Natives in
@@ -466,8 +466,53 @@ gruppiert nach Quelle und Klasse, damit die meisten Aufrufe in ihrer Einheit ble
 `string` (Methoden des Preludes über Verteiler in der Helfer-Einheit) und `alloc` werden langsamer, die anderen bleiben innerhalb der Schwankung dieser
 Messung. So kleine Programme teilt `auto` nicht; für große ist der Preis zu messen, bevor `auto` dort Standard bleibt (offen).
 
+### Schnellbuild
+
+Der Kompromiss für Testbuilds: `forge build|publish --quick` (`--quick=1`), in spark der **Hase** links von *Build* und *Publish* (auch *Run > Quick Build*,
+die Stufe in *Tools > Options > Compilers*). Ein Schnellbuild ändert nur den C-Compiler, nicht das Programm: **-O0** (`--quick=1`: -O1; msvc `/Od`, `/O1`)
+statt der Optimierung der Toolchain (auch statt `--optimize size`), und **geteilt**, wo die Toolchain teilen kann und `auto` es täte (gcc, clang, MinGW,
+Emscripten: `"split": "on"` erzwungen, auch bei Publish und bei `"split": "off"`); der Modus (Debug, Release, Performance: Asserts, Prüfungen) und das erzeugte
+C bleiben, FIRE_SPLIT geht weiter vor. Die **Natives der Packages** in ihren eigenen Einheiten (`fire_natives_*.c`, auch der Graphics-Rasterizer und die
+C-Engine von ai) und die Natives in C++ behalten die Optimierung der Toolchain - sie laufen in jedem Programm heiß -, und weil sie optimiert mehrfach so lange
+brauchen, wie ihre Größe sagt, kommen sie zuerst an die Reihe. Die Bibliotheken der Packages für die VM baut ein Schnellbuild nicht (`PackageLibrary`, eigene
+Toolchain); die Engine von ai hat ohnehin `#pragma GCC optimize("O2")`, wenn ohne Optimierung gebaut wird. TinyCC (optimiert kaum und ist schnell), Open
+Watcom, `files` und `custom` bauen wie ohne (das Log sagt es), ebenso linkage `static`/`shared`/`plugin`. Das Log sagt "Schnellbuild (-O0, geteilt): a test
+build, not a release"; **Publish** schreibt "Schnellbuild (-O0, geteilt)" ins Log, in die Zusammenfassung (die Statuszeile von spark) und in die Marke
+`.firepublish` jedes Ordners, und der Stand "aktuell" (`obj/publish/*.json`) nimmt die Stufe in den Schlüssel: ein Schnell-Publish ist für ein normales nicht
+aktuell und umgekehrt. Der Schlüssel des Programm-Caches nennt die Stufe ebenfalls (die Befehle unterscheiden sich ohnehin).
+
+**Gemessen** (gcc 13.3, 4 vCPUs, **mit Last von außen** - andere Agenten bauten und testeten, Last 5-8: die Zeiten sind höher als auf einem ruhigen Rechner,
+die Verhältnisse belastbar; `FIRE_BUILD_TIMES=1`, `FIRE_PROGRAM_CACHE=0`, nacheinander). "ganz" ist der ganze `forge build` (Frontend und Generator: Docking
+~14 s, Assistent ~30 s), "gcc" die Wand-Zeit der Compiler, "CPU" die Summe von forge und den Compilern:
+
+| Programm | eine Datei -O2 (Publish bisher) | geteilt -O2 (`auto`, Build) | Schnellbuild -O1 | **Schnellbuild -O0** |
+|---|---:|---:|---:|---:|
+| Docking: ganz / gcc / CPU | 125 s / 111 s / 124 s | 99 s / 85 s / 175 s | 77 s / 62 s / 131 s | **36 s / 21 s / 56 s** |
+| Docking: Programm | 5,36 MB | 7,70 MB | 7,63 MB | 6,98 MB |
+| Assistent: ganz / gcc / CPU | 273 s / 245 s / 272 s | 198 s / 168 s / 359 s | 151 s / 120 s / 262 s | **73 s / 43 s / 116 s** |
+| Assistent: Programm | 10,26 MB | 14,40 MB | 14,56 MB | 13,20 MB |
+
+Ein Test-Publish wird so mit -O0 3,5- bis 3,7-mal so schnell fertig wie bisher, mit -O1 1,6- bis 1,8-mal. Bei -O0 bestimmt die längste Einheit die Wand-Zeit:
+bei Docking sind das die Natives (`fire_natives_shared.c`, optimiert 19 s unter Last; allein und ohne Last 9,8 s gegen 3,7 s mit -O0) - der Preis dafür, dass
+Rasterizer und Engines schnell bleiben, etwa 4 s.
+
+**Laufzeit** (die Benchmarks von `tests/bench` mit 30-mal so vielen Durchläufen, Release, gcc, kürzester von 7, Last 5-11; alle drei mit `--toolchain gcc`,
+die Schnellbuilds geteilt):
+
+| ms | alloc | array | fib | float | lambda | list | loop | method | string | Summe |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| -O2 (normal, eine Datei) | 39 | 225 | 7,9 | 97 | 119 | 128 | 46 | 7,6 | 34 | 704 |
+| Schnellbuild -O0 | 267 | 1656 | 12 | 413 | 752 | 691 | 480 | 255 | 388 | 4913 |
+| Schnellbuild -O1 | 50 | 257 | 6,6 | 99 | 142 | 133 | 41 | 25 | 78 | 831 |
+
+-O0 läuft 5- bis 30-mal so langsam (zusammen 7-mal), -O1 fast wie -O2 (zusammen 1,2-mal; `method` und `string` 2- bis 3-mal - die Teilung, siehe oben,
+und weniger Einbetten). Für einen Test, der nur starten und ein paar Klicks tun soll, reicht -O0; wer mit dem Testbuild misst oder viel rechnet, nimmt -O1
+(Standard bleibt -O0).
+
 ### Tests
 
+* `FIRE_TESTS_ONLY=publish` (`PublishTests.QuickBuild`): `--quick` auf der Befehlszeile, Flags und Teilung je Toolchain, der Schlüssel des Programm-Caches
+  (normal, -O0, -O1 je für sich, derselbe Schnellbuild aus dem Cache), ein Schnell-Publish mit Marke und eigenem Stand "aktuell", beide Programme laufen.
 * `FIRE_TESTS_ONLY=native` mit `FIRE_SPLIT=1` (und `FIRE_SPLIT_UNIT_KB=16`/`32`, damit auch kleine Fälle in viele Einheiten zerfallen) über die Familien Besitz,
   Ausnahmen, Abbruch, Reflection, JSON, inline c, Strings, Spezialisierungen, Bytes, Await, Tasks, Threads/Lambdas und die Fälle mit ui, Http und SQLite:
   dieselben Ausgaben (AddressSanitizer/UBSan). Was dabei auffiel und behoben ist: der Zustand der Plattform (`FIRE_ONCE`, die grünen Threads liefen nicht),
