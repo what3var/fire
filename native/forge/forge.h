@@ -77,6 +77,7 @@ struct FcCtx {
     /* the linker (Phase C 3): the set of included files shared by all sources of a program (NULL: one per source), the effects of its directives */
     FcList* sharedIncluded;
     void (*directiveHook)(struct FcCtx* c, void* state, const char* name, FcList* args, int line, FcList* importNamespaces);
+    int programWordWidth;   /* TypeChecker.ProgramWordWidth of the target (0: 64; the generator, Phase D 1, sets it) */
     void* directiveState;
     /* the ResourceTable of `new Resource("path")` (Preprocessor.ResolveResources): the full paths, a resource's id is its index; NULL: none */
     FcList* resourcePaths;

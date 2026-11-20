@@ -784,7 +784,7 @@ static FcList* fcTypeCheck(FcCtx* c, FcList* program, FcResolveResult* resolved,
     t->reportFrom = reportFrom < 0 ? firstUserSource : reportFrom;
     t->programIntWidth = intWidth;
     t->programFloatWidth = floatWidth;
-    t->programWordWidth = 64;
+    t->programWordWidth = c->programWordWidth ? c->programWordWidth : 64;
     t->nativeReturns = nativeReturns;
     t->returnWhat = "";
     t->rr = resolved;

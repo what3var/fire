@@ -117,6 +117,7 @@ static FcLinked* fgLinkNative(FcCtx* c, const char* path, const char* preludePat
     resolved = fcResolve(c, program, &L->natives, NULL);
     intWidth = o->intWidth ? o->intWidth : L->directiveIntWidth != FC_NULL_INT ? L->directiveIntWidth : t->intWidth;
     floatWidth = o->floatWidth ? o->floatWidth : L->directiveFloatWidth != FC_NULL_INT ? L->directiveFloatWidth : t->floatWidth;
+    c->programWordWidth = t->wordWidth;   /* (Linker: TypeChecker.ProgramWordWidth = target.WordWidth) */
     fcTypeCheckRun(c, program, resolved, strict, firstUserSource, firstUserSource, intWidth, floatWidth, fcNativeReturnTypes(L));
     compiled = fcCompile(c, program, resolved, &L->registry, false);
     linked = (FcLinked*)fcAlloc(c, sizeof *linked);
