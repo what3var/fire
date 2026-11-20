@@ -2,6 +2,9 @@
  * ReportBuildFiles with the engine native - LoadConfig, KeepAll, ToolchainFor, NativeBuilder.BuildSafe, NativeOutcome - and the options it reads) and
  * `forge-c buildplan <options> <file>`, the measure of Phase D 2: what FrontendDump.DumpBuildPlan of the C# forge prints. */
 
+/* a project or a solution (Phase D 3, project/cli.c): 0 not one, 1 a program (b gets its plan, the names of target and toolchain the project's when not given),
+ * 2 a library (nothing to build) */
+static int (*nbProjectBuildPlan)(FcCtx* c, const char* path, NbBuild* b, NbConfig* config, const char** targetName, const char** toolchainName);
 /* `buildplan <options> <file>`: the plan of a native build of one file (see FrontendDump.DumpBuildPlan) */
 static void nbDumpBuildPlan(FcCtx* c, const char* options, const char* path, const char* prelude, const char* storeRoot, FcBuf* out) {
     FcList* words = fgSplit(c, options, '+');
@@ -42,6 +45,10 @@ static void nbDumpBuildPlan(FcCtx* c, const char* options, const char* path, con
     b.dryRun = true;
     b.plan = &plan;
     fcBufStr(&plan, "");
+    if (nbProjectBuildPlan) {
+        int kind = nbProjectBuildPlan(c, path, &b, config, &targetName, &toolchainName);
+        if (kind == 2) { fcBufStr(out, "library\n"); fcBufFree(&plan); return; }
+    }
     target = nbResolveTarget(c, config, targetName);
     toolchain = nbResolveToolchain(c, config, target, toolchainName, NB_PURPOSE_BUILD);
     /* (the toolchain `files` writes into a temporary folder: `<build>`) */

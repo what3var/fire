@@ -226,15 +226,21 @@ bool fcIsWhiteSpace(uint16_t c) {
 }
 
 bool fcReadText(const char* path, FcU16* out) {
-    size_t n = 0, i = 0;
+    size_t n = 0;
     uint8_t* b = fbReadFile(path, &n);
     if (!b) return false;
+    fcDecodeText(b, n, out);
+    free(b);
+    return true;
+}
+/* the bytes of a text as File.ReadAllText decodes them */
+void fcDecodeText(const uint8_t* b, size_t n, FcU16* out) {
+    size_t i = 0;
     fcU16Put(out, NULL, 0);
     if (n >= 2 && ((b[0] == 0xFF && b[1] == 0xFE) || (b[0] == 0xFE && b[1] == 0xFF))) {
         bool le = b[0] == 0xFF;
         for (i = 2; i + 1 < n; i += 2) fcU16Unit(out, le ? (uint16_t)(b[i] | (b[i + 1] << 8)) : (uint16_t)((b[i] << 8) | b[i + 1]));
-        free(b);
-        return true;
+        return;
     }
     if (n >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) i = 3;
     while (i < n) {
@@ -259,8 +265,6 @@ bool fcReadText(const char* path, FcU16* out) {
         else fcU16Unit(out, (uint16_t)cp);
         i += (size_t)len;
     }
-    free(b);
-    return true;
 }
 
 /* ---- exceptions ---- */

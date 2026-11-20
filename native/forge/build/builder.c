@@ -402,7 +402,27 @@ static char* nbResolveExe(const char* exe) {
 }
 /* Runs a tool of the build in workDir: its output and errors (in that order), and whether it ended with 0. A rooted program puts its folder first in the PATH
  * (a portable toolchain finds its other programs there); Open Watcom gets WATCOM, INCLUDE, EDPATH. Thread-safe: no allocation in the context. */
+/* the log of a BuildMonitor (Phase D 3: publish, `build --all`): every tool's command and the lines of its output as it runs (NULL: none) */
+static void (*nbMonitorLine)(const char* text, size_t n);
+static NbRunResult nbRunCore(const char* exe, const char* arguments, const char* workDir);
 static NbRunResult nbRun(const char* exe, const char* arguments, const char* workDir) {
+    NbRunResult r;
+    size_t i, start;
+    if (!nbMonitorLine) return nbRunCore(exe, arguments, workDir);
+    {
+        size_t n = strlen(exe) + strlen(arguments) + 2;
+        char* line = (char*)malloc(n);
+        if (!line) fbOutOfMemory();
+        snprintf(line, n, "%s %s", exe, arguments);
+        nbMonitorLine(line, strlen(line));
+        free(line);
+    }
+    r = nbRunCore(exe, arguments, workDir);
+    for (i = start = 0; r.text && i <= r.len; i++)
+        if (i == r.len || r.text[i] == '\n') { if (i > start || i < r.len) nbMonitorLine(r.text + start, i - start); start = i + 1; }
+    return r;
+}
+static NbRunResult nbRunCore(const char* exe, const char* arguments, const char* workDir) {
     NbRunResult r = { false, NULL, 0 };
     int argc = 0, i, outPipe[2], errPipe[2], status = 0;
     char** args = nbSplitArguments(arguments, &argc);
@@ -1077,6 +1097,9 @@ typedef struct NbBuild {
     /* a dry run (`forge-c buildplan`): the files are written and the commands planned, nothing runs; plan gets what FrontendDump.DumpBuildPlan prints */
     bool dryRun;
     FcBuf* plan;
+    /* a project (Phase D 3, project/): the link of its plan instead of the one file `path` (NULL: the file) */
+    FcLinked* (*link)(FcCtx* c, const struct NbBuild* b, const FgOptions* o, FcNatives** registry, const char* kind);
+    void* project;
 } NbBuild;
 static int nbUnitOrderCmp(const void* a, const void* b);
 static bool nbUnitOrderNatives;
@@ -1151,7 +1174,7 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
     o.stripping = nbStrippingOf(config);
     o.optimize = nbOptimizeOf(config, target);
     if (config->globalJobs) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: \"globalJobs\" of fire.native.json");
-    linked = fgLinkNativeKind(c, b->path, b->prelude, b->storeRoot, b->strict, &o, &registry, kind);
+    linked = b->link ? b->link(c, b, &o, &registry, kind) : fgLinkNativeKind(c, b->path, b->prelude, b->storeRoot, b->strict, &o, &registry, kind);
     memset(&store, 0, sizeof store);
     store.root = b->storeRoot;
     program = fgGenerateSources(c, linked, registry->names, target, o.stripping, nbQuickSplitOf(config, kind), kind, &store);
