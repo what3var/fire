@@ -22,10 +22,10 @@ namespace fire.Compiler
         public static int Run(IReadOnlyList<string> args)
         {
             string command = args[0];
-            if ((command == "fbc" || command == "cgen") && args.Count >= 3)
+            if ((command == "fbc" || command == "cgen" || command == "buildplan") && args.Count >= 3)
             {
-                // `cgen <options> <file>`: the C `forge native` writes (Phase D 1), the options a word (NativeDump)
-                if (command == "cgen") { command = "cgen:" + args[1]; args = args.Skip(1).ToList(); goto parsed; }
+                // `cgen <options> <file>`: the C `forge native` writes (Phase D 1), the options a word (NativeDump); `buildplan <options> <file>`: what a native build would run (Phase D 2)
+                if (command == "cgen" || command == "buildplan") { command = command + ":" + args[1]; args = args.Skip(1).ToList(); goto parsed; }
                 // `fbc <debug|release|performance|default> <file>`: the program file `forge bytecode` writes (Phase C 4); the mode is a parameter of the command
                 command = "fbc:" + args[1];
                 args = args.Skip(1).ToList();
@@ -60,6 +60,7 @@ namespace fire.Compiler
             if (command == "diagnostics") return DumpDiagnostics(path, output);
             if (command.StartsWith("fbc:", StringComparison.Ordinal)) return DumpProgramFile(command.Substring(4), path, output);
             if (command.StartsWith("cgen:", StringComparison.Ordinal)) return DumpNative(command.Substring(5), path, output);
+            if (command.StartsWith("buildplan:", StringComparison.Ordinal)) return DumpBuildPlan(command.Substring(10), path, output);
             var o = new StringBuilder();
             int result = 0;
             try
@@ -247,6 +248,148 @@ namespace fire.Compiler
             {
                 Linker.ProcessDefaultTypeChecking = before;
                 Linker.ProcessIntWidth = intBefore;
+            }
+            var bytes = new UTF8Encoding(false).GetBytes(o.ToString());
+            output.Write(bytes, 0, bytes.Length);
+            output.Flush();
+            return result;
+        }
+
+        /// <summary>`forge buildplan <options> <file>` (Phase D 2, docs/spec/FORGE_C.md): what `forge build <file> --engine native` (linkage "source") would run - the steps of
+        /// NativeBuilder.Build up to the cache, without running a compiler: the toolchain (after the fallback of a C-only compiler for natives in C++), the lines of the log
+        /// before the commands (the fallback, a quick build), the commands (the folder of the build `&lt;build&gt;`, the program `&lt;program&gt;`), the key of
+        /// ProgramCache (`none`: not cached) and every file of the folder of the build with its SHA-256. The options are those of `cgen` (`split` is `"split": "on"`) and
+        /// `nosplit` (`"split": "off"`), `tc:<toolchain>` (`--toolchain`; default: the machine's compiler for building), `quick`, `quick1` (`--quick`, `--quick=1`).
+        /// The toolchain `files` writes into a temporary folder (`<build>`). Errors as with `cgen`.</summary>
+        private static int DumpBuildPlan(string options, string path, Stream output)
+        {
+            var lines = File.Exists(path) ? File.ReadAllLines(path) : Array.Empty<string>();
+            bool strict = lines.Skip(Math.Max(0, lines.Length - 12)).Any(l => l.Trim() == "//# types: strict");
+            fire.Runtime.VmExecutionMode? mode = null;
+            int? floatWidth = null, intWidth = null;
+            string? targetName = null, toolchainName = null;
+            var config = new fire.Native.NativeConfig();
+            foreach (var word in options.Split('+', StringSplitOptions.RemoveEmptyEntries))
+            {
+                switch (word)
+                {
+                    case "default": break;
+                    case "debug": mode = fire.Runtime.VmExecutionMode.Debug; break;
+                    case "release": mode = fire.Runtime.VmExecutionMode.Release; break;
+                    case "performance": mode = fire.Runtime.VmExecutionMode.Performance; break;
+                    case "split": config.Split = "on"; break;
+                    case "nosplit": config.Split = "off"; break;
+                    case "quick": config.Quick = 0; break;
+                    case "quick1": config.Quick = 1; break;
+                    case "speed": case "size": config.Optimize = word; config.OptimizeFromCommandLine = true; break;
+                    case "i16": intWidth = 16; break;
+                    case "i32": intWidth = 32; break;
+                    case "f32": floatWidth = 32; break;
+                    default:
+                        if (word.StartsWith("strip", StringComparison.Ordinal) && int.TryParse(word.AsSpan(5), out int level)) { config.Stripping = (fire.Native.StrippingLevel)level; config.StrippingFromCommandLine = true; }
+                        else if (word.StartsWith("t:", StringComparison.Ordinal)) targetName = word.Substring(2);
+                        else if (word.StartsWith("tc:", StringComparison.Ordinal)) toolchainName = word.Substring(3);
+                        else throw new ArgumentException("unknown option " + word);
+                        break;
+                }
+            }
+            var before = Linker.ProcessDefaultTypeChecking;
+            var intBefore = Linker.ProcessIntWidth;
+            Linker.ProcessDefaultTypeChecking = strict ? TypeCheckMode.Strict : null;
+            Linker.ProcessIntWidth = intWidth;
+            var o = new StringBuilder();
+            int result = 0;
+            string? workDir = null;
+            try
+            {
+                string full = Path.GetFullPath(path);
+                var target = config.ResolveTarget(targetName);
+                var toolchain = config.ResolveToolchain(target, toolchainName, fire.Native.ToolchainPurpose.Build);
+                string exe = Path.GetFullPath("plan-out" + target.ProgramExtension);
+                var log = new StringBuilder();
+                NativeBuilder.NativeProgram program;
+                while (true)
+                {
+                    // (Build: the direction, the program for the kind of the toolchain, the compiler that compiles C++ for a C-only one)
+                    toolchain = NativeBuilder.WithDirection(toolchain, NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target));
+                    program = NativeBuilder.GenerateLinked(new[] { File.ReadAllText(path) }, target, mode, floatWidth, Path.GetDirectoryName(full), null, null, new string?[] { full },
+                        NativeBuilder.StrippingOf(config, null), config.GlobalJobsValue, toolchain.EffectiveKind, NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target), config.Stats,
+                        NativeBuilder.QuickBuild.SplitOf(config, toolchain.EffectiveKind));
+                    if (program.Natives != null && NativeBuilder.CppFallback(toolchain) is { } cppToolchain)
+                    {
+                        log.AppendLine(NativeBuilder.CppFallbackNote(toolchain, cppToolchain, program.Natives));
+                        toolchain = cppToolchain;
+                        continue;
+                    }
+                    break;
+                }
+                workDir = Path.Combine(Path.GetTempPath(), "fire-native-" + Guid.NewGuid().ToString("N"));
+                var commands = new List<(string Executable, string Arguments)>();
+                string? key = null;
+                if (toolchain.EffectiveKind == "files")
+                {
+                    NativeBuilder.WriteFiles(workDir, program.C, target, NativeBuilder.SourceName, null, program.Natives, program.Units);
+                    if (toolchain.Layout == "idf-component")
+                    {
+                        string moreSources = program.Units == null ? "" : string.Concat(program.Units.Where(u => u.Kind is not (fire.Native.SplitUnitKind.Header or fire.Native.SplitUnitKind.Runtime)).Select(u => $" \"{u.Name}\""));
+                        File.WriteAllText(Path.Combine(workDir, "CMakeLists.txt"),
+                            $"# Generated by fire.Native for target '{target.Name}': the program as an ESP-IDF component (call {target.Native.Entry.Name} from the application).\n" +
+                            $"idf_component_register(SRCS \"{NativeBuilder.SourceName}\"{moreSources}{(program.Natives != null ? $" \"{NativeBuilder.NativesName}\"" : "")}\n                       INCLUDE_DIRS \".\")\n" +
+                            "target_compile_options(${COMPONENT_LIB} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=gnu11> $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17>)\n");
+                    }
+                    log.AppendLine($"{workDir}: {NativeBuilder.SourceName}{(program.Natives != null ? ", " + NativeBuilder.NativesName : "")}, fire_rt.h and platform/{target.Native.Platform}/ for {target.Name}; the entry point is {target.Native.Entry.Name}");
+                }
+                else
+                {
+                    string cppFile = NativeBuilder.WriteFiles(workDir, program.C, target, NativeBuilder.SourceName, null, program.Natives, program.Units);
+                    string? nativesFile = program.Natives != null ? Path.Combine(workDir, NativeBuilder.NativesName) : null;
+                    if (toolchain.EffectiveKind != "custom" && fire.Native.ToolchainDetector.Find(toolchain) == null)
+                    {
+                        o.Append("toolchain ").Append(toolchain.EffectiveKind).Append("\nnot found ").Append(toolchain.EffectiveCompiler).Append('\n');
+                        goto written;
+                    }
+                    fire.Native.ToolchainDef? nativesToolchain = null;
+                    if (config.Quick is { } quick)
+                    {
+                        nativesToolchain = toolchain;
+                        toolchain = NativeBuilder.QuickBuild.Apply(toolchain, quick);
+                        log.AppendLine(NativeBuilder.QuickBuild.LogLine(quick, toolchain.EffectiveKind));
+                    }
+                    var units = program.Units?.Where(u => u.Kind != fire.Native.SplitUnitKind.Header)
+                        .OrderByDescending(u => nativesToolchain != null && u.Kind == fire.Native.SplitUnitKind.Natives).ThenByDescending(u => u.Cost).ToList();
+                    commands = units != null ? NativeBuilder.SplitCommands(toolchain, target, units, program.Units![0].Name, nativesFile, workDir, exe, program.Gui, nativesToolchain)
+                        : NativeBuilder.BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, program.Gui).ToList();
+                    key = NativeBuilder.ProgramCache.Key(toolchain, target, workDir, exe, commands, config.Stats, units?.Count ?? 0, config.Quick);
+                }
+                o.Append("toolchain ").Append(toolchain.EffectiveKind).Append('\n');
+                if (log.Length > 0) o.Append("log\n").Append(log.ToString().Replace(workDir, "<build>", StringComparison.Ordinal));
+                foreach (var (executable, arguments) in commands)
+                    o.Append("command ").Append(executable).Append(' ').Append(arguments.Replace(exe, "<program>", StringComparison.Ordinal).Replace(workDir, "<build>", StringComparison.Ordinal)).Append('\n');
+                o.Append("key ").Append(key ?? "none").Append('\n');
+                foreach (var file in Directory.EnumerateFiles(workDir, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(workDir, f).Replace('\\', '/')).OrderBy(f => f, StringComparer.Ordinal))
+                    o.Append("file ").Append(file).Append(' ').Append(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(workDir, file)))).ToLowerInvariant()).Append('\n');
+                written:;
+            }
+            catch (Exception ex) when (CommandLineRunner.IsCompileError(ex))
+            {
+                o.Clear().Append("error\n").Append(CommandLineRunner.DescribeErrors(ex).Replace("\r\n", "\n")).Append('\n');
+                result = 1;
+            }
+            catch (fire.Native.NativeNotSupportedException ex)
+            {
+                o.Clear().Append("unsupported: ").Append(ex.Message.Replace("\r\n", "\n")).Append('\n');
+                result = 1;
+            }
+            catch (Exception ex)
+            {
+                o.Clear().Append("internal: ").Append(ex.GetType().Name).Append(": ").Append(ex.Message.Replace("\r\n", "\n")).Append('\n');
+                result = 1;
+            }
+            finally
+            {
+                Linker.ProcessDefaultTypeChecking = before;
+                Linker.ProcessIntWidth = intBefore;
+                if (workDir != null) try { Directory.Delete(workDir, true); } catch (IOException) { }
             }
             var bytes = new UTF8Encoding(false).GetBytes(o.ToString());
             output.Write(bytes, 0, bytes.Length);

@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 größtenteils (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 größtenteils, Schritt 2 teilweise (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -410,9 +410,17 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    `forge-c cgen`, `tests/compare-frontend.sh ... native`: Standardoptionen **1056 von 1129** Fällen, **92 von 93** Paketen, **30 von 34**
    Beispielen byte-gleich, **kein** Unterschied des Generators (die eine Abweichung, `Scene3D Models`, sind die Modelle als Ressourcen - der
    Linker, Schritt 4) - der Rest ist noch nicht portiert (`unported: ...`): Reflection und Probes (alle 73 übrigen Fälle), Debug-Builds,
-   die geteilten Einheiten (`ProgramSplit`), `linkage` static/shared (Module, Plugins), `--stats`. Weitere Optionssätze über eine
+   die geteilten Einheiten (`ProgramSplit`; seit Schritt 2 portiert), `linkage` static/shared (Module, Plugins), `--stats`. Weitere Optionssätze über eine
    Stichprobe (504 Quellen) ebenso ohne Unterschied, siehe dort.
 2. NativeBuilder, Toolchains (gcc, clang, MSVC, tcc, Emscripten, ESP-IDF, Open Watcom), Linkage, `PackageLibrary`, Stats, Boot-Images, PE-Ressourcen.
+   **Teilweise umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-2-der-builder)): `native/forge/build/` (Stand 6f21d1a4) - `forge-c build` mit linkage
+   `source`: `ToolchainDef`, `ToolchainDetector`, `MachineToolchains`, `NativeConfig` (fire.native.json, eigene Ziele), die Befehlszeilen aller Arten (gcc,
+   clang, tcc, Emscripten, MSVC, `custom`, `files`/ESP-IDF, Open Watcom ohne Disk-Image), der C++-Ersatz für TinyCC, die geteilten Einheiten nebeneinander,
+   der Schnellbuild `--quick[=0|1]`, der Programm-Cache (derselbe Schlüssel wie in C#) und `OptimizingToolchain`; dazu im Generator die Teilung in Einheiten
+   (`ProgramSplit`). Maß: `forge buildplan` gegen `forge-c buildplan` (Befehle, Dateien, Cache-Schlüssel) über den Korpus und echte Builds einer Stichprobe mit
+   gcc und tcc (`tests/compare-frontend.sh ... buildplan|build`). Offen: linkage static/shared/plugin (braucht die Module des Generators), `PackageLibrary`
+   (die Bibliotheken der Pakete für die VM: die Wrapper), `--stats` (NativeStats), Boot-Images (Fat12, bios16), PE-Ressourcen (Version, Icon), Windows als Host,
+   `ToolchainProvider`/`TestToolchain`.
 3. Projekt, Solution, Bauplan, Vorlagen, Beispiele; von der Paketverwaltung, was forge braucht (Manifest, Store, `.fpk`). ember bleibt bis Phase F das C#-Programm.
 4. Rest der Befehlszeile: Testläufer, `forge data`, Modellwandler (`.fmesh`, `.fblocks`, glTF), Packer.
 5. `ToolchainSetup` (lädt unter Windows einen Compiler): braucht HTTPS und Entpacken im Werkzeug - über das System (WinHTTP) statt eigener TLS.

@@ -709,5 +709,3 @@ static const char* WithoutSplitMarks(FgGen* g, const char* text) {
     }
     return fcBufDone(g->c, &b);
 }
-static FgFuncKey* SplitKeyOf(FgGen* g, FgFunc* f) { (void)f; FG_UNPORTED("split units"); }
-static FcList* ProgramSplitSplit(FgGen* g, const char* programText, FcList* splitKeys) { (void)programText; (void)splitKeys; FG_UNPORTED("split units"); }
