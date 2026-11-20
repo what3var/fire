@@ -1,8 +1,9 @@
 # forge in C (`native/forge`)
 
-Status: **Phase C, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-c---das-frontend-in-c) (20.11.2026), dazu der größte
-Teil von **Phase D Schritt 1**, dem Generator Bytecode -> C ([unten](#phase-d-schritt-1-der-generator)), und von **Schritt 2**, dem Builder
-([unten](#phase-d-schritt-2-der-builder): `forge-c build` mit linkage `source`), und **Schritt 3**, Projekte, Solutions und das Paketformat `.fpk`
+Status: **Phase C, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-c---das-frontend-in-c) (20.11.2026), dazu
+**Phase D Schritt 1**, der Generator Bytecode -> C ([unten](#phase-d-schritt-1-der-generator); mit Reflection, Probes, Debug-Builds, `--stats` - offen nur die
+Module für linkage static/shared/plugin), der größte Teil von **Schritt 2**, dem Builder ([unten](#phase-d-schritt-2-der-builder): `forge-c build` mit linkage
+`source`, `--stats`), und **Schritt 3**, Projekte, Solutions und das Paketformat `.fpk`
 ([unten](#phase-d-schritt-3-projekte-solutions-pakete): `forge-c build`/`publish` eines Projekts oder einer Solution): Lexer,
 Präprozessor mit `#if`, Diagnosen, AST und Parser (1, 2); Resolver, Typprüfer und `SetterClaims` mit dem, was sie vom Linker brauchen - die
 Direktiven eines Builds mit ihrer Wirkung, `#import` mit den Preludes und den Natives der installierten Pakete (3); der Bytecode-Compiler, was die
@@ -358,14 +359,22 @@ Die Optionen sind Wörter, mit `+` verbunden: `default`, `debug`/`release`/`perf
 | Stichprobe, `t:dos16` (Zeigerkonvention) | 504 | 487 | 16 | 1 (`Scene3D Models`) |
 | Stichprobe, `t:win16` (Zeigerkonvention) | 504 | 475 | 28 | 1 (`Scene3D Models`) |
 | Stichprobe, `strip2`, `t:windows`, `t:wasm`, `i16` (Stand vor JSON und `Library.Get`) | 504 | 455 / 473 / 475 / 473 | 48 / 30 / 28 / 30 | 1 (`Scene3D Models`) |
-| Stichprobe, `debug`, `split` | 504 | 131 (die Fehler des Frontends) | 373 | 0 |
+| Stichprobe, `debug`, `split` (Stand vor Reflection und Debug-Builds) | 504 | 131 (die Fehler des Frontends) | 373 | 0 |
+| `default` mit `NATIVE_STRICT=1` (Reflection, Probes, Selektoren portiert), `tests/cases` / `packages` / `src/fire.Project` | 1129 / 93 / 34 | 1129 / 93 / 33 | 0 | 0 / 0 / 1 (`Scene3D Models`) |
+| `debug` und `split` mit `NATIVE_STRICT=1`, dieselben (je) | 1129 / 93 / 34 | 1129 / 93 / 33 | 0 | 0 / 0 / 1 (`Scene3D Models`) |
+| die 73 Fälle der Reflection und `fire-reflection` mit `strip0` / `strip1` / `strip2` | 74 | 74 / 74 / 74 | 0 | 0 |
 
 (Die Stichprobe: jede dritte Quelle von `tests/cases` und alle von `packages` und `src/fire.Project`, 504 Quellen.)
 
-Noch nicht portiert (`unported: ...`, über die Fälle mit Standardoptionen): die Reflection (`CppGenerator.Reflection.cs`: `__refl_*`, die Selektoren
-der Lambdas, die Probes - alle 73 noch nicht portierten Fälle und das eine Paket, `fire-reflection`), Debug-Builds (`CppGenerator.Debug.cs`), die Teilung in
-Einheiten (`ProgramSplit.cs`, `CppGenerator.Split.cs` - seit Schritt 2 portiert, [unten](#phase-d-schritt-2-der-builder)), `linkage` static/shared (`CppGenerator.Modules.cs`, `ModuleDispatch.cs`, `StaticLinkage.cs`,
-`Plugins.cs`: der Generator in C kennt nur die eine Rolle des ganzen Programms - `Modular`, `LibraryRole` sind `false`) und `--stats`.
+Portiert seit dem Stand oben: die Reflection (`CppGenerator.Reflection.cs` in `gen/reflection.c`: die `__refl_*`-Natives, die Tabellen `RfClass`/`RfMember`
+mit Attributen und den weggelassenen Membern, `Reflect.Get/Set/Call/New`, die Selektoren der Lambdas, `probe`/`silence` mit den Settern, die Probes suchen,
+`RuntimeClass.ComputedSources`), Debug-Builds (`CppGenerator.Debug.cs` in `gen/debug.c`: Schattenstapel, `FIRE_DBG_L/J`, Ebenen der Gültigkeitsbereiche,
+die Tabellen des Programms), `--stats` (`CppGenerator.Stats.cs` in `gen/stats.c`, [unten](#phase-d-schritt-2-der-builder) der Bericht). Dabei gefunden: `RegisterJsonTargets`
+las in C den Code einer Funktion, die in dieser Runde erst angelegt, noch nicht erzeugt war (C#: `Func.Decoded` ist bis dahin leer) - in ruhrpott-raser
+(`Raser.Viewer`, `Raser.Game`) vertauschte das die Nummern zweier Klassen. Noch nicht portiert: `linkage` static/shared/plugin (`CppGenerator.Modules.cs`,
+`ModuleDispatch.cs`, `StaticLinkage.cs`, `Plugins.cs`: der Generator in C kennt nur die eine Rolle des ganzen Programms - `Modular`, `LibraryRole` sind `false`;
+ein Generator je Bibliotheksmodul mit seiner Sicht des Programms, die Runden über die gemeinsamen Schalter, die Exporte `fx_`, die Tabellen der Laufzeit, die
+Bibliotheken im Cache, die DLLs und Plugins) und `FIRE_MODULES=1` (`GenerateModular`). `forge cgen`/`buildplan` (FrontendDump) haben dafür auch noch kein Wort.
 
 ### Dateien
 
@@ -378,7 +387,10 @@ Einheiten (`ProgramSplit.cs`, `CppGenerator.Split.cs` - seit Schritt 2 portiert,
 | `gen/cppgenerator2.c` | `Run` (die Runden, der Kopf, die Tabellen, die Helfer, `fire_init`, die Einstiegspunkte), Dispatcher, Feldhelfer, Eigenschaften, Klassendeskriptoren, Records | `CppGenerator.cs` 1971-3512 |
 | `gen/cppgenerator3.c` | der Fluss, `GenerateChunkCore` (beide Durchgänge, Prolog, Rahmen, Catch-Funktionen), Regionen, Ausgänge, Variablen, die Schatten der Slots | `CppGenerator.cs` 3513-4679 |
 | `gen/packed.c`, `gen/cabi.c`, `gen/overloads.c`, `gen/selectors.c` | gepackte Felder; die C-Schnittstelle der Methoden; Überladungen nach Typ, die Selektoren, `OverloadHint` | `CppGenerator.Packed.cs`, `CppGenerator.CAbi.cs`, `CppGenerator.Overloads.cs`, `Bytecode/Overloads.cs` (`OverloadHint`) |
-| `gen/misc.c` | Konstanten (`Constant`, `DoubleLiteral` wie `"R"` von .NET, `CString`), `UnitId`, Prototypen, die Thunks von `Library.Get` (mit `LibraryMethods.Parse`), die Zeigerkonvention der Open-Watcom-Ziele (`PointerFunction`, `PointerCallsPass`), was jedes Programm von der Reflection braucht; die Stummel der nicht portierten Teile | `CppGenerator.cs`, `PointerCalls.cs`, `Modules.cs`, `Debug.cs`, `Reflection.cs`, `Split.cs` (Teile), `Standard/LibraryMethods.cs` |
+| `gen/misc.c` | Konstanten (`Constant`, `DoubleLiteral` wie `"R"` von .NET, `CString`), `UnitId`, Prototypen, die Thunks von `Library.Get` (mit `LibraryMethods.Parse`), die Zeigerkonvention der Open-Watcom-Ziele (`PointerFunction`, `PointerCallsPass`), `Nested` | `CppGenerator.cs`, `PointerCalls.cs`, `Modules.cs`, `Debug.cs`, `Split.cs` (Teile), `Standard/LibraryMethods.cs` |
+| `gen/reflection.c` | die Reflection: die Stufen (`UseReflection`, `UseReflectionLevel`, `UseProbes`), was sie erreicht (`RegisterReflectionTargets`, `RegisterKeptTargets`, `ReachedClasses`, `ReflectionTableClasses`), die Tabellen (`ReflectionRows` mit Attributen aus `ArgsJson`, `StrippedMethod`, `NewCases`), `ReflectionCode` (die `rf_*`-Funktionen), `WrapProbeSetter`, `ProbeCode`; `ComputedSources` | `CppGenerator.Reflection.cs`, `Bytecode/RuntimeClass.cs` (`ComputedSources`) |
+| `gen/debug.c` | Debug-Builds: `FuncDebug`, `DebugBegin`, `DebugLevelOf`, `DebugBeforeInstruction`/`AfterInstruction`, Prolog, Tabellen, Wrapper (auch der Catch-Blöcke), `DebugFunctionName`, `IsHiddenFunc`, `DebugProgramTables`; `PlaceOf` | `CppGenerator.Debug.cs`, `CppGenerator.Packed.cs` (`PlaceOf`) |
+| `gen/stats.c` | `--stats`: `FuncStat`, `StatOf`, `NoCAbiReason`, `FuncStats` | `CppGenerator.Stats.cs`, `NativeStats.cs` (`FuncStat`) |
 | `gen/json.c` | JSON: die Ziele des Lesens, die Tabellen der Klassen und Felder, die Typargumente | `CppGenerator.Json.cs`, `Standard/JsonMethods.cs` (`JsonFieldsOf`) |
 | `gen/cppgenerator4.c` ... `gen/cppgenerator8.c` | `StepCore`: seine lokalen Funktionen über dem Zustand eines Schritts (`FgSC`), `CFields`, dann der `switch` in der Reihenfolge der C#-Datei (Stapel, Variablen, Natives; Rechnen, Einheiten, Vergleiche, Sprünge; Aufrufe, Felder, `new`; Lambdas, Wächter, Arrays, Besitz, Zeiger, Ausnahmen, Threads) | `CppGenerator.cs` 4680-8555, `CppGenerator.CFields.cs` |
 | `gen/native.c` | die Ziele, `NativeBuilder.GenerateLinked` mit `files` (das Linken mit den Symbolen des Ziels), `forge-c cgen` | `NativeConfig.cs`, `Runtime/TargetProfile.cs`, `NativeBuilder` (Teil), `FrontendDump.cs` (`DumpNative`) |
@@ -398,7 +410,8 @@ Einheiten (`ProgramSplit.cs`, `CppGenerator.Split.cs` - seit Schritt 2 portiert,
 * **Die Pakete**: das Manifest wird für den Generator noch einmal gelesen (`linker.c` behält nur, was der Linker braucht); die regulären Ausdrücke von
   `NativeHeaders` und `PackageStore` sind Zeile für Zeile ausgeschrieben. Jedes Paket des Stores liegt im Store (`IsInStore`): seine Header werden
   nach `pkg/<import>/` gezeigt, nicht eingesetzt.
-* **Warnungen**: die Helfer der noch nicht portierten Teile (Reflection, JSON, Debug) sind schon da und noch unbenutzt (`-Wunused-function`).
+* **Warnungen**: einige Helfer (vor allem der Module) sind schon da und noch unbenutzt (`-Wunused-function`).
+* **Die Natives der Reflection** werden in der Reihenfolge der C#-`switch`-Arme ausgewertet: `S(...)` nur im passenden Arm, die Liste (`OwnerList`) davor.
 
 ## Phase D Schritt 2: der Builder
 
@@ -435,6 +448,7 @@ Tabellen), `Toolchain/` (toolchain.json, portable Compiler) neben sich wie forge
 | `buildplan default` (Linux, Build-Compiler der Maschine: tcc), `tests/cases` / `packages` / `src/fire.Project` | 1129 / 93 / 34 | 1056 / 92 / 30 | 73 / 1 / 3 | 0 / 0 / 1 (`Scene3D Models`) |
 | `buildplan tc:gcc+quick` (geteilt, -O0), dieselben | 1129 / 93 / 34 | 1056 / 92 / 30 | 73 / 1 / 3 | 0 / 0 / 1 (`Scene3D Models`) |
 | `build`, Stichprobe (jeder 10. Fall, 72 mit `.expected`), gcc / tcc / gcc `--quick` / clang `--quick` | 72 je Toolchain | 63 (Protokoll und Ausgabe) | 9 (Reflection) | 0 |
+| `build` nach der Reflection: dieselbe Stichprobe mit tcc (darunter die 9 Fälle der Reflection) / jeder 20. Fall mit tcc und `-m DEBUG` / gcc mit `--stats` (die ersten 46 der Stichprobe: Protokoll mit dem Bericht) | 72 / 35 / 46 | 72 / 35 (eines baut keiner) / 46 | 0 | 0 |
 
 (`build`: das Protokoll beider forges ist nach dem Normalisieren der Pfade gleich, die beiden Programme geben dasselbe aus; 61 davon genau die
 `.expected` - die zwei anderen enden, wie verlangt, mit einer unbehandelten Ausnahme. `buildplan tc:gcc+quick` teilt jedes Programm: das ist auch das Maß der
@@ -448,6 +462,7 @@ Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge
 | `build/toolchain.c` | `ToolchainDef` (die eingebauten, `WithBase`, `CCompilerFor`), `ToolchainDetector`, `ToolchainSetup` (`FindProgram`, `Detect`), `MachineToolchains` (toolchain.json), Open Watcom (Befehl, Ort, Umgebung, Startcode), `NativeConfig` (fire.native.json mit `TargetDef.Apply`, `ResolveTarget`, `ResolveToolchain`), `OptimizingToolchain` | `Toolchain.cs`, `ToolchainSetup.cs`, `MachineToolchains.cs`, `Toolchains/*.cs`, `NativeConfig.cs`, `PackageLibrary.cs` (Teil) |
 | `build/builder.c` | `QuickBuild`, `WithDirection`, `NativeRuntimeFiles.WriteTo`, `PackageHeaders.WriteTo`, `WriteFiles`, `Run` (fork/exec, die Argumente wie .NET sie teilt), `CompilerCommand`, `BuildCommands`, `SplitCommands`, `CompileUnits`, `ToolchainStamp`, `ArchiveCommand`, `CppFallback`, `ProgramCache`, `Build` (linkage source) | `NativeBuilder.cs`, `NativeBuilder.Quick.cs`, `NativeBuilder.ProgramCache.cs`, `NativeRuntimeFiles.cs`, `Package.Manager/PackageStore.cs` (`PackageHeaders`), `NativeLibraryCache.cs` (`Root`) |
 | `build/command.c` | `forge-c build`, `forge-c buildplan` | `CommandLine.Report.cs` (`ReportBuildFiles`, `NativeOutcome`), `FrontendDump.cs` (`DumpBuildPlan`) |
+| `build/stats.c` | `--stats`: `MapOptions`, die Map von GNU ld und Open Watcom (`ReadMap`), woher jede Funktion kommt (`OriginsOf` mit der `DefinitionRegex` ausgeschrieben), `Analyze`, `Text`, `Json` (wie System.Text.Json eingerückt mit dem Standard-Encoder), `DosLoadBytes`, `WriteStats` | `NativeStats.cs`, `NativeBuilder.cs` (`WriteStats`) |
 
 ### Entscheidungen
 
@@ -455,7 +470,7 @@ Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge
 * **Die Argumente** gehen als eine Zeile in `ProcessStartInfo`; forge-c teilt sie wie .NET (Anführungszeichen, Backslashes) - die Zeilen im Protokoll sind dieselben.
 * **Zeitstempel**: `FileInfo` einer symbolischen Verknüpfung (`/usr/bin/gcc -> /etc/alternatives/gcc`) hat Größe und Zeit der Verknüpfung selbst - die
   Stempel von Toolchain und Cache nehmen darum `lstat`; sonst wäre der Schlüssel für gcc ein anderer als in C#.
-* **Was fehlt, sagt es**: linkage `static`/`shared`/`plugin` (der Generator hat noch keine Module), `--stats`, `"globalJobs"` und Kommentare in fire.native.json
+* **Was fehlt, sagt es**: linkage `static`/`shared`/`plugin` (der Generator hat noch keine Module), `"globalJobs"` und Kommentare in fire.native.json
   sind `unported: ...`; ohne Compiler meldet der Build es statt eines Installationsangebots (`ToolchainProvider`).
 
 ## Phase D Schritt 3: Projekte, Solutions, Pakete
@@ -500,9 +515,9 @@ Ohne `--engine` baut `forge build` ein Programm für die VM; forge-c baut nur na
 | `publish` an Kopien: die Grenzfälle (ein Projekt mit Fehlern, eines mit Copy-Dateien, `clean`, zwei Zielen; zweimal, der zweite Lauf "up to date"), ruhrpott-raser (nichts eingeschaltet), `-p Raser.Core` zweimal | 6 Läufe | 6 (Ausgabe, geschriebene Dateien) | - | 0 |
 
 Die drei Unterschiede bei `buildplan` liegen nicht im Projektteil: `Scene3D Models` sind die Modelle als Ressourcen (`ModelConverter`, Schritt 4; schon in Schritt 1 so),
-`Raser.Viewer` und `Raser.Game` vertauschen im erzeugten C die Nummern zweier Klassen (`Raser.Chunk`, `Raser.ChunkManifest`: in C registriert `RegisterJsonTargets`
-die zweite vor der ersten). Das gelinkte Programm ist gleich (`fbc native` byte-gleich), es ist eine Abweichung des Generators (Schritt 1), die erst ein so großes
-Programm zeigt.
+`Raser.Viewer` und `Raser.Game` vertauschten im erzeugten C die Nummern zweier Klassen (`Raser.Chunk`, `Raser.ChunkManifest`: in C registrierte `RegisterJsonTargets`
+die zweite vor der ersten) - eine Abweichung des Generators (Schritt 1), inzwischen behoben (siehe dort): das C beider ist jetzt byte-gleich (`build --toolchain files`),
+die Reflection-Projekte (Raser.Tool, Raser.Server, Raser.Launcher und die 3 von `src/fire.Project`) übersetzt der Generator jetzt auch.
 
 **Die Pakete.** Ein `.fpk` ist ein Zip, wie `ZipArchive` es schreibt: dieselben Einträge in derselben Reihenfolge, dieselben Kopffelder (Version 2.0, von Unix, keine
 Datenbeschreiber, UTF-8-Bit nur bei Nicht-ASCII-Namen, die Rechte der Datei in den externen Attributen, `package.json` als 0644, eine leere Datei gespeichert statt
