@@ -30,6 +30,8 @@ if (args.Length == 2 && args[0] == "tables")
 if (args.Length >= 2 && (args[0] == "tokens" || args[0] == "ast" || args[0] == "diagnostics" || args[0] == "fbc" || args[0] == "cgen" || args[0] == "buildplan")) return FrontendDump.Run(args);
 // `projectplan <project|solution>` / `fpk <file.fpk>`: what the model of projects makes of a file, a package as it is read - the measures of Phase D 3 (ProjectDump, docs/spec/FORGE_C.md).
 if (args.Length == 2 && (args[0] == "projectplan" || args[0] == "fpk")) return ProjectDump.Run(args);
+// `pkglibplan|bootimage|peres|toolchaintest <arg>`: the measures of the builder's tools in C (BuilderToolsDump, docs/spec/FORGE_C.md Phase D 2).
+if (BuilderToolsDump.Handles(args)) return BuilderToolsDump.Run(args);
 
 // `falstad <circuit.txt> [-o <file.biscuit>]`: a circuit of Falstad's simulator (File > Export As Text) as a schematic (docs/circuits/README.md); without -o to the output.
 if (args.Length >= 2 && args[0] == "falstad")

@@ -238,6 +238,7 @@ typedef struct FcLinker {
     FcNatives registry;         /* the NativeRegistry with its indexes */
     int directiveIntWidth, directiveFloatWidth;   /* FC_NULL_INT: none */
     int executionMode;          /* AssemblyInfo.ExecutionMode: 0 Debug, 1 Release, 2 Performance */
+    FcAsmInfo asmInfo;          /* the rest of AssemblyInfo (the subsystem, the version info, the icon) */
 } FcLinker;
 
 /* ImportedPreludes.ParseImportName */
@@ -272,6 +273,36 @@ static void fcWithDependencies(FcLinker* L, const char* importKey, FcDict* visit
     fcListAdd(c, out, (void*)importKey);
 }
 
+/* AssemblyInfo.FileVersion/ProductVersion = text: four numbers (int.TryParse: blanks around them, a sign), else the version stays */
+static void fcVersionSet(int* v, const char* text) {
+    int n[4], k;
+    const char* p = text;
+    for (k = 0; k < 4; k++) {
+        char* end;
+        long x;
+        while (*p == ' ' || (*p >= 9 && *p <= 13)) p++;
+        if (!((*p >= '0' && *p <= '9') || ((*p == '-' || *p == '+') && p[1] >= '0' && p[1] <= '9'))) return;
+        x = strtol(p, &end, 10);
+        if (x > 2147483647L || x < -2147483647L - 1) return;
+        p = end;
+        while (*p == ' ' || (*p >= 9 && *p <= 13)) p++;
+        if (k < 3 ? *p != '.' : *p != 0) return;
+        if (k < 3) p++;
+        n[k] = (int)x;
+    }
+    for (k = 0; k < 4; k++) v[k] = n[k];
+}
+/* the directives of the version info and the icon (Linker: #name, #codename, #description, #author, #comments, #icon, #version, #fileversion) */
+static void fcLinkerAsmInfo(FcAsmInfo* a, const char* name, const char* value) {
+    if (streq0(name, "name")) a->productName = value;
+    else if (streq0(name, "codename")) a->internalName = value;
+    else if (streq0(name, "description")) a->fileDescription = value;
+    else if (streq0(name, "author")) a->companyName = value;
+    else if (streq0(name, "comments")) a->comments = value;
+    else if (streq0(name, "icon")) a->iconPath = value;
+    else if (streq0(name, "version")) fcVersionSet(a->productVersion, value);
+    else if (streq0(name, "fileversion")) fcVersionSet(a->fileVersion, value);
+}
 /* the directives of a build with their effects (Linker.CompileAndLink's registry) */
 static void fcLinkerDirective(FcCtx* c, void* state, const char* name, FcList* args, int line, FcList* importNamespaces) {
     FcLinker* L = (FcLinker*)state;
@@ -305,7 +336,9 @@ static void fcLinkerDirective(FcCtx* c, void* state, const char* name, FcList* a
     if (streq0(name, "name") || streq0(name, "codename") || streq0(name, "description") || streq0(name, "author") || streq0(name, "comments") || streq0(name, "icon")
         || streq0(name, "version") || streq0(name, "fileversion")) {
         if (arg->type != TT_StringLiteral) fcThrow(c, FC_ERR_LINKER, 1, 0, NULL, fcFmt(c, "Wrong arguments for the '%s' directive.", name));
+        fcLinkerAsmInfo(&L->asmInfo, name, arg->stringValue);
     }
+    if (streq0(name, "noconsole")) L->asmInfo.gui = true;
 }
 
 static void fcRegisterNative(FcLinker* L, const char* name) { fcSetAdd(&L->natives, name); fcNativesRegister(L->c, &L->registry, name); }
@@ -590,6 +623,7 @@ static FcLinked* fcLinkFile(FcCtx* c, const char* path, const char* preludePath,
     linked->wordWidth = 64;
     linked->firstUserSource = fe->firstUserSource;
     linked->mode = modeOverride >= 0 ? modeOverride : L->executionMode;
+    linked->asmInfo = &L->asmInfo;
     linked->nativeImports = &L->nativeImports;
     fcPackageNativesOf(L, &linked->packageNatives, &linked->packageNativeLibraries);
     linked->graphicsNatives = NULL;

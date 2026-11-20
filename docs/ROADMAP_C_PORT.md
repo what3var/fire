@@ -418,9 +418,12 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    clang, tcc, Emscripten, MSVC, `custom`, `files`/ESP-IDF, Open Watcom ohne Disk-Image), der C++-Ersatz für TinyCC, die geteilten Einheiten nebeneinander,
    der Schnellbuild `--quick[=0|1]`, der Programm-Cache (derselbe Schlüssel wie in C#) und `OptimizingToolchain`; dazu im Generator die Teilung in Einheiten
    (`ProgramSplit`). Maß: `forge buildplan` gegen `forge-c buildplan` (Befehle, Dateien, Cache-Schlüssel) über den Korpus und echte Builds einer Stichprobe mit
-   gcc und tcc (`tests/compare-frontend.sh ... buildplan|build`). Offen: linkage static/shared/plugin (braucht die Module des Generators), `PackageLibrary`
-   (die Bibliotheken der Pakete für die VM: die Wrapper), `--stats` (NativeStats), Boot-Images (Fat12, bios16), PE-Ressourcen (Version, Icon), Windows als Host,
-   `ToolchainProvider`/`TestToolchain`.
+   gcc und tcc (`tests/compare-frontend.sh ... buildplan|build`). Dazu (Stand de45e7e4) `PackageLibrary` (`forge-c pkglib`: die Bibliotheken der Pakete für
+   die VM mit ihren Wrappern in C und C++ und `libfire_gfx`, `Locate`/`Ensure` mit denselben Schlüsseln - 27 von 27 Plänen gleich, die 25 gebauten
+   Bibliotheken byte-gleich mit denen des C#-forge, beide VMs laden sie), das Boot-Image von bios16 (Fat12, nach dem Link; gemessen mit `bootimage`), die
+   PE-Ressourcen (Version, Icon, Subsystem: der Inhalt wie in C#; geschrieben werden sie wie dort nur unter Windows) mit `#noconsole` (`-mwindows`),
+   `ToolchainProvider`/`TestToolchain`, `"globalJobs"` und Kommentare in fire.native.json. Offen: linkage static/shared/plugin (braucht die Module des
+   Generators), `--stats` (NativeStats), Windows als Host (dort auch das Schreiben der PE-Ressourcen), das Herunterladen von Toolchains (Schritt 5).
 3. Projekt, Solution, Bauplan, Vorlagen, Beispiele; von der Paketverwaltung, was forge braucht (Manifest, Store, `.fpk`). ember bleibt bis Phase F das C#-Programm.
    **Zum größten Teil umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-3-projekte-solutions-pakete)): `native/forge/project/` (Stand de45e7e4) - das Laden von
    `.fireproj`/`.firesln`, die Dateien, Ordner (mit `.gitignore`) und Build-Aktionen eines Projekts, Bauordnung und Startprojekt, der `BuildPlan` mit Bibliotheken und

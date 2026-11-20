@@ -370,6 +370,51 @@ static FcJson* nbReadJson(FcCtx* c, const char* path) {
     return j.bad || *j.p ? NULL : v;
 }
 
+/* The JSON of fire.native.json as NativeConfig reads it (ReadCommentHandling.Skip, AllowTrailingCommas): the comments - `//` to the end of the line, `/` `*` ... `*` `/` -
+ * and a comma before `]` or `}` taken out (outside the strings) before it is read */
+static FcJson* nbReadJsonLenient(FcCtx* c, const char* path) {
+    size_t len = 0, i, o = 0;
+    uint8_t* data = fbReadFile(path, &len);
+    char* text;
+    FcJsonReader j;
+    FcJson* v;
+    bool inString = false;
+    if (!data) return NULL;
+    text = (char*)fcAlloc(c, len + 1);
+    for (i = 0; i < len; i++) {
+        char ch = (char)data[i];
+        if (inString) {
+            text[o++] = ch;
+            if (ch == '\\' && i + 1 < len) text[o++] = (char)data[++i];
+            else if (ch == '"') inString = false;
+            continue;
+        }
+        if (ch == '"') { inString = true; text[o++] = ch; continue; }
+        if (ch == '/' && i + 1 < len && data[i + 1] == '/') { while (i < len && data[i] != '\n') i++; if (i < len) text[o++] = '\n'; continue; }
+        if (ch == '/' && i + 1 < len && data[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < len && !(data[i] == '*' && data[i + 1] == '/')) i++;
+            if (i + 1 >= len) { free(data); return NULL; }   /* (an unterminated comment: not JSON) */
+            i++;
+            text[o++] = ' ';
+            continue;
+        }
+        if (ch == ']' || ch == '}') {
+            size_t k = o;
+            while (k > 0 && (text[k - 1] == ' ' || text[k - 1] == '\t' || text[k - 1] == '\r' || text[k - 1] == '\n')) k--;
+            if (k > 0 && text[k - 1] == ',') text[k - 1] = ' ';
+        }
+        text[o++] = ch;
+    }
+    text[o] = 0;
+    free(data);
+    j.c = c; j.p = text; j.bad = false;
+    if (o >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) j.p += 3;
+    v = fcJsonValue(&j);
+    fcJsonWs(&j);
+    return j.bad || *j.p ? NULL : v;
+}
+
 /* ---- MachineToolchains ---- */
 enum { NB_PURPOSE_BUILD, NB_PURPOSE_PUBLISH };
 typedef struct NbMachine { const char* build; const char* publish; NbToolchain* legacy; } NbMachine;
@@ -545,13 +590,20 @@ static int nbStrippingParse(FcCtx* c, const char* text) {
     for (i = 0; i < 4; i++) if (streq0(t, names[i])) return i;
     return -2;
 }
+/* GlobalJobsModes.Parse: the name trimmed, any case - GJM_*, -1: none */
+static int nbGlobalJobsParse(FcCtx* c, const char* text) {
+    const char* t;
+    if (!text) return -1;
+    t = fcAsciiLower(c, fgTrim(c, text));
+    return streq0(t, "safepoints") ? GJM_Safepoints : streq0(t, "sleep") ? GJM_Sleep : streq0(t, "sync") ? GJM_Sync : -1;
+}
 static NbConfig* nbConfigLoad(FcCtx* c, const char* path) {
     NbConfig* k = nbConfigNew(c);
-    FcJson* json = nbReadJson(c, path);
+    FcJson* json = nbReadJsonLenient(c, path);
     FcJson* v;
     const char* s;
     int i;
-    if (!json || json->kind != FJ_OBJ) NB_CONFIG_FAIL("fire.native.json: the file is not a JSON object (or not JSON the port reads: comments and trailing commas are not ported).");
+    if (!json || json->kind != FJ_OBJ) NB_CONFIG_FAIL("fire.native.json: the file is not a JSON object.");
     k->path = fcFullPath(c, ".", path);
     k->engine = fcJsonStr(json, "engine");
     k->target = fcJsonStr(json, "target");
@@ -571,7 +623,10 @@ static NbConfig* nbConfigLoad(FcCtx* c, const char* path) {
         if (fcAsciiIEq(s, "speed")) k->optimize = 0; else if (fcAsciiIEq(s, "size")) k->optimize = 1;
         else NB_CONFIG_FAIL("fire.native.json: \"optimize\": '%s' is not one of: speed, size.", s);
     }
-    if ((s = fcJsonStr(json, "globalJobs")) != NULL) k->globalJobs = s;
+    if ((s = fcJsonStr(json, "globalJobs")) != NULL) {
+        if (nbGlobalJobsParse(c, s) < 0) NB_CONFIG_FAIL("fire.native.json: \"globalJobs\": '%s' is not one of: safepoints, sleep, sync.", s);
+        k->globalJobs = s;
+    }
     if ((s = fcJsonStr(json, "split")) != NULL) {
         if ((k->split = fgSplitModeParse(s)) < 0) NB_CONFIG_FAIL("fire.native.json: \"split\": '%s' is not one of: auto, on, off.", s);
         k->splitGiven = true;

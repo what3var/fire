@@ -462,6 +462,13 @@ typedef struct FcCompiled {
     FcList* customUnits;      /* FcCustomUnit* */
 } FcCompiled;
 
+/* Linker's AssemblyInfo as far as a native build needs it (the subsystem, the version info and the icon: #noconsole, #name, #codename, #description, #author,
+ * #comments, #icon, #version, #fileversion - the build of PE resources, build/peres.c); the texts are fc8, NULL: not set */
+typedef struct FcAsmInfo {
+    bool gui;                 /* SubsystemType.GUI (#noconsole) */
+    const char* productName; const char* internalName; const char* fileDescription; const char* companyName; const char* comments; const char* iconPath;
+    int fileVersion[4], productVersion[4];   /* the four numbers (AssemblyInfo.FileVersion/ProductVersion, "0.0.0.0" at first) */
+} FcAsmInfo;
 typedef struct FcLinked {
     FcCompiled* program;
     int mode;                 /* VmExecutionMode: 0 Debug, 1 Release, 2 Performance */
@@ -472,4 +479,5 @@ typedef struct FcLinked {
     FcList* sourceFiles; FcList* sourceHashes;   /* fc8 or NULL entries */
     int optimize;             /* OptimizeFor (a native build, gen/native.c): 0 Speed, 1 Size */
     FcList* sourceModules;    /* LinkedProgram.SourceModules: "core", then the module of each source (NULL: a source of the program); NULL: none */
+    FcAsmInfo* asmInfo;       /* (the directives of the version info; NULL: none - set by the linkers of linker.c and gen/native.c) */
 } FcLinked;

@@ -419,7 +419,24 @@ forge buildplan <optionen> x.fire                    (C#, FrontendDump.DumpBuild
 forge-c buildplan <optionen> x.fire                  (dasselbe aus dem Builder in C; `--list <dateien.txt> --out <ordner>` wie bei `cgen`)
 tests/compare-frontend.sh <forge> <forge-c> buildplan [<ordner>]   (BUILDPLAN_OPTIONS="default tc:gcc+quick ...")
 tests/compare-frontend.sh <forge> <forge-c> build [<ordner>]       (echte Builds einer Stichprobe: BUILD_EVERY=25, BUILD_TOOLCHAINS="gcc tcc", BUILD_FLAGS)
+forge-c pkglib <import>... | --all | graphics+windows                (die Bibliotheken der Pakete für die VM: gefunden oder jetzt gebaut, ein Pfad je Zeile)
+forge pkglibplan <import> / forge-c pkglibplan <import>              (was PackageLibrary bauen würde: Datei, Schlüssel, Toolchain, Befehl, Dateien des Ordners)
+tests/compare-frontend.sh <forge> <forge-c> pkglib [<ordner>]       (`pkglibplan` jedes Imports mit Natives im Store und von graphics+windows)
+forge bootimage <exe> / forge-c bootimage <exe>                      (WatcomToolchain.AfterLink von bios16 auf einer eigenen Datei: <exe>.img daneben)
+forge peres <x.fire> / forge-c peres <x.fire>                        (die PE-Ressourcen eines nativen Builds für Windows: Subsystem, VS_VERSIONINFO, Icon)
+forge toolchaintest <toolchain> / forge-c toolchaintest <toolchain>  (NativeBuilder.TestToolchain; eine fire.native.json im Ordner gilt)
 ```
+
+Die Werkzeuge des Builders (Stand de45e7e4): **`PackageLibrary`** - die Bibliotheken der Natives der Pakete für die VM (C und C++, typisierte Funktionen, `reset`,
+`host`-Funktionen ausgelassen, die gemeinsame Bibliothek von graphics und windows `libfire_gfx`), `Locate` (vorgebaut im Paket, gebaut in `lib/<rid>/` oder im
+Temp-Ordner und nicht älter als die Quellen, unter `Prebuilt/` neben forge-c mit `.hash` = `StandardSources.NativeHashOf`), der Schlüssel der Laufzeit
+(`.runtime`: `NativeRuntimeFiles.Fingerprint` und der Wrapper), `Ensure` mit dem gemerkten Fehlschlag (`.failed`, 5 Minuten), `FIRE_PKGBUILD_KEEP`. Dieselben
+Dateien wie die des C#-forge: eine Bibliothek, die das eine gebaut hat, nimmt das andere. **Das Boot-Image** von bios16 (`Fat12Image`, `BiosBootSectors`,
+`WatcomToolchain.AfterLink`: nach dem Link, wie in C#). **Die PE-Ressourcen** (`PeResourceEditor`: VS_VERSIONINFO, die Bilder eines Icons und ihre Gruppe,
+`SetSubsystem`; `AssemblyInfo.ToVersionInfo`; die Direktiven `#noconsole`, `#name`, `#codename`, `#description`, `#author`, `#comments`, `#icon`, `#version`,
+`#fileversion` - der Linker in C behält sie jetzt, `FcAsmInfo`): `#noconsole` gibt einem Programm für Windows `-mwindows` (vorher fehlte es).
+**`ToolchainProvider`** (`Require`: die gewünschte, sonst die gefundene Toolchain, sonst die Frage der Befehlszeile) und `TestToolchain`. **fire.native.json** mit
+Kommentaren und Kommas am Ende und mit `"globalJobs"` (der Vorgabewert für ein Programm, das nichts sagt: `Compiler.Compile` mit `globalJobsDefault`).
 
 `buildplan` druckt die Toolchain (nach dem C++-Ersatz), die Zeilen des Protokolls vor den Befehlen (Ersatz, Schnellbuild), jeden Befehl (der Ordner des Builds
 als `<build>`, das Programm als `<programm>`), den Schlüssel des Programm-Caches (`none`: nicht gecacht) und jede Datei des Ordners mit ihrem SHA-256 - also
@@ -436,6 +453,16 @@ Tabellen), `Toolchain/` (toolchain.json, portable Compiler) neben sich wie forge
 | `buildplan tc:gcc+quick` (geteilt, -O0), dieselben | 1129 / 93 / 34 | 1056 / 92 / 30 | 73 / 1 / 3 | 0 / 0 / 1 (`Scene3D Models`) |
 | `build`, Stichprobe (jeder 10. Fall, 72 mit `.expected`), gcc / tcc / gcc `--quick` / clang `--quick` | 72 je Toolchain | 63 (Protokoll und Ausgabe) | 9 (Reflection) | 0 |
 
+| `pkglib` (`pkglibplan`: Datei, `NativeHashOf`, Fingerprint, Schlüssel, Toolchain, Befehl, Dateien), die Importe mit Natives des Stores und graphics+windows | 27 | 27 | 0 | 0 |
+| `forge-c pkglib --all graphics+windows` in einem Store ohne `lib/`: die gebauten Bibliotheken gegen die des C#-forge (`Prebuilt/`) | 25 | 25 (byte-gleich, `.runtime` gleich) | 0 | 0 |
+| die C-VM mit nur diesen Bibliotheken (`FIRE_PKG_PATH`, die Programme von `forge-c bytecode`): Fälle mit compression, time, hash, websocket, http, sqlite, graphics, scene3d; dazu `forge run` (C-VM und C#-VM) mit dem `libfire_gfx` von forge-c | 9 | 9 (`.expected`) | 0 | 0 |
+| `bootimage` (eine Datei als FIRE.EXE; `disk` mit Ordnern, Datum vor 1980, leerer Datei; Fehler: kein 8.3-Name, voll, doppelt, mehr als 224 Einträge, ein Unterordner zu groß) | 7 | 7 (Bild ohne die Uhrzeit von FIRE.EXE - `DateTime.Now` - byte-gleich, Meldung gleich) | 0 | 0 |
+| `peres` (ohne Direktiven, alle mit Unicode und `<&>+`, `#noconsole` mit Versionen mit Leerzeichen und Zahlen über 65535, ein Icon mit 3 Bildern, keins, eins vom Typ 2, Versionen mit Vorzeichen und ungültige) | 5 | 5 | 0 | 0 |
+| `buildplan t:windows+tc:gcc/tcc/clang(+quick)` eines Programms mit `#noconsole` | 5 | 5 | 0 | 0 |
+| `buildplan default` und `t:windows+tc:gcc` über `tests/cases` / `packages` / `src/fire.Project` nach diesen Änderungen | 1129 / 93 / 34 | 1056 / 92 / 30 | 73 / 1 / 3 | 0 / 0 / 1 (`Scene3D Models`, wie oben) |
+| `build` mit fire.native.json mit Kommentaren, Kommas am Ende, `"globalJobs": " Sleep "` (Linux, gcc) und für Windows mit MinGW (`x86_64-w64-mingw32-g++`, `#noconsole`, Versionsinfo, Icon): Protokoll, Fehlerausgabe, behaltene Quellen (`--keep`) | 2 | 2 (die `.exe` bis auf den Zeitstempel des PE-Kopfs gleich) | 0 | 0 |
+| `toolchaintest` gcc, clang, tcc, files, eine fehlende, eine eigene; `build` mit einem Compiler, den es nicht gibt (`Require` nimmt den gefundenen) | 7 | 7 | 0 | 0 |
+
 (`build`: das Protokoll beider forges ist nach dem Normalisieren der Pfade gleich, die beiden Programme geben dasselbe aus; 61 davon genau die
 `.expected` - die zwei anderen enden, wie verlangt, mit einer unbehandelten Ausnahme. `buildplan tc:gcc+quick` teilt jedes Programm: das ist auch das Maß der
 Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge-c aus dem Cache - gleicher Schlüssel, geprüft mit tcc, gcc und `--quick`.)
@@ -448,6 +475,11 @@ Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge
 | `build/toolchain.c` | `ToolchainDef` (die eingebauten, `WithBase`, `CCompilerFor`), `ToolchainDetector`, `ToolchainSetup` (`FindProgram`, `Detect`), `MachineToolchains` (toolchain.json), Open Watcom (Befehl, Ort, Umgebung, Startcode), `NativeConfig` (fire.native.json mit `TargetDef.Apply`, `ResolveTarget`, `ResolveToolchain`), `OptimizingToolchain` | `Toolchain.cs`, `ToolchainSetup.cs`, `MachineToolchains.cs`, `Toolchains/*.cs`, `NativeConfig.cs`, `PackageLibrary.cs` (Teil) |
 | `build/builder.c` | `QuickBuild`, `WithDirection`, `NativeRuntimeFiles.WriteTo`, `PackageHeaders.WriteTo`, `WriteFiles`, `Run` (fork/exec, die Argumente wie .NET sie teilt), `CompilerCommand`, `BuildCommands`, `SplitCommands`, `CompileUnits`, `ToolchainStamp`, `ArchiveCommand`, `CppFallback`, `ProgramCache`, `Build` (linkage source) | `NativeBuilder.cs`, `NativeBuilder.Quick.cs`, `NativeBuilder.ProgramCache.cs`, `NativeRuntimeFiles.cs`, `Package.Manager/PackageStore.cs` (`PackageHeaders`), `NativeLibraryCache.cs` (`Root`) |
 | `build/command.c` | `forge-c build`, `forge-c buildplan` | `CommandLine.Report.cs` (`ReportBuildFiles`, `NativeOutcome`), `FrontendDump.cs` (`DumpBuildPlan`) |
+| `build/pkglib.c` | die Bibliotheken der Pakete für die VM: `Rid`, `HostPlatformKeys`, `FileNameFor`, `Prebuilt`, `BuiltDirectories`, `NewestSource`, `Fingerprint`, `RuntimeKey`, `NativeHashOf` (die Funktionen als JSON wie `System.Text.Json`), die Wrapper in C, C++ und der von graphics und windows, `Locate`, `Ensure`, `EnsureGraphics`; `forge-c pkglib`, `pkglibplan` | `PackageLibrary.cs`, `NativeRuntimeFiles.cs` (`Fingerprint`), `StandardSources.cs` (`NativeHashOf`), `CppGenerator.cs` (`DisplayLibraries`) |
+| `build/provider.c` | `ToolchainProvider.Require`, `ToolchainRequest.Message`, die Frage der Befehlszeile, `TestToolchain`; `toolchaintest` | `ToolchainSetup.cs` (`ToolchainProvider`, `ToolchainRequest`), `ConsoleToolchainPrompt.cs`, `NativeBuilder.cs` (`TestToolchain`) |
+| `build/peres.c` | `PeVersionInfo`, `ToVersionInfo`, VS_VERSIONINFO, die Bilder eines Icons und ihre Gruppe, `SetSubsystem`, `ApplyPeMetadata`; `peres` | `src/fire/Utilities/PeResourceEditor.cs`, `Assembly/AssemblyInfo.cs`, `NativeBuilder.cs` (`ApplyPeMetadata`) |
+| `build/bootimage.c` | `Fat12Image` (`Create`, `FromFolder`, `ShortName`), der Bootsektor von bios16, `AfterLink`; `bootimage` | `Toolchains/Fat12Image.cs`, `Toolchains/BiosBootSectors.cs`, `Toolchains/WatcomToolchain.cs` (`AfterLink`) |
+| `build/tools.c` | die Befehle der Werkzeuge (`pkglib` und die Messungen) | `BuilderToolsDump.cs` (die Messungen auf der Seite von C#) |
 
 ### Entscheidungen
 
@@ -455,8 +487,22 @@ Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge
 * **Die Argumente** gehen als eine Zeile in `ProcessStartInfo`; forge-c teilt sie wie .NET (Anführungszeichen, Backslashes) - die Zeilen im Protokoll sind dieselben.
 * **Zeitstempel**: `FileInfo` einer symbolischen Verknüpfung (`/usr/bin/gcc -> /etc/alternatives/gcc`) hat Größe und Zeit der Verknüpfung selbst - die
   Stempel von Toolchain und Cache nehmen darum `lstat`; sonst wäre der Schlüssel für gcc ein anderer als in C#.
-* **Was fehlt, sagt es**: linkage `static`/`shared`/`plugin` (der Generator hat noch keine Module), `--stats`, `"globalJobs"` und Kommentare in fire.native.json
-  sind `unported: ...`; ohne Compiler meldet der Build es statt eines Installationsangebots (`ToolchainProvider`).
+* **Was fehlt, sagt es**: linkage `static`/`shared`/`plugin` (der Generator hat noch keine Module) und `--stats` sind `unported: ...`.
+* **`ToolchainProvider`**: der Host von forge-c ist die Befehlszeile - gefragt wird nur, wenn jemand da ist (Ein- und Ausgabe ein Terminal), und dann wie das C#-forge
+  hier: w64devkit lädt fire nur unter Windows, also steht der Text da und die Antwort ist "abbrechen"; Open Watcom ließe sich unter Linux x64 laden, das
+  Herunterladen ist aber Schritt 5 - forge-c zeigt den Text und sagt das.
+* **PE-Ressourcen**: das C#-forge schreibt sie mit der Ressourcen-API von Win32 (`UpdateResource`) und nur unter Windows; forge-c baut nur unter POSIX, also lässt
+  `ApplyPeMetadata` das Programm wie das C#-forge dort in Ruhe (auch beim Cross-Build mit MinGW). Portiert ist der Inhalt der Ressourcen (gemessen mit `peres`) und
+  das Subsystem (`-mwindows`). Ein Fehler des Icons (`ReadIconImages`) ist in C ein Text statt einer Ausnahme; die Meldungen von .NET für eine zu kurze Datei sind
+  nachgeschrieben.
+* **Boot-Image**: Open Watcom ist hier nicht installiert - `bootimage` prüft `AfterLink` auf einer beliebigen Datei als FIRE.EXE; ein echter Build für bios16 ruft
+  dieselbe Funktion nach dem Link. Die Zeit von FIRE.EXE ist `DateTime.Now` (die Messung lässt diese 10 Bytes aus), die der Dateien von `disk` ihre Änderungszeit,
+  beide in der Ortszeit. Großbuchstaben (`ToUpperInvariant`) nur für ASCII - ein Name mit anderen Zeichen ist ohnehin kein 8.3-Name, nur die Meldung schreibt ihn
+  dann klein.
+* **`NativeHashOf`**: `JsonSerializer.Serialize` der Funktionen ist nachgeschrieben (die Eigenschaften in ihrer Reihenfolge, `null`, der Standard-Encoder: `"`, `<`,
+  `>`, `&`, `'`, `+`, `` ` `` und alles außer druckbarem ASCII als `\uXXXX`).
+* **fire.native.json**: Kommentare (`//`, `/* */`) und ein Komma vor `]`/`}` werden vor dem Lesen entfernt (`ReadCommentHandling.Skip`, `AllowTrailingCommas`); die
+  Meldung einer kaputten Datei ist kürzer als die von `System.Text.Json`.
 
 ## Phase D Schritt 3: Projekte, Solutions, Pakete
 
@@ -556,10 +602,12 @@ Der Generator (Phase D Schritt 1, `native/forge/gen/`): `src/fire.Native/CppGene
 `src/fire/Bytecode/Overloads.cs` (`OverloadHint`), `src/fire/Standard/JsonMethods.cs`, `LibraryMethods.cs` und von `src/fire.Package.Manager`
 `Manifest.cs`, `NativeSources.cs`, `PackageStore.cs` - Stand 808e9788; das Maß ist `tests/compare-frontend.sh ... native` mit den
 Optionssätzen der Tabelle oben. Der Builder (Phase D Schritt 2, `native/forge/build/`, `gen/split.c`): `src/fire.Compiler/NativeBuilder.cs`,
-`NativeBuilder.Quick.cs`, `NativeBuilder.ProgramCache.cs`, `PackageLibrary.cs` (`OptimizingToolchain`), `CommandLine.Report.cs` (`ReportBuildFiles`),
+`NativeBuilder.Quick.cs`, `NativeBuilder.ProgramCache.cs`, `PackageLibrary.cs`, `StandardSources.cs` (`NativeHashOf`), `ConsoleToolchainPrompt.cs`,
+`Assembly/AssemblyInfo.cs`, `CommandLine.Report.cs` (`ReportBuildFiles`), `src/fire/Utilities/PeResourceEditor.cs`,
 `src/fire.Native/Toolchain.cs`, `ToolchainSetup.cs`, `MachineToolchains.cs`, `NativeConfig.cs`, `NativeRuntimeFiles.cs`, `ProgramSplit.cs`, `CppGenerator.Split.cs`,
-`Toolchains/*.cs`, `src/fire/Runtime/TargetProfile*.cs`, `PackageStore.cs` (`PackageHeaders`) - Stand 6f21d1a4; das Maß ist
-`tests/compare-frontend.sh ... buildplan` und `... build`.
+`Toolchains/*.cs`, `src/fire/Runtime/TargetProfile*.cs`, `PackageStore.cs` (`PackageHeaders`) - Stand 6f21d1a4, die Werkzeuge (`build/pkglib.c`,
+`provider.c`, `peres.c`, `bootimage.c`) Stand de45e7e4; das Maß ist `tests/compare-frontend.sh ... buildplan`, `... build` und `... pkglib`, dazu `bootimage` und
+`peres` auf beiden Seiten.
 Projekte, Solutions, Pakete (Phase D Schritt 3, `native/forge/project/`): `src/fire.Project/FireProject.cs`, `FireSolution.cs`, `ProjectSettings.cs`, `ProjectPublish.cs`,
 `ProjectOutput.cs`, `ProjectFiles.cs`, `ProjectFolders.cs`, `Workspace.cs`, `BuildPlan.cs`, `ProjectNatives.cs`, `Notes.cs` (`Folder`), von `src/fire.Package.Manager`
 `Fpk.cs`, `Manifest.cs`, `NativeSources.cs` (`NativeSourceOrder`), von `src/fire.Compiler` `ProjectBuilder.cs`, `ProjectLibraries.cs`, `ProjectNativeOverlay.cs`,
