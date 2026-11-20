@@ -51,7 +51,7 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   ended after ten seconds is killed with its process tree). **Unsaved text is built as it is in the editor**, without saving: each changed document goes to
   forge as an overlay (`--overlay <file>=<copy>`), a script that was never saved as a temporary file - the same as when spark built in its own process
   (Visual Studio saves first; spark leaves saving to you, so a build never writes your files). spark still decides what it decided before: the target of
-  the tool strip (`-t`), the mode of the run (`-m`), where the program goes (`-o`), the statistics switch (`--stats`); a missing compiler is asked for
+  the tool strip (`-t`), the mode of the run (`-m`), where the program goes (`-o`), the statistics switch (`--stats`), the hare (`--quick`); a missing compiler is asked for
   in spark before forge starts. Clean builds nothing and stays in spark, so does the compile for a run in the VM (the VM runs inside spark until it moves
   to a child process, [ROADMAP_C_PORT](../ROADMAP_C_PORT.md)). `FIRE_FORGE` names another forge (a program or a `forge.dll`). *Build virtual* only writes
   the program now; *Start* compiles for the VM itself.
@@ -59,7 +59,18 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   *Copy if newer*, *Copy always* - and *Set by* (the file itself, a pattern or the default). Several files selected in the Solution Explorer (Ctrl+click,
   Shift+click) are changed at once (the window shows "(mixed)" when they differ); the context menu of a file has the same as *Build Action*. An ignored
   file is shown pale with "ignored", a copied one with "copy" ([projects](projects.md#build-actions)).
-- **Build tool strip:** target, *Build* (native), *Publish*, and the *Statistics* switch: when it is on, *Build*
+- **Quick build (the hare):** the hare left of *Build* and *Publish* in the *Build* tool strip (also *Run > Quick Build*; kept in the settings of spark)
+  makes every native build and publish spark starts - *Build*, *Build Solution*, the build of a native *Run* or *Debug*, *Publish* - a **quick build for
+  tests**: forge gets `--quick` ([forge](forge.md#options)), the C compiler works without optimisation (-O0; msvc /Od) and the program is compiled in
+  units side by side wherever the toolchain can split (gcc, clang, MinGW, Emscripten - also for *Publish*, which otherwise stays one file;
+  [NATIVE_SPLIT](../spec/NATIVE_SPLIT.md#schnellbuild)). The mode stays what it is (Debug, Release, Performance: asserts and checks as before); the natives of
+  the packages keep their optimisation, so does everything built for the VM. While it is on the hare glows amber - a quick build is no release: a quick
+  *Publish* says "Schnellbuild (-O0, geteilt)" in the build log, in the summary of the status bar and in the `.firepublish` mark of the publish folder,
+  and it is not "up to date" for a normal *Publish* (nor the other way round). *Tools > Options > Compilers* chooses its level: -O0 (the default, the
+  shortest build) or -O1 (about twice the compile time of -O0, a program almost as fast as a normal build; measured in
+  [NATIVE_SPLIT](../spec/NATIVE_SPLIT.md#schnellbuild): a test publish of the assistant 273 s -> 73 s with -O0, 151 s with -O1). TinyCC - the automatic Build compiler - is quick anyway: with it the
+  hare changes nothing; it matters for the Publish compiler (GCC) and for a Build compiler gcc or clang.
+- **Build tool strip:** target, the hare (quick build), *Build* (native), *Publish*, and the *Statistics* switch: when it is on, *Build*
   writes the statistics of the native build (`forge build --stats`, [forge](forge.md)) and opens them in a tab - the size of the program and what it takes
   to load, the code by origin (the C of the packages, the runtime, the C library, the generated fire code by module), the data, how much of the generated
   functions are C numbers, the biggest functions. A `.stats.json` next to a program opens in the same viewer.
@@ -84,7 +95,8 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   A project's own toolchain goes first (*Project Properties > Native & Toolchain*, `toolchain` in `fire.native.json`, a target that names one, `--toolchain`);
   both dialogs say so. Debug, Release and Performance stay the build *modes* - the compiler no longer depends on them. TinyCC compiles only C: when a
   program has natives in C++ and Build is TinyCC (chosen or automatic), the build hands it to the next compiler (GCC, else Clang or MSVC) and the build log
-  says so in one line ([natives](../packages/natives.md#0-c-or-c)).
+  says so in one line ([natives](../packages/natives.md#0-c-or-c)). Below the grid, *Quick build (the hare)* chooses the optimisation level of a quick build:
+  -O0 or -O1.
 - **Setup wizard** (at the first start, *? > Setup Wizard*): its page *Compilers* is the same grid with the same checkbox (and, on Windows, Open Watcom for
   the old PC targets); Start saves the choice and downloads what it lists.
 - **Panels:** Output, Build log, Error list, Solution Explorer, Test Explorer ([testing](testing.md)), Todo ([notes](notes.md)), Devices

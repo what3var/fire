@@ -62,6 +62,9 @@ namespace fire.Compiler
         public string? Host { get; init; }
         /// <summary>`--split auto|on|off`: the C of the program in several translation units, compiled at the same time (`"split"` in fire.native.json; docs/spec/NATIVE_SPLIT.md).</summary>
         public string? Split { get; init; }
+        /// <summary>`--quick[=0|1]`: a quick native build for tests (build, publish): the C compiler with -O0 (or -O1) and the program in units where the toolchain splits;
+        /// the mode stays (NativeBuilder.QuickBuild). Null: a normal build.</summary>
+        public int? Quick { get; init; }
         /// <summary>`--global-jobs safepoints|sleep|sync`: when the main program runs the `fire global` jobs by itself (docs/spec/THREADING_DESIGN.md section 7); goes before the
         /// project's `globalJobs`, `#globaljobs`/`#nosync` and fire.native.json. Null: those decide.</summary>
         public fire.Runtime.GlobalJobsMode? GlobalJobs { get; init; }
@@ -104,8 +107,8 @@ namespace fire.Compiler
             """
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--global-jobs safepoints|sleep|sync] [-- <arguments of the program>...]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--linkage source|static|shared|plugin] [--host <program>] [--split auto|on|off] [--global-jobs safepoints|sleep|sync]
-              fire.Compiler publish <solution.firesln>|<project.fireproj> [-p <project>] [--toolchain <name>]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--linkage source|static|shared|plugin] [--host <program>] [--split auto|on|off] [--quick[=0|1]] [--global-jobs safepoints|sleep|sync]
+              fire.Compiler publish <solution.firesln>|<project.fireproj> [-p <project>] [--toolchain <name>] [--quick[=0|1]]
               fire.Compiler build|publish ... [--report json] [--overlay <source>=<file>]... [--debug-info] [--check] [--all]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--global-jobs safepoints|sleep|sync]
               fire.Compiler bytecode <file>... | <project.fireproj> | <solution.firesln> [-p <project>] [-o <out.fbc>] [-m ...] [-f 32|64] [-i 32|64] [-D name]... [--report json] [--overlay <source>=<file>]...
@@ -151,6 +154,10 @@ namespace fire.Compiler
             --split auto|on|off  The C of the program in several translation units that the compiler builds at the same time (one per core; FIRE_BUILD_JOBS), then linked:
                     auto (the default) splits a large program (2 MB of C) built with gcc, clang or Emscripten; on splits whenever the toolchain can; off keeps one file
                     ("split" in fire.native.json; FIRE_SPLIT=1/0 goes before both; docs/spec/NATIVE_SPLIT.md).
+            --quick[=0|1]  A quick native build for tests, not for releases (build, publish; spark's hare switch): the C compiler without optimisation (-O0; --quick=1: -O1;
+                    msvc /Od, /O1) and the program in units built side by side where the toolchain splits (gcc, clang, MinGW, Emscripten - forced on, also for publish).
+                    The mode (debug, release, performance) stays; the natives of the packages keep their optimisation. TinyCC, Open Watcom, files and custom build as without it,
+                    so do the linkages static, shared and plugin. Publish marks it: "Schnellbuild (-O0, geteilt)".
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             -i      Width of int in bits: 16, 32 or 64 (default: whatever the script sets with #intwidth, otherwise 64 - also on small targets).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
@@ -220,6 +227,7 @@ namespace fire.Compiler
             fire.Runtime.OptimizeFor? optimize = null;
             string? linkage = null;
             string? split = null;
+            int? quick = null;
             string? host = null;
             string? output = null;
             var defines = new List<string>();
@@ -301,6 +309,12 @@ namespace fire.Compiler
                     string? value = i + 1 < args.Count ? args[++i].ToLowerInvariant() : null;
                     if (fire.Native.SplitModes.Parse(value) == null || string.IsNullOrEmpty(value)) return Fail(command, "--split must be followed by auto, on or off.");
                     split = value;
+                }
+                else if (TryOption(arg, "--quick", "--quick", out var quickInline))
+                {
+                    if (command is not (CommandKind.Build or CommandKind.Publish)) return Fail(command, "--quick is only available with build and publish.");
+                    quick = NativeBuilder.QuickBuild.ParseLevel(quickInline == null ? null : Unquote(quickInline));
+                    if (quick == null) return Fail(command, "--quick takes the optimisation level 0 or 1 (--quick, --quick=1).");
                 }
                 else if (string.Equals(arg, "--host", StringComparison.OrdinalIgnoreCase))
                 {
@@ -449,6 +463,7 @@ namespace fire.Compiler
                 Optimize = optimize,
                 Linkage = linkage,
                 Split = split,
+                Quick = quick,
                 Report = report,
                 Overlays = overlays,
                 DebugInfo = debugInfo,
@@ -624,6 +639,7 @@ namespace fire.Compiler
             if (options.Optimize is { } direction) { config.Optimize = fire.Runtime.OptimizeFors.Name(direction); config.OptimizeFromCommandLine = true; }
             if (options.Linkage != null) config.Linkage = options.Linkage;
             if (options.Split != null) config.Split = options.Split;
+            if (options.Quick != null) config.Quick = options.Quick;
             if (options.Host != null) config.Host = options.Host;
             return config;
         }
@@ -982,7 +998,7 @@ namespace fire.Compiler
             catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
             var monitor = new fire.Native.BuildMonitor(log: line => stdout.WriteLine(line));
             // (a project named on the command line, or the project file itself, is published even when its publishing is off)
-            var result = ProjectPublisher.Publish(workspace, projects, new PublishOptions { Monitor = monitor, IncludeDisabled = projects != null, Toolchain = options.ToolchainName, TextOf = TextOf(options) });
+            var result = ProjectPublisher.Publish(workspace, projects, new PublishOptions { Monitor = monitor, IncludeDisabled = projects != null, Toolchain = options.ToolchainName, TextOf = TextOf(options), Quick = options.Quick });
             foreach (var d in result.Diagnostics) stderr.WriteLine(d.ToLogLine());
             return result.Ok ? ExitOk : ExitScriptError;
         }

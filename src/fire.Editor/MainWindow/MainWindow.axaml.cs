@@ -194,6 +194,7 @@ namespace fire.Editor
                 UpdateRunButtons();   // (Stop is grey while nothing runs)
                 tbBuildStats.IsChecked = _settings.BuildStats;
                 tbProfile.IsChecked = _settings.Profile;
+                ShowQuickBuild();
             };
             // our caption buttons (see SparkDecorations in MainWindow.axaml): set explicitly, since the decorations do not see Window.Resources
             WindowDecorationsTheme = (Avalonia.Styling.ControlTheme)Resources["SparkDecorations"]!;

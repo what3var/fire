@@ -108,13 +108,22 @@
             <Setter Property="Margin" Value="4,2"/>
             <Setter Property="Fill" Value="#4A4252"/>
         </Style>
-        <!-- a tool button that is a switch (IsChecked): on, it keeps a frame and a light background -->
-        <Style Selector="local|ToolStripButton:checked /template/ ContentPresenter#PART_ContentPresenter">
+        <!-- a tool button that is a switch (IsChecked): on, it keeps a frame and a light background (by its class: a ToolStripButton is styled as a Button, its type selector does not match) -->
+        <Style Selector="Button.toolstrip:checked /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="#3360A5FA"/>
             <Setter Property="BorderBrush" Value="#9960A5FA"/>
             <Setter Property="BorderThickness" Value="1"/>
         </Style>
-        <Style Selector="local|ToolStripButton Border.dropdown:pointerover">
+        <!-- the hare (quick build): on, it glows amber - a quick build is no release, it must not be overlooked -->
+        <Style Selector="Button.toolstrip.hare:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#66F59E0B"/>
+            <Setter Property="BorderBrush" Value="#FFF59E0B"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style Selector="Button.toolstrip.hare:checked PathIcon">
+            <Setter Property="Foreground" Value="#FFFCD34D"/>
+        </Style>
+        <Style Selector="Button.toolstrip Border.dropdown:pointerover">
             <Setter Property="Background" Value="#33FFFFFF"/>
         </Style>
         <!-- compact buttons of the little tool bars inside the panels (formatting bar of the Markdown editor, ...) -->

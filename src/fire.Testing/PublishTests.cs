@@ -5,7 +5,8 @@ using fire.Projects;
 /// <summary>Build actions and Publish (docs/tools/projects.md, "Build actions" and "Publish"): `buildActions` and `publish` in the project file read and written (old files without them stay
 /// as they were), Ignore takes a source out of the compile, Copy copies a file next to the program (keeping its folder) and into the publish folders, a resource that the code names is still
 /// embedded, Publish builds only what is not up to date, copies into its folders without touching other files there (unless `clean`), skips projects that have it off and puts a library
-/// before the programs that use it. A quick run: FIRE_TESTS_ONLY=publish (FIRE_TESTS_FILTER narrows it by the title of a check). The native publish runs when a C compiler is there.</summary>
+/// before the programs that use it; the quick build (`--quick`, spark's hare): the command line, the flags and units by toolchain, the key of the program cache, a quick
+/// publish marked and with its own up-to-date state. A quick run: FIRE_TESTS_ONLY=publish (FIRE_TESTS_FILTER narrows it by the title of a check). The native publish runs when a C compiler is there.</summary>
 static class PublishTests
 {
     private static int _failures;
@@ -37,6 +38,7 @@ static class PublishTests
             Actions(root);
             PublishVm(root);
             PublishNative(root);
+            QuickBuild(root);
         }
         finally { try { Directory.Delete(root, true); } catch (IOException) { } }
         Console.WriteLine(_failures == 0 ? "Alle Publish-Pruefungen bestanden." : $"FEHLER: {_failures} Publish-Pruefung(en) fehlgeschlagen.");
@@ -239,6 +241,95 @@ static class PublishTests
         }
         var again = ProjectPublisher.Publish(Workspace.Open(Path.Combine(s, "N", "N.fireproj")));
         Check("Publish nativ (aktuell): nicht neu gebaut", again.Ok && again.Projects.Single().UpToDate, Log(again));
+    }
+
+    // ---- the quick build (`--quick`, spark's hare; docs/spec/NATIVE_SPLIT.md "Schnellbuild") ------------------------------------------------------
+    private static void QuickBuild(string root)
+    {
+        // the command line
+        Check("Schnellbuild: --quick ist -O0", CommandLineParser.Parse(new[] { "build", "a.fire", "--quick" }) is { Error: null, Quick: 0 });
+        Check("Schnellbuild: --quick=1 und --quick=O1 sind -O1", CommandLineParser.Parse(new[] { "build", "a.fire", "--quick=1" }) is { Error: null, Quick: 1 }
+            && CommandLineParser.Parse(new[] { "publish", "App.firesln", "--quick=O1" }) is { Error: null, Quick: 1 } && CommandLineParser.Parse(new[] { "build", "a.fire", "--quick=-O0" }) is { Quick: 0 });
+        Check("Schnellbuild: ohne --quick ein normaler Build", CommandLineParser.Parse(new[] { "build", "a.fire" }) is { Error: null, Quick: null });
+        Check("Schnellbuild: --quick=2 und --quick bei run/native/test/bytecode sind Fehler", CommandLineParser.Parse(new[] { "build", "a.fire", "--quick=2" }).Error != null
+            && new[] { "run", "native", "test", "bytecode" }.All(c => CommandLineParser.Parse(new[] { c, "a.fire", "--quick" }).Error != null));
+        // what it changes: the flag and the units by toolchain, nothing for TinyCC, Open Watcom, files
+        var q = NativeBuilder.QuickBuild.Apply(new fire.Native.ToolchainDef { Kind = "gcc", Compiler = "g++", Optimization = "-O2" }, 0);
+        Check("Schnellbuild: gcc -O0 / -O1, msvc /Od, TinyCC und Watcom wie sie sind", q.Optimization == "-O0" && NativeBuilder.QuickBuild.Flag("clang", 1) == "-O1" && NativeBuilder.QuickBuild.Flag("msvc", 0) == "/Od"
+            && NativeBuilder.QuickBuild.Flag("tcc", 0) == null && NativeBuilder.QuickBuild.Flag("watcom", 0) == null && NativeBuilder.QuickBuild.Flag("files", 0) == null, q.Optimization);
+        var off = new fire.Native.NativeConfig { Split = "off", Quick = 0 };
+        Check("Schnellbuild: geteilt mit gcc, clang, Emscripten (auch bei \"split\": \"off\"), eine Datei mit TinyCC und msvc",
+            NativeBuilder.QuickBuild.SplitOf(off, "gcc") == fire.Native.SplitMode.On && NativeBuilder.QuickBuild.SplitOf(off, "emscripten") == fire.Native.SplitMode.On
+            && NativeBuilder.QuickBuild.SplitOf(off, "tcc") == fire.Native.SplitMode.Off && NativeBuilder.QuickBuild.SplitOf(off, "msvc") == fire.Native.SplitMode.Off
+            && NativeBuilder.QuickBuild.SplitOf(new fire.Native.NativeConfig { Split = "off" }, "gcc") == fire.Native.SplitMode.Off);
+        Check("Schnellbuild: die Marke", NativeBuilder.QuickBuild.Label(0) == "Schnellbuild (-O0, geteilt)" && NativeBuilder.QuickBuild.Label(1, "gcc") == "Schnellbuild (-O1, geteilt)"
+            && NativeBuilder.QuickBuild.Label(0, "msvc") == "Schnellbuild (/Od, eine Datei)");
+
+        if (fire.Native.ToolchainSetup.FindProgram("gcc") == null) { Console.WriteLine("(Schnellbuild nativ: kein gcc - uebersprungen)"); return; }
+        string s = Path.Combine(root, "quick");
+        string? cacheBefore = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
+        string? programCacheBefore = Environment.GetEnvironmentVariable("FIRE_PROGRAM_CACHE");
+        Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", Path.Combine(s, "cache"));   // (the cache of programs of this test alone)
+        Environment.SetEnvironmentVariable("FIRE_PROGRAM_CACHE", null);
+        try
+        {
+            // the program cache: a quick build is its own program - not the normal one from the cache, and the other way round
+            string src = Write(s, "p/main.fire", "class Box { int v }\nvar b = new Box()\nb.v = 6 * 7\nprint(\"quick \" + b.v)\n");
+            var target = fire.Runtime.TargetProfile.Host;
+            NativeBuildResult Build(int? quick, string exe)
+            {
+                var config = new fire.Native.NativeConfig { Quick = quick };
+                var toolchain = config.ResolveToolchain(target, "gcc");
+                return NativeBuilder.BuildSafe(new[] { File.ReadAllText(src) }, config, target, toolchain, Path.Combine(s, exe), null, null, false, Path.GetDirectoryName(src), null, null);
+            }
+            bool FromCache(NativeBuildResult r) => r.Log.Contains("taken from the cache", StringComparison.Ordinal);
+            var normal = Build(null, "normal");
+            var quick = Build(0, "quick");
+            Check("Schnellbuild nativ: gebaut mit -O0, in Einheiten, die Zeile im Log", quick.Ok && quick.Log.Contains("Schnellbuild (-O0, geteilt)") && quick.Log.Contains(" -O0 ")
+                && quick.Log.Contains("fire_program_1.c") && !quick.Log.Contains(" -O2 "), quick.Log);
+            Check("Schnellbuild nativ: nicht das normale Programm aus dem Cache", normal.Ok && !FromCache(normal) && !FromCache(quick), quick.Log);
+            if (quick.Ok)
+            {
+                var (code, output) = RunProgram(quick.Output, s);
+                Check("Schnellbuild nativ: das Programm laeuft", code == 0 && output.Contains("quick 42"), $"{code}: {output}");
+            }
+            var quickAgain = Build(0, "quick2");
+            var quickO1 = Build(1, "quick3");
+            var normalAgain = Build(null, "normal2");
+            Check("Schnellbuild nativ: der Schluessel des Programm-Caches - derselbe Schnellbuild aus dem Cache, -O1 und der normale Build je fuer sich",
+                FromCache(quickAgain) && !FromCache(quickO1) && quickO1.Log.Contains(" -O1 ") && FromCache(normalAgain) && !normalAgain.Log.Contains("Schnellbuild"),
+                quickAgain.Log + "\n----\n" + quickO1.Log + "\n----\n" + normalAgain.Log);
+
+            // publish: marked, its own up-to-date state
+            Write(s, "Q/Q.fireproj", """{ "name": "Q", "publish": { "enabled": true, "targets": ["../qdist"] } }""");
+            Write(s, "Q/main.fire", "print(\"quick publish \" + (6 * 7))\n");
+            string proj = Path.Combine(s, "Q", "Q.fireproj");
+            PublishResult Publish(int? level) => ProjectPublisher.Publish(Workspace.Open(proj), null, new PublishOptions { Toolchain = "gcc", Quick = level });
+            var first = Publish(null);
+            var qp = Publish(0);
+            string marker = Path.Combine(s, "qdist", ProjectFiles.PublishMarker);
+            Check("Schnellbuild Publish: neu gebaut (nicht aktuell nach dem normalen), die Marke in der Zusammenfassung und im Ziel",
+                first.Ok && qp.Ok && !qp.Projects.Single().UpToDate && qp.Summary.Contains("Schnellbuild (-O0, geteilt)") && File.Exists(marker) && File.ReadAllText(marker).Contains("Schnellbuild (-O0, geteilt)"),
+                Log(qp) + "\n" + qp.Summary);
+            string program = Path.Combine(s, "qdist", "Q" + (OperatingSystem.IsWindows() ? ".exe" : ""));
+            if (File.Exists(program))
+            {
+                var (code, output) = RunProgram(program, s);
+                Check("Schnellbuild Publish: das Programm laeuft", code == 0 && output.Contains("quick publish 42"), $"{code}: {output}");
+            }
+            var qp2 = Publish(0);
+            var qp1 = Publish(1);
+            var back = Publish(null);
+            Check("Schnellbuild Publish: derselbe Schnellbuild aktuell, -O1 und danach der normale neu gebaut, ohne Marke",
+                qp2.Ok && qp2.Projects.Single().UpToDate && qp1.Ok && !qp1.Projects.Single().UpToDate && back.Ok && !back.Projects.Single().UpToDate
+                && !back.Summary.Contains("Schnellbuild") && !File.ReadAllText(marker).Contains("Schnellbuild"),
+                Log(qp2) + "\n" + Log(qp1) + "\n" + Log(back) + "\n" + back.Summary);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", cacheBefore);
+            Environment.SetEnvironmentVariable("FIRE_PROGRAM_CACHE", programCacheBefore);
+        }
     }
 
     private static (int Code, string Output) RunProgram(string program, string workingDirectory)

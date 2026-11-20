@@ -22,8 +22,8 @@ namespace fire.Compiler
 
             private static bool Enabled => Environment.GetEnvironmentVariable("FIRE_PROGRAM_CACHE") is not "0";
 
-            /// <summary>The key of the build (null: it is not cached).</summary>
-            public static string? Key(ToolchainDef toolchain, TargetProfile target, string workDir, string exe, IReadOnlyList<(string Executable, string Arguments)> commands, bool stats, int units = 0)
+            /// <summary>The key of the build (null: it is not cached). <paramref name="quick"/>: the level of a quick build (`--quick`), null: a normal one.</summary>
+            public static string? Key(ToolchainDef toolchain, TargetProfile target, string workDir, string exe, IReadOnlyList<(string Executable, string Arguments)> commands, bool stats, int units = 0, int? quick = null)
             {
                 if (!Enabled || stats || toolchain.EffectiveKind is not ("gcc" or "clang" or "tcc")) return null;
                 try
@@ -34,7 +34,8 @@ namespace fire.Compiler
                     Add("fire program cache 1");
                     Add(target.Name);
                     Add(ToolchainStamp(toolchain));
-                    if (units > 0) Add($"split {units}");   // (a split program, docs/spec/NATIVE_SPLIT.md: its units - one file keeps the key it had)
+                    if (units > 0) Add($"split {units}");
+                    if (quick is { } level) Add($"quick {level}");   // (a quick build, `--quick`: its own program - the commands differ too, the key says it outright)   // (a split program, docs/spec/NATIVE_SPLIT.md: its units - one file keeps the key it had)
                     foreach (var (executable, arguments) in commands)
                     {
                         Add(Stamp(executable));

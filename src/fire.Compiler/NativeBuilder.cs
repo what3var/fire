@@ -139,6 +139,11 @@ namespace fire.Compiler
             return copy;
         }
 
+        /// <summary>A quick build (`--quick`) with linkage static, shared or plugin: built as without it - the log says so.</summary>
+        private static NativeBuildResult QuickNotApplied(NativeConfig config, NativeBuildResult result) => config.Quick is { } level
+            ? result with { Log = $"{QuickBuild.Label(level)}: only with linkage \"source\" - linkage \"{config.Linkage}\" builds as without it.\n" + result.Log }
+            : result;
+
         /// <summary>Translates and builds. <paramref name="output"/> is the program, or the folder for a toolchain that only writes files. <paramref name="monitor"/> (else the
         /// <see cref="BuildMonitor.Current"/> one) gets the progress and the commands as they run; when it is cancelled the build throws <see cref="OperationCanceledException"/>
         /// (<see cref="BuildSafe"/> returns a result with <see cref="NativeBuildResult.Cancelled"/> instead).</summary>
@@ -154,7 +159,7 @@ namespace fire.Compiler
             {
                 bool can = toolchain.EffectiveKind is "gcc" or "clang" && (target.Native.Platform == "posix" && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) && target.Name == TargetProfile.Host.Name
                     || target.Native.Platform == "windows");
-                if (can) return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, shared: true);
+                if (can) return QuickNotApplied(config, BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, shared: true));
                 config.Linkage = "static";
                 NativeBuildResult r;
                 try { r = Build(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths); }
@@ -162,13 +167,14 @@ namespace fire.Compiler
                 return r with { Log = $"Linkage \"shared\" is only available on Linux and macOS with gcc or clang and on Windows with MinGW (not for the target '{target.Name}' with '{toolchain.EffectiveKind}'): built with linkage \"static\".\n" + r.Log };
             }
             if (string.Equals(config.Linkage, "plugin", StringComparison.OrdinalIgnoreCase))
-                return BuildPlugin(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
+                return QuickNotApplied(config, BuildPlugin(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths));
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
-                return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
+                return QuickNotApplied(config, BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths));
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
                 return WriteStaticFiles(sources, config, target, toolchain, output, mode, floatWidth, basePath, defines, plan, sourcePaths);
+            // (a quick build, `--quick`: the units forced on where the toolchain splits - QuickBuild; its optimisation level is set below, when the compiler is known)
             var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind, OptimizeOf(config, plan, target), config.Stats,
-                config.SplitValue);
+                QuickBuild.SplitOf(config, toolchain.EffectiveKind));
             // natives in C++, and the machine's compiler is C only (TinyCC): the next compiler builds it, the log says so in one line
             if (program.Natives != null && CppFallback(toolchain) is { } cppToolchain)
             {
@@ -220,10 +226,20 @@ namespace fire.Compiler
                     }
                     toolchain = provided;
                 }
+                // (a quick build: the C of the program with the level of `--quick`; the natives of the packages in units of their own keep the toolchain's optimisation)
+                ToolchainDef? nativesToolchain = null;
+                if (config.Quick is { } quick)
+                {
+                    nativesToolchain = toolchain;
+                    toolchain = QuickBuild.Apply(toolchain, quick);
+                    log.AppendLine(QuickBuild.LogLine(quick, toolchain.EffectiveKind));
+                }
                 bool ok = true;
                 // (a split program, docs/spec/NATIVE_SPLIT.md: every unit compiled on its own, side by side - the costly ones first -, then one command links)
-                var units = program.Units?.Where(u => u.Kind != SplitUnitKind.Header).OrderByDescending(u => u.Cost).ToList();
-                var sourceCommands = units != null ? SplitCommands(toolchain, target, units, program.Units![0].Name, nativesFile, workDir, exe, gui) : BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui).ToList();
+                // (a quick build: the natives, still optimised, cost several times what their size says - they go first, the program's units fill the other cores)
+                var units = program.Units?.Where(u => u.Kind != SplitUnitKind.Header)
+                    .OrderByDescending(u => nativesToolchain != null && u.Kind == SplitUnitKind.Natives).ThenByDescending(u => u.Cost).ToList();
+                var sourceCommands = units != null ? SplitCommands(toolchain, target, units, program.Units![0].Name, nativesFile, workDir, exe, gui, nativesToolchain) : BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui).ToList();
                 int sideBySide = units?.Count ?? 0;
                 string? mapFile = null;
                 if (config.Stats && sourceCommands.Count > 0 && NativeStats.MapOptions(toolchain.EffectiveKind, NativeStats.MapFileOf(exe)) is { } mapOptions)
@@ -233,7 +249,7 @@ namespace fire.Compiler
                     sourceCommands[^1] = (lastExe, lastArgs + " " + mapOptions);
                 }
                 // (the same files and commands as a program built before: that program - ProgramCache)
-                string? cacheKey = ProgramCache.Key(toolchain, target, workDir, exe, sourceCommands, config.Stats, sideBySide);
+                string? cacheKey = ProgramCache.Key(toolchain, target, workDir, exe, sourceCommands, config.Stats, sideBySide, config.Quick);
                 if (cacheKey != null && ProgramCache.TryRestore(target, cacheKey, exe))
                 {
                     BuildMonitor.Step(BuildPhase.Link, "The program is unchanged: taken from the cache", sourceCommands.Count - 1, sourceCommands.Count);
@@ -645,9 +661,9 @@ namespace fire.Compiler
         public static int BuildJobs => int.TryParse(Environment.GetEnvironmentVariable("FIRE_BUILD_JOBS"), out int n) && n > 0 ? n : Math.Max(1, Environment.ProcessorCount);
 
         /// <summary>The commands of a split program (docs/spec/NATIVE_SPLIT.md): each unit to an object file (in the order of <paramref name="units"/>), then the command that
-        /// links them - with natives in C++ the C++ compiler, which compiles those too. What the build links (`// fire-link:`) and whether it is a debug build is read from the header.</summary>
+        /// links them - with natives in C++ the C++ compiler, which compiles those too. <paramref name="nativesToolchain"/>: a quick build's toolchain for the natives of the packages. What the build links (`// fire-link:`) and whether it is a debug build is read from the header.</summary>
         public static List<(string Executable, string Arguments)> SplitCommands(ToolchainDef toolchain, TargetProfile target, IReadOnlyList<SplitUnit> units, string headerName, string? nativesFile,
-            string workDir, string exe, bool gui = false)
+            string workDir, string exe, bool gui = false, ToolchainDef? nativesToolchain = null)
         {
             string header = Path.Combine(workDir, headerName);
             var commands = new List<(string, string)>();
@@ -656,12 +672,14 @@ namespace fire.Compiler
             {
                 string obj = Path.Combine(workDir, Path.ChangeExtension(unit.Name, ".o"));
                 objects.Add(obj);
-                commands.Add(CompilerCommand(toolchain, target, Path.Combine(workDir, unit.Name), workDir, obj, gui: gui, language: "c", compileOnly: true, programFile: header));
+                // (a quick build: the natives of the packages with the toolchain's optimisation - nativesToolchain -, the program without)
+                var unitToolchain = unit.Kind == SplitUnitKind.Natives ? nativesToolchain ?? toolchain : toolchain;
+                commands.Add(CompilerCommand(unitToolchain, target, Path.Combine(workDir, unit.Name), workDir, obj, gui: gui, language: "c", compileOnly: true, programFile: header));
             }
             // (the objects in the order of the files, not of the compiles: the same program for the same units)
             var ordered = units.Select((u, i) => (u.Name, Obj: objects[i])).OrderBy(x => x.Name == CppGenerator.ProgramFileName ? "" : x.Name, StringComparer.Ordinal).Select(x => x.Obj).ToList();
             if (nativesFile != null)
-                commands.Add(CompilerCommand(toolchain, target, nativesFile, workDir, exe, gui: gui, language: "c++", extraInputs: ordered, programFile: header));
+                commands.Add(CompilerCommand(nativesToolchain ?? toolchain, target, nativesFile, workDir, exe, gui: gui, language: "c++", extraInputs: ordered, programFile: header));
             else
                 commands.Add(CompilerCommand(toolchain, target, ordered[0], workDir, exe, gui: gui, language: "c", extraInputs: ordered.Skip(1), programFile: header));
             return commands;

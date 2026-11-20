@@ -420,6 +420,7 @@ namespace fire.Compiler
                 IncludeDisabled = projects != null,
                 Toolchain = options.ToolchainName,
                 TextOf = TextOf(options),
+                Quick = options.Quick,
             });
             if (result.Cancelled) throw new OperationCanceledException();
             foreach (var d in result.Diagnostics) report.Diagnostic(d);

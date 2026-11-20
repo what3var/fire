@@ -43,6 +43,7 @@ namespace fire.Editor
             var args = new List<string> { "build", file, "--all", "--engine", "native", "-m", ForgeMode(_session.ExecutionMode) };
             if (_nativeTargetChoice != null) args.AddRange(new[] { "-t", _nativeTargetChoice });   // (the tool strip goes before the settings of each project)
             if (_settings.BuildStats) args.Add("--stats");
+            AddQuickBuild(args);
             ForgeOutcome result;
             try
             {

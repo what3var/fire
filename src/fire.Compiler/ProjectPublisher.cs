@@ -20,6 +20,9 @@ namespace fire.Compiler
         public string? Toolchain { get; init; }
         /// <summary>Publish projects that have publishing off as well (a test, `forge publish --all`); the spark commands never do.</summary>
         public bool IncludeDisabled { get; init; }
+        /// <summary>`forge publish --quick[=level]` (spark's hare switch): the native programs as quick builds for tests (NativeBuilder.QuickBuild: -O0 or -O1, in units where the
+        /// toolchain splits) - marked in the log, the summary and the publish folder; its own up-to-date state. Null: a normal publish.</summary>
+        public int? Quick { get; init; }
     }
 
     /// <summary>How the publish of one project went.</summary>
@@ -49,6 +52,8 @@ namespace fire.Compiler
     {
         public List<ProjectPublishResult> Projects { get; } = new();
         public bool Cancelled { get; set; }
+        /// <summary>A quick publish (<see cref="PublishOptions.Quick"/>): its level; the summary says so ("Schnellbuild (-O0, geteilt)"), so it is not taken for a release.</summary>
+        public int? Quick { get; set; }
         public int Published => Projects.Count(p => p.Ok);
         public int Failed => Projects.Count(p => !p.Ok && !p.Skipped);
         public bool Ok => !Cancelled && Failed == 0 && Projects.All(p => p.Ok || p.Skipped && p.Error == null);
@@ -68,6 +73,7 @@ namespace fire.Compiler
                 if (Failed > 0) sb.Append($", {Failed} failed");
                 int skipped = Projects.Count(p => p.Skipped);
                 if (skipped > 0) sb.Append($", {skipped} skipped");
+                if (Quick is { } level && Projects.Any(p => p.Engine == "native")) sb.Append($" - {NativeBuilder.QuickBuild.Label(level)}, not for release");
                 return sb.Append('.').ToString();
             }
         }
@@ -95,13 +101,14 @@ namespace fire.Compiler
             var monitor = options.Monitor ?? BuildMonitor.Current;
             using var watching = BuildMonitor.Use(monitor);
             var token = monitor?.Token ?? CancellationToken.None;
-            var result = new PublishResult();
+            var result = new PublishResult { Quick = options.Quick };
             // (the order of the references: a library first; a project that is no member of the workspace keeps its place at the end)
             var order = workspace.BuildOrder();
             var asked = (projects ?? EnabledProjects(workspace)).Distinct().ToList();
             var ordered = order.Where(asked.Contains).Concat(asked.Where(p => !order.Contains(p))).ToList();
             var failed = new HashSet<LoadedProject>();
             void Log(string line) { if (monitor != null) monitor.Line(line); }
+            if (options.Quick is { } quickLevel) Log($"{NativeBuilder.QuickBuild.Label(quickLevel)}: a quick publish for tests, not a release - the native programs are built without full optimisation.");
             try
             {
                 for (int i = 0; i < ordered.Count; i++)
@@ -178,17 +185,18 @@ namespace fire.Compiler
                     // (publish: one file unless fire.native.json asks for units - the units build faster, the one file is smaller and lets the compiler see the whole
                     // program; docs/spec/NATIVE_SPLIT.md)
                     config.Split ??= "off";
+                    config.Quick = options.Quick;   // (a quick publish: -O0 and the units where the toolchain splits - before the "off" above)
                     target = config.ResolveTarget(targetName);
                     var toolchain = config.ResolveToolchain(target, options.Toolchain ?? toolchainName, fire.Native.ToolchainPurpose.Publish);
                     bool files = toolchain.EffectiveKind == "files";
                     output = plan.Settings.Output is { } fixedOutput && !files ? fixedOutput
                         : files ? ProjectOutput.Folder(project.Directory, target.Name, modeName)
                         : ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, modeName, target.ProgramExtension);
-                    key = StampKey(plan, engine, modeName, target, toolchain, output, config);
+                    key = StampKey(plan, engine, modeName, target, toolchain, output, config, options.Quick);
                     upToDate = !options.Rebuild && IsUpToDate(project, StampName(engine, target.Name, modeName), key, output);
                     if (!upToDate)
                     {
-                        log($"{project.Name}: building natively for {target.Name} ({modeName}, {toolchain.EffectiveKind})");
+                        log($"{project.Name}: building natively for {target.Name} ({modeName}, {toolchain.EffectiveKind}{(options.Quick is { } q ? ", " + NativeBuilder.QuickBuild.Label(q, toolchain.EffectiveKind) : "")})");
                         Directory.CreateDirectory(files ? output : Path.GetDirectoryName(Path.GetFullPath(output))!);
                         var built = NativeBuilder.BuildSafe(plan.SourceTexts, config, target, toolchain, output, mode, null, false, null, null, plan);
                         if (built.Cancelled) throw new OperationCanceledException(token);
@@ -274,7 +282,8 @@ namespace fire.Compiler
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { problems.Add($"{folder}: {ex.Message}"); continue; }
                 var r = ProjectContent.CopyTo(items.Values, folder, token);
                 // (the mark of a publish folder: a project whose folder holds it does not take the copies there for its own files)
-                try { File.WriteAllText(Path.Combine(folder, ProjectFiles.PublishMarker), $"Published by fire: {project.Name} ({DateTime.Now:yyyy-MM-dd HH:mm}). The files here are copies; Publish overwrites them.\n"); }
+                string quickNote = options.Quick is { } ql && engine == "native" ? $" {NativeBuilder.QuickBuild.Label(ql)}: a quick build for tests, not a release." : "";
+                try { File.WriteAllText(Path.Combine(folder, ProjectFiles.PublishMarker), $"Published by fire: {project.Name} ({DateTime.Now:yyyy-MM-dd HH:mm}). The files here are copies; Publish overwrites them.{quickNote}\n"); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
                 copied += r.Copied.Count;
                 problems.AddRange(r.Problems.Select(p => $"{folder}: {p}"));
@@ -355,9 +364,9 @@ namespace fire.Compiler
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
 
-        /// <summary>The inputs of a build as one hash: the compiler, the engine, mode, target and toolchain, the settings, the text of every source of the project and its libraries, and the
+        /// <summary>The inputs of a build as one hash: the compiler, the engine, mode, target and toolchain, a quick build (its level), the settings, the text of every source of the project and its libraries, and the
         /// size and time of every other file of theirs (resources, natives; not the Copy files, which are copied anyway), the project files and the native configuration.</summary>
-        internal static string StampKey(BuildPlan plan, string engine, string mode, TargetProfile? target, ToolchainDef? toolchain, string output, NativeConfig? config = null)
+        internal static string StampKey(BuildPlan plan, string engine, string mode, TargetProfile? target, ToolchainDef? toolchain, string output, NativeConfig? config = null, int? quick = null)
         {
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             void Add(string? text) { var bytes = Encoding.UTF8.GetBytes(text ?? "\0"); hash.AppendData(BitConverter.GetBytes(bytes.Length)); hash.AppendData(bytes); }
@@ -373,6 +382,7 @@ namespace fire.Compiler
             Add(engine); Add(mode); Add(target?.Name); Add(Path.GetFullPath(output));
             if (toolchain != null) { Add(toolchain.EffectiveKind); Add(toolchain.Compiler); Add(toolchain.Optimization); Add(string.Join(" ", toolchain.Args ?? new List<string>())); }
             if (config != null) { Add(config.Linkage); if (config.Path != null) AddFile(config.Path); }
+            if (quick is { } level) Add($"quick {level}");   // (a quick publish is not up to date for a normal one, nor the other way round)
             Add(JsonSerializer.Serialize(plan.Settings));
             foreach (var r in plan.Packages) Add($"{r.Package}@{r.Version}");
             void AddProject(LoadedProject p, IEnumerable<SourceFile> sources)
