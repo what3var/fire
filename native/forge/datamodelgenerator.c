@@ -79,7 +79,7 @@ static bool fmDataBool(const FjValue* e, const char* name) { const FjValue* v = 
 /* (a TryGetInt32 or GetString of System.Text.Json on a value of another kind: an InvalidOperationException in C#) */
 static _Noreturn void fmDataKindError(FcCtx* c, const char* wanted, const FjValue* v) {
     static const char* const kinds[] = { "Object", "Array", "String", "Number", "True", "False", "Null" };
-    fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "internal: InvalidOperationException: The requested operation requires an element of type '%s', but the target element has type '%s'.", wanted, kinds[v->kind]));
+    fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "Unhandled exception. System.InvalidOperationException: The requested operation requires an element of type '%s', but the target element has type '%s'.", wanted, kinds[v->kind]));
 }
 /* f.TryGetInt32(out v) on a property that is there */
 static bool fmDataTryInt(FcCtx* c, const FjValue* v, int* out) {

@@ -96,7 +96,12 @@ static int fcMarkupRun(const char* command, const char* path, FcBuf* out, FcBuf*
                 fcOut8(err, fmDiagText(&ctx, (const FmDiag*)ctx.err.list->items[i]));
                 fcBufChar(err, '\n');
             }
-        } else { fcBufStr(err, "internal: "); fcOut8(err, ctx.err.message ? ctx.err.message : "?"); fcBufChar(err, '\n'); }
+        } else {
+            /* (an exception C# does not catch there: its first line - "Unhandled exception. ..." - without the stack) */
+            if (!ctx.err.message || !fcStartsWith(ctx.err.message, "Unhandled exception.")) fcBufStr(err, "internal: ");
+            fcOut8(err, ctx.err.message ? ctx.err.message : "?");
+            fcBufChar(err, '\n');
+        }
         result = 1;
     } FC_END_TRY;
     fcU16Free(&text);
