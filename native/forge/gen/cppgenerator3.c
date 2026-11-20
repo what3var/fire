@@ -141,6 +141,14 @@ static void EmitLeave(FgGen* g, FgFunc* f, int scopeId, FgEmit* emit) {
 }
 
 static void GenerateChunkCore(FgGen* g, FgFunc* f);
+/* (gen/debug.c) */
+static FgFuncDebug* DebugBegin(FgGen* g, FgFunc* f, FgCode code, FgFlow** entry);
+static void DebugBeforeInstruction(FgGen* g, FgFunc* f, FgFuncDebug* d, FcChunk* chunk, FgInstr* ins, int i, FgFlow* st, FgOut* o, bool isTarget, FcDict* locals);
+static void DebugAfterInstruction(FgGen* g, FgFunc* f, FgInstr* ins, FgFlow* st, FgOut* o);
+static const char* DebugPrologue(FgGen* g, FgFunc* f, FgFuncDebug* d);
+static const char* DebugTables(FgGen* g, FgFunc* f, FgFuncDebug* d);
+static const char* DebugWrapper(FgGen* g, FgFunc* f, const char* call);
+static const char* DebugCatchWrapper(FgGen* g, FgFunc* f, const char* catchName);
 static void GenerateChunk(FgGen* g, FgFunc* f) {
     if (f->external) return;
     GenerateChunkCore(g, f);
@@ -265,6 +273,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     const char* frame;
     const char* defSignature;
     bool framed;
+    FgFuncDebug* dbg;
     int i, k;
     g->cur = f;
     f->cabi = CAbiOf(g, f);
@@ -366,7 +375,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         if (any) fgISetAdd(g->c, f->needsList, h->target);
     }
 
-    if (DebugBuild) FG_UNPORTED("debug builds");
+    dbg = DebugBuild ? DebugBegin(g, f, code, entry) : NULL;
     for (i = 0; i < code.n; i++) {
         FgInstr* ins = &code.p[i];
         FgOut* o;
@@ -376,6 +385,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         if (!entry[i]) continue;
         o = OutOf(f, entry[i]->region);
         if (fgISetHas(g->c, targets, ins->addr)) fcBufFmt(&o->code, "L%d:;\n", ins->addr);
+        if (dbg) DebugBeforeInstruction(g, f, dbg, chunk, ins, i, entry[i], o, fgISetHas(g->c, targets, ins->addr), locals);
         fcBufFmt(&cb, "// %d: %s", ins->addr, fgOpName(ins->op));
         for (k = 0; k < ins->n; k++) fcBufFmt(&cb, "%s%d", k ? "," : " ", ins->a[k]);
         comment = fcBufDone(g->c, &cb);
@@ -390,6 +400,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         else fcBufFmt(&o->code, "    %s\n", comment);
         state = fgFlowClone(g, entry[i]);
         StepFn(g, f, chunk, ins, state, &o->code, locals);
+        if (dbg) DebugAfterInstruction(g, f, ins, entry[i], o);
         g->lineDir = NULL;
     }
     regionsSorted = fgRegionsSorted(g, f);
@@ -402,6 +413,8 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     members = fcListNew(g->c);
     defName = Wrapped && (f->kind != FK_Main || DebugBuild) ? fcFmt(g->c, "%s_b", f->name) : f->name;
     if (framed) { FcList* pn = fgParamNames(g, f); for (i = 0; i < pn->count; i++) fgMemberAdd(g, members, "Value", (const char*)pn->items[i], fcFmt(g->c, "%s_in", (const char*)pn->items[i])); }
+    /* a debug build: the frame of the function on the shadow stack (its wrapper pushed it; the catch blocks reach it through the frame struct) */
+    if (dbg && framed) fgMemberAdd(g, members, "DbgFrame*", "DF", "g_dbgTop");
 
     fcBufStr(&pre, ""); fcBufStr(&decl, ""); fcBufStr(&post, "");
     fcBufStr(&pre, Trampoline(g, f));
@@ -434,6 +447,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
             if (f->cabi->paramType[i] != 0 && !ScalarVarOf(g, f, fcFmt(g->c, "P%d", i)))
                 fcBufFmt(&pre, "    Value P%d = %s;\n", i, ScalarValueOf(g, KindOfType(f->cabi->paramType[i]), 0, fcFmt(g->c, "P%d_c", i)));
     for (i = 0; i < fgParamCount(f); i++) fcBufFmt(&pre, "    (void)P%d;\n", i);
+    if (dbg && !framed) fcBufStr(&pre, "    DbgFrame* const DF = g_dbgTop;\n");
     if (g->usesTryDepth) {
         if (f->usesTryTake) { if (framed) fgMemberAdd(g, members, "OwnList*", "MYARGS", "g_argIn"); else fcBufStr(&decl, "    OwnList* const MYARGS = g_argIn;\n"); }
         fcBufStr(&post, "    g_argIn = NULL;\n");
@@ -535,8 +549,10 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     if (!fgIsTop(f) && g->usesTakeUpwards && fgISetHas(g->c, f->needsList, FunctionScope)) fcBufStr(&post, "    OP.parent = g_globalOwn;   // the parent scope of a function scope is the global scope\n");
     for (i = 0; i < fgParamLike(f); i++)
         if (VarRef(g, VarKey(g, f, fcFmt(g->c, "P%d", i)))) fcBufFmt(&post, "    retain(P%d);\n", i);
+    if (dbg) fcBufStr(&post, DebugPrologue(g, f, dbg));
 
     fcBufStr(&sb, "");
+    if (dbg) fcBufStr(&sb, DebugTables(g, f, dbg));
     for (i = 0; i < regionsSorted->count; i++) {
         FgRegion* region = (FgRegion*)regionsSorted->items[i];
         FcList* types = fcListNew(g->c);
@@ -549,7 +565,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     for (i = 0; i < catchRegions->count; i++) {
         FgRegion* region = (FgRegion*)catchRegions->items[i];
         const char* catchVar = fcFmt(g->c, "B%d_0", region->catchScopeId);
-        fcBufFmt(&catchCode, "static void %s(void* ctx_, uint32_t ci, Value e)\n", CatchName(g, f, region));
+        fcBufFmt(&catchCode, "static void %s%s(void* ctx_, uint32_t ci, Value e)\n", CatchName(g, f, region), dbg ? "_b" : "");
         fcBufStr(&catchCode, "{\n");
         fcBufFmt(&catchCode, "    %s* FR = (%s*)ctx_;\n", frame, frame);
         fcBufStr(&catchCode, "    switch (ci) {\n");
@@ -567,7 +583,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         fcBufStr(&catchCode, "}\n");
     }
     plain = fcListNew(g->c);
-    if (framed) {
+    if (framed && !dbg) {   /* (a debug build keeps them all in the frame: the debugger reads them from the catch blocks too) */
         FcDict* used = fgIdentifiers(g, catchCode.p ? catchCode.p : "");
         FcList* kept = fcListNew(g->c);
         for (i = 0; i < members->count; i++) {
@@ -586,6 +602,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         for (i = 0; i < members->count; i++) fcBufFmt(&sb, "%s%s;", i ? " " : "", ((FgMember*)members->items[i])->decl);
         fcBufFmt(&sb, " } %s;\n", frame);
         for (i = 0; i < catchRegions->count; i++) fcBufFmt(&sb, "static void %s(void* ctx_, uint32_t ci, Value e);\n", CatchName(g, f, (FgRegion*)catchRegions->items[i]));
+        if (dbg) for (i = 0; i < catchRegions->count; i++) fcBufFmt(&sb, "static void %s_b(void* ctx_, uint32_t ci, Value e);\n", CatchName(g, f, (FgRegion*)catchRegions->items[i]));
         for (i = 0; i < members->count; i++) { const char* mn = ((FgMember*)members->items[i])->name; fcBufFmt(&sb, "#define %s (FR->%s)\n", mn, mn); }
     }
     fcBufFmt(&sb, "%s\n", defSignature);
@@ -617,6 +634,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     if (g->target->lineDirectives && catchCode.len > 0) fcBufStr(&sb, LineResetMarker "\n");
     if (framed) for (i = 0; i < members->count; i++) fcBufFmt(&sb, "#undef %s\n", ((FgMember*)members->items[i])->name);
     for (i = 0; i < listMacros->count; i++) fcBufFmt(&sb, "#undef %s\n", (const char*)listMacros->items[i]);
+    if (dbg) for (i = 0; i < catchRegions->count; i++) fcBufFmt(&sb, "%s\n", DebugCatchWrapper(g, f, CatchName(g, f, (FgRegion*)catchRegions->items[i])));
     if (f->cabi) fcBufStr(&sb, CAbiWrapper(g, f, f->cabi));
     if (!streq0(defName, f->name)) {
         FcList* args = fcListNew(g->c);
@@ -624,13 +642,14 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         if (f->kind == FK_FireBody) fcListAdd(g->c, args, (void*)"args");
         for (i = 0; i < pn->count; i++) fcListAdd(g->c, args, pn->items[i]);
         fcBufFmt(&sb, "%s\n", fgSignature(g, f));
-        fcBufFmt(&sb, f->kind == FK_FireBody ? "{ %s(%s); }\n" : "{ return %s(%s); }\n", defName, fgJoin(g->c, args, ", "));
+        if (dbg) fcBufFmt(&sb, "%s\n", DebugWrapper(g, f, fcFmt(g->c, "%s(%s)", defName, fgJoin(g->c, args, ", "))));
+        else fcBufFmt(&sb, f->kind == FK_FireBody ? "{ %s(%s); }\n" : "{ return %s(%s); }\n", defName, fgJoin(g->c, args, ", "));
     }
     f->code = PointerArgs(g, fcBufDone(g->c, &sb));
     fcBufFree(&pre); fcBufFree(&decl); fcBufFree(&post); fcBufFree(&catchCode);
     fcBufFree(&f->root->code); fcBufFree(&f->root->tail);
     for (i = 0; i < regionsSorted->count; i++) { FgRegion* r = (FgRegion*)regionsSorted->items[i]; fcBufFree(&r->out->code); fcBufFree(&r->out->tail); }
-    if (PointerCallsOn && !framed && streq0(defName, f->name) && !f->exportName && !f->external && !(f->kind == FK_Main || f->kind == FK_FireBody)) {
+    if (PointerCallsOn && !framed && !dbg && streq0(defName, f->name) && !f->exportName && !f->external && !(f->kind == FK_Main || f->kind == FK_FireBody)) {
         f->code = PointerFunction(g, f->cabi ? CName(g, f) : f->name, f->code, defSignature);
         if (f->cabi) f->code = PointerFunction(g, f->name, f->code, fgSignature(g, f));
     }

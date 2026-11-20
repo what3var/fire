@@ -624,7 +624,40 @@ static FgStep StepCoreNative(FgSC* x) {
         { const char* s0 = S(first); const char* s1 = S(first + 1); E("%s = charCall(%s.i, %s, &%s);", s0, s0, s1, OwnerList()); }
         d = first + 1; SetR(first, true); return Next();
     }
-    if (fcStartsWith(native, "__refl_")) FG_UNPORTED("reflection (%s)", native);
+    if (fcStartsWith(native, "__refl_") && fgIsReflectionNative(native)) {
+        const char* callerArg = "g_reflCaller";
+        const char* list;
+        const char* call = NULL;
+        const char* a[4] = { NULL, NULL, NULL, NULL };
+        UseReflection(g);
+        UseReflectionLevel(g, native); fcSetAdd(g->reflNativesUsed, native);
+        if (streq0(native, "__refl_probe") || streq0(native, "__refl_silence") || streq0(native, "__refl_silence_handle")) UseProbes(g);
+        if (streq0(native, "__refl_probe")) NoteProbeAnything(g);   /* (Reflect.Probe: a name computed at run time) */
+        list = fcFmt(g->c, "&%s", OwnerList());
+#define FG_REFL(nm, n) (streq0(native, nm) && argc == (n) && ((n) < 1 || (a[0] = S(first))) && ((n) < 2 || (a[1] = S(first + 1))) && ((n) < 3 || (a[2] = S(first + 2))) && ((n) < 4 || (a[3] = S(first + 3))))
+        if (FG_REFL("__refl_class_name", 1)) call = fcFmt(g->c, "rf_class_name(%s, %s)", a[0], list);
+        else if (FG_REFL("__refl_class_info", 1)) call = fcFmt(g->c, "rf_class_info(%s, %s)", a[0], list);
+        else if (FG_REFL("__refl_members", 1)) call = fcFmt(g->c, "rf_members(%s, %s)", a[0], list);
+        else if (FG_REFL("__refl_classes", 0)) call = fcFmt(g->c, "rf_classes(%s)", list);
+        else if (FG_REFL("__refl_is_sub", 2)) call = fcFmt(g->c, "rf_is_sub(%s, %s)", a[0], a[1]);
+        else if (FG_REFL("__refl_get", 2)) call = fcFmt(g->c, "rf_get(%s, %s, %s, %s)", a[0], a[1], list, callerArg);
+        else if (FG_REFL("__refl_set", 3)) call = fcFmt(g->c, "rf_set(%s, %s, %s, %s, %s)", a[0], a[1], a[2], list, callerArg);
+        else if (FG_REFL("__refl_call", 3)) call = fcFmt(g->c, "rf_call(%s, %s, %s, %s, %s)", a[0], a[1], a[2], list, callerArg);
+        else if (FG_REFL("__refl_new", 2)) call = fcFmt(g->c, "rf_new(%s, %s, %s, %s)", a[0], a[1], list, callerArg);
+        else if (FG_REFL("__refl_has", 2)) call = fcFmt(g->c, "rf_has(%s, %s)", a[0], a[1]);
+        else if (FG_REFL("__refl_selector_path", 1)) call = fcFmt(g->c, "rf_selector_path(%s, %s)", a[0], list);
+        else if (FG_REFL("__refl_member_kind", 2)) call = fcFmt(g->c, "rf_member_kind(%s, %s, %s)", a[0], a[1], list);
+        else if (FG_REFL("__refl_probe", 4)) call = fcFmt(g->c, "rf_probe(%s, %s, %s, %s, %s, %s)", a[0], a[1], a[2], a[3], list, callerArg);
+        else if (FG_REFL("__refl_silence", 2)) call = fcFmt(g->c, "rf_silence(%s, %s)", a[0], a[1]);
+        else if (FG_REFL("__refl_silence_handle", 1)) call = fcFmt(g->c, "rf_silence_handle(%s)", a[0]);
+        else if (FG_REFL("__refl_enum_name", 1)) call = fcFmt(g->c, "rf_enum_name(%s, %s)", a[0], list);
+        else if (FG_REFL("__refl_enum_of", 2)) call = fcFmt(g->c, "rf_enum_of(%s, %s)", a[0], a[1]);
+        else FG_NOTSUP("native function '%s' with %d argument(s) (called in %s)", native, argc, x->fn);
+#undef FG_REFL
+        E("%s = %s;", S(first), call);
+        Check();
+        d = first + 1; SetR(first, true); return Next();
+    }
     if (fcStartsWith(native, "__GRPHWin")) {
         FcDict* wn = BridgeOf(g, "windows", "__GRPHWin");
         FgPkgFn* winNative = (FgPkgFn*)fcDictGet(wn, native + 9);

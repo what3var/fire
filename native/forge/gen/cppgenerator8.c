@@ -1,6 +1,6 @@
 /* native/forge/gen/cppgenerator8.c - src/fire.Native/CppGenerator.cs (commit 808e9788), part 8: StepCore from MakeLambda on - lambdas, the guards of
  * the prologue, the type arguments, strings, arrays and buffers, ownership, pointers, exceptions and the fire threads; the end of the switch.
- * Not yet: the probes (CppGenerator.Reflection.cs) and the selectors of lambdas - FG_UNPORTED. */
+ * The probes and the selectors of lambdas with their reflection (gen/reflection.c). */
 
 /* ArrayElem.OpenFits */
 static bool fgAeOpenFits(int open, int declared) {
@@ -35,7 +35,19 @@ static FgStep xMakeLambda(FgSC* x) {
     target = GetFunc(g, proto, FK_Lambda, captures);
     fcBufStr(&defaultsInit, "");
     fcBufStr(&caps, "");
-    if (proto->selectorPath) FG_UNPORTED("the selectors of lambdas (reflection)");
+    if (proto->selectorPath) {
+        const char* key = fgJoin(g->c, proto->selectorPath, "\x01");
+        FgSelectorPath* sp = (FgSelectorPath*)fcDictGet(g->selectorPaths, key);
+        UseReflection(g);
+        if (!sp) {
+            sp = (FgSelectorPath*)fcAlloc(g->c, sizeof *sp);
+            sp->name = fcFmt(g->c, "%skSel%d", Px, fcDictCount(g->selectorPaths));
+            sp->path = proto->selectorPath;
+            fcDictPut(g->selectorPaths, key, sp);
+            g->version++;
+        }
+        fcBufFmt(&defaultsInit, " l->sel = %s; l->nsel = %d;", sp->name, proto->selectorPath->count);
+    }
     for (i = 0; proto->paramDefaults && i < proto->paramDefaults->count; i++) if (proto->paramDefaults->items[i]) anyDefault = true;
     if (anyDefault) {
         int required = 0;
@@ -1045,10 +1057,34 @@ static FgStep StepCore4(FgSC* x) {
             Check();
             d--; SetR(d - 1, false); return Next();
         }
-        case OP_Probe:
-        case OP_SilenceMember:
+        case OP_Probe: {
+            const char* member;
+            Need(2); UseProbes(g);
+            NoteProbeTarget(g, ObjSlot(d - 2) ? ObjClass(g, Ty(d - 2)) : NULL, (ins->a[1] & 2) != 0 ? NULL : Str(ins->a[0]));
+            member = (ins->a[1] & 2) != 0 ? "NULL" : CString(g, Str(ins->a[0]));
+            {
+                const char* target = S(d - 2);
+                const char* handler = S(d - 1);
+                const char* store = S(d - 2);
+                E("{ char err[500]; int64_t id = rf_probeAdd(%s, %s, %s, %s, err, sizeof err); if (id == -2) { } else if (id < 0) { fireError(strstr(err, \"has no member\") ? \"MissingMemberException\" : \"ArgumentException\", err); } else %s = Int(id); }",
+                    target, member, (ins->a[1] & 1) != 0 ? "true" : "false", handler, store);
+            }
+            Check();
+            d--; SetR(d - 1, false); return Next();
+        }
+        case OP_SilenceMember: {
+            const char* member;
+            Need(1); UseProbes(g);
+            member = ins->a[1] != 0 ? "NULL" : CString(g, Str(ins->a[0]));
+            E("{ char err[500]; if (!rf_silenceCore(%s, %s, err, sizeof err)) fireError(\"ArgumentException\", err); }", S(d - 1), member);
+            Check();
+            d--; return Next();
+        }
         case OP_SilenceValue:
-            FG_UNPORTED("probes");
+            Need(1); UseProbes(g);
+            E("{ char err[500]; if (!rf_silenceValue(%s, err, sizeof err)) fireError(\"ArgumentException\", err); }", S(d - 1));
+            Check();
+            d--; return Next();
         case OP_CopyValue: {
             const char* s;
             Need(1);

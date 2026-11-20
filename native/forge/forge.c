@@ -71,6 +71,8 @@ static bool fcStrictTag(const char* path);
 #include "gen/selectors.c"
 #include "gen/json.c"
 #include "gen/misc.c"
+#include "gen/reflection.c"
+#include "gen/debug.c"
 #include "gen/split.c"
 #include "gen/cppgenerator4.c"
 #include "gen/cppgenerator5.c"

@@ -1,8 +1,7 @@
 /* native/forge/gen/misc.c - the smaller parts of the generator (commit 808e9788): from CppGenerator.cs the constants (UnitId, Constant, DoubleLiteral,
- * CString); from CppGenerator.Modules.cs FunctionPrototypes; from CppGenerator.Debug.cs Nested; from CppGenerator.Reflection.cs what every program needs
- * (RegisterKeptTargets, KeepConstructors, AddFieldName, AddDispatcher - the reflection itself is not ported yet); from CppGenerator.Json.cs ProgramEnum;
- * from CppGenerator.Split.cs the marks; the parts of CppGenerator.PointerCalls.cs, CppGenerator.Reflection.cs, CppGenerator.Json.cs,
- * CppGenerator.Debug.cs and ProgramSplit.cs that are not ported yet refuse (FG_UNPORTED). */
+ * CString); from CppGenerator.Modules.cs FunctionPrototypes; from CppGenerator.Debug.cs Nested; from CppGenerator.Json.cs ProgramEnum;
+ * from CppGenerator.Split.cs the marks; the parts of CppGenerator.PointerCalls.cs, CppGenerator.Json.cs, CppGenerator.Debug.cs and ProgramSplit.cs
+ * that are not ported yet refuse (FG_UNPORTED). The reflection is gen/reflection.c. */
 
 /* ---- Constants (CppGenerator.cs) ---- */
 static int UnitId(FgGen* g, const FcU* unit) {
@@ -161,76 +160,6 @@ static const char* Nested(FgGen* g, const char* statement) {
         return fcFmt(g->c, "FIRE_DBG_NESTED(%s);", fcStrN(g->c, statement, n));
     }
 }
-static const char* DebugProgramTables(FgGen* g) { FG_UNPORTED("debug builds"); }
-
-/* ---- CppGenerator.Reflection.cs: what every program needs ---- */
-static bool KeptClass(FgGen* g, const FcRtClass* rc) { return rc->keep || fcDictHas(g->literalClasses, rc->name); }
-static void AddDispatcher(FgGen* g, const char* name, int argc) { if (!fgHasNameArgc(g, g->dispatchers, name, argc)) { fgAddNameArgc(g, g->dispatchers, name, argc); g->version++; } }
-static void AddFieldName(FgGen* g, const char* name) { if (fcSetAdd(g->fieldNames, name)) g->version++; }
-/* The constructors of a class (with the functions of their default values): it can be made. */
-static void KeepConstructors(FgGen* g, const FcRtClass* rc) {
-    FcList* all;
-    int i, argc;
-    RegisterClass(g, rc->name);
-    all = fgAllConstructors(g->c, rc);
-    for (i = 0; i < all->count; i++) {
-        FcProto* ctor = (FcProto*)all->items[i];
-        int needed = ctor->paramCount;
-        const char* args;
-        GetFunc(g, ctor, FK_Ctor, 0);
-        while (needed > 0 && needed - 1 < ctor->paramDefaults->count && ctor->paramDefaults->items[needed - 1]) needed--;
-        for (argc = needed; argc < ctor->paramCount; argc++) DefaultArgsPre(g, ctor, argc, "self", "list", &args);
-    }
-}
-/* An instance method that a call by name may reach: its dispatchers for every number of arguments it takes. */
-static void KeepInstanceMethod(FgGen* g, const char* name, FcProto* m) {
-    int required = m->paramCount, argc;
-    GetFunc(g, m, FK_Method, 0);
-    while (required > 0 && required - 1 < m->paramDefaults->count && m->paramDefaults->items[required - 1]) required--;
-    for (argc = required; argc <= m->paramCount; argc++) AddDispatcher(g, name, argc);
-    if (fcStartsWith(name, "get_") || fcStartsWith(name, "set_")) AddFieldName(g, name + 4);
-}
-static void KeepMethod(FgGen* g, const char* name, FcProto* m) {
-    if (m->isStatic) GetFunc(g, m, FK_Static, 0);
-    else KeepInstanceMethod(g, name, m);
-}
-static void RegisterReflectionTargets(FgGen* g) { if (g->usesReflection) FG_UNPORTED("reflection"); }
-/* What stays although nothing may reach it (the stripping levels) */
-static void RegisterKeptTargets(FgGen* g) {
-    FcList* classes = fcListNew(g->c);
-    int i, k;
-    FC_DICT_EACH(g->program->program->classes, e) fcListAdd(g->c, classes, e->value);
-    for (i = 0; i < classes->count; i++) {
-        FcRtClass* rc = (FcRtClass*)classes->items[i];
-        if (g->strip == 0 || KeptClass(g, rc)) {
-            FcDict* index = FG_INDEX(rc);
-            KeepConstructors(g, rc);
-            FC_DICT_EACH(index, f) AddFieldName(g, (const char*)f->key);
-            FC_DICT_EACH(rc->methods, m) { FcList* protos = (FcList*)m->value; for (k = 0; k < protos->count; k++) KeepMethod(g, (const char*)m->key, (FcProto*)protos->items[k]); }
-            continue;
-        }
-        if (g->strip <= 2) KeepConstructors(g, rc);
-        if (g->strip == 1)
-            FC_DICT_EACH(rc->methods, m) { FcList* protos = (FcList*)m->value; for (k = 0; k < protos->count; k++) if (fgAccessOf((FcProto*)protos->items[k]) == ACC_Public) KeepMethod(g, (const char*)m->key, (FcProto*)protos->items[k]); }
-        if (rc->keptMembers) {
-            RegisterClass(g, rc->name);
-            for (k = 0; k < rc->keptMembers->count; k++) {
-                const char* name = (const char*)rc->keptMembers->items[k];
-                const char* methodNames[3];
-                int n, p;
-                if (fgHasField(g, rc, name)) AddFieldName(g, name);
-                methodNames[0] = name; methodNames[1] = fcFmt(g->c, "get_%s", name); methodNames[2] = fcFmt(g->c, "set_%s", name);
-                for (n = 0; n < 3; n++) {
-                    FcList* protos = (FcList*)fcDictGet(rc->methods, methodNames[n]);
-                    if (protos) for (p = 0; p < protos->count; p++) KeepMethod(g, methodNames[n], (FcProto*)protos->items[p]);
-                }
-            }
-        }
-    }
-}
-static const char* WrapProbeSetter(FgGen* g, const char* name, const char* text) { (void)name; (void)text; FG_UNPORTED("probes"); }
-static FcList* ComputedSources(FgGen* g, const FcRtClass* rc, const char* name) { (void)rc; (void)name; FG_UNPORTED("probes"); }
-static const char* ReflectionCode(FgGen* g) { FG_UNPORTED("reflection"); }
 
 /* ---- CppGenerator.Json.cs ---- */
 /* ProgramEnum: the enum of this name in the program; false: none */
