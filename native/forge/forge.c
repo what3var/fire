@@ -102,6 +102,7 @@ static bool fcStrictTag(const char* path);
 #include "build/peres.c"
 #include "build/bootimage.c"
 #include "build/tools.c"
+#include "build/cvm.c"   /* the engine vm (Phase D 3) */
 #endif
 
 /* the markup generators (Phase C 5) */
@@ -127,6 +128,8 @@ static bool fcStrictTag(const char* path);
 #include "project/command.c"
 #include "project/publisher.c"
 #include "project/cli.c"
+#include <sys/file.h>
+#include "project/standard.c"   /* the standard packages installed from Source/ (Phase D 3) */
 #endif
 
 /* `ui|biscuit|fdata <file>` (Program.cs: MarkupFiles.GenerateScript, the script on stdout, the diagnostics of a MarkupException on stderr) and
@@ -376,12 +379,16 @@ int main(int argc, char** argv) {
         }
     }
     nbProjectBuildPlan = pjProjectBuildPlanHook;   /* (buildplan of a project, Phase D 3) */
+    /* (Program.cs: the standard packages of Source/ next to the program packed and installed when they are missing or changed - project/standard.c) */
+    if (argc >= 2 && strcmp(argv[1], "install-standard") == 0) { nsEnsureInstalled(prelude, store, stdout); return 0; }
+    if (argc >= 2 && (strcmp(argv[1], "build") == 0 || strcmp(argv[1], "publish") == 0 || strcmp(argv[1], "bytecode") == 0)) nsEnsureInstalled(prelude, store, stderr);
     if (argc >= 2 && strcmp(argv[1], "build") == 0) {
         int i;
         for (i = 2; i < argc; i++) if (argv[i][0] != '-' && pjIsProjectFile(argv[i])) return pjBuildCommand(argc, argv, prelude, store);   /* Phase D 3 */
         return nbBuildMain(argc, argv, prelude, store);   /* Phase D 2 */
     }
     if (argc >= 2 && strcmp(argv[1], "publish") == 0) return pjPublishCommand(argc, argv, prelude, store);   /* Phase D 3 */
+    if (argc >= 2 && strcmp(argv[1], "build-vm") == 0) return nvBuildVmMain(argc, argv, store);   /* Phase D 3: the VM in C into a folder (build/cvm.c) */
     if (argc == 3 && strcmp(argv[1], "projectplan") == 0) return pjProjectPlanDump(argv[2], stdout);
     if (argc == 3 && strcmp(argv[1], "fpk") == 0) return pjPackageDump(argv[2], stdout);
     { int r = nbToolsMain(argc, argv, prelude, store); if (r >= 0) return r; }   /* Phase D 2: pkglib and the measures of the tools (build/tools.c) */

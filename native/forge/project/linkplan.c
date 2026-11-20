@@ -101,7 +101,11 @@ static void pjOverlayRegister(FcCtx* c, FcStore* store, const PjPlan* plan) {
         }
         pi->dir = part->directory;
         pi->packageName = fcFmt(c, "project:%s", part->projectName);
+        pi->packageVersion = pjPackageVersion(c, plan->settings->version);
         pi->overlay = true;
+        pi->overlayNative = &part->native->m;
+        pi->overlayBuildDir = nbCombine(c, nbCombine(c, part->directory, "obj"), "native");
+        pi->overlayFile = part->projectFile;
         fcListAdd(c, merged, pi);
     }
     for (i = 0; i < store->imports->count; i++) fcListAdd(c, merged, store->imports->items[i]);
@@ -174,6 +178,59 @@ static int pjVersionCompare(FcCtx* c, const char* a, const char* b) {
     return strcmp(sa, sb) < 0 ? -1 : 1;
 }
 
+/* ---- a reference `github:owner/repo[@ref][#name]` (PackageStore.FindBySpec, GitHubSpec.Parse, PackageLock.Load/ForRepository of src/fire.Package.Manager,
+ * commit de45e7e4): the package the lock file of the store (ember-lock.json, written by `ember install github:...`) says came from that repository. forge only
+ * reads the lock file; installing from GitHub (the network) is ember's. ---- */
+static bool pjGhChars(const char* s, size_t n, const char* extra) {
+    size_t i;
+    for (i = 0; i < n; i++) if (!(isalnum((unsigned char)s[i]) && (unsigned char)s[i] < 0x80) && !strchr(extra, s[i])) return false;
+    return true;
+}
+/* GitHubSpec.TryParse: the repository `owner/repo` (".git" taken off), NULL when the spec names none */
+static const char* pjGitHubRepository(FcCtx* c, const char* spec) {
+    const char* rest = pjTrim(c, spec + 7);
+    const char* hash = strchr(rest, '#');
+    const char* at;
+    const char* slash;
+    const char* owner;
+    const char* repo;
+    const char* ref = NULL;
+    size_t on, rn;
+    if (hash) { if (!pkIsName(hash + 1)) return NULL; rest = fcStrN(c, rest, (size_t)(hash - rest)); }
+    if ((at = strchr(rest, '@')) != NULL) { ref = at + 1; rest = fcStrN(c, rest, (size_t)(at - rest)); }
+    slash = strchr(rest, '/');
+    if (!slash || strchr(slash + 1, '/')) return NULL;
+    owner = fcStrN(c, rest, (size_t)(slash - rest)); repo = slash + 1;
+    on = strlen(owner); rn = strlen(repo);
+    /* ^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$, ^[A-Za-z0-9._-]{1,100}$ */
+    if (on < 1 || on > 39 || !pjGhChars(owner, 1, "") || !pjGhChars(owner, on, "-")) return NULL;
+    if (rn < 1 || rn > 100 || !pjGhChars(repo, rn, "._-") || streq0(repo, ".") || streq0(repo, "..")) return NULL;
+    if (rn > 4 && fcAsciiIEq(repo + rn - 4, ".git")) repo = fcStrN(c, repo, rn - 4);
+    /* ^[A-Za-z0-9._+-][A-Za-z0-9._/+-]{0,199}$, without "..", "//" or a "/" at the end */
+    if (ref) {
+        size_t n = strlen(ref);
+        if (n < 1 || n > 200 || !pjGhChars(ref, 1, "._+-") || !pjGhChars(ref, n, "._/+-") || strstr(ref, "..") || strstr(ref, "//") || ref[n - 1] == '/') return NULL;
+    }
+    return fcFmt(c, "%s/%s", owner, repo);
+}
+/* PackageLock.Load + ForRepository: the name of the package of that repository; NULL - none, or a lock file that cannot be read (FindBySpec: not installed) */
+static const char* pjLockedPackage(FcCtx* c, const char* storeRoot, const char* repository) {
+    FcJson* lock = nbReadJsonLenient(c, nbCombine(c, storeRoot, "ember-lock.json"));
+    FcJson* format;
+    FcJson* entries;
+    int i;
+    if (!lock || lock->kind != FJ_OBJ) return NULL;
+    if ((format = fcJsonGet(lock, "format")) != NULL && (format->kind != FJ_NUM || format->n > 1)) return NULL;
+    if (!(entries = fcJsonGet(lock, "github")) || entries->kind == FJ_NULL) return NULL;
+    if (entries->kind != FJ_ARR) return NULL;
+    for (i = 0; i < entries->items->count; i++) {
+        FcJson* e = (FcJson*)entries->items->items[i];
+        const char* r = e && e->kind == FJ_OBJ ? fcJsonStr(e, "repository") : NULL;
+        if (r && pjIEq(r, repository)) return fcJsonStr(e, "package") ? fcJsonStr(e, "package") : "";
+    }
+    return NULL;
+}
+
 /* What a link with a plan is asked for: the engine `vm` (target NULL) or `native` for a target (FgOptions of gen/native.c) */
 typedef struct PjLinkIn {
     PjPlan* plan;
@@ -182,6 +239,7 @@ typedef struct PjLinkIn {
     const char* toolchainKind;   /* the symbol of the toolchain (a native build) */
     int modeOverride;            /* -1: none (the VM; a native build takes o->mode) */
     int floatWidthOverride;      /* 0: none */
+    FcStore** storeOut;          /* gets the store of the link, with the overlay of the plan (the engine vm: the libraries of its packages, build/cvm.c); NULL: not wanted */
 } PjLinkIn;
 
 /* Linker.CompileAndLink with the plan: the linked program; `registry` gets the NativeRegistry (the generator's names) */
@@ -310,10 +368,13 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
         const char* installed = NULL;
         const char* version = NULL;
         int m;
-        if (fcStartsWith(name, "github:")) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: a package reference github:... (the lock file of the store)");
-        if (at && at > name) name = fcStrN(c, name, (size_t)(at - name));
+        if (strlen(name) >= 7 && pjIEq(fcStrN(c, name, 7), "github:")) {
+            /* (FindBySpec: the package the lock file names for the repository) */
+            const char* repository = pjGitHubRepository(c, name);
+            name = repository ? pjLockedPackage(c, L->store.root, repository) : NULL;
+        } else if (at && at > name) name = fcStrN(c, name, (size_t)(at - name));
         if (!L->store.loaded) fcStoreLoad(c, &L->store);
-        for (m = 0; m < L->store.imports->count; m++) {
+        for (m = 0; name && m < L->store.imports->count; m++) {
             const FcPkgImport* pi = (const FcPkgImport*)L->store.imports->items[m];
             if (pi->packageName && pjIEq(pi->packageName, name)) { installed = pi->packageName; version = pi->packageVersion; break; }
         }
@@ -345,8 +406,8 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     floatWidth = floatOverride ? floatOverride : plan->settings->floatWidth != FC_NULL_INT ? plan->settings->floatWidth : L->directiveFloatWidth != FC_NULL_INT ? L->directiveFloatWidth : t ? t->floatWidth : 64;
     c->programWordWidth = t ? t->wordWidth : 64;
     fcTypeCheckRun(c, program, resolved, strict, firstUserSource, firstUserSource, intWidth, floatWidth, fcNativeReturnTypes(L));
-    compiled = fcCompile(c, program, resolved, &L->registry, false);
-    if (plan->settings->globalJobs) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: settings.globalJobs of a project (the forced mode of Compiler.Compile)");
+    /* (Linker.ForcedGlobalJobs: the project's settings.globalJobs before `#globaljobs`; GlobalJobsDefault: "globalJobs" of fire.native.json, a native build) */
+    compiled = fcCompileJobs(c, program, resolved, &L->registry, false, plan->settings->globalJobs ? nbGlobalJobsParse(c, plan->settings->globalJobs) : -1, in->o ? in->o->globalJobs - 1 : -1);
     linked = (FcLinked*)fcAlloc(c, sizeof *linked);
     notSerializable = fcDictNew(c, FC_KEY_STR);
     total = processed->count;
@@ -405,5 +466,6 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     linked->optimize = in->o ? (in->o->optimize >= 0 ? in->o->optimize : t->optimize) : 0;
     linked->sourceModules = sourceModules;
     if (registry) *registry = &L->registry;
+    if (in->storeOut) *in->storeOut = &L->store;
     return linked;
 }

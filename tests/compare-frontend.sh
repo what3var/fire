@@ -34,8 +34,9 @@
 # `projectbuild` builds the program projects of src/fire.Project natively with both forges (BUILD_TOOLCHAINS) - log and program byte-identical - and runs
 # `build --all` (PROJECT_ALL_FLAGS, default --engine native) and `publish` on a copy of each solution folder of PROJECT_COPY, comparing what they print.
 # `pkglib` (Phase D 2) compares what PackageLibrary would build for the VM (`forge pkglibplan <import>`) for every import with natives of the store.
+# `vmbuild` (Phase D 3) builds programs that carry the VM (`build` without --engine) with both forges: every VMBUILD_EVERY-th case and the samples as projects.
 set -u
-if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|buildplan|build|project|projectbuild|pkglib|all] [work folder]" >&2; exit 2; fi
+if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|buildplan|build|project|projectbuild|pkglib|vmbuild|all] [work folder]" >&2; exit 2; fi
 FORGE_CS=$1
 FORGE_C=$2
 WHAT=${3:-both}
@@ -261,6 +262,43 @@ print("graphics+windows")' "$store" > "$WORK/pkglib.lst"
     else status=1; echo "  differs: $name"; diff "$WORK/pkglib/$name-cs.txt" "$WORK/pkglib/$name-c.txt" | head -6 | sed 's/^/    /'; fi
   done < "$WORK/pkglib.lst"
   echo "pkglib: $same of $total identical"
+fi
+
+# ---- vmbuild (Phase D 3): programs that carry the VM (`build` with the engine vm) - every VMBUILD_EVERY-th case of tests/cases (default 6) and the projects of a
+# copy of src/fire.Project/Samples: what both forges print (paths normalized), the exit code, the files byte for byte (the VM, the program file, the libraries -
+# the same only when both find the same `fire`: forge-c next to the C# forge, or FIRE_VM_EXE) and what the programs print ----
+if [ "$WHAT" = vmbuild ]; then
+  kinds=()
+  total=0 same=0 bytes=0 runs=0
+  mkdir -p "$WORK/vmbuild"
+  for file in $(awk -v e="${VMBUILD_EVERY:-6}" 'NR % e == 3' "$WORK/cases.lst"); do
+    total=$((total + 1)); d="$WORK/vmbuild/$total"; mkdir -p "$d"
+    $FORGE_CS build "$ROOT/$file" -o "$d/p-cs" > "$d/out-cs.txt" 2> "$d/err-cs.txt"; echo "exit $?" >> "$d/out-cs.txt"
+    "$FORGE_C" build "$ROOT/$file" -o "$d/p-c" > "$d/out-c.txt" 2> "$d/err-c.txt"; echo "exit $?" >> "$d/out-c.txt"
+    sed -i -E "s#$d/p-cs \([0-9]+ bytes\)#<program>#" "$d/out-cs.txt"; sed -i -E "s#$d/p-c \([0-9]+ bytes\)#<program>#" "$d/out-c.txt"
+    if cmp -s "$d/out-cs.txt" "$d/out-c.txt" && cmp -s "$d/err-cs.txt" "$d/err-c.txt"; then same=$((same + 1)); else status=1; echo "  differs: $file"; diff "$d/err-cs.txt" "$d/err-c.txt" | head -4 | sed 's/^/    /'; fi
+    if [ -f "$d/p-cs" ] && [ -f "$d/p-c" ]; then
+      cmp -s "$d/p-cs" "$d/p-c" && bytes=$((bytes + 1))
+      (cd "$(dirname "$ROOT/$file")" && timeout 30 "$d/p-cs" < /dev/null > "$d/run-cs.txt" 2>&1; echo "exit $?" >> "$d/run-cs.txt")
+      (cd "$(dirname "$ROOT/$file")" && timeout 30 "$d/p-c" < /dev/null > "$d/run-c.txt" 2>&1; echo "exit $?" >> "$d/run-c.txt")
+      cmp -s "$d/run-cs.txt" "$d/run-c.txt" && runs=$((runs + 1))
+    fi
+  done
+  echo "vmbuild cases: $same of $total print the same, $bytes programs byte-identical, $runs programs run the same"
+  rm -rf "$WORK/vmbuild/cs" "$WORK/vmbuild/c"; cp -r src/fire.Project/Samples "$WORK/vmbuild/cs"; cp -r src/fire.Project/Samples "$WORK/vmbuild/c"
+  total=0 same=0
+  while IFS= read -r rel; do
+    total=$((total + 1))
+    for k in cs c; do
+      f=$FORGE_CS; [ $k = c ] && f=$FORGE_C
+      (cd "$WORK/vmbuild/$k" && $f build "$rel" > "$WORK/vmbuild/p$total-$k.txt" 2>&1; echo "exit $?" >> "$WORK/vmbuild/p$total-$k.txt")
+      sed -i "s#$WORK/vmbuild/$k/##g; s#([0-9]* bytes)#(n bytes)#" "$WORK/vmbuild/p$total-$k.txt"
+    done
+    if cmp -s "$WORK/vmbuild/p$total-cs.txt" "$WORK/vmbuild/p$total-c.txt"; then same=$((same + 1)); else status=1; echo "  differs: $rel"; fi
+  done < <(cd "$WORK/vmbuild/cs" && find . -name '*.fireproj' -type f | LC_ALL=C sort)
+  bytes=0 n=0
+  while IFS= read -r p; do n=$((n + 1)); cmp -s "$WORK/vmbuild/cs/$p" "$WORK/vmbuild/c/$p" && bytes=$((bytes + 1)); done < <(cd "$WORK/vmbuild/cs" && find . -path '*/bin/vm-*' -type f | LC_ALL=C sort)
+  echo "vmbuild projects: $same of $total print the same, $bytes of $n programs byte-identical"
 fi
 [ "$WHAT" = all ] && kinds=(tokens ast diagnostics "${fbcKinds[@]}")
 

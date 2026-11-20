@@ -1,6 +1,6 @@
 /* native/forge/project/publisher.c - Publish (Phase D 3, commit de45e7e4): src/fire.Compiler/ProjectPublisher.cs (Publish, PublishOne, Companions, the stamps
- * of what was built - StampKey, IsUpToDate, WriteStamp -, CleanProblem, EmptyFolder; PublishResult.Summary) and CommandLine.Publish. The engine `native`
- * and the packages of libraries; a program that carries the VM is `unported` (the publish of that project fails and says so). The key of a stamp hashes
+ * of what was built - StampKey, IsUpToDate, WriteStamp -, CleanProblem, EmptyFolder; PublishResult.Summary) and CommandLine.Publish. The engines `native`
+ * and `vm` (a program that carries the VM in C, build/cvm.c) and the packages of libraries. The key of a stamp hashes
  * forge-c itself where C# hashes its two assemblies: a program published by one forge is built again by the other. */
 
 typedef struct PjPublishOptions { const char* toolchain; bool includeDisabled; int quick; bool rebuild; } PjPublishOptions;
@@ -308,6 +308,7 @@ static PjPublishResult* pjPublishOne(FcCtx* c, PjOut* po, PjWorkspace* w, PjLoad
                 memset(&b, 0, sizeof b);
                 b.prelude = prelude; b.storeRoot = storeRoot; b.mode = mode;
                 b.link = pjNbLink;
+                b.overlay = pjNbOverlay;
                 b.project = plan;
                 pjStepInit(&step);
                 nbMonitorLine = pjMonitorLine;
@@ -342,7 +343,49 @@ static PjPublishResult* pjPublishOne(FcCtx* c, PjOut* po, PjWorkspace* w, PjLoad
                 } else output = res.output;
             }
         } else if (streq0(engine, "vm")) {
-            failed = pjPublishFail(c, project, "unported: the engine vm (a program that carries the virtual machine) - forge-c publishes natively", NULL, engine, modeName);
+            /* a program that carries the VM in C (build/cvm.c) */
+            output = plan->settings->output ? plan->settings->output : pjProgramPath(c, project->project->directory, project->project->name, "vm", modeName, "");
+            key = pjStampKey(c, plan, engine, modeName, NULL, NULL, output, NULL, -1);
+            upToDate = !options->rebuild && pjIsUpToDate(c, project, pjStampName(c, engine, "vm", modeName), key, output);
+            if (!upToDate) {
+                FcCtx step;
+                PjLinkIn in;
+                const char* volatile vmError = NULL;
+                volatile bool broken = false;
+                nvRefuseDotnet(c);
+                nvStoreRoot = storeRoot;
+                pjLog(fcFmt(c, "%s: building a program with the virtual machine (%s)", project->project->name, modeName));
+                nbMkdirs(c, fcDirectoryName(c, pjFull(c, output, ".")));
+                memset(&in, 0, sizeof in);
+                in.plan = plan; in.prelude = prelude; in.storeRoot = storeRoot; in.modeOverride = mode;
+                pjStepInit(&step);
+                FC_TRY(&step) {
+                    FcStore* store = NULL;
+                    FcNatives* registry = NULL;
+                    FcLinked* linked;
+                    FcList* libraries;
+                    const char* error = NULL;
+                    in.storeOut = &store;
+                    linked = pjLink(&step, &in, &registry);
+                    libraries = nvEnsureLibraries(&step, linked, store, registry, NULL);
+                    if (!nvPack(&step, linked, libraries, output, NULL, &error)) vmError = fcStr(c, error);
+                } FC_CATCH(&step) {
+                    FcList* errs;
+                    if (step.err.kind == FC_ERR_PACKAGE) vmError = fcStr(c, step.err.message);
+                    else if (!pjIsCompileErrorKind(step.err.kind)) { c->err = step.err; fcRethrow(c); }
+                    else {
+                        errs = fcDiagnosticsOf(&step, &step.err, NULL);
+                        for (i = 0; i < errs->count; i++) fcListAdd(c, diagnostics, errs->items[i]);
+                        broken = true;
+                    }
+                } FC_END_TRY;
+                for (i = 0; i < step.diags->count; i++) fcListAdd(c, diagnostics, step.diags->items[i]);
+                if (broken) {
+                    const char* first = NULL;
+                    for (i = 0; i < diagnostics->count && !first; i++) if (((FcDiagnostic*)diagnostics->items[i])->severity == FC_SEV_ERROR) first = ((FcDiagnostic*)diagnostics->items[i])->message;
+                    failed = pjPublishFail(c, project, first ? first : "it does not compile", diagnostics, engine, modeName);
+                } else if (vmError) failed = pjPublishFail(c, project, vmError, NULL, engine, modeName);
+            }
         } else failed = pjPublishFail(c, project, fcFmt(c, "'%s' is no engine (vm, native).", engine), NULL, "", "");
     } FC_CATCH(c) {
         if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "native-config: ")) failed = pjPublishFail(c, project, c->err.message + 15, NULL, engine, modeName);

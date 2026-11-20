@@ -63,6 +63,8 @@ static void nbDumpBuildPlan(FcCtx* c, const char* options, const char* path, con
 /* `forge-c build <file> [options]`: a native build as `forge build <file> --engine native` makes it. */
 typedef struct NbArgs {
     const char* file; const char* output; const char* targetName; const char* toolchainName; const char* configFile; const char* linkage;
+    const char* engine;   /* --engine vm|native (NULL: the configuration's, else vm - build/cvm.c) */
+    bool strict;          /* --types strict (Linker.ProcessDefaultTypeChecking; lax is the default) */
     int mode, floatWidth, stripping, optimize, quick, split;
     bool keepAll, keep, stats;
 } NbArgs;
@@ -107,9 +109,15 @@ static int nbBuildMain(int argc, char** argv, const char* prelude, const char* s
         else if (streq0(a, "--config")) configFile = NB_VALUE();
         else if (streq0(a, "--engine")) {
             const char* e = NB_VALUE();
-            if (!e || !fcAsciiIEq(e, "native")) { fprintf(stderr, "forge-c build: only the engine native is ported (--engine native).\n"); return 2; }
+            if (!e || !(fcAsciiIEq(e, "vm") || fcAsciiIEq(e, "native"))) { fprintf(stderr, "--engine must be followed by vm or native.\n"); return 2; }
+            args.engine = fcAsciiIEq(e, "vm") ? "vm" : "native";
         }
         else if (streq0(a, "--linkage")) linkage = NB_VALUE();
+        else if (streq0(a, "--types")) {
+            const char* v = NB_VALUE();
+            if (!v || !(fcAsciiIEq(v, "lax") || fcAsciiIEq(v, "strict"))) { fprintf(stderr, "--types must be followed by lax or strict.\n"); return 2; }
+            args.strict = fcAsciiIEq(v, "strict");
+        }
         else if (streq0(a, "--split")) {
             const char* v = NB_VALUE();
             if (!v || !*v || (split = fgSplitModeParse(v)) < 0) { fprintf(stderr, "--split must be followed by auto, on or off.\n"); return 2; }
@@ -157,6 +165,8 @@ static int nbBuildMain(int argc, char** argv, const char* prelude, const char* s
 #undef keepAll
 #undef keep
 #undef stats
+static const char* pjChooseEngine(FcCtx* c, const char* given, const char* configured, const char* targetName, NbConfig* config, FcBuf* err);   /* (project/command.c) */
+static int nvBuildFile(FcCtx* c, const char* path, const char* output, const char* prelude, const char* storeRoot, bool strict, int mode, FcBuf* out, FcBuf* err);   /* (cvm.c) */
 static int nbBuildRun(NbArgs* argsIn, const char* prelude, const char* storeRoot) {
     FcCtx ctx;
     FcCtx* c = &ctx;
@@ -173,6 +183,7 @@ static int nbBuildRun(NbArgs* argsIn, const char* prelude, const char* storeRoot
         NbToolchain* toolchain;
         NbBuild b;
         NbResult r;
+        const char* engine;
         if (args.configFile) {
             if (!nbFileExists(args.configFile)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: Configuration not found: %s", args.configFile));
             config = nbConfigLoad(c, args.configFile);
@@ -185,10 +196,21 @@ static int nbBuildRun(NbArgs* argsIn, const char* prelude, const char* storeRoot
         if (args.linkage) config->linkage = args.linkage;
         if (args.split >= 0) config->split = args.split;
         if (args.quick >= 0) config->quick = args.quick;
+        /* ChooseEngine: the engine vm packs the program with the VM in C (build/cvm.c) */
+        engine = pjChooseEngine(c, args.engine, config->engine, args.targetName, config, &err);
+        if (!engine) result = 2;
+        else if (streq0(engine, "vm")) {
+            if (args.floatWidth) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: -f with the engine vm");
+            c->collecting = true;
+            result = nvBuildFile(c, args.file, args.output, prelude, storeRoot, args.strict, args.mode, &out, &err);
+            c->collecting = false;
+            for (i = 0; i < c->diags->count; i++) fcDiagLogLine(&err, (const FcDiagnostic*)c->diags->items[i]);
+        }
+        if (engine && streq0(engine, "native")) {
         target = nbResolveTarget(c, config, args.targetName);
         toolchain = nbResolveToolchain(c, config, target, args.toolchainName, NB_PURPOSE_BUILD);
         memset(&b, 0, sizeof b);
-        b.path = args.file; b.prelude = prelude; b.storeRoot = storeRoot; b.strict = fcStrictTag(args.file);
+        b.path = args.file; b.prelude = prelude; b.storeRoot = storeRoot; b.strict = args.strict;   /* (--types; the tag `//# types: strict` is the test runner's, not forge's) */
         b.mode = args.mode; b.floatWidth = args.floatWidth; b.keepSources = args.keep;
         c->collecting = true;   /* (the warnings of the code: BuildSafe collects them) */
         r = nbBuild(c, &b, config, target, toolchain, args.output ? args.output : nbDefaultOutput(c, target));
@@ -200,6 +222,7 @@ static int nbBuildRun(NbArgs* argsIn, const char* prelude, const char* storeRoot
             fcBufFmt(&out, "The native build for %s failed.\n", target->name);
             result = 1;
         } else fcBufFmt(&out, "%s (native, target %s, toolchain %s)\n", r.output, target->name, nbKind(toolchain));
+        }
     } FC_CATCH(c) {
         FcList* diags;
         c->collecting = false;
@@ -207,6 +230,9 @@ static int nbBuildRun(NbArgs* argsIn, const char* prelude, const char* storeRoot
         if (c->err.kind == FC_ERR_NATIVE) { fcBufStr(&err, "error E7001: Not supported by the native backend yet: "); fcOut8(&err, c->err.message); fcBufChar(&err, '\n'); result = 1; }
         else if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "native-config: ")) { fcBufFmt(&err, "error E7003: %s\n", c->err.message + 15); result = 2; }
         else if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "unported: ")) { fcBufFmt(&err, "forge-c: %s\n", c->err.message); result = 2; }
+        /* (the engine vm: a library of a package that cannot be built - PackageException -, a VM that cannot be had) */
+        else if (c->err.kind == FC_ERR_PACKAGE) { fcBufFmt(&err, "%s\n", c->err.message); result = 1; }
+        else if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "vm: ")) { fcBufFmt(&err, "%s\n", c->err.message + 4); result = 1; }
         else {
             diags = fcDiagnosticsOf(c, &c->err, NULL);
             for (i = 0; i < diags->count; i++) fcDiagLogLine(&err, (const FcDiagnostic*)diags->items[i]);

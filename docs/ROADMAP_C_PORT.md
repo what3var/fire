@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 bis auf die Module, Schritt 2 teilweise, Schritt 3 größtenteils (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 bis auf die Module, Schritt 2 teilweise, Schritt 3 bis auf Windows (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -425,7 +425,7 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    Generators), Windows als Host (dort auch das Schreiben der PE-Ressourcen), das Herunterladen von Toolchains (Schritt 5). Seither
    portiert: `--stats` (NativeStats: die Map, der Bericht als Text und JSON).
 3. Projekt, Solution, Bauplan, Vorlagen, Beispiele; von der Paketverwaltung, was forge braucht (Manifest, Store, `.fpk`). ember bleibt bis Phase F das C#-Programm.
-   **Zum größten Teil umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-3-projekte-solutions-pakete)): `native/forge/project/` (Stand de45e7e4) - das Laden von
+   **Umgesetzt bis auf Windows** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-3-projekte-solutions-pakete)): `native/forge/project/` (Stand de45e7e4) - das Laden von
    `.fireproj`/`.firesln`, die Dateien, Ordner (mit `.gitignore`) und Build-Aktionen eines Projekts, Bauordnung und Startprojekt, der `BuildPlan` mit Bibliotheken und
    Natives, der Linker mit Plan, `forge-c build` eines Projekts oder einer Solution (eine Bibliothek wird gepackt, ein Programm nativ gebaut, die Copy-Dateien daneben;
    `--check`, `--all`), `forge-c publish`, das Paketformat `.fpk` (Manifest, Zip schreiben und lesen). Maß: `forge projectplan`/`forge fpk` gegen `forge-c`
@@ -433,9 +433,11 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    ruhrpott-raser, Grenzfälle), **70 von 70** Bibliotheken gleich gepackt (Ausgabe, Manifest, Einträge, Zip-Struktur; jeder forge liest das Paket des anderen -
    verschieden nur die Zeiten und die komprimierten Bytes: zlib-ng in .NET, der Deflater von `packages/compression` in forge-c), die Programme der Projekte wie bei
    einzelnen Dateien (`buildplan` 26 von 36, die übrigen: Reflection und die Modelle als Ressourcen aus Schritt 1/4, eine Abweichung des Generators an Raser.Viewer/
-   Raser.Game bei gleichem gelinkten Programm), `build --all` und `publish` an Kopien gleich bis auf die Programme mit Reflection. Offen: die Engine `vm` (ein Programm,
-   das die VM trägt; forge-c baut nur nativ), die C++-Natives eines Projekts in einem nativen Programm, `settings.globalJobs` eines Projekts, Paketreferenzen
-   `github:...`, Vorlagen (`TemplateInstaller`) und Beispiele (`SampleCatalog`), das Installieren in den Store (`StandardSources`, `ember install`), Windows.
+   Raser.Game bei gleichem gelinkten Programm), `build --all` und `publish` an Kopien gleich bis auf die Programme mit Reflection. Dazu (20.11.2026) die Engine `vm`
+   (`build/cvm.c`: `fire` gefunden oder gebaut wie in C# - dieselbe VM, derselbe Schlüssel -, das Programm und die Bibliotheken der Pakete dahinter; 188 von 188 Fällen
+   und 43 von 43 Projekten gleich, die Programme byte-gleich bis auf `Scene3D Models`), die C++-Natives eines Projekts (im nativen Programm und als Bibliothek für die VM),
+   `settings.globalJobs`, Paketreferenzen `github:...` (über `ember-lock.json`), das Installieren der Standardpakete in den Store (`StandardSources.EnsureInstalled`:
+   derselbe Store, dieselben Stempel). Vorlagen und Beispiele nutzt forge nicht (nur spark). Offen: `FIRE_VM_ENGINE=dotnet`, Windows; `ember install` bleibt C#.
 4. Rest der Befehlszeile: Testläufer, `forge data`, Modellwandler (`.fmesh`, `.fblocks`, glTF), Packer.
 5. `ToolchainSetup` (lädt unter Windows einen Compiler): braucht HTTPS und Entpacken im Werkzeug - über das System (WinHTTP) statt eigener TLS.
 6. `forge conformance` ersetzt den Kern von `fire.Testing`; Installer (`setup.iss`) und Paketierung ohne .NET-Werkzeuge.

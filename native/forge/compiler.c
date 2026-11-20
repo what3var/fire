@@ -543,7 +543,12 @@ static FcList* StaticInitOrder(FcComp* cm, FcDict* classes, FcDict* deps);
 typedef struct FcStaticInit { FcRtClass* cls; const char* field; FcProto* init; } FcStaticInit;
 
 /* Compiler.Compile; globalJobsDefault: `"globalJobs"` of fire.native.json (the default when the program says nothing - Linker.GlobalJobsDefault), -1: none */
+static FcCompiled* fcCompileJobs(FcCtx* c, FcList* program, FcResolveResult* rr, FcNatives* natives, bool classMeta, int globalJobsForced, int globalJobsDefault);
 static FcCompiled* fcCompileWith(FcCtx* c, FcList* program, FcResolveResult* rr, FcNatives* natives, bool classMeta, int globalJobsDefault) {
+    return fcCompileJobs(c, program, rr, natives, classMeta, -1, globalJobsDefault);
+}
+/* (globalJobsForced: the command line, then the project - `settings.globalJobs`, Linker.ForcedGlobalJobs; -1: the source decides) */
+static FcCompiled* fcCompileJobs(FcCtx* c, FcList* program, FcResolveResult* rr, FcNatives* natives, bool classMeta, int globalJobsForced, int globalJobsDefault) {
     FcCompShared* sh = (FcCompShared*)fcAlloc(c, sizeof *sh);
     FcComp* compiler;
     FcDict* classes;
@@ -570,6 +575,7 @@ static FcCompiled* fcCompileWith(FcCtx* c, FcList* program, FcResolveResult* rr,
     classes = CompileClasses(compiler, program);
 
     for (i = 0; i < program->count; i++) if (((FcStmt*)program->items[i])->kind == SK_GlobalJobsDirective) globalJobs = ((FcGlobalJobsDirective*)program->items[i])->mode;
+    if (globalJobsForced >= 0) globalJobs = globalJobsForced;
     if (globalJobs < 0) globalJobs = globalJobsDefault >= 0 ? globalJobsDefault : GJM_Safepoints;
     if (globalJobs != GJM_Safepoints) { fcChunkOp(c, compiler->chunk, OP_SetAutoSync); fcChunkByte(c, compiler->chunk, globalJobs); }
     for (i = 0; i < program->count; i++) {

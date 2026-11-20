@@ -82,10 +82,11 @@ static const char* nlPrebuilt(FcCtx* c, const FgInstImport* imp) {
         if (fcAsciiIEq((const char*)m.libraryRids->items[i], nlRid()) && nbFileExists(nlFullPath(c, imp, (const char*)m.libraryPaths->items[i]))) return nlFullPath(c, imp, (const char*)m.libraryPaths->items[i]);
     return NULL;
 }
-/* BuiltDirectories: lib/<rid>/ in the folder of the package (a package of the store has no BuildDirectory), then a folder in the temporary files */
+/* BuiltDirectories: <BuildDirectory>/<rid> (the natives of a project: obj/native), else lib/<rid>/ in the folder of the package, then a folder in the temporary files */
 static FcList* nlBuiltDirectories(FcCtx* c, const FgInstImport* imp) {
     FcList* r = fcListNew(c);
-    fcListAdd(c, r, (void*)nbCombine(c, nbCombine(c, imp->dir, "lib"), nlRid()));
+    if (imp->buildDirectory) fcListAdd(c, r, (void*)nbCombine(c, imp->buildDirectory, nlRid()));
+    else fcListAdd(c, r, (void*)nbCombine(c, nbCombine(c, imp->dir, "lib"), nlRid()));
     fcListAdd(c, r, (void*)nbCombine(c, nbCombine(c, nbCombine(c, nbTempPath(c), "fire-packages"), fcFmt(c, "%s-%s", nlSafe(c, imp->pkgName), nlSafe(c, imp->pkgVersion))), nlRid()));
     return r;
 }
@@ -101,6 +102,8 @@ static long long nlNewestSource(FcCtx* c, const FgInstImport* imp) {
     int i;
     for (i = 0; i < sources->count; i++) { long long t = nlWriteTicks(nlFullPath(c, imp, (const char*)sources->items[i])); if (t > newest) newest = t; }
     for (i = 0; i < imp->native->headers->count; i++) { long long t = nlWriteTicks(nlFullPath(c, imp, (const char*)imp->native->headers->items[i])); if (t > newest) newest = t; }
+    /* (the project file of a project's natives: the build order of the sources is written there) */
+    if (imp->descriptionFile && nbFileExists(imp->descriptionFile)) { long long t = nlWriteTicks(imp->descriptionFile); if (t > newest) newest = t; }
     return newest == LLONG_MIN ? 0 : newest;   /* (DefaultIfEmpty(DateTime.MinValue)) */
 }
 

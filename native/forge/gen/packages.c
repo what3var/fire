@@ -27,7 +27,10 @@ typedef struct FgPkgNativeM {
     FcList* headers;
 } FgPkgNativeM;
 /* InstalledImport (with its package) */
-typedef struct FgInstImport { const char* name; const char* pkgName; const char* pkgVersion; const char* dir; FgPkgNativeM* native; } FgInstImport;
+typedef struct FgInstImport {
+    const char* name; const char* pkgName; const char* pkgVersion; const char* dir; FgPkgNativeM* native;
+    const char* buildDirectory; const char* descriptionFile;   /* the natives of a project (ProjectNativeOverlay, Phase D 3): obj/native, the project file; NULL: a package */
+} FgInstImport;
 
 static const char* fgPkgFnSymbol(const FgPkgFn* fn) { return fn->cfn && *fn->cfn ? fn->cfn : fn->cpp; }
 
@@ -138,6 +141,8 @@ static const char* fgReadText(FcCtx* c, const char* path) {
     free(text);
     return r;
 }
+/* InstalledImport.FullPath: a file of an import - relative to the package's folder, or rooted (the natives of a project have absolute paths, Phase D 3) */
+static const char* fgPkgFile(FcCtx* c, const char* dir, const char* file) { return file[0] == '/' ? file : fcFmt(c, "%s/%s", dir, file); }
 /* The InstalledImport of an import of the store (its package's manifest read again) */
 static FgInstImport* fgInstalledImport(FcCtx* c, FcDict* cache, const FcPkgImport* pi) {
     FgInstImport* r = (FgInstImport*)fcDictGet(cache, pi);
@@ -147,6 +152,14 @@ static FgInstImport* fgInstalledImport(FcCtx* c, FcDict* cache, const FcPkgImpor
     if (r) return r;
     r = (FgInstImport*)fcAlloc(c, sizeof *r);
     r->name = pi->name; r->dir = pi->dir;
+    if (pi->overlay) {
+        /* (a project's natives, ProjectNativeOverlay: the package "project:<name>" that is in the store's overlay, not on the disk) */
+        r->pkgName = pi->packageName; r->pkgVersion = pi->packageVersion ? pi->packageVersion : "";
+        r->native = (FgPkgNativeM*)pi->overlayNative;
+        r->buildDirectory = pi->overlayBuildDir; r->descriptionFile = pi->overlayFile;
+        fcDictPut(cache, pi, r);
+        return r;
+    }
     manifest = fgReadJsonFile(c, fcFmt(c, "%s/package.json", pi->dir));
     r->pkgName = manifest ? (fcJsonStr(manifest, "name") ? fcJsonStr(manifest, "name") : "") : "";
     r->pkgVersion = manifest ? (fcJsonStr(manifest, "version") ? fcJsonStr(manifest, "version") : "") : "";
@@ -480,7 +493,7 @@ static FcList* fgReadNativeSources(FcCtx* c, FcDict* cache, FcStore* store, cons
             for (m = 0; m < used->count; m++) if (streq0(((FgNamedText*)used->items[m])->name, name)) have = true;
             if (!have) {
                 FgNamedText* t = (FgNamedText*)fcAlloc(c, sizeof *t);
-                const char* text = fgReadText(c, fcFmt(c, "%s/%s", other->dir, (const char*)layer->items[k]));
+                const char* text = fgReadText(c, fgPkgFile(c, other->dir, (const char*)layer->items[k]));
                 if (!text) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: the source %s cannot be read", name));
                 t->name = name; t->text = text;
                 fcListAdd(c, used, t);
@@ -491,7 +504,7 @@ static FcList* fgReadNativeSources(FcCtx* c, FcDict* cache, FcStore* store, cons
     for (i = 0; i < sources->count; i++) {
         FgNamedText* t = (FgNamedText*)fcAlloc(c, sizeof *t);
         t->name = (const char*)sources->items[i];
-        t->text = fgReadText(c, fcFmt(c, "%s/%s", imp->dir, t->name));
+        t->text = fgReadText(c, fgPkgFile(c, imp->dir, t->name));
         if (!t->text) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: the source %s cannot be read", t->name));
         fcListAdd(c, texts, t);
     }
