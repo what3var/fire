@@ -208,6 +208,45 @@ static class ServeTests
             long servedMs = watch.ElapsedMilliseconds;
             Check($"Diagnosen im Projekt: {title} ({own.Count} Diagnosen; eigener Prozess {ownMs} ms, Protokoll {servedMs} ms mit dem Senden des Projekts)", Show(served) == Show(own),
                 $"Protokoll: {Show(served)}\n  eigener Prozess: {Show(own)}");
+            if (title.Contains(".firesln")) CompareCompletion(title, self, text, others.Concat(plan.Libraries.Values.Distinct().SelectMany(l => l.Sources.Select(f => (f.Path, f.Text)))).ToList());
+        }
+
+        // the completion at the places of a real document (after `this.`, after the first `.` of a call, on a word being typed): the same list as in this process, and the time
+        void CompareCompletion(string title, string path, string text, List<(string Path, string Text)> context)
+        {
+            var offsets = new List<int>();
+            int at = text.IndexOf("this.", StringComparison.Ordinal);
+            if (at >= 0) offsets.Add(at + 5);
+            at = text.IndexOf(").", StringComparison.Ordinal);
+            if (at >= 0) offsets.Add(at + 2);
+            at = text.IndexOf("\n    var ", StringComparison.Ordinal);
+            if (at >= 0) offsets.Add(at + 7);
+            if (offsets.Count == 0) return;
+            s.Client.Open(path + ".completion", 1, text, includes: context.Select(f => new ServeFile(f.Path, f.Text)));
+            long ownMs = 0, servedMs = 0, firstMs = -1;
+            bool same = true;
+            string detail = "";
+            foreach (int offset in offsets)
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var index = ScriptSymbolIndex.Build(text, Array.Empty<string>(), context);
+                var own = CompletionEngine.GetSuggestions(text, offset, index).OrderByDescending(i => i.Score).ToList();
+                ownMs += watch.ElapsedMilliseconds;
+                watch.Restart();
+                var served = s.Client.Completion(path + ".completion", offset, out _);
+                if (firstMs < 0) firstMs = watch.ElapsedMilliseconds; else servedMs += watch.ElapsedMilliseconds;
+                static string Item(CompletionItem i) => $"{i.Text}|{i.Kind}|{i.Score:R}|{i.Detail}";
+                if (!own.Select(Item).SequenceEqual(served.Select(Item)))
+                {
+                    same = false;
+                    int k = 0;
+                    while (k < own.Count && k < served.Count && Item(own[k]) == Item(served[k])) k++;
+                    detail += $"\n  bei {offset}: ab {k}: Protokoll {string.Join(", ", served.Skip(k).Take(4).Select(Item))} / eigener Prozess {string.Join(", ", own.Skip(k).Take(4).Select(Item))}";
+                }
+            }
+            s.Client.Close(path + ".completion");
+            Check($"Vervollstaendigung im Projekt: {title} an {offsets.Count} Stellen wie im eigenen Prozess (eigener Prozess mit dem Index {ownMs / offsets.Count} ms je Stelle; "
+                + $"Protokoll: die erste {firstMs} ms mit den Indizes der {context.Count} Dateien, dann {(offsets.Count > 1 ? servedMs / (offsets.Count - 1) : 0)} ms)", same, detail);
         }
 
         string root = Path.Combine(Folder, "solution");
