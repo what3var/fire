@@ -319,7 +319,7 @@ static FrOutcome frNativeBuild(FcCtx* c, const TcOptions* o, PjPlan* plan, bool 
     NbResult r;
     FcCtx step;
     FcList* diags;
-    const FcDiagnostic* first = NULL;
+    const FcDiagnostic* volatile first = NULL;
     bool files = streq0(nbKind(toolchain), "files");
     void (*onReport)(const FcDiagnostic*) = fcOnReport;
     int i;
@@ -443,6 +443,7 @@ static FrOutcome frBuildFiles(FcCtx* c, const TcOptions* o, const char* prelude,
 
 /* the mode a project's program is built in (ModeName: -m, else EffectiveModeName - a compile of its sources) */
 static const char* frModeName(FcCtx* c, const TcOptions* o, PjPlan* plan, const char* prelude, const char* storeRoot, const FgTarget* target, PjOut* po) {
+    (void)c;
     if (o->mode >= 0) return o->mode == 0 ? "debug" : o->mode == 2 ? "performance" : "release";
     return pjEffectiveModeName(po, plan, prelude, storeRoot, target, o->mode, o->floatWidth);
 }
@@ -726,7 +727,7 @@ static FrOutcome frPublish(FcCtx* c, const TcOptions* o, const char* prelude, co
     PjPublishOptions options;
     FcList* results;
     bool ok = true;
-    const PjPublishResult* first = NULL;
+    const PjPublishResult* volatile first = NULL;
     int i, k;
     if (o->files->count != 1 || !tcIsProjectFile(file)) return frFailure(c, 2, "publish takes one solution (.firesln) or project (.fireproj).");
     if (!nbFileExists(file)) return frFailure(c, 2, fcFmt(c, "File not found: %s", file));

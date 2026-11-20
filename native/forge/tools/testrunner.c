@@ -443,7 +443,7 @@ static int trTestRun(TrArgs* args, const char* prelude, const char* storeRoot) {
     FcList* runs;
     FcBuf out = {0};
     const TdFilter* filter;
-    NbConfig* config = NULL;
+    NbConfig* volatile config = NULL;
     const char* engine;
     volatile bool compileFailed = false;
     volatile int i;
