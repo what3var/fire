@@ -209,8 +209,8 @@ static FcList* svAnalyze(FcCtx* c, const char* preludePath, const char* storeRoo
         const char* volatile cwd = in->base ? in->base : fcFullPath(c, ".", ".");
         fcSymbolsForHost(c, c->symbols);
         c->sharedIncluded = fcListNew(c);
-        c->resourcePaths = fcListNew(c);
-        c->resourceNames = fcListNew(c);
+        c->resourcePaths = NULL;   /* (no ResourceTable, as in LiveDiagnostics: `new Resource("path")` keeps its text) */
+        c->resourceNames = NULL;
         c->directiveHook = svAnalysisDirective;
         c->directiveState = &A;
         if (extraImports)

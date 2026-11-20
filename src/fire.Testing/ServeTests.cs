@@ -185,6 +185,67 @@ static class ServeTests
         catch (ServeException ex) { Check("unbekanntes Dokument: Fehler 'document'", ex.Code == "document", ex.Message); }
     }
 
+    private static string Show(IEnumerable<Diagnostic> l) => string.Join(" | ", l.Select(d => $"{d.Line}:{d.Severity}:{d.Code}:{d.Message}{(d.File != null ? " @" + d.File : "")}"));
+
+    /// <summary>The analysis of a document of a project (a BuildPlan: the other files, a library with its namespace): over the protocol as
+    /// LiveDiagnostics.AnalyzeInProject in this process - a small solution, and the documents of a big one when it is on this machine
+    /// (FIRE_SERVE_SOLUTION, read only).</summary>
+    private static void ProjectDiagnostics(string exe)
+    {
+        using var s = new Session(exe, 50);
+        void Compare(string title, fire.Projects.Workspace ws, string projectName, string document, Func<string, string?>? textOf = null)
+        {
+            var project = ws.FindByName(projectName)!;
+            var plan = fire.Projects.BuildPlan.Create(ws, project, path => textOf?.Invoke(Path.GetFullPath(path)) ?? FileTexts.Read(path));
+            string self = Path.GetFullPath(document);
+            var others = plan.Sources.Where(f => !fire.Projects.ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
+            string text = textOf?.Invoke(self) ?? File.ReadAllText(document);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var own = LiveDiagnostics.AnalyzeInProject(text, others, Path.GetDirectoryName(document), plan);
+            long ownMs = watch.ElapsedMilliseconds;
+            watch.Restart();
+            var served = ServeDocuments.AnalyzeInProject(s.Client, self, text, Path.GetDirectoryName(document), plan, others) ?? new List<Diagnostic>();
+            long servedMs = watch.ElapsedMilliseconds;
+            Check($"Diagnosen im Projekt: {title} ({own.Count} Diagnosen; eigener Prozess {ownMs} ms, Protokoll {servedMs} ms mit dem Senden des Projekts)", Show(served) == Show(own),
+                $"Protokoll: {Show(served)}\n  eigener Prozess: {Show(own)}");
+        }
+
+        string root = Path.Combine(Folder, "solution");
+        string Write(string relative, string text)
+        {
+            string path = Path.Combine(root, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, text);
+            return path;
+        }
+        Write("Core/Core.fireproj", """{ "name": "Core", "type": "library", "import": "core.lib" }""");
+        string greeter = Write("Core/greeter.fire", "class Greeter {\n    static string Hello(string name) { return \"Hello, \" + name }\n}\nwarn 5: \"a warning of the library\"\n");
+        Write("Util/Util.fireproj", """{ "name": "Util", "type": "library" }""");
+        Write("Util/text.fire", "#import \"core.lib\"\nclass Shout { static string Loud(string s) { return core.lib.Greeter.Hello(s) + \"!\" } }\n");
+        Write("App/App.fireproj", """{ "name": "App", "references": [ { "project": "../Core/Core.fireproj" }, { "project": "../Util/Util.fireproj" } ] }""");
+        string main = Write("App/main.fire", "#import \"core.lib\"\n#import \"Util\"\nprint(core.lib.Greeter.Hello(\"x\"))\nprint(Util.Shout.Loud(\"y\"))\nprint(Helper.Twice(2))\nprint(Nope.X())\n");
+        string helper = Write("App/helper.fire", "class Helper {\n    static int Twice(int x) { return x * 2 }\n}\n");
+        var ws = fire.Projects.Workspace.Open(Write("All.firesln", """{ "name": "All", "projects": ["Core/Core.fireproj", "Util/Util.fireproj", "App/App.fireproj"] }"""));
+        Compare("Bibliotheken mit Namespace, eine andere Datei, ein Fehler", ws, "App", main);
+        Compare("ein Syntaxfehler in der Bibliothek", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, greeter) ? "class Greeter {\n    static string Hello(string name { return name }\n}\n" : null);
+        Compare("eine andere Datei kaputt: das Dokument allein", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, helper) ? "class Helper {\n    static int Twice(int x { return x }\n" : null);
+        Compare("unbekannter Import mit dem Hinweis auf die Bibliotheken", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, Path.GetFullPath(main)) ? "#import \"Core\"\nprint(1)\n" : null);
+        Compare("eine Bibliothek selbst (ihr eigener Import)", ws, "Util", Path.Combine(root, "Util/text.fire"));
+
+        // a big solution of this machine (read only)
+        string? solution = Environment.GetEnvironmentVariable("FIRE_SERVE_SOLUTION");
+        if (solution == null && File.Exists("/home/user/what3var/ruhrpott-raser/RuhrpottRaser.firesln")) solution = "/home/user/what3var/ruhrpott-raser/RuhrpottRaser.firesln";
+        if (solution != null && File.Exists(solution))
+        {
+            var big = fire.Projects.Workspace.Open(solution);
+            foreach (var p in big.Projects.Take(20))
+            {
+                var first = p.Files.Where(f => f.EndsWith(".fire", StringComparison.OrdinalIgnoreCase) && !f.Replace('\\', '/').Contains("/testing/")).OrderBy(f => f, StringComparer.Ordinal).FirstOrDefault();
+                if (first != null) Compare($"{Path.GetFileName(solution)}: {p.Name}/{Path.GetFileName(first)}", big, p.Name, first);
+            }
+        }
+    }
+
     /// <summary>Everything (with the installed packages): the protocol, and the diagnostics compared with LiveDiagnostics.</summary>
     public static int Run()
     {
@@ -223,6 +284,8 @@ static class ServeTests
             }
         }
         catch (Exception ex) { Check("Diagnosen", false, ex.ToString()); }
+        try { ProjectDiagnostics(exe); }
+        catch (Exception ex) { Check("Diagnosen im Projekt", false, ex.ToString()); }
         Console.WriteLine(_failures == 0 ? "Alle Diagnose-Pruefungen von forge serve bestanden." : $"FEHLER: {_failures} Diagnose-Pruefung(en) von forge serve fehlgeschlagen.");
         return failures + _failures;
     }

@@ -489,9 +489,9 @@ namespace fire.Editor
             filePath != null ? Path.GetFullPath(filePath) : Path.Combine(Path.GetTempPath(), $"untitled-{Environment.ProcessId}-{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(owner)}.fire");
 
         /// <summary>The server has the document with this text (and these context files, this project).</summary>
-        private static ServeClient? Sync(string path, string text, IReadOnlyList<(string Path, string Text)>? includes, string? project, string? baseDirectory)
+        private static ServeClient? Sync(string path, string text, IReadOnlyList<(string Path, string Text)>? includes, string? project, string? baseDirectory, ServeClient? server = null)
         {
-            var client = ServeClient.Shared;
+            var client = server ?? ServeClient.Shared;
             if (client == null) return null;
             lock (Docs)
             {
@@ -551,9 +551,12 @@ namespace fire.Editor
         }
 
         /// <summary>The diagnostics of a document of a project over the protocol (the context of the plan: its other files and libraries); null: not available.</summary>
-        public static List<Diagnostic>? AnalyzeInProject(string path, string text, string? baseDirectory, fire.Projects.BuildPlan plan, IReadOnlyList<(string Path, string Text)> others)
+        public static List<Diagnostic>? AnalyzeInProject(string path, string text, string? baseDirectory, fire.Projects.BuildPlan plan, IReadOnlyList<(string Path, string Text)> others) =>
+            AnalyzeInProject(ServeClient.Shared, path, text, baseDirectory, plan, others);
+
+        /// <summary>Like AnalyzeInProject on a server of its own (the tests).</summary>
+        public static List<Diagnostic>? AnalyzeInProject(ServeClient? client, string path, string text, string? baseDirectory, fire.Projects.BuildPlan plan, IReadOnlyList<(string Path, string Text)> others)
         {
-            var client = ServeClient.Shared;
             if (client == null) return null;
             try
             {
@@ -575,7 +578,7 @@ namespace fire.Editor
                         Projects[key] = (hash, client);
                     }
                 }
-                return Sync(path, text, null, key, baseDirectory)?.Diagnose(path).Items;
+                return Sync(path, text, null, key, baseDirectory, client)?.Diagnose(path).Items;
             }
             catch (Exception ex) when (ex is IOException or ServeException) { return null; }
         }
