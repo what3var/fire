@@ -542,13 +542,14 @@ static FcList* StaticInitOrder(FcComp* cm, FcDict* classes, FcDict* deps);
 
 typedef struct FcStaticInit { FcRtClass* cls; const char* field; FcProto* init; } FcStaticInit;
 
-static FcCompiled* fcCompile(FcCtx* c, FcList* program, FcResolveResult* rr, FcNatives* natives, bool classMeta) {
+/* Compiler.Compile; globalJobsDefault: `"globalJobs"` of fire.native.json (the default when the program says nothing - Linker.GlobalJobsDefault), -1: none */
+static FcCompiled* fcCompileWith(FcCtx* c, FcList* program, FcResolveResult* rr, FcNatives* natives, bool classMeta, int globalJobsDefault) {
     FcCompShared* sh = (FcCompShared*)fcAlloc(c, sizeof *sh);
     FcComp* compiler;
     FcDict* classes;
     FcCompiled* compiled;
     FcList* order;
-    int i, k, globalJobs = GJM_Safepoints;
+    int i, k, globalJobs = -1;
     FcStmt* endWait = NULL;
     sh->c = c;
     sh->rr = rr;
@@ -569,6 +570,7 @@ static FcCompiled* fcCompile(FcCtx* c, FcList* program, FcResolveResult* rr, FcN
     classes = CompileClasses(compiler, program);
 
     for (i = 0; i < program->count; i++) if (((FcStmt*)program->items[i])->kind == SK_GlobalJobsDirective) globalJobs = ((FcGlobalJobsDirective*)program->items[i])->mode;
+    if (globalJobs < 0) globalJobs = globalJobsDefault >= 0 ? globalJobsDefault : GJM_Safepoints;
     if (globalJobs != GJM_Safepoints) { fcChunkOp(c, compiler->chunk, OP_SetAutoSync); fcChunkByte(c, compiler->chunk, globalJobs); }
     for (i = 0; i < program->count; i++) {
         FcStmt* s = (FcStmt*)program->items[i];
@@ -2312,3 +2314,5 @@ static bool fcReadingMethodsOf(FcCtx* c, FcList* parms, FcBlockStmt* body) {
     }
     return true;
 }
+
+static FcCompiled* fcCompile(FcCtx* c, FcList* program, FcResolveResult* rr, FcNatives* natives, bool classMeta) { return fcCompileWith(c, program, rr, natives, classMeta, -1); }

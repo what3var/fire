@@ -69,6 +69,7 @@ typedef struct FgOptions {
     int stripping;         /* -1: none (level 3; a debug build 0) */
     int optimize;          /* -1: the target's */
     bool split;
+    int globalJobs;        /* `"globalJobs"` of fire.native.json (the builder): 0 none, else the GlobalJobsMode + 1 */
 } FgOptions;
 
 /* Linker.CompileAndLink with Engine "native" and the ToolchainKind (its symbol for `#if`) for one file */
@@ -135,7 +136,7 @@ static FcLinked* fgLinkNativeKind(FcCtx* c, const char* path, const char* prelud
     floatWidth = o->floatWidth ? o->floatWidth : L->directiveFloatWidth != FC_NULL_INT ? L->directiveFloatWidth : t->floatWidth;
     c->programWordWidth = t->wordWidth;   /* (Linker: TypeChecker.ProgramWordWidth = target.WordWidth) */
     fcTypeCheckRun(c, program, resolved, strict, firstUserSource, firstUserSource, intWidth, floatWidth, fcNativeReturnTypes(L));
-    compiled = fcCompile(c, program, resolved, &L->registry, false);
+    compiled = fcCompileWith(c, program, resolved, &L->registry, false, o->globalJobs - 1);
     linked = (FcLinked*)fcAlloc(c, sizeof *linked);
     notSerializable = fcDictNew(c, FC_KEY_STR);
     total = processed->count;
@@ -172,6 +173,7 @@ static FcLinked* fgLinkNativeKind(FcCtx* c, const char* path, const char* prelud
     linked->wordWidth = t->wordWidth;
     linked->firstUserSource = firstUserSource;
     linked->mode = o->mode >= 0 ? o->mode : L->executionMode;
+    linked->asmInfo = &L->asmInfo;
     linked->nativeImports = &L->nativeImports;
     fcPackageNativesOf(L, &linked->packageNatives, &linked->packageNativeLibraries);
     linked->sourceFiles = fcListNew(c);

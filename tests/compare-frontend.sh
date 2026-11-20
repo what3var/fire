@@ -27,8 +27,9 @@
 # quick, quick1, nosplit). `build` builds every BUILD_EVERY-th case of tests/cases (default 25) with both forges for real, with each toolchain of
 # BUILD_TOOLCHAINS (default "gcc tcc"; BUILD_FLAGS="--quick" for more switches), without the program cache, and compares the logs (normalized) and what the two
 # programs print - and counts the programs of forge-c that print the case's .expected.
+# `pkglib` (Phase D 2) compares what PackageLibrary would build for the VM (`forge pkglibplan <import>`) for every import with natives of the store.
 set -u
-if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|buildplan|build|all] [work folder]" >&2; exit 2; fi
+if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|buildplan|build|pkglib|all] [work folder]" >&2; exit 2; fi
 FORGE_CS=$1
 FORGE_C=$2
 WHAT=${3:-both}
@@ -118,6 +119,32 @@ if [ "$WHAT" = build ]; then
       done
     fi
   done
+fi
+# ---- pkglib (Phase D 2): the libraries of the packages for the VM - `forge pkglibplan <import>` of every import with natives in the store (FIRE_PACKAGES, else
+# Packages/ next to the C# forge) and of `graphics+windows`: the file, the keys (NativeHashOf, the runtime's fingerprint, RuntimeKey), the toolchain, the command,
+# the files of the folder of the build ----
+if [ "$WHAT" = pkglib ]; then
+  kinds=()
+  store=${FIRE_PACKAGES:-$(dirname "$(command -v "${FORGE_CS%% *}" || echo "$FORGE_CS")")/Packages}
+  python3 -I -c '
+import json, os, sys
+root = sys.argv[1]
+for d in sorted(os.listdir(root)):
+    p = os.path.join(root, d, "package.json")
+    if os.path.exists(p):
+        for im in json.load(open(p, encoding="utf-8-sig")).get("imports", []):
+            if "native" in im: print(im["name"])
+print("graphics+windows")' "$store" > "$WORK/pkglib.lst"
+  total=0 same=0
+  mkdir -p "$WORK/pkglib"
+  while IFS= read -r name; do
+    total=$((total + 1))
+    $FORGE_CS pkglibplan "$name" > "$WORK/pkglib/$name-cs.txt" 2>&1
+    "$FORGE_C" pkglibplan "$name" > "$WORK/pkglib/$name-c.txt" 2>&1
+    if cmp -s "$WORK/pkglib/$name-cs.txt" "$WORK/pkglib/$name-c.txt"; then same=$((same + 1))
+    else status=1; echo "  differs: $name"; diff "$WORK/pkglib/$name-cs.txt" "$WORK/pkglib/$name-c.txt" | head -6 | sed 's/^/    /'; fi
+  done < "$WORK/pkglib.lst"
+  echo "pkglib: $same of $total identical"
 fi
 [ "$WHAT" = all ] && kinds=(tokens ast diagnostics "${fbcKinds[@]}")
 

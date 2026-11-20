@@ -90,6 +90,11 @@ static bool fcStrictTag(const char* path);
 #include "build/toolchain.c"
 #include "build/builder.c"
 #include "build/command.c"
+#include "build/pkglib.c"
+#include "build/provider.c"
+#include "build/peres.c"
+#include "build/bootimage.c"
+#include "build/tools.c"
 #endif
 
 /* the markup generators (Phase C 5) */
@@ -346,6 +351,7 @@ int main(int argc, char** argv) {
         }
     }
     if (argc >= 2 && strcmp(argv[1], "build") == 0) return nbBuildMain(argc, argv, prelude, store);   /* Phase D 2 */
+    { int r = nbToolsMain(argc, argv, prelude, store); if (r >= 0) return r; }   /* Phase D 2: pkglib and the measures of the tools (build/tools.c) */
 #endif
     /* `fbc <mode> ...`: the mode is part of the command */
     if (argc >= 4 && (strcmp(argv[1], "fbc") == 0 || strcmp(argv[1], "cgen") == 0 || strcmp(argv[1], "buildplan") == 0) && strlen(argv[2]) < 200) {

@@ -1065,6 +1065,10 @@ static bool nbCompileUnits(FcCtx* c, FcList* commands, FcList* units, const char
 }
 
 /* ---- Build (linkage "source") ---- */
+/* (build/provider.c, build/peres.c, build/bootimage.c) */
+static NbToolchain* nbToolchainRequire(FcCtx* c, NbToolchain* wanted, const char* reason);
+static void nbApplyPeMetadata(FcCtx* c, const char* exe, const FcAsmInfo* info, const FgTarget* target, FcBuf* log);
+static const char* nbAfterLink(FcCtx* c, const NbToolchain* toolchain, const FgTarget* target, const char* exe);
 typedef struct NbResult { bool ok; const char* output; const char* log; const char* error; } NbResult;   /* error: the diagnostic of a failed build (NULL: none) */
 typedef struct NbBuild {
     const char* path;           /* the source */
@@ -1150,7 +1154,7 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
     o.floatWidth = b->floatWidth;
     o.stripping = nbStrippingOf(config);
     o.optimize = nbOptimizeOf(config, target);
-    if (config->globalJobs) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: \"globalJobs\" of fire.native.json");
+    o.globalJobs = config->globalJobs ? nbGlobalJobsParse(c, config->globalJobs) + 1 : 0;   /* (GlobalJobsDefault: when the program says nothing) */
     linked = fgLinkNativeKind(c, b->path, b->prelude, b->storeRoot, b->strict, &o, &registry, kind);
     memset(&store, 0, sizeof store);
     store.root = b->storeRoot;
@@ -1203,6 +1207,8 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
         const char* nativesFile;
         const char* exe = fcFullPath(c, ".", output);
         NbToolchain* nativesToolchain = NULL;
+        NbToolchain* provided = NULL;
+        bool gui = linked->asmInfo && linked->asmInfo->gui;   /* (program.Gui: #noconsole) */
         FcList* units = NULL;
         FcList* sourceCommands;
         int sideBySide = 0, i;
@@ -1210,14 +1216,15 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
         bool ok = true, compiled, built;
         cppFile = nbWriteFiles(c, &store, instImports, workDir, program.program, target, "fire_program.c", configDirectory, program.natives, program.units);
         nativesFile = program.natives ? nbCombine(c, workDir, "fire_natives.cpp") : NULL;
-        if (!streq0(kind, "custom") && !nbFind(c, toolchain)) {
-            /* nothing to compile with (ToolchainProvider: the host would offer one - forge-c says so) */
+        if (!streq0(kind, "custom") && !nbFind(c, toolchain) && (b->dryRun || (provided = nbToolchainRequire(c, toolchain, "A native build translates the program to C++ and compiles it with a C++ toolchain.")) == NULL)) {
+            /* nothing to compile with: ToolchainProvider offers one (the host asks the user: install, change, cancel - build/provider.c) */
             const char* notFound = fcFmt(c, "The compiler '%s' was not found. Install it, name another one in the toolchain of fire.native.json, or build with the toolchain 'files' and compile the sources yourself.", nbEffectiveCompiler(toolchain));
             if (b->dryRun) fcBufFmt(b->plan, "toolchain %s\nnot found %s\n", kind, nbEffectiveCompiler(toolchain));
             if (!b->keepSources) nbDeleteTree(c, workDir);
             r.output = exe; r.log = notFound; r.error = notFound;
             return r;
         }
+        if (provided) { toolchain = provided; kind = nbKind(toolchain); }
         /* (a quick build: the C of the program with the level of `--quick`; the natives of the packages in units of their own keep the toolchain's optimisation) */
         if (config->quick >= 0) {
             nativesToolchain = toolchain;
@@ -1230,9 +1237,9 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
             for (i = 0; i < program.units->count; i++) if (((FgSplitUnit*)program.units->items[i])->kind != SUK_Header) fcListAdd(c, units, program.units->items[i]);
             nbUnitOrderNatives = nativesToolchain != NULL;
             nbStableSort(units, nbUnitOrderCmp);
-            sourceCommands = nbSplitCommands(c, toolchain, target, units, ((FgSplitUnit*)program.units->items[0])->name, nativesFile, workDir, exe, false, nativesToolchain);
+            sourceCommands = nbSplitCommands(c, toolchain, target, units, ((FgSplitUnit*)program.units->items[0])->name, nativesFile, workDir, exe, gui, nativesToolchain);
             sideBySide = units->count;
-        } else sourceCommands = nbBuildCommands(c, toolchain, target, cppFile, nativesFile, workDir, exe, false, NULL);
+        } else sourceCommands = nbBuildCommands(c, toolchain, target, cppFile, nativesFile, workDir, exe, gui, NULL);
         /* (the same files and commands as a program built before: that program - ProgramCache) */
         cacheKey = nbProgramCacheKey(c, toolchain, target, workDir, exe, sourceCommands, config->stats, sideBySide, config->quick);
         if (b->dryRun) {
@@ -1263,6 +1270,8 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
         }
         built = ok && nbFileExists(exe);
         if (built && compiled && cacheKey) nbProgramCacheStore(c, target, cacheKey, exe);
+        if (built) nbApplyPeMetadata(c, exe, linked->asmInfo, target, &log);
+        if (built) { const char* after = nbAfterLink(c, toolchain, target, exe); if (after) fcBufFmt(&log, "%s\n", after); }   /* (a target without an operating system: its disk image) */
         if (!b->keepSources) nbDeleteTree(c, workDir);
         r.ok = built;
         r.output = exe;
