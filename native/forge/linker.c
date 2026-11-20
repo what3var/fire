@@ -483,6 +483,7 @@ static FcFrontend* fcCompileFrontend(FcCtx* c, const char* path, const char* pre
     arr = (FcProcessed**)fcAlloc(c, sizeof(FcProcessed*) * (size_t)processed->count);
     for (i = 0; i < processed->count; i++) arr[i] = (FcProcessed*)processed->items[i];
     fe->program = fcParseMultiple(c, arr, processed->count);
+    if (c->testDriver) fcTestDriverApply(c, fe->program, processed, firstUserSource);   /* (`forge test`, Phase D 4) */
     fe->resolved = fcResolve(c, fe->program, &L->natives, NULL);
     fe->firstUserSource = firstUserSource;
     fe->processed = processed;

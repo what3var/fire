@@ -326,6 +326,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     arr = (FcProcessed**)fcAlloc(c, sizeof(FcProcessed*) * (size_t)processed->count);
     for (i = 0; i < processed->count; i++) arr[i] = (FcProcessed*)processed->items[i];
     program = fcParseMultiple(c, arr, processed->count);
+    if (c->testDriver && fcTestDriverApply(c, program, processed, firstUserSource)) fcListAdd(c, sourceModules, NULL);   /* (`forge test`, Phase D 4) */
     /* CheckLibraryHasNoEntryPoint */
     if (plan->project->project->type == PJ_LIBRARY) {
         FcList* errors = fcListNew(c);

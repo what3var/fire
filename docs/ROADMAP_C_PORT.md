@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 größtenteils, Schritt 2 teilweise, Schritt 3 größtenteils (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1 größtenteils, Schritt 2 teilweise, Schritt 3 größtenteils, Schritt 4 teilweise (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -437,6 +437,16 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    das die VM trägt; forge-c baut nur nativ), die C++-Natives eines Projekts in einem nativen Programm, `settings.globalJobs` eines Projekts, Paketreferenzen
    `github:...`, Vorlagen (`TemplateInstaller`) und Beispiele (`SampleCatalog`), das Installieren in den Store (`StandardSources`, `ember install`), Windows.
 4. Rest der Befehlszeile: Testläufer, `forge data`, Modellwandler (`.fmesh`, `.fblocks`, glTF), Packer.
+   **Teilweise umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-4-der-rest-der-befehlszeile)): der **Modellwandler** in `native/forge/model/` (Stand 6c1b0f0e:
+   `ModelConverter`, `BlockModel`, `MeshModel` - glTF/`.glb`, `.fblocks`, `.fmesh` -, eine Modellressource wird beim Einfügen zur Modelldatei, `forge-c model`):
+   `tests/compare-frontend.sh ... model` **576 von 576** Dateien des Korpus (`tests/model-corpus.py`: die Modelle des Repositorys, zufällige Modelle aller Formate,
+   ihre Fehlerpfade, beschädigte Kopien) gleich - Ausgabe, Fehler, `.f3d` Byte für Byte, auch als Ressource eines Programms; damit ist `Scene3D Models` in `cgen`,
+   `fbc`, `buildplan` und `projectbuild` gleich (die eine bekannte Abweichung der Schritte 1 bis 3). **`forge test`** in `native/forge/tools/` (Stand b833e71b: der
+   Treiber, der Filter, der Teil des Linkers, das Protokoll, die Zusammenfassung; in der VM in C oder `--engine native`): 47 von 53 Paketprojekten gleich (die 6
+   übrigen brauchen die Bibliothek ihrer eigenen Natives für die VM - nicht portiert), die Quellen von `TestingTests` und weitere Fälle in beiden Engines gleich.
+   Offen: `forge data` (ein Treiber in der VM wie `test`, braucht den Link mehrerer Quellen), `run`, `native`, `dump`, `stats`, `prebuild-standard`/`install-standard`/
+   `build-vm`/`tables`, `-o` von `ui|biscuit|fdata|falstad`, die Bibliothek der eigenen Natives eines Projekts für die VM. Der Packer: `fire.Runtime.Packer` packt nur
+   noch die .NET-Einzeldatei (`FIRE_VM_ENGINE=dotnet`) und entfällt in C; das Packen mit der VM in C ist die Engine `vm` (Schritt 3).
 5. `ToolchainSetup` (lädt unter Windows einen Compiler): braucht HTTPS und Entpacken im Werkzeug - über das System (WinHTTP) statt eigener TLS.
 6. `forge conformance` ersetzt den Kern von `fire.Testing`; Installer (`setup.iss`) und Paketierung ohne .NET-Werkzeuge.
 7. `fire_embed.h` und die Packages `forge`/`script` (L6), mit Tests in fire (ein Programm übersetzt und startet ein Skript, VM und nativ).
