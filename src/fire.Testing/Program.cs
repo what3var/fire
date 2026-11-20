@@ -15259,6 +15259,18 @@ else
                 };
                 string? FindProgram(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
                 string? xvfbRun = FindProgram("xvfb-run");
+                // (the VM (forge run) installs the standard packages and builds the C of graphics and windows on its first start after a build - two minutes on a busy machine,
+                // longer than the cases that run the VM give it on their clock (the reader of a case waits 90 s for the VM's text); and two first starts at the same time
+                // install into the same folder. Done once, without a clock, before the first case that runs the VM; the others wait for it.)
+                var vmFirstStart = new Lazy<string>(() =>
+                {
+                    string forgeTool = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                    if (!File.Exists(forgeTool)) return "";
+                    string warm = Path.Combine(workDir, "vm_first_start.fire");
+                    File.WriteAllText(warm, "#import \"windows\"\n#import \"time\"\nprint(Clipboard.HasText)\n");
+                    string said = RunProc(forgeTool, $"run \"{warm}\"", workDir, out int warmExit, null, new Dictionary<string, string?> { ["FIRE_DISPLAY"] = "headless" });
+                    return warmExit == 0 ? "" : $"(der erste Start der VM, Exitcode {warmExit}:)\n{said}";
+                }, LazyThreadSafetyMode.ExecutionAndPublication);
                 // (what runs: the native window cases and the cases under Wine at the same time - see the end of this block)
                 var windowRuns = new List<Action>();
                 // Builds a case with fire's own display (packages/windows/native/fire_display_desktop.h) and runs it: `display` "dummy" (headless: the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), "x11-two"
@@ -15571,7 +15583,7 @@ else
                             print(win.Tick())
                             """;
                         File.WriteAllText(script, vmSource);
-                        windowSteps.Add(() => PrepareWindowCase(idleVmTitle, vmSource, new[] { "True" }, "", "x11-two", "", $"sh \"{check}\"", $"\"{idleForge}\" run \"{script}\""));
+                        windowSteps.Add(() => { _ = vmFirstStart.Value; return PrepareWindowCase(idleVmTitle, vmSource, new[] { "True" }, "", "x11-two", "", $"sh \"{check}\"", $"\"{idleForge}\" run \"{script}\""); });
                     }
                 }
                 windowRuns.Add(() => TestJobs.Ordered(windowSteps.Count, i => windowSteps[i](), (_, run) => run(), what: "Fenster: gebaut"));
@@ -15587,6 +15599,7 @@ else
                     {
                         string writer = Path.Combine(workDir, "vmwriter.fire");
                         File.WriteAllText(writer, writerScript);
+                        if (vmFirstStart.Value is { Length: > 0 } firstStart) Console.WriteLine(firstStart);
                         RunWindowCase(title, readerScript, new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" },
                             "", "x11-two", writerScript, $"\"{forge}\" run \"{writer}\"");
                     }
@@ -15602,6 +15615,7 @@ else
                     {
                         string reader = Path.Combine(workDir, "vmlatereader.fire");
                         File.WriteAllText(reader, lateReaderScript);
+                        if (vmFirstStart.Value is { Length: > 0 } firstStart) Console.WriteLine(firstStart);
                         RunWindowCase(title, lateReaderScript, lateExpected, "", "x11-late", lateWriterScript, null, $"\"{forge}\" run \"{reader}\"");
                     }
                 });

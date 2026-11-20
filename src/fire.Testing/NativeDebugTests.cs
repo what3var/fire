@@ -161,6 +161,16 @@ sealed class NativeDebugClient : IDisposable
 
     public bool WaitExit(TimeSpan timeout) => _process == null || _process.WaitForExit((int)timeout.TotalMilliseconds);
 
+    /// <summary>Waits for the end of the program and for the end of its stdout: the output comes on its own pipe, read on the thread pool, the events over TCP -
+    /// `exited` can be here before the last lines of the output (under load, with the other jobs of the run, by far). Bounded: a process that inherited the pipe
+    /// (wineserver) must not keep the test waiting.</summary>
+    public bool WaitExitAndOutput(TimeSpan timeout)
+    {
+        if (_process == null) return true;
+        if (!_process.WaitForExit((int)timeout.TotalMilliseconds)) return false;
+        return Task.Run(() => _process.WaitForExit()).Wait(timeout);   // (without a timeout WaitForExit also waits for the end of the redirected streams)
+    }
+
     public void Dispose()
     {
         try { if (_process != null && !_process.HasExited) _process.Kill(); } catch (Exception) { }
@@ -984,6 +994,7 @@ static class NativeDebugTests
             c.Request("continue", new() { ["thread"] = 1, ["breakpoints"] = false });
             var profile = c.NextEvent("profile");
             var exited = c.NextEvent("exited");
+            c.WaitExitAndOutput(NativeDebugClient.Timeout);
             var lines = new Dictionary<int, (long Hits, long Micros)>();
             foreach (var row in profile.GetProperty("lines").EnumerateArray())
                 if (row[0].GetInt32() == first) lines[row[1].GetInt32()] = (row[2].GetInt64(), row[3].GetInt64());
