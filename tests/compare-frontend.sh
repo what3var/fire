@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The frontend in C against the one in C# (docs/spec/FORGE_C.md, docs/ROADMAP_C_PORT.md Phase C 1-4): `tokens`, `ast`, `diagnostics` and the program file
+# The frontend in C against the one in C# (docs/spec/FORGE_C.md, docs/ROADMAP_C_PORT.md Phase C 1-5): `tokens`, `ast`, `diagnostics` and the program file
 # (`fbc`) of every source of the corpus - tests/cases/**/*.fire, packages/**/*.fire, the samples and templates in src/fire.Project - must be byte-identical.
 #
-#   tests/compare-frontend.sh <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|all] [work folder]
+#   tests/compare-frontend.sh <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|all] [work folder]
 #
 # `both` is tokens and ast; `diag` compares `diagnostics` (what forge prints while it compiles a source up to the type check: the resolver, the type
 # checker, the preludes of its imports); `fbc` the program file `forge bytecode` writes (`forge fbc <mode> <file>`: the bytecode compiler, the linker,
@@ -13,6 +13,10 @@
 # part of the corpus and the first differences; the outputs stay in the work folder (default: a temporary one). Exit code 0 when everything matches.
 # FRONTEND_MUTANTS=n adds a part "mutants": n damaged copies of every source of the corpus (cut off, a character removed, a piece repeated - the same
 # ones every time), which go through the error paths of the lexer, the preprocessor and the parser.
+# `markup` (Phase C 5) compares what `forge ui|biscuit|fdata|falstad <file>` writes (both streams: the generated script, the schematic, the
+# diagnostics, the warnings) with `forge-c markup --list`: the markup files of the repository (.fxml, .biscuit, .fdata), the markup src/fire.Testing
+# writes inline (tests/extract-markup.py: .fxml, .biscuit, .fdata, Falstad's circuits as .txt) and, with FRONTEND_MUTANTS=n, n damaged copies of each
+# (the error paths of the XML and JSON readers). The C# forge runs once per file there (it has no --list for these commands).
 set -u
 if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|all] [work folder]" >&2; exit 2; fi
 FORGE_CS=$1
@@ -55,7 +59,69 @@ kinds=(tokens ast)
 [ "$WHAT" = diag ] && kinds=(diagnostics)
 fbcKinds=(); for m in ${FBC_MODES:-debug release performance}; do fbcKinds+=("fbc-$m"); done
 [ "$WHAT" = fbc ] && kinds=("${fbcKinds[@]}")
+[ "$WHAT" = markup ] && kinds=()
 [ "$WHAT" = all ] && kinds=(tokens ast diagnostics "${fbcKinds[@]}")
+
+# ---- markup (Phase C 5) ----
+if [ "$WHAT" = markup ] || [ "$WHAT" = all ]; then
+  find . \( -name .git -o -name .claude -o -name bin -o -name obj \) -prune -o \( -name '*.fxml' -o -name '*.biscuit' -o -name '*.fdata' \) -type f -print \
+    | LC_ALL=C sort > "$WORK/markup-files.lst"
+  rm -rf "$WORK/markup-inline"
+  python3 -I tests/extract-markup.py "$WORK/markup-inline" > "$WORK/markup-inline.lst"
+  markupParts=(files inline)
+  if [ -n "${FRONTEND_MUTANTS:-}" ]; then
+    rm -rf "$WORK/markup-mutants"
+    cat "$WORK/markup-files.lst" "$WORK/markup-inline.lst" | python3 -c '
+import os, random, sys
+out, n = sys.argv[1], int(sys.argv[2])
+random.seed(7)
+names = []
+for k, path in enumerate(l.rstrip("\n") for l in sys.stdin):
+    data = open(path, encoding="utf-8", errors="replace").read()
+    for m in range(n if data else 0):
+        i, j, r = random.randrange(len(data)), random.randrange(len(data)), random.random()
+        text = data[:i] if r < 0.34 else data[:i] + data[i + 1:] if r < 0.67 else data[:i] + data[j:j + random.randrange(1, 20)] + data[i:]
+        d = "%s/m%05d-%d" % (out, k, m)
+        os.makedirs(d, exist_ok=True)
+        name = os.path.join(d, os.path.basename(path))
+        open(name, "w", encoding="utf-8").write(text)
+        names.append(name)
+print("\n".join(names))' "$WORK/markup-mutants" "$FRONTEND_MUTANTS" > "$WORK/markup-mutants.lst"
+    markupParts+=(mutants)
+  fi
+  for part in "${markupParts[@]}"; do
+    lst="$WORK/markup-$part.lst"
+    total=$(wc -l < "$lst")
+    if [ -z "${FORGE_CS_CACHE:-}" ] || [ ! -d "$WORK/markup-$part-cs" ]; then
+      rm -rf "$WORK/markup-$part-cs"
+      mkdir -p "$WORK/markup-$part-cs"
+      n=0
+      while IFS= read -r file; do
+        n=$((n + 1))
+        case "$file" in *.fxml) cmd=ui ;; *.biscuit) cmd=biscuit ;; *.fdata) cmd=fdata ;; *) cmd=falstad ;; esac
+        $FORGE_CS $cmd "$file" > "$WORK/markup-$part-cs/$n.txt" 2>&1
+      done < "$lst"
+    fi
+    rm -rf "$WORK/markup-$part-c"
+    "$FORGE_C" markup --list "$lst" --out "$WORK/markup-$part-c" > /dev/null
+    same=0
+    diffs=()
+    n=0
+    while IFS= read -r file; do
+      n=$((n + 1))
+      if cmp -s "$WORK/markup-$part-cs/$n.txt" "$WORK/markup-$part-c/$n.txt"; then same=$((same + 1)); else diffs+=("$n:$file"); fi
+    done < "$lst"
+    echo "markup $part: $same of $total identical"
+    if [ $same -ne $total ]; then
+      status=1
+      for d in "${diffs[@]:0:5}"; do
+        idx=${d%%:*}
+        echo "  differs: ${d#*:}"
+        diff "$WORK/markup-$part-cs/$idx.txt" "$WORK/markup-$part-c/$idx.txt" | head -6 | sed 's/^/    /'
+      done
+    fi
+  done
+fi
 for kind in "${kinds[@]}"; do
   for part in "${parts[@]}"; do
     lst="$WORK/$part.lst"

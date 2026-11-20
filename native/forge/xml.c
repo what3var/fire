@@ -43,6 +43,7 @@ typedef struct FcXReader {
     int line, lineStart;  /* the index where the current line starts */
     FcList* nsStack;      /* pairs prefix, uri (const char*) */
     FcList* open;         /* the elements whose content is read (outermost first) */
+    FcBuf* pending;       /* the text being read: freed when the reader fails */
     jmp_buf fail;
     FcXmlError error;
 } FcXReader;
@@ -57,6 +58,7 @@ static _Noreturn void fcxFailAt(FcXReader* r, int line, int pos, const char* mes
     r->error.message = fcFmt(r->c, "%s Line %d, position %d.", message, line, pos);
     r->error.line = line;
     r->error.pos = pos;
+    if (r->pending) { fcBufFree(r->pending); r->pending = NULL; }
     longjmp(r->fail, 1);
 }
 static _Noreturn void fcxFail(FcXReader* r, const char* message) { fcxFailAt(r, r->line, fcxPos(r, r->i), message); }
@@ -114,7 +116,7 @@ static _Noreturn void fcxEof(FcXReader* r) {
     int k;
     fcBufStr(&b, "Unexpected end of file has occurred. The following elements are not closed: ");
     for (k = r->open->count - 1; k >= 0; k--) { fcBufStr(&b, ((FcXNode*)r->open->items[k])->name); fcBufStr(&b, k > 0 ? ", " : "."); }
-    fcxFail(r, fcBufDone(r->c, &b));
+    fcxFail(r, (r->pending = NULL, fcBufDone(r->c, &b)));
 }
 
 /* a name (an attribute's: a wrong first character is that even as the last one of the text) */
@@ -229,6 +231,7 @@ static void fcxComment(FcXReader* r, FcXNode* parent) {
         FcBuf b = {0};
         bool special = false;
         fcBufStr(&b, "");
+        r->pending = &b;   /* (freed if the reader fails) */
         while (r->i < r->n && !fcxAt(r, "-->")) {
             if (fcxAt(r, "--")) fcxFail(r, "An XML comment cannot contain '--', and '-' cannot be the last character.");
             if (fcxSpecial(r->s[r->i])) special = true;
@@ -237,7 +240,7 @@ static void fcxComment(FcXReader* r, FcXNode* parent) {
             fcxAdvance(r);
         }
         if (r->i >= r->n) {
-            fcBufFree(&b);
+            fcBufFree(&b); r->pending = NULL;
             if (special) fcxFail(r, "Unexpected end of file while parsing Comment has occurred.");
             fcxFailAt(r, line, start - lineStart + 1, "Unexpected end of file while parsing Comment has occurred.");
         }
@@ -245,9 +248,9 @@ static void fcxComment(FcXReader* r, FcXNode* parent) {
         if (parent) {
             FcXNode* node = (FcXNode*)fcAlloc(r->c, sizeof *node);
             node->kind = FCX_COMMENT;
-            node->text = fcBufDone(r->c, &b);
+            node->text = (r->pending = NULL, fcBufDone(r->c, &b));
             fcxAddNode(r, parent, node);
-        } else fcBufFree(&b);
+        } else { fcBufFree(&b); r->pending = NULL; }
     }
     (void)start;
 }
@@ -258,21 +261,22 @@ static void fcxPi(FcXReader* r, FcXNode* parent) {
     r->i += 2;
     target = fcxName(r);
     fcBufStr(&b, "");
+    r->pending = &b;   /* (freed if the reader fails) */
     fcxSkipSpace(r);
     while (r->i < r->n && !fcxAt(r, "?>")) {
         if (r->s[r->i] == '\r') { fcBufChar(&b, '\n'); fcxAdvance(r); continue; }
         fcBufUnit(&b, r->s[r->i]);
         fcxAdvance(r);
     }
-    if (r->i >= r->n) { fcBufFree(&b); fcxFail(r, "Unexpected end of file while parsing PI has occurred."); }
+    if (r->i >= r->n) { fcBufFree(&b); r->pending = NULL; fcxFail(r, "Unexpected end of file while parsing PI has occurred."); }
     r->i += 2;
     if (parent) {
         FcXNode* node = (FcXNode*)fcAlloc(r->c, sizeof *node);
         node->kind = FCX_PI;
         node->target = target;
-        node->text = fcBufDone(r->c, &b);
+        node->text = (r->pending = NULL, fcBufDone(r->c, &b));
         fcxAddNode(r, parent, node);
-    } else fcBufFree(&b);
+    } else { fcBufFree(&b); r->pending = NULL; }
 }
 
 /* an attribute value in quotes (the reader stands on the quote) */
@@ -280,19 +284,20 @@ static const char* fcxAttrValue(FcXReader* r) {
     uint16_t quote = r->s[r->i];
     FcBuf b = {0};
     fcBufStr(&b, "");
+    r->pending = &b;   /* (freed if the reader fails) */
     r->i++;
     for (;;) {
         uint16_t u;
-        if (r->i >= r->n) { fcBufFree(&b); fcxFail(r, "There is an unclosed literal string."); }
+        if (r->i >= r->n) { fcBufFree(&b); r->pending = NULL; fcxFail(r, "There is an unclosed literal string."); }
         u = r->s[r->i];
         if (u == quote) { r->i++; break; }
-        if (u == '<') { fcBufFree(&b); fcxFail(r, fcFmt(r->c, "'<', hexadecimal value 0x3C, is an invalid attribute character.")); }
+        if (u == '<') { fcBufFree(&b); r->pending = NULL; fcxFail(r, fcFmt(r->c, "'<', hexadecimal value 0x3C, is an invalid attribute character.")); }
         if (u == '&') { fcxReference(r, &b); continue; }
         if (u == '\r' || u == '\n' || u == '\t') { fcBufChar(&b, ' '); fcxAdvance(r); continue; }
         fcBufUnit(&b, u);
         r->i++;
     }
-    return fcBufDone(r->c, &b);
+    return (r->pending = NULL, fcBufDone(r->c, &b));
 }
 
 static void fcxContent(FcXReader* r, FcXNode* element);
@@ -420,6 +425,7 @@ static void fcxContent(FcXReader* r, FcXNode* e) {
                 int contentAt, contentLine, contentStart;
                 bool special = false;
                 fcBufStr(&b, "");
+                r->pending = &b;   /* (freed if the reader fails) */
                 r->i += 9;
                 contentAt = r->i; contentLine = r->line; contentStart = r->lineStart;
                 while (r->i < r->n && !fcxAt(r, "]]>")) {
@@ -428,12 +434,12 @@ static void fcxContent(FcXReader* r, FcXNode* e) {
                     fcBufUnit(&b, r->s[r->i]);
                     fcxAdvance(r);
                 }
-                if (r->i >= r->n && special) { fcBufFree(&b); fcxFail(r, "Unexpected end of file while parsing CDATA has occurred."); }
-                if (r->i >= r->n) { fcBufFree(&b); fcxFailAt(r, contentLine, contentAt - contentStart + 1, "Unexpected end of file while parsing CDATA has occurred."); }
+                if (r->i >= r->n && special) { fcBufFree(&b); r->pending = NULL; fcxFail(r, "Unexpected end of file while parsing CDATA has occurred."); }
+                if (r->i >= r->n) { fcBufFree(&b); r->pending = NULL; fcxFailAt(r, contentLine, contentAt - contentStart + 1, "Unexpected end of file while parsing CDATA has occurred."); }
                 r->i += 3;
                 node = (FcXNode*)fcAlloc(c, sizeof *node);
                 node->kind = FCX_CDATA;
-                node->text = fcBufDone(c, &b);
+                node->text = (r->pending = NULL, fcBufDone(c, &b));
                 fcxAddNode(r, e, node);
                 continue;
             }
@@ -455,6 +461,7 @@ static void fcxContent(FcXReader* r, FcXNode* e) {
             FcBuf b = {0};
             bool onlySpace = true;
             fcBufStr(&b, "");
+            r->pending = &b;   /* (freed if the reader fails) */
             while (r->i < r->n && r->s[r->i] != '<') {
                 uint16_t u = r->s[r->i];
                 if (u == '&') { fcxReference(r, &b); onlySpace = false; continue; }
@@ -464,7 +471,7 @@ static void fcxContent(FcXReader* r, FcXNode* e) {
                 fcBufUnit(&b, u);
                 fcxAdvance(r);
             }
-            if (onlySpace) { fcBufFree(&b); continue; }
+            if (onlySpace) { fcBufFree(&b); r->pending = NULL; continue; }
             {
                 FcXNode* last = e->nodes->count ? (FcXNode*)e->nodes->items[e->nodes->count - 1] : NULL;
                 if (last && last->kind == FCX_TEXT) {
@@ -472,12 +479,12 @@ static void fcxContent(FcXReader* r, FcXNode* e) {
                     FcBuf j = {0};
                     fcBufStr(&j, last->text);
                     fcBufPut(&j, b.p, b.len);
-                    fcBufFree(&b);
+                    fcBufFree(&b); r->pending = NULL;
                     last->text = fcBufDone(c, &j);
                 } else {
                     FcXNode* node = (FcXNode*)fcAlloc(c, sizeof *node);
                     node->kind = FCX_TEXT;
-                    node->text = fcBufDone(c, &b);
+                    node->text = (r->pending = NULL, fcBufDone(c, &b));
                     fcxAddNode(r, e, node);
                 }
             }

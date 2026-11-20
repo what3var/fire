@@ -28,6 +28,7 @@ typedef struct FjReader {
     jmp_buf fail;
     FjError error;
     FcList* tokens;       /* (DataModelGenerator.LineIndex) the tokens in order: FjToken* */
+    FcBuf* pending;       /* the text being read: freed when the reader fails */
 } FjReader;
 
 /* a token as Utf8JsonReader.Read gives them, for LineIndex */
@@ -44,6 +45,7 @@ static _Noreturn void fjFailAt(FjReader* r, size_t at, const char* message) {
     r->error.message = fcFmt(r->c, "%s LineNumber: %" PRId64 " | BytePositionInLine: %" PRId64 ".", message, line, (int64_t)(at - ls));
     r->error.line = line;
     r->error.pos = (int64_t)(at - ls);
+    if (r->pending) { fcBufFree(r->pending); r->pending = NULL; }
     longjmp(r->fail, 1);
 }
 
@@ -88,16 +90,17 @@ static int fjHex(unsigned char b) { return b >= '0' && b <= '9' ? b - '0' : b >=
 static const char* fjString(FjReader* r) {
     FcBuf b = {0};
     fcBufStr(&b, "");
+    r->pending = &b;   /* (freed if the reader fails) */
     r->i++;
     for (;;) {
         unsigned char ch;
-        if (r->i >= r->n) { fcBufFree(&b); fjFailAt(r, r->n, "Expected end of string, but instead reached end of data."); }
+        if (r->i >= r->n) { fcBufFree(&b); r->pending = NULL; fjFailAt(r, r->n, "Expected end of string, but instead reached end of data."); }
         ch = r->s[r->i];
         if (ch == '"') { r->i++; break; }
-        if (ch < 0x20) { fcBufFree(&b); fjFailAt(r, r->i, fcFmt(r->c, "'%s' is invalid within a JSON string. The string should be correctly escaped.", fjPrintable(r->c, ch))); }
+        if (ch < 0x20) { fcBufFree(&b); r->pending = NULL; fjFailAt(r, r->i, fcFmt(r->c, "'%s' is invalid within a JSON string. The string should be correctly escaped.", fjPrintable(r->c, ch))); }
         if (ch == '\\') {
             unsigned char e;
-            if (r->i + 1 >= r->n) { fcBufFree(&b); fjFailAt(r, r->n, "Expected end of string, but instead reached end of data."); }
+            if (r->i + 1 >= r->n) { fcBufFree(&b); r->pending = NULL; fjFailAt(r, r->n, "Expected end of string, but instead reached end of data."); }
             e = r->s[r->i + 1];
             r->i += 2;
             switch (e) {
@@ -113,9 +116,9 @@ static const char* fjString(FjReader* r) {
                     int k, v = 0;
                     for (k = 0; k < 4; k++) {
                         int h;
-                        if (r->i + (size_t)k >= r->n) { fcBufFree(&b); fjFailAt(r, r->n, "Expected end of string, but instead reached end of data."); }
+                        if (r->i + (size_t)k >= r->n) { fcBufFree(&b); r->pending = NULL; fjFailAt(r, r->n, "Expected end of string, but instead reached end of data."); }
                         h = fjHex(r->s[r->i + (size_t)k]);
-                        if (h < 0) { fcBufFree(&b); fjFailAt(r, r->i + (size_t)k, fcFmt(r->c, "'%s' is not a hex digit following '\\u' within a JSON string. The string should be correctly escaped.", fjPrintable(r->c, r->s[r->i + (size_t)k]))); }
+                        if (h < 0) { fcBufFree(&b); r->pending = NULL; fjFailAt(r, r->i + (size_t)k, fcFmt(r->c, "'%s' is not a hex digit following '\\u' within a JSON string. The string should be correctly escaped.", fjPrintable(r->c, r->s[r->i + (size_t)k]))); }
                         v = v * 16 + h;
                     }
                     r->i += 4;
@@ -123,7 +126,7 @@ static const char* fjString(FjReader* r) {
                     break;
                 }
                 default:
-                    fcBufFree(&b);
+                    fcBufFree(&b); r->pending = NULL;
                     fjFailAt(r, r->i - 1, fcFmt(r->c, "'%s' is an invalid escapable character within a JSON string. The string should be correctly escaped.", fjPrintable(r->c, e)));
             }
             continue;
@@ -143,7 +146,7 @@ static const char* fjString(FjReader* r) {
             else fcBufUnit(&b, (uint16_t)cp);
         }
     }
-    return fcBufDone(r->c, &b);
+    return (r->pending = NULL, fcBufDone(r->c, &b));
 }
 
 static bool fjDelimiter(unsigned char b) { return b == ',' || b == '}' || b == ']' || b == ' ' || b == '\n' || b == '\r' || b == '\t' || b == '/'; }
@@ -193,7 +196,7 @@ static void fjLiteral(FjReader* r, const char* lit, const char* what) {
             fcBufStr(&b, "'");
             fcBufPut(&b, (const char*)r->s + r->i, r->n - r->i);
             fcBufFmt(&b, "' is an invalid JSON literal. Expected the literal '%s'.", what);
-            fjFailAt(r, r->i + k, fcBufDone(r->c, &b));
+            fjFailAt(r, r->i + k, (r->pending = NULL, fcBufDone(r->c, &b)));
         }
     r->i += len;
 }
