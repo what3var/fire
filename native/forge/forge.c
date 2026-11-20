@@ -559,6 +559,9 @@ int main(int argc, char** argv) {
         free(list);
         return 0;
     }
+#ifndef _WIN32
+    if (argc >= 2) return tcUnknownCommand(argc, argv);   /* (CommandLineParser.Parse: "Unknown command ..." with the usage, Phase D 4) */
+#endif
     fprintf(stderr, "usage: forge-c tokens|ast|diagnostics <file.fire> | forge-c tokens|ast|diagnostics --list <files.txt> --out <folder>\n");
     return 2;
 }

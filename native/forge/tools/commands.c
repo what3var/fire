@@ -7,6 +7,8 @@
  * `run` compiles like `bytecode` and runs the program file in the VM in C (`fire run <program.fbc> -- <arguments>`; the C# forge runs it in its own VM in the
  * process - the VM in C prints the same, an exception nobody caught as the same line). What forge-c does not port says `unported: ...`. */
 
+#include "dump.c"   /* ProgramDump (`dump`) */
+
 /* ---- CommandLineParser ---- */
 typedef enum TcCommand { TC_RUN, TC_BUILD, TC_NATIVE, TC_TEST, TC_HELP, TC_BYTECODE, TC_DUMP, TC_PUBLISH } TcCommand;
 typedef struct TcOptions {
@@ -540,7 +542,14 @@ static int tcBytecode(FcCtx* c, const TcOptions* o, const char* prelude, const c
             tcPlanOptions(c, o, plan);
             break;
         }
-    if (o->command == TC_DUMP) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: dump (ProgramDump.Text - `forge-c fbc` measures the same program file)");
+    if (o->command == TC_DUMP && !plan && o->files->count == 1) {
+        /* (a program file: ProgramFile.Read - forge-c has the writer only) */
+        size_t n = 0;
+        uint8_t* head = fbReadFile((const char*)o->files->items[0], &n);
+        bool program = head && n >= 4 && memcmp(head, "FBC\x1A", 4) == 0;
+        free(head);
+        if (program) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: dump of a program file (ProgramFile.Read)");
+    }
     if (!plan) {
         const char* missing;
         plan = tcPlanOfFiles(c, o, 1, &missing);
@@ -554,12 +563,27 @@ static int tcBytecode(FcCtx* c, const TcOptions* o, const char* prelude, const c
         tcWarnings(&step);
         fcBufStr(&bytes, "");
         bytes.len = 0;
-        fcProgramFileWrite(&step, linked, true, &bytes);
-        f = fopen(o->outputFile, "wb");
-        if (!f) fcThrow(&step, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(&step, "unported: the program file cannot be written ('%s')", o->outputFile));
-        fwrite(bytes.p, 1, bytes.len, f);
-        fclose(f);
-        printf("%s (%zu bytes)\n", fcFullPath(&step, ".", o->outputFile), bytes.len);
+        if (o->command == TC_DUMP) {
+            /* ProgramDump.Text: to -o, else to the output */
+            FcBuf text = {0};
+            fcBufStr(&text, "");
+            tdProgram(&step, linked, true, &text);
+            fcOut8(&bytes, text.p);
+            fcBufFree(&text);
+            if (o->output) {
+                f = fopen(o->outputFile, "wb");
+                if (!f) fcThrow(&step, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(&step, "unported: the file cannot be written ('%s')", o->outputFile));
+                fwrite(bytes.p, 1, bytes.len, f);
+                fclose(f);
+            } else fwrite(bytes.p, 1, bytes.len, stdout);
+        } else {
+            fcProgramFileWrite(&step, linked, true, &bytes);
+            f = fopen(o->outputFile, "wb");
+            if (!f) fcThrow(&step, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(&step, "unported: the program file cannot be written ('%s')", o->outputFile));
+            fwrite(bytes.p, 1, bytes.len, f);
+            fclose(f);
+            printf("%s (%zu bytes)\n", fcFullPath(&step, ".", o->outputFile), bytes.len);
+        }
         fcBufFree(&bytes);
     } FC_CATCH(&step) {
         result = tcCompileFailed(&step);
@@ -984,6 +1008,240 @@ static int tcData(FcCtx* c, int argc, char** argv, const char* prelude, const ch
     return 0;
 }
 
+/* a command nobody took: what CommandLineParser.Parse says of it (an unknown command, or the error of a known one) with the usage */
+static int tcUnknownCommand(int argc, char** argv) {
+    FcCtx ctx;
+    TcOptions* o;
+    int r;
+    fcCtxInit(&ctx);
+    o = tcParse(&ctx, argc, argv);
+    r = o->error ? tcUsageError(o) : 2;
+    if (!o->error) fprintf(stderr, "forge-c: unported: %s\n", argv[1]);
+    fcCtxFree(&ctx);
+    return r;
+}
+
+/* ---- `forge stats <before.stats.json> <after.stats.json>` (Program.cs): NativeStats.FromJson and Compare of src/fire.Native/NativeStats.cs (commit 808e9788) ---- */
+typedef struct TsOrigin { const char* name; long long bytes; } TsOrigin;
+typedef struct TsTyping { const char* module; long long functions, bytes, withCAbi; } TsTyping;
+typedef struct TsBiggest { const char* cname; const char* what; long long bytes; } TsBiggest;
+typedef struct TsReport { const char* target; long long fileBytes; bool hasLoad; long long loadBytes; FcList* code; FcList* data; FcList* typing; FcList* biggest; } TsReport;
+/* (JsonSerializer.Deserialize<Report>: the names as written, what does not fit a JsonException - here false) */
+static bool tsLong(const FjValue* v, long long* out) {
+    double d;
+    if (!v || v->kind != FJK_NUMBER || strpbrk(v->text, ".eE")) return false;
+    d = strtod(v->text, NULL);
+    if (d < -9.2e18 || d > 9.2e18) return false;
+    *out = strtoll(v->text, NULL, 10);
+    return true;
+}
+static bool tsStr(const FjValue* v, const char** out) {
+    if (!v) { *out = NULL; return true; }
+    if (v->kind == FJK_NULL) { *out = NULL; return true; }
+    if (v->kind != FJK_STRING) return false;
+    *out = v->text;
+    return true;
+}
+static bool tsList(FcCtx* c, const FjValue* v, int kind, FcList** out) {
+    int i;
+    *out = NULL;
+    if (!v || v->kind == FJK_NULL) return true;
+    if (v->kind != FJK_ARRAY) return false;
+    *out = fcListNew(c);
+    for (i = 0; i < v->items->count; i++) {
+        const FjValue* x = (const FjValue*)v->items->items[i];
+        long long n = 0;
+        if (x->kind == FJK_NULL) { fcListAdd(c, *out, NULL); continue; }
+        if (x->kind != FJK_OBJECT) return false;
+        if (kind == 0) {
+            TsOrigin* o = (TsOrigin*)fcAlloc(c, sizeof *o);
+            if (!tsStr(fjProp(x, "Name"), &o->name) || (fjProp(x, "Bytes") && !tsLong(fjProp(x, "Bytes"), &o->bytes)) || (fjProp(x, "Functions") && !tsLong(fjProp(x, "Functions"), &n))) return false;
+            fcListAdd(c, *out, o);
+        } else if (kind == 1) {
+            TsTyping* t = (TsTyping*)fcAlloc(c, sizeof *t);
+            static const char* const ints[] = { "Params", "CParams", "ValueLocals", "CLocals", "StackSlots", "Shadows" };
+            int k;
+            if (!tsStr(fjProp(x, "Module"), &t->module) || (fjProp(x, "Functions") && !tsLong(fjProp(x, "Functions"), &t->functions))
+                || (fjProp(x, "Bytes") && !tsLong(fjProp(x, "Bytes"), &t->bytes)) || (fjProp(x, "WithCAbi") && !tsLong(fjProp(x, "WithCAbi"), &t->withCAbi))) return false;
+            for (k = 0; k < 6; k++) if (fjProp(x, ints[k]) && !tsLong(fjProp(x, ints[k]), &n)) return false;
+            fcListAdd(c, *out, t);
+        } else {
+            TsBiggest* b = (TsBiggest*)fcAlloc(c, sizeof *b);
+            const char* origin;
+            if (!tsStr(fjProp(x, "CName"), &b->cname) || !tsStr(fjProp(x, "What"), &b->what) || !tsStr(fjProp(x, "Origin"), &origin) || (fjProp(x, "Bytes") && !tsLong(fjProp(x, "Bytes"), &b->bytes))) return false;
+            fcListAdd(c, *out, b);
+        }
+    }
+    return true;
+}
+/* FromJson: NULL when the text is no report (JsonException, or `null`) */
+static TsReport* tsFromJson(FcCtx* c, const char* text) {
+    FjError error;
+    FjValue* v = fjParse(c, text, &error, NULL);
+    TsReport* r;
+    const FjValue* x;
+    if (!v || v->kind != FJK_OBJECT) return NULL;
+    r = (TsReport*)fcAlloc(c, sizeof *r);
+    if (!tsStr(fjProp(v, "Target"), &r->target)) return NULL;
+    if ((x = fjProp(v, "FileBytes")) != NULL && !tsLong(x, &r->fileBytes)) return NULL;
+    if ((x = fjProp(v, "LoadBytes")) != NULL && x->kind != FJK_NULL) { if (!tsLong(x, &r->loadBytes)) return NULL; r->hasLoad = true; }
+    if (!tsList(c, fjProp(v, "Code"), 0, &r->code) || !tsList(c, fjProp(v, "Data"), 0, &r->data) || !tsList(c, fjProp(v, "Typing"), 1, &r->typing) || !tsList(c, fjProp(v, "Biggest"), 2, &r->biggest)) return NULL;
+    return r;
+}
+/* a number rounded half away from zero to `decimals` places, from its exact decimal digits (the custom formats of .NET) */
+static const char* tsRound(FcCtx* c, double v, int decimals) {
+    char exact[400];
+    char* dot;
+    size_t n, keep, i;
+    bool up;
+    FcBuf b = {0};
+    snprintf(exact, sizeof exact, "%.60f", fabs(v));
+    dot = strchr(exact, '.');
+    keep = (size_t)(dot - exact) + (decimals > 0 ? 1 + (size_t)decimals : 0);
+    up = exact[(size_t)(dot - exact) + 1 + (size_t)decimals] >= '5';
+    exact[keep] = 0;
+    if (decimals == 0) exact[dot - exact] = 0;
+    n = strlen(exact);
+    if (up) {
+        for (i = n; i-- > 0;) {
+            if (exact[i] == '.') continue;
+            if (exact[i] == '9') { exact[i] = '0'; if (i == 0) { fcBufChar(&b, '1'); break; } continue; }
+            exact[i]++;
+            break;
+        }
+    }
+    fcBufStr(&b, exact);
+    return fcBufDone(c, &b);
+}
+static const char* tsK(FcCtx* c, long long b) {
+    if (llabs(b) >= 10240) return fcFmt(c, "%s%s KB", b < 0 && strcmp(tsRound(c, b / 1024.0, 0), "0") != 0 ? "-" : "", tsRound(c, b / 1024.0, 0));
+    return fcFmt(c, "%lld B", b);
+}
+static const char* tsD(FcCtx* c, long long a, long long b) {
+    double p;
+    if (b == a) return "=";
+    if (a == 0) return fcFmt(c, "%s%s", b > a ? "+" : "-", tsK(c, llabs(b - a)));
+    p = 100.0 * (double)(b - a) / (double)a;
+    return fcFmt(c, "%s%s (%s%s%%)", b > a ? "+" : "-", tsK(c, llabs(b - a)), p < 0 ? "-" : "+", tsRound(c, p, 1));
+}
+static long long tsSum(const FcList* l) { long long s = 0; int i; for (i = 0; l && i < l->count; i++) if (l->items[i]) s += ((TsOrigin*)l->items[i])->bytes; return s; }
+static void tsTable(FcCtx* c, FcBuf* sb, const char* title, const FcList* a, const FcList* b) {
+    FcList* names = fcListNew(c);
+    long long* xs;
+    long long* ys;
+    int* order;
+    int i, k, n;
+    for (k = 0; k < 2; k++) {
+        const FcList* l = k == 0 ? a : b;
+        for (i = 0; l && i < l->count; i++) { const char* nm = ((TsOrigin*)l->items[i])->name; int m; bool have = false; for (m = 0; m < names->count; m++) if (fcSameText((const char*)names->items[m], nm)) have = true; if (!have) fcListAdd(c, names, (void*)nm); }
+    }
+    n = names->count;
+    xs = (long long*)fcAlloc(c, sizeof(long long) * (size_t)(n + 1)); ys = (long long*)fcAlloc(c, sizeof(long long) * (size_t)(n + 1)); order = (int*)fcAlloc(c, sizeof(int) * (size_t)(n + 1));
+    for (i = 0; i < n; i++) {
+        const char* nm = (const char*)names->items[i];
+        int m;
+        xs[i] = ys[i] = 0;
+        for (m = 0; a && m < a->count; m++) if (fcSameText(((TsOrigin*)a->items[m])->name, nm)) { xs[i] = ((TsOrigin*)a->items[m])->bytes; break; }
+        for (m = 0; b && m < b->count; m++) if (fcSameText(((TsOrigin*)b->items[m])->name, nm)) { ys[i] = ((TsOrigin*)b->items[m])->bytes; break; }
+        order[i] = i;
+    }
+    /* (OrderByDescending |B - A|, then B: stable) */
+    for (i = 1; i < n; i++) {
+        int x = order[i], j = i;
+        while (j > 0) {
+            int y = order[j - 1];
+            long long dx = llabs(ys[x] - xs[x]), dy = llabs(ys[y] - xs[y]);
+            if (dx > dy || (dx == dy && ys[x] > ys[y])) { order[j] = y; j--; } else break;
+        }
+        order[j] = x;
+    }
+    fcBufFmt(sb, "  %s %s -> %s  %s:\n", title, tsK(c, tsSum(a)), tsK(c, tsSum(b)), tsD(c, tsSum(a), tsSum(b)));
+    for (i = 0; i < n; i++) { int r = order[i]; fcBufFmt(sb, "    %9s -> %9s  %-18s  %s\n", tsK(c, xs[r]), tsK(c, ys[r]), tsD(c, xs[r], ys[r]), (const char*)names->items[r]); }
+}
+static const char* tsCompare(FcCtx* c, const TsReport* before, const TsReport* after) {
+    FcBuf sb = {0};
+    FcList* modules = fcListNew(c);
+    FcList* keys = fcListNew(c);
+    int i, k, n, m;
+    fcBufStr(&sb, "");
+    fcBufFmt(&sb, "Comparison (%s -> %s): program %s -> %s  %s\n", before->target ? before->target : "", after->target ? after->target : "", tsK(c, before->fileBytes), tsK(c, after->fileBytes), tsD(c, before->fileBytes, after->fileBytes));
+    if (before->hasLoad && after->hasLoad) fcBufFmt(&sb, "  loaded %s -> %s  %s\n", tsK(c, before->loadBytes), tsK(c, after->loadBytes), tsD(c, before->loadBytes, after->loadBytes));
+    tsTable(c, &sb, "code", before->code, after->code);
+    if ((before->data ? before->data->count : 0) + (after->data ? after->data->count : 0) > 0) tsTable(c, &sb, "data", before->data, after->data);
+    for (k = 0; k < 2; k++) {
+        const FcList* l = k == 0 ? before->typing : after->typing;
+        for (i = 0; l && i < l->count; i++) { const char* nm = ((TsTyping*)l->items[i])->module; bool have = false; for (m = 0; m < modules->count; m++) if (fcSameText((const char*)modules->items[m], nm)) have = true; if (!have) fcListAdd(c, modules, (void*)nm); }
+    }
+    if (modules->count > 0) {
+        fcBufStr(&sb, "  fire functions by module (functions, bytes, C interface):\n");
+        for (i = 0; i < modules->count; i++) {
+            const char* nm = (const char*)modules->items[i];
+            const TsTyping* a = NULL;
+            const TsTyping* b = NULL;
+            for (m = 0; before->typing && m < before->typing->count && !a; m++) if (fcSameText(((TsTyping*)before->typing->items[m])->module, nm)) a = (TsTyping*)before->typing->items[m];
+            for (m = 0; after->typing && m < after->typing->count && !b; m++) if (fcSameText(((TsTyping*)after->typing->items[m])->module, nm)) b = (TsTyping*)after->typing->items[m];
+            fcBufFmt(&sb, "    %-18s %4lld -> %-4lld %8s -> %-8s %-18s C interface %lld -> %lld\n", nm ? nm : "", a ? a->functions : 0, b ? b->functions : 0, tsK(c, a ? a->bytes : 0), tsK(c, b ? b->bytes : 0),
+                tsD(c, a ? a->bytes : 0, b ? b->bytes : 0), a ? a->withCAbi : 0, b ? b->withCAbi : 0);
+        }
+    }
+    /* (the functions: by their C name - the biggest of each build; the last of a name wins) */
+    for (k = 0; k < 2; k++) {
+        const FcList* l = k == 0 ? before->biggest : after->biggest;
+        for (i = 0; l && i < l->count; i++) { const char* nm = ((TsBiggest*)l->items[i])->cname; bool have = false; for (m = 0; m < keys->count; m++) if (fcSameText((const char*)keys->items[m], nm)) have = true; if (!have) fcListAdd(c, keys, (void*)nm); }
+    }
+    {
+        n = keys->count;
+        long long* as = (long long*)fcAlloc(c, sizeof(long long) * (size_t)(n + 1));
+        long long* bs = (long long*)fcAlloc(c, sizeof(long long) * (size_t)(n + 1));
+        const char** whats = (const char**)fcAlloc(c, sizeof(char*) * (size_t)(n + 1));
+        int* order = (int*)fcAlloc(c, sizeof(int) * (size_t)(n + 1));
+        int count = 0;
+        for (i = 0; i < n; i++) {
+            const char* nm = (const char*)keys->items[i];
+            const TsBiggest* x = NULL;
+            const TsBiggest* y = NULL;
+            for (m = 0; before->biggest && m < before->biggest->count; m++) if (fcSameText(((TsBiggest*)before->biggest->items[m])->cname, nm)) x = (TsBiggest*)before->biggest->items[m];
+            for (m = 0; after->biggest && m < after->biggest->count; m++) if (fcSameText(((TsBiggest*)after->biggest->items[m])->cname, nm)) y = (TsBiggest*)after->biggest->items[m];
+            as[i] = x ? x->bytes : 0; bs[i] = y ? y->bytes : 0; whats[i] = y ? y->what : x->what;
+            if (as[i] != bs[i]) order[count++] = i;
+        }
+        for (i = 1; i < count; i++) {
+            int x = order[i], j = i;
+            while (j > 0 && llabs(bs[x] - as[x]) > llabs(bs[order[j - 1]] - as[order[j - 1]])) { order[j] = order[j - 1]; j--; }
+            order[j] = x;
+        }
+        if (count > 15) count = 15;
+        if (count > 0) {
+            fcBufStr(&sb, "  functions that changed most (of the biggest of each build):\n");
+            for (i = 0; i < count; i++) {
+                int r = order[i];
+                fcBufFmt(&sb, "    %9s -> %9s  %-18s  %s%s%s\n", tsK(c, as[r]), tsK(c, bs[r]), tsD(c, as[r], bs[r]), (const char*)keys->items[r], whats[r] && *whats[r] ? " " : "", whats[r] ? whats[r] : "");
+            }
+        }
+    }
+    return fcBufDone(c, &sb);
+}
+static int tcStats(FcCtx* c, int argc, char** argv) {
+    TsReport* r[2];
+    int i;
+    if (argc != 4) { fprintf(stderr, "usage: stats <before.stats.json> <after.stats.json>  (the reports `build ... --stats` writes next to a program)\n"); return 2; }
+    for (i = 0; i < 2; i++) {
+        FcU16 t = {0};
+        if (!nbFileExists(argv[2 + i]) || !fcReadText(argv[2 + i], &t)) { fprintf(stderr, "Could not find file '%s'.\n", fcFullPath(c, ".", argv[2 + i])); return 1; }
+        r[i] = tsFromJson(c, fc8FromU16(c, t.p, t.len));
+        fcU16Free(&t);
+    }
+    for (i = 0; i < 2; i++) if (!r[i]) { fprintf(stderr, "%s: not a report of `--stats`\n", argv[2 + i]); return 1; }
+    {
+        FcBuf u = {0};
+        fcBufStr(&u, "");
+        fcOut8(&u, tsCompare(c, r[0], r[1]));
+        fwrite(u.p, 1, u.len, stdout);
+        fcBufFree(&u);
+    }
+    return 0;
+}
+
 static int tcReportMain(int argc, char** argv, const char* prelude, const char* storeRoot);   /* (tools/report.c) */
 static bool tcWantsReport(int argc, char** argv);
 
@@ -1001,11 +1259,7 @@ static int tcMain(int argc, char** argv, const char* prelude, const char* storeR
     if (tcWantsReport(argc, argv)) return tcReportMain(argc, argv, prelude, storeRoot);
     if (streq0(cmd, "tables") && argc == 3) { fprintf(stderr, "forge-c: unported: tables (Tables.Write: the tables of native/tables are written from the C# definitions; forge-c reads them)\n"); return 2; }
     if (streq0(cmd, "prebuild-standard") && argc >= 4) { fprintf(stderr, "forge-c: unported: prebuild-standard (StandardSources.Prebuild; `forge-c pkglib --all` builds the libraries of the store)\n"); return 2; }
-    if (streq0(cmd, "stats")) {
-        if (argc != 4) { fprintf(stderr, "usage: stats <before.stats.json> <after.stats.json>  (the reports `build ... --stats` writes next to a program)\n"); return 2; }
-        fprintf(stderr, "forge-c: unported: stats (NativeStats.FromJson, Compare - with --stats, Phase D 2)\n");
-        return 2;
-    }
+    if (streq0(cmd, "stats")) { fcCtxInit(c); result = tcStats(c, argc, argv); fcCtxFree(c); return result; }
     if (fcAsciiIEq(cmd, "data")) {
         fcCtxInit(c);
         FC_TRY(c) {
