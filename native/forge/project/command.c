@@ -250,7 +250,21 @@ typedef struct PjBuildArgs {
     int mode, floatWidth, stripping, optimize, quick, split;
     bool keepAll, keep, stats, all, check;
     FcList* defines;
+    /* (Phase D 4, tools/commands.c) -i, --debug-info (NativeLaunch.DebugToolchain); planHook: the overlays, -D and --types in each plan of the command */
+    int intWidth;
+    bool debugInfo;
+    void (*planHook)(FcCtx* c, const void* state, PjPlan* plan);
+    const void* hookState;
 } PjBuildArgs;
+/* NativeLaunch.DebugToolchain: a copy (through JSON: without MachineChoice) without optimisation, with debug information, not stripped */
+static NbToolchain* pjDebugToolchain(FcCtx* c, const NbToolchain* t) {
+    NbToolchain* copy = (NbToolchain*)fcAlloc(c, sizeof *copy);
+    *copy = *t;
+    copy->optimization = streq0(nbKind(t), "msvc") ? "/Od /Zi" : "-O0 -g";
+    copy->strip = 0;
+    copy->machineChoice = false;
+    return copy;
+}
 static NbConfig* pjConfigFor(FcCtx* c, const PjBuildArgs* a, const char* projectFile) {
     NbConfig* config;
     if (a->configFile) config = nbConfigLoad(c, a->configFile);
@@ -315,7 +329,7 @@ static int pjBuildVmProgram(FcCtx* c, PjOut* po, const PjBuildArgs* a, PjPlan* p
     full = pjFull(c, program, ".");
     nbMkdirs(c, fcDirectoryName(c, full));
     memset(&in, 0, sizeof in);
-    in.plan = plan; in.prelude = prelude; in.storeRoot = storeRoot; in.modeOverride = a->mode; in.floatWidthOverride = a->floatWidth;
+    in.plan = plan; in.prelude = prelude; in.storeRoot = storeRoot; in.modeOverride = a->mode; in.floatWidthOverride = a->floatWidth; in.intWidthOverride = a->intWidth;
     pjStepInit(&step);
     FC_TRY(&step) {
         FcStore* store = NULL;
@@ -355,6 +369,7 @@ static int pjBuildProgram(FcCtx* c, PjOut* po, const PjBuildArgs* a, PjPlan* pla
     if (!streq0(engine, "native")) return pjBuildVmProgram(c, po, a, plan, prelude, storeRoot, output, out, err, report);
     target = nbResolveTarget(c, config, a->targetName ? a->targetName : plan->settings->target);
     toolchain = nbResolveToolchain(c, config, target, a->toolchainName ? a->toolchainName : plan->settings->toolchain, NB_PURPOSE_BUILD);
+    if (a->debugInfo) toolchain = pjDebugToolchain(c, toolchain);
     files = streq0(nbKind(toolchain), "files");
     if (!a->linkage && plan->settings->linkage) config->linkage = plan->settings->linkage;
     if (report && files) output = NULL;
@@ -369,7 +384,7 @@ static int pjBuildProgram(FcCtx* c, PjOut* po, const PjBuildArgs* a, PjPlan* pla
     nbMkdirs(c, files ? pjFull(c, to, ".") : fcDirectoryName(c, pjFull(c, to, ".")));
     if (config->stats) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: --stats");
     memset(&b, 0, sizeof b);
-    b.prelude = prelude; b.storeRoot = storeRoot; b.mode = a->mode; b.floatWidth = a->floatWidth; b.keepSources = a->keep;
+    b.prelude = prelude; b.storeRoot = storeRoot; b.mode = a->mode; b.floatWidth = a->floatWidth; b.intWidth = a->intWidth; b.keepSources = a->keep;
     b.link = pjNbLink;
     b.overlay = pjNbOverlay;
     b.project = plan;
@@ -463,6 +478,7 @@ static int pjBuildAll(FcCtx* c, PjOut* po, const PjBuildArgs* a, PjWorkspace* w,
         }
         FC_TRY(c) {
             plan = pjPlanOrThrow(w, project);
+            if (a->planHook) a->planHook(c, a->hookState, plan);
         } FC_CATCH(c) {
             if (c->err.kind != FC_ERR_PROJECT) fcRethrow(c);
             failure = c->err.message;
@@ -555,6 +571,7 @@ static int pjBuildMain(PjBuildArgs* a, const char* prelude, const char* storeRoo
                 w = pjWorkspaceOpen(c, a->file);
                 project = pjSelectProject(w, a->projectName);
                 plan = pjPlanOrThrow(w, project);
+                if (a->planHook) a->planHook(c, a->hookState, plan);
             } FC_CATCH(c) {
                 if (c->err.kind != FC_ERR_PROJECT) fcRethrow(c);
                 fcBufFmt(&err, "%s\n", c->err.message);

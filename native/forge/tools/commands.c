@@ -302,6 +302,8 @@ static void tcApplyOverlays(FcCtx* c, const TcOptions* o, PjPlan* plan) {
         }
     }
 }
+/* the name of a GlobalJobsMode (--global-jobs into the settings of a plan) */
+static const char* tcGlobalJobsName(int mode) { return mode == GJM_Sync ? "sync" : mode == GJM_Sleep ? "sleep" : "safepoints"; }
 /* a plan without a project: the sources of the command line (files 1: named by their file names, from their folders; 2: texts from baseFolder) with the
  * defines and the type checking of the command line */
 static PjPlan* tcFilesPlan(FcCtx* c, const TcOptions* o, FcList* paths, FcList* texts, int files, const char* baseFolder) {
@@ -314,6 +316,7 @@ static PjPlan* tcFilesPlan(FcCtx* c, const TcOptions* o, FcList* paths, FcList* 
     if (!getcwd(cwd, sizeof cwd)) strcpy(cwd, ".");
     settings->defines = fcListCopy(c, o->defines);
     if (o->types == 1) settings->typeChecking = "strict";
+    if (o->globalJobs >= 0) settings->globalJobs = tcGlobalJobsName(o->globalJobs);
     project->name = "program"; project->type = PJ_EXE; project->settings = settings; project->directory = fcStr(c, cwd); project->serializable = -1; project->syncGitignore = -1;
     project->filePath = paths->count > 0 ? fcFullPath(c, ".", (const char*)paths->items[0]) : fcStr(c, cwd);
     loaded->project = project;
@@ -332,16 +335,33 @@ static PjPlan* tcFilesPlan(FcCtx* c, const TcOptions* o, FcList* paths, FcList* 
     plan->baseFolder = baseFolder;
     return plan;
 }
+/* the files as texts without paths (RuntimeSession.Build of `forge test`: from the current folder, unnamed) - each File.ReadAllText */
+static PjPlan* tcTextsPlan(FcCtx* c, FcList* paths, FcList* defines, int types) {
+    TcOptions o;
+    FcList* texts = fcListNew(c);
+    int i;
+    memset(&o, 0, sizeof o);
+    o.defines = defines ? defines : fcListNew(c);
+    o.types = types;
+    for (i = 0; i < paths->count; i++) {
+        FcU16 t = {0};
+        if (!fcReadText((const char*)paths->items[i], &t)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "cannot read '%s'", (const char*)paths->items[i]));
+        fcListAdd(c, texts, (void*)fc8FromU16(c, t.p, t.len));
+        fcU16Free(&t);
+    }
+    return tcFilesPlan(c, &o, paths, texts, 2, NULL);
+}
 /* a project's plan with the defines and the type checking of the command line (Linker.Defines with the project's, ProcessDefaultTypeChecking before its own) */
 static void tcPlanOptions(FcCtx* c, const TcOptions* o, PjPlan* plan) {
     PjSettings* s;
     int i;
-    if (o->defines->count == 0 && o->types < 0) return;
+    if (o->defines->count == 0 && o->types < 0 && o->globalJobs < 0) return;
     s = (PjSettings*)fcAlloc(c, sizeof *s);
     *s = *plan->settings;
     s->defines = s->defines ? fcListCopy(c, s->defines) : fcListNew(c);
     for (i = 0; i < o->defines->count; i++) fcListAdd(c, s->defines, o->defines->items[i]);
     if (o->types >= 0) s->typeChecking = o->types == 1 ? "strict" : "lax";
+    if (o->globalJobs >= 0) s->globalJobs = tcGlobalJobsName(o->globalJobs);   /* (Linker.ProcessGlobalJobs before the project's globalJobs) */
     plan->settings = s;
 }
 /* the names of the files (Path.GetFileName: the text of `start`, the title of a compile) */
@@ -548,6 +568,202 @@ static int tcBytecode(FcCtx* c, const TcOptions* o, const char* prelude, const c
     return result;
 }
 
+/* `test`: the configuration of --engine native (--config or the nearest fire.native.json, with the switches of the command line: KeepAll) */
+static NbConfig* tcTestConfig(FcCtx* c, const TrArgs* a) {
+    const TcOptions* o = (const TcOptions*)a->options;
+    PjBuildArgs b;
+    if (o->configFile && !nbFileExists(o->configFile)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: Configuration not found: %s", o->configFile));
+    memset(&b, 0, sizeof b);
+    b.configFile = o->configFile; b.stripping = o->stripping; b.optimize = o->optimize; b.quick = o->quick; b.split = o->split; b.linkage = o->linkage;
+    b.keepAll = o->keepAll; b.stats = o->stats;
+    return pjConfigFor(c, &b, a->file);
+}
+static int tcTest(const TcOptions* o, const char* prelude, const char* storeRoot) {
+    TrArgs a;
+    memset(&a, 0, sizeof a);
+    a.files = o->files; a.projectName = o->projectName; a.engine = o->engine; a.filter = o->testFilter; a.toolchainName = o->toolchainName; a.configFile = o->configFile;
+    a.mode = o->mode; a.keepAll = o->keepAll; a.defines = o->defines; a.floatWidth = o->floatWidth; a.intWidth = o->intWidth; a.types = o->types;
+    a.config = tcTestConfig; a.options = o;
+    return trTestRun(&a, prelude, storeRoot);
+}
+
+/* PjBuildArgs of the options (the configuration of a native build: KeepAll, ConfigFor; the builds of project/command.c) */
+static void tcPlanHook(FcCtx* c, const void* state, PjPlan* plan) { tcApplyOverlays(c, (const TcOptions*)state, plan); tcPlanOptions(c, (const TcOptions*)state, plan); }
+static PjBuildArgs tcArgs(const TcOptions* o) {
+    PjBuildArgs a;
+    memset(&a, 0, sizeof a);
+    a.file = o->files->count > 0 ? (const char*)o->files->items[0] : NULL;
+    a.output = o->output; a.targetName = o->targetName; a.toolchainName = o->toolchainName; a.configFile = o->configFile; a.linkage = o->linkage; a.engine = o->engine;
+    a.projectName = o->projectName; a.mode = o->mode; a.floatWidth = o->floatWidth; a.stripping = o->stripping; a.optimize = o->optimize; a.quick = o->quick; a.split = o->split;
+    a.keepAll = o->keepAll; a.keep = o->keep; a.stats = o->stats; a.all = o->all; a.check = o->checkOnly; a.defines = o->defines;
+    a.intWidth = o->intWidth; a.debugInfo = o->debugInfo; a.planHook = tcPlanHook; a.hookState = o;
+    return a;
+}
+/* `build <files>` (CommandLine.Build, NativeBuild) with what the build of one file (build/command.c) does not take: several files, -D, -i, --overlay,
+ * --debug-info, --global-jobs - the plan of the files */
+static int tcBuildFiles(FcCtx* c, const TcOptions* o, const char* prelude, const char* storeRoot) {
+    FcBuf out = {0}, err = {0};
+    volatile int result = 0;
+    PjPlan* plan;
+    const char* missing;
+    int i;
+    for (i = 0; i < o->files->count; i++) if (!tcReadSource(c, o, (const char*)o->files->items[i])) { fprintf(stderr, "File not found: %s\n", (const char*)o->files->items[i]); return 2; }
+    plan = tcPlanOfFiles(c, o, 1, &missing);
+    fcBufStr(&out, "");
+    fcBufStr(&err, "");
+    c->collecting = true;
+    FC_TRY(c) {
+        PjBuildArgs a = tcArgs(o);
+        NbConfig* config;
+        const char* engine;
+        if (o->configFile && !nbFileExists(o->configFile)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: Configuration not found: %s", o->configFile));
+        config = pjConfigFor(c, &a, (const char*)o->files->items[0]);
+        engine = pjChooseEngine(c, o->engine, config->engine, o->targetName, config, &err);
+        if (!engine) result = 2;
+        else if (streq0(engine, "native")) {
+            const FgTarget* target = nbResolveTarget(c, config, o->targetName);
+            NbToolchain* toolchain = nbResolveToolchain(c, config, target, o->toolchainName, NB_PURPOSE_BUILD);
+            NbBuild b;
+            NbResult r;
+            if (o->debugInfo) toolchain = pjDebugToolchain(c, toolchain);
+            if (config->stats) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: --stats");
+            memset(&b, 0, sizeof b);
+            b.prelude = prelude; b.storeRoot = storeRoot; b.mode = o->mode; b.floatWidth = o->floatWidth; b.intWidth = o->intWidth; b.keepSources = o->keep;
+            b.link = pjNbLink; b.project = plan;
+            r = nbBuild(c, &b, config, target, toolchain, o->output ? o->output : nbDefaultOutput(c, target));
+            c->collecting = false;
+            for (i = 0; i < c->diags->count; i++) fcDiagLogLine(&err, (const FcDiagnostic*)c->diags->items[i]);
+            if (*r.log) { fcOut8(&out, r.log); if (!fcEndsWith(r.log, "\n")) fcBufChar(&out, '\n'); }
+            if (!r.ok) {
+                if (r.error) fcBufFmt(&err, "error %s: %s\n", strstr(r.error, "was not found") ? "E7003" : "E7002", r.error);
+                fcBufFmt(&out, "The native build for %s failed.\n", target->name);
+                result = 1;
+            } else fcBufFmt(&out, "%s (native, target %s, toolchain %s)\n", r.output, target->name, nbKind(toolchain));
+        } else {
+            const char* full = fcFullPath(c, ".", o->outputFile);
+            FcStore* store = NULL;
+            FcNatives* registry = NULL;
+            FcLinked* linked;
+            FcList* libraries;
+            const char* error = NULL;
+            nvRefuseDotnet(c);
+            nvStoreRoot = storeRoot;
+            linked = tcLinkVm(c, o, plan, prelude, storeRoot, &store, &registry);
+            c->collecting = false;
+            for (i = 0; i < c->diags->count; i++) fcDiagLogLine(&err, (const FcDiagnostic*)c->diags->items[i]);
+            libraries = nvEnsureLibraries(c, linked, store, registry, &err);
+            if (!nvPack(c, linked, libraries, o->outputFile, &err, &error)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "vm: %s", error));
+            fcBufFmt(&out, "%s (%lld bytes)\n", full, nvFileLength(full));
+        }
+    } FC_CATCH(c) {
+        if (c->collecting) { c->collecting = false; for (i = 0; i < c->diags->count; i++) fcDiagLogLine(&err, (const FcDiagnostic*)c->diags->items[i]); }
+        if (c->err.kind == FC_ERR_NATIVE) { fcBufStr(&err, "error E7001: Not supported by the native backend yet: "); fcOut8(&err, c->err.message); fcBufChar(&err, '\n'); result = 1; }
+        else if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "native-config: ")) { fcBufFmt(&err, "%s\n", c->err.message + 15); result = 2; }
+        else if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "unported: ")) { fcBufFmt(&err, "forge-c: %s\n", c->err.message); result = 2; }
+        else if (c->err.kind == FC_ERR_PACKAGE) { fcBufFmt(&err, "%s\n", c->err.message); result = 1; }
+        else if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "vm: ")) { fcBufFmt(&err, "%s\n", c->err.message + 4); result = 1; }
+        else if (pjIsCompileErrorKind(c->err.kind)) { pjDescribeErrors(c, &err); result = 1; }
+        else { fcBufFmt(&err, "forge-c: internal: %s\n", c->err.message ? c->err.message : "?"); result = 2; }
+    } FC_END_TRY;
+    fwrite(err.p, 1, err.len, stderr);
+    fwrite(out.p, 1, out.len, stdout);
+    fcBufFree(&out);
+    fcBufFree(&err);
+    return result;
+}
+/* `build` with what the builds of build/command.c and project/command.c do not parse: the plan of the files here, a project there with its hook */
+static int tcBuild(FcCtx* c, const TcOptions* o, const char* prelude, const char* storeRoot) {
+    if (o->host) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: --host (linkage plugin)");
+    if (o->files->count == 1 && tcIsProjectFile((const char*)o->files->items[0])) {
+        PjBuildArgs a = tcArgs(o);
+        return pjBuildMain(&a, prelude, storeRoot);
+    }
+    if (o->all) { fprintf(stderr, "--all builds a solution or a project file.\n"); return 2; }
+    return tcBuildFiles(c, o, prelude, storeRoot);
+}
+
+/* the length of an fc8 text in UTF-16 units (string.Length) */
+static size_t tcLength16(const char* s) { const unsigned char* p = (const unsigned char*)s; size_t n = 0; while (*p) { fc8Next(&p); n++; } return n; }
+/* `native <files> [-o out.c]` (Native): the C of the program for the target - NativeBuilder.GenerateLinked with the toolchain "files" - written next to
+ * fire_rt.h (WriteFiles), and how to compile it */
+static int tcNative(FcCtx* c, const TcOptions* o, const char* prelude, const char* storeRoot) {
+    FcCtx step;
+    volatile int result = 0;
+    const char* file = (const char*)o->files->items[0];
+    const char* missing;
+    PjPlan* plan;
+    int i;
+    for (i = 0; i < o->files->count; i++) if (!tcReadSource(c, o, (const char*)o->files->items[i])) { fprintf(stderr, "File not found: %s\n", (const char*)o->files->items[i]); return 2; }
+    if (o->files->count == 1 && tcIsProjectFile(file)) {
+        /* (RunProject: the plan first, then the answer) */
+        FC_TRY(c) {
+            PjWorkspace* w = pjWorkspaceOpen(c, file);
+            pjPlanOrThrow(w, pjSelectProject(w, o->projectName));
+            fprintf(stderr, "`native` takes source files; build a project with `build` (set \"engine\": \"native\" in the project or use --engine native).\n");
+        } FC_CATCH(c) {
+            if (c->err.kind != FC_ERR_PROJECT) fcRethrow(c);
+            fprintf(stderr, "%s\n", c->err.message);
+        } FC_END_TRY;
+        return 2;
+    }
+    plan = tcPlanOfFiles(c, o, 1, &missing);
+    fcCtxInit(&step);
+    step.collecting = true;
+    FC_TRY(&step) {
+        PjBuildArgs a = tcArgs(o);
+        NbConfig* config;
+        const FgTarget* target;
+        PjLinkIn in;
+        FgOptions fo;
+        FcNatives* registry = NULL;
+        FcLinked* linked;
+        FcStore store;
+        FgSources program;
+        const char* full = fcFullPath(&step, ".", o->outputFile);
+        const char* dir = fcDirectoryName(&step, full);
+        const char* natives;
+        FcBuf extra = {0};
+        size_t length;
+        if (o->configFile && !nbFileExists(o->configFile)) fcThrow(&step, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(&step, "native-config: Configuration not found: %s", o->configFile));
+        config = pjConfigFor(&step, &a, file);
+        target = nbResolveTarget(&step, config, o->targetName);
+        memset(&fo, 0, sizeof fo);
+        fo.target = target; fo.mode = o->mode; fo.intWidth = o->intWidth; fo.floatWidth = o->floatWidth; fo.stripping = nbStrippingOf(config); fo.optimize = nbOptimizeOf(config, target);
+        fo.globalJobs = config->globalJobs ? nbGlobalJobsParse(&step, config->globalJobs) + 1 : 0;
+        memset(&in, 0, sizeof in);
+        in.plan = plan; in.prelude = prelude; in.storeRoot = storeRoot; in.o = &fo; in.toolchainKind = "files"; in.modeOverride = -1;
+        linked = pjLink(&step, &in, &registry);
+        tcWarnings(&step);
+        memset(&store, 0, sizeof store);
+        store.root = storeRoot;
+        program = fgGenerateSources(&step, linked, registry->names, target, fo.stripping, false, config->split, "files", &store);
+        nbMkdirs(&step, dir);
+        nbWriteFiles(&step, &store, fcDictNew(&step, FC_KEY_PTR), dir, program.program, target, fcBaseName(full), config->path ? fcDirectoryName(&step, config->path) : NULL, program.natives, program.units);
+        if (program.units) {
+            FcList* names = fcListNew(&step);
+            for (i = 2; i < program.units->count; i++) fcListAdd(&step, names, (void*)((FgSplitUnit*)program.units->items[i])->name);
+            printf("the program in %d translation units (docs/spec/NATIVE_SPLIT.md): %s next to it, with %s\n", program.units->count - 1, fgJoin(&step, names, ", "), ((FgSplitUnit*)program.units->items[0])->name);
+        }
+        natives = program.natives ? nbCombine(&step, dir, "fire_natives.cpp") : "";
+        fcBufStr(&extra, "");
+        for (i = 0; i < target->compileArgCount; i++) fcBufFmt(&extra, "%s%s", i ? " " : "", target->compileArgs[i]);
+        length = tcLength16(program.program);
+        if (target->isEmbedded || target->entryKind == 1)
+            printf("%s (%zu characters)%s%s for %s - add %s, fire_rt.h and platform/%s/ to your project (the entry point is %s)\n", full, length, *natives ? " and " : "", natives, target->name,
+                *natives ? "them" : "it", target->platform, target->entryName);
+        else if (!*natives) printf("%s (%zu characters) - compile with: cc -std=c11 -O2 %s \"%s\" -o program -lm\n", full, length, extra.p, full);
+        else printf("%s (%zu characters) and %s - compile with: cc -std=c11 -O2 %s -c \"%s\" -o program.o && c++ -std=c++17 -O2 %s \"%s\" program.o -o program\n", full, length, natives, extra.p, full, extra.p, natives);
+        fcBufFree(&extra);
+    } FC_CATCH(&step) {
+        tcWarnings(&step);
+        if (step.err.kind == FC_ERR_NATIVE) { fprintf(stderr, "error E7001: Not supported by the native backend yet: %s\n", step.err.message); result = 1; }
+        else if (step.err.kind == FC_ERR_INTERNAL && step.err.message && fcStartsWith(step.err.message, "native-config: ")) { fprintf(stderr, "%s\n", step.err.message + 15); result = 2; }
+        else result = tcCompileFailed(&step);
+    } FC_END_TRY;
+    fcCtxFree(&step);
+    return result;
+}
+
 static int tcReportMain(int argc, char** argv, const char* prelude, const char* storeRoot);   /* (tools/report.c) */
 static bool tcWantsReport(int argc, char** argv);
 
@@ -571,7 +787,32 @@ static int tcMain(int argc, char** argv, const char* prelude, const char* storeR
         return 2;
     }
     if (fcAsciiIEq(cmd, "data")) { fprintf(stderr, "forge-c: unported: data (DataCommand: the driver of the schema in the VM)\n"); return 2; }
-    if (!(fcAsciiIEq(cmd, "run") || fcAsciiIEq(cmd, "native") || fcAsciiIEq(cmd, "dump") || fcAsciiIEq(cmd, "bytecode") || streq0(cmd, "help") || streq0(cmd, "-h") || streq0(cmd, "--help") || streq0(cmd, "-?") || streq0(cmd, "/?"))) return -1;
+    if (fcAsciiIEq(cmd, "build") || fcAsciiIEq(cmd, "publish")) {
+        /* CommandLineParser.Parse first (its errors with the usage); what the builds of the earlier steps take goes to them */
+        bool gap;
+        fcCtxInit(c);
+        o = tcParse(c, argc, argv);
+        if (o->error) { result = tcUsageError(o); fcCtxFree(c); return result; }
+        gap = o->command == TC_BUILD && (o->files->count > 1 || o->defines->count > 0 || o->intWidth || o->overlays->count > 0 || o->debugInfo || o->globalJobs >= 0 || o->host
+            || (o->types >= 0 && o->files->count == 1 && tcIsProjectFile((const char*)o->files->items[0])));
+        if (o->command == TC_PUBLISH && (o->overlays->count > 0 || o->defines->count > 0 || o->intWidth || o->types >= 0 || o->globalJobs >= 0)) {
+            fprintf(stderr, "forge-c: unported: publish with --overlay, -D, -i, --types or --global-jobs\n");
+            fcCtxFree(c);
+            return 2;
+        }
+        if (!gap) { fcCtxFree(c); return -1; }
+        FC_TRY(c) {
+            nsEnsureInstalled(prelude, storeRoot, stderr);
+            result = tcBuild(c, o, prelude, storeRoot);
+        } FC_CATCH(c) {
+            if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "unported: ")) fprintf(stderr, "forge-c: %s\n", c->err.message);
+            else fprintf(stderr, "forge-c: internal: %s\n", c->err.message ? c->err.message : "?");
+            result = 2;
+        } FC_END_TRY;
+        fcCtxFree(c);
+        return result;
+    }
+    if (!(fcAsciiIEq(cmd, "run") || fcAsciiIEq(cmd, "test") || fcAsciiIEq(cmd, "native") || fcAsciiIEq(cmd, "dump") || fcAsciiIEq(cmd, "bytecode") || streq0(cmd, "help") || streq0(cmd, "-h") || streq0(cmd, "--help") || streq0(cmd, "-?") || streq0(cmd, "/?"))) return -1;
     /* `bytecode <file> -o <out> [-m MODE]` of one file without anything else: the measured way (forge.c) */
     if (fcAsciiIEq(cmd, "bytecode")) {
         int files = 0;
@@ -590,8 +831,9 @@ static int tcMain(int argc, char** argv, const char* prelude, const char* storeR
         else {
             nsEnsureInstalled(prelude, storeRoot, stderr);
             if (o->command == TC_RUN) result = tcRun(c, o, prelude, storeRoot);
+            else if (o->command == TC_TEST) result = tcTest(o, prelude, storeRoot);
             else if (o->command == TC_BYTECODE || o->command == TC_DUMP) result = tcBytecode(c, o, prelude, storeRoot);
-            else if (o->command == TC_NATIVE) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: native (the C into out.c - `forge-c cgen` measures the same C)");
+            else if (o->command == TC_NATIVE) result = tcNative(c, o, prelude, storeRoot);
         }
     } FC_CATCH(c) {
         if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "unported: ")) fprintf(stderr, "forge-c: %s\n", c->err.message);

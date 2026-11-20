@@ -439,7 +439,7 @@ int main(int argc, char** argv) {
 #endif
     if (argc >= 3 && strcmp(argv[1], "model") == 0) return mdModelCommand(argc, argv);   /* Phase D 4: `forge model` (model/command.c) */
 #ifndef _WIN32
-    if (argc >= 2 && strcmp(argv[1], "test") == 0) return trTestCommand(argc, argv, prelude, store);   /* Phase D 4: `forge test` (tools/testrunner.c) */
+    /* (`forge test`, Phase D 4: tools/commands.c parses it, tools/testrunner.c runs it) */
 #endif
     /* `fbc <mode> ...`: the mode is part of the command */
     if (argc >= 4 && (strcmp(argv[1], "fbc") == 0 || strcmp(argv[1], "cgen") == 0 || strcmp(argv[1], "buildplan") == 0) && strlen(argv[2]) < 200) {

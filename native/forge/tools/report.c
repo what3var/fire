@@ -299,15 +299,7 @@ static FrOutcome frCompileFailure(FcCtx* c, FcCtx* step) {
 static bool frIsKind(const FcCtx* c, const char* prefix) { return c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, prefix); }
 
 /* PjBuildArgs of the options (the configuration of a native build: KeepAll, ConfigFor) */
-static PjBuildArgs frArgs(const TcOptions* o) {
-    PjBuildArgs a;
-    memset(&a, 0, sizeof a);
-    a.file = o->files->count > 0 ? (const char*)o->files->items[0] : NULL;
-    a.output = o->output; a.targetName = o->targetName; a.toolchainName = o->toolchainName; a.configFile = o->configFile; a.linkage = o->linkage; a.engine = o->engine;
-    a.projectName = o->projectName; a.mode = o->mode; a.floatWidth = o->floatWidth; a.stripping = o->stripping; a.optimize = o->optimize; a.quick = o->quick; a.split = o->split;
-    a.keepAll = o->keepAll; a.keep = o->keep; a.stats = o->stats; a.all = o->all; a.check = o->checkOnly; a.defines = o->defines;
-    return a;
-}
+static PjBuildArgs frArgs(const TcOptions* o) { return tcArgs(o); }
 /* LoadConfig: --config (it has to exist), else the nearest fire.native.json; with the switches of the command line (KeepAll) */
 static NbConfig* frLoadConfig(FcCtx* c, const TcOptions* o, const char* near) {
     PjBuildArgs a = frArgs(o);
@@ -317,16 +309,7 @@ static NbConfig* frLoadConfig(FcCtx* c, const TcOptions* o, const char* near) {
 /* ToolchainFor: --toolchain, the project's, the configuration's or the machine's Build compiler - with --debug-info the one for the debugger */
 static NbToolchain* frToolchainFor(FcCtx* c, const TcOptions* o, NbConfig* config, const FgTarget* target, const PjPlan* plan) {
     NbToolchain* t = nbResolveToolchain(c, config, target, o->toolchainName ? o->toolchainName : plan ? plan->settings->toolchain : NULL, NB_PURPOSE_BUILD);
-    if (o->debugInfo) {
-        /* NativeLaunch.DebugToolchain: a copy (through JSON: without MachineChoice) without optimisation, with debug information, not stripped */
-        NbToolchain* copy = (NbToolchain*)fcAlloc(c, sizeof *copy);
-        *copy = *t;
-        copy->optimization = streq0(nbKind(t), "msvc") ? "/Od /Zi" : "-O0 -g";
-        copy->strip = 0;
-        copy->machineChoice = false;
-        t = copy;
-    }
-    return t;
+    return o->debugInfo ? pjDebugToolchain(c, t) : t;
 }
 /* NativeBuilder.BuildSafe and NativeOutcome: the native build of a plan (its own collector: the warnings come with its result), its log, its diagnostics,
  * the copies next to it and what it wrote. `project`: the name for the log of `--all` */

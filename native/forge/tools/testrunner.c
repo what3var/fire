@@ -4,7 +4,11 @@
  * a folder fire-test-<guid> of the temp folder). Both report through the lines of the driver (tools/testdriver.c) on stdout.
  *
  * Where the VM is: FIRE_VM_EXE, else `fire` (`fire-i32`, ...) next to forge-c - as CVm.Locate finds it; building it into the cache when there is none
- * is CVm's (the engine vm of Phase D 3) and not here. Not ported: several files at once, -D, -f, the spinner of a console (a cosmetic of a terminal). */
+ * is CVm's (the engine vm of Phase D 3) and not here. The libraries of the program's packages and of a project's own natives (the overlay of the store) are
+ * built as for the engine vm and found by the VM through FIRE_PKG_PATH (PackageImports.RegisterForRun). The command line is CommandLineParser.Parse
+ * (tools/commands.c): several files (texts, as RuntimeSession.Build has them), -D, -f, -i, --types. Not ported: the spinner of a console (`[\\] ...`
+ * while a test runs, only in a terminal - the output of the VM is read when it has ended); cancelling is TestRunner.Cancel, spark's, not the command
+ * line's. */
 
 typedef enum TrStatus { TR_PASSED, TR_FAILED, TR_ERROR } TrStatus;
 typedef struct TrResult { const char* cls; const char* method; const char* name; const char* description; TrStatus status; const char* message; bool finished; FcBuf output; } TrResult;
@@ -88,6 +92,7 @@ static void trLines(TrProtocol* p, const char* text, size_t n) {
 }
 
 /* a program with its arguments: what it writes to stdout and stderr, its exit code (Process.ExitCode: 128 + the signal when one ended it) */
+static const char* trPkgPath;   /* FIRE_PKG_PATH of the program that runs (NULL: as it is) */
 static int trExec(FcCtx* c, char** argv, FcBuf* out, FcBuf* err) {
     int o[2], e[2], status = 0;
     pid_t pid;
@@ -99,6 +104,7 @@ static int trExec(FcCtx* c, char** argv, FcBuf* out, FcBuf* err) {
     if (pid == 0) {
         dup2(o[1], 1); dup2(e[1], 2);
         close(o[0]); close(o[1]); close(e[0]); close(e[1]);
+        if (trPkgPath && *trPkgPath) setenv("FIRE_PKG_PATH", trPkgPath, 1);
         execv(argv[0], argv);
         _exit(127);
     }
@@ -150,21 +156,37 @@ static double trNow(void) { struct timeval tv; gettimeofday(&tv, NULL); return (
 typedef struct TrArgs {
     const char* file; const char* projectName; const char* engine; const char* filter; const char* toolchainName; const char* configFile;
     int mode; bool keepAll;
+    FcList* files;          /* the files of the command line (several: their texts, Phase D 4) */
+    FcList* defines;        /* -D */
+    int floatWidth, intWidth, types;   /* -f, -i (0: none), --types (-1: none) */
+    NbConfig* (*config)(FcCtx* c, const struct TrArgs* a);   /* the configuration of --engine native with the switches of the command line (KeepAll) */
+    const void* options;    /* (the TcOptions of tools/commands.c) */
 } TrArgs;
+/* (tools/commands.c) a plan of texts without a project: the files with the defines and the type checking of the command line */
+static PjPlan* tcTextsPlan(FcCtx* c, FcList* paths, FcList* defines, int types);
+static const char* tcPkgPath(FcCtx* c, FcList* libraries);   /* (tools/commands.c) the folders of the libraries for FIRE_PKG_PATH */
+/* the defines and the type checking of the command line in a project's plan */
+static void trPlanOptions(FcCtx* c, const TrArgs* a, PjPlan* plan) {
+    PjSettings* s;
+    int i;
+    if ((!a->defines || a->defines->count == 0) && a->types < 0) return;
+    s = (PjSettings*)fcAlloc(c, sizeof *s);
+    *s = *plan->settings;
+    s->defines = s->defines ? fcListCopy(c, s->defines) : fcListNew(c);
+    for (i = 0; a->defines && i < a->defines->count; i++) fcListAdd(c, s->defines, a->defines->items[i]);
+    if (a->types >= 0) s->typeChecking = a->types == 1 ? "strict" : "lax";
+    plan->settings = s;
+}
+/* the files need the link of a plan (several, or what the link of one file does not take) */
+static bool trTextsWanted(const TrArgs* a) { return (a->files && a->files->count > 1) || (a->defines && a->defines->count > 0) || a->floatWidth || a->intWidth || a->types >= 0; }
 
-/* the VM for the widths of a program (CVm.Locate without building one): FIRE_VM_EXE, else next to forge-c */
+/* the VM for the widths of a program (CVm.Locate: FIRE_VM_EXE, next to forge-c, in the cache, or built into it now - build/cvm.c; the C# forge runs the
+ * tests in its own VM) */
 static const char* trLocateVm(FcCtx* c, int intWidth, int floatWidth) {
-    const char* given = getenv("FIRE_VM_EXE");
-    const char* name = fcFmt(c, "fire%s%s", intWidth == 64 ? "" : fcFmt(c, "-i%d", intWidth), floatWidth == 64 ? "" : "-f32");
-    const char* next;
-    if (given && *given) {
-        if (nbFileExists(given)) return given;
-        if (intWidth == 64 && floatWidth == 64) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "FIRE_VM_EXE names '%s', which does not exist.", given));
-    }
-    next = nbCombine(c, nbBaseDirectory, name);
-    if (nbFileExists(next)) return next;
-    fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: the VM '%s' is not next to forge-c (building it into the cache is CVm's - the engine vm)", name));
-    return NULL;
+    const char* error = NULL;
+    const char* vm = nvLocate(c, intWidth, floatWidth, NULL, &error);
+    if (!vm) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "vm: %s", error));
+    return vm;
 }
 
 /* a unique folder in the temp folder (Path.GetTempPath() + prefix + Guid) */
@@ -226,11 +248,22 @@ static TrRun* trRunInVm(FcCtx* c, const char* title, const TrArgs* a, PjPlan* pl
     memset(&d, 0, sizeof d); d.run = run; d.plan = plan; d.files = files; d.filter = filter;
     c->testDriver = trDriverText;
     c->testDriverState = &d;
+    trPkgPath = NULL;
+    if (!plan && trTextsWanted(a)) { plan = tcTextsPlan(c, a->files, a->defines, a->types); d.plan = NULL; }
     if (plan) {
         PjLinkIn in;
+        FcStore* store = NULL;
+        FcNatives* registry = NULL;
         memset(&in, 0, sizeof in);
-        in.plan = plan; in.prelude = prelude; in.storeRoot = storeRoot; in.modeOverride = a->mode;
-        linked = pjLink(c, &in, NULL);
+        in.plan = plan; in.prelude = prelude; in.storeRoot = storeRoot; in.modeOverride = a->mode; in.floatWidthOverride = a->floatWidth; in.intWidthOverride = a->intWidth;
+        in.storeOut = &store;
+        linked = pjLink(c, &in, &registry);
+        c->testDriver = NULL;
+        if (d.tests > 0) {
+            /* (the libraries of its packages and of the project's own natives, for the VM: PackageImports.RegisterForRun) */
+            nvStoreRoot = storeRoot;
+            trPkgPath = tcPkgPath(c, nvEnsureLibraries(c, linked, store, registry, NULL));
+        }
     } else linked = fcLinkFile(c, a->file, prelude, storeRoot, fcStrictTag(a->file), a->mode);
     c->testDriver = NULL;
     if (d.tests > 0) {
@@ -248,10 +281,8 @@ static TrRun* trRunInVm(FcCtx* c, const char* title, const TrArgs* a, PjPlan* pl
         argv[0] = (char*)vm; argv[1] = (char*)"run"; argv[2] = (char*)file; argv[3] = NULL;
         fcBufStr(&out, ""); fcBufStr(&err, "");
         code = trExec(c, argv, &out, &err);
+        trPkgPath = NULL;
         trRemoveTree(dir);
-        if (strstr(err.p, "its library 'libfire_pkg_project_") && strstr(err.p, "could not be loaded"))
-            /* (PackageImports.RegisterForRun builds the library of a project's own natives - the overlay of the store - for the VM in the process) */
-            fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: the natives of a project in the VM (the library of the overlay of the store, PackageLibrary)");
         trLines(&p, out.p, out.len);
         if (!p.done) {
             /* (the VM in C reports an exception nobody caught as UncaughtScriptException does: "Unhandled exception of type 'X': message") */
@@ -288,7 +319,10 @@ static TrRun* trRunNative(FcCtx* c, const char* title, const TrArgs* a, PjPlan* 
     exe = fcFmt(c, "%s/tests", dir);
     memset(&b, 0, sizeof b);
     b.path = a->file; b.prelude = prelude; b.storeRoot = storeRoot; b.strict = plan ? false : fcStrictTag(a->file); b.mode = a->mode;
-    if (plan) { pjApplyBuildSettings(c, config, plan); b.link = pjNbLink; b.project = plan; }
+    b.floatWidth = a->floatWidth; b.intWidth = a->intWidth;
+    if (!plan && trTextsWanted(a)) { b.link = pjNbLink; b.project = tcTextsPlan(c, a->files, a->defines, a->types); }
+    /* (the C++ natives of the project and its libraries: in the store of the generator, ProjectNativeOverlay) */
+    if (plan) { pjApplyBuildSettings(c, config, plan); b.link = pjNbLink; b.overlay = pjNbOverlay; b.project = plan; }
     c->testDriver = trDriverText;
     c->testDriverState = &d;
     FC_TRY(c) {
@@ -384,38 +418,6 @@ static const char* trFindHere(FcCtx* c, const char* extension, int* count) {
     return *count == 1 ? found : NULL;
 }
 
-static int trParseArgs(int argc, char** argv, TrArgs* a) {
-    int i;
-    memset(a, 0, sizeof *a);
-    a->mode = -1;
-    for (i = 2; i < argc; i++) {
-        const char* s = argv[i];
-        const char* next = i + 1 < argc ? argv[i + 1] : NULL;
-#define TR_VALUE() (next ? (i++, next) : NULL)
-        if (streq0(s, "--filter")) a->filter = TR_VALUE();
-        else if (fcStartsWith(s, "--filter=")) a->filter = s + 9;
-        else if (streq0(s, "-p") || streq0(s, "--project")) { a->projectName = TR_VALUE(); if (!a->projectName) { fprintf(stderr, "-p must be followed by the name of a project.\n"); return 2; } }
-        else if (streq0(s, "-m") || streq0(s, "--mode")) {
-            const char* m = TR_VALUE();
-            if (!m || !(fcAsciiIEq(m, "debug") || fcAsciiIEq(m, "release") || fcAsciiIEq(m, "performance"))) { fprintf(stderr, "-m must be followed by DEBUG, RELEASE or PERFORMANCE.\n"); return 2; }
-            a->mode = fcAsciiIEq(m, "debug") ? 0 : fcAsciiIEq(m, "release") ? 1 : 2;
-        }
-        else if (streq0(s, "--engine")) {
-            const char* e = TR_VALUE();
-            if (!e || !(fcAsciiIEq(e, "vm") || fcAsciiIEq(e, "native"))) { fprintf(stderr, "--engine must be followed by vm or native.\n"); return 2; }
-            a->engine = fcAsciiIEq(e, "vm") ? "vm" : "native";
-        }
-        else if (streq0(s, "--toolchain")) a->toolchainName = TR_VALUE();
-        else if (streq0(s, "--config")) a->configFile = TR_VALUE();
-        else if (streq0(s, "--keep-all")) a->keepAll = true;
-        else if (s[0] == '-') { fprintf(stderr, "forge-c test: the option %s is not ported.\n", s); return 2; }
-        else if (!a->file) a->file = s;
-        else { fprintf(stderr, "forge-c test: several files at once are not ported (one file, project or solution).\n"); return 2; }
-#undef TR_VALUE
-    }
-    return -1;
-}
-
 /* the line of a compile error of a run (DescribeErrors, after the title) */
 static void trDescribe(FcCtx* step, const char* title, FILE* err, bool unnamed) {
     FcList* diags = fcDiagnosticsOf(step, &step->err, NULL);
@@ -432,21 +434,22 @@ static void trDescribe(FcCtx* step, const char* title, FILE* err, bool unnamed) 
     fcBufFree(&b);
 }
 
-/* `forge-c test [<file> | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m <mode>] [--filter A.B,C]` */
-static int trTestCommand(int argc, char** argv, const char* prelude, const char* storeRoot) {
+/* `forge-c test [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m <mode>] [--filter A.B,C] [-D name] [-f 32|64] [-i 16|32|64]`
+ * (the options parsed by CommandLineParser.Parse, tools/commands.c) */
+static int trTestRun(TrArgs* args, const char* prelude, const char* storeRoot) {
     FcCtx ctx;
     FcCtx* c = &ctx;
-    TrArgs a;
+    TrArgs a = *args;
     FcList* runs;
     FcBuf out = {0};
     const TdFilter* filter;
     NbConfig* config = NULL;
     const char* engine;
     volatile bool compileFailed = false;
-    int r = trParseArgs(argc, argv, &a);
     volatile int i;
-    if (r >= 0) return r;
     fcCtxInit(c);
+    if (!a.files) a.files = fcListNew(c);
+    if (a.files->count > 0) a.file = (const char*)a.files->items[0];
     if (!a.file) {
         /* nothing named: the solution in this folder, else the project */
         int n;
@@ -454,19 +457,16 @@ static int trTestCommand(int argc, char** argv, const char* prelude, const char*
         if (n == 0) found = trFindHere(c, ".fireproj", &n);
         if (!found) { fprintf(stderr, n == 0 ? "No file was named and there is no solution or project in this folder.\n" : "There are several solutions or projects in this folder: name one.\n"); fcCtxFree(c); return 2; }
         a.file = found;
+        fcListAdd(c, a.files, (void*)found);
     }
-    if (!nbFileExists(a.file)) { fprintf(stderr, "File not found: %s\n", a.file); fcCtxFree(c); return 2; }
+    for (i = 0; i < a.files->count; i++) if (!nbFileExists((const char*)a.files->items[i])) { fprintf(stderr, "File not found: %s\n", (const char*)a.files->items[i]); fcCtxFree(c); return 2; }
     filter = a.filter ? tdFilterParse(c, a.filter) : NULL;
     engine = a.engine ? a.engine : "vm";
     runs = fcListNew(c);
     fcBufStr(&out, "");
     if (strcmp(engine, "native") == 0) {
         FC_TRY(c) {
-            if (a.configFile) {
-                if (!nbFileExists(a.configFile)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: Configuration not found: %s", a.configFile));
-                config = nbConfigLoad(c, a.configFile);
-            } else config = nbConfigFindFor(c, a.file);
-            if (a.keepAll) { config->stripping = 0; config->strippingFromCommandLine = true; }
+            config = a.config(c, &a);
         } FC_CATCH(c) {
             const char* m = c->err.message ? c->err.message : "";
             fprintf(stderr, "%s\n", fcStartsWith(m, "native-config: ") ? m + 15 : m);
@@ -483,11 +483,11 @@ static int trTestCommand(int argc, char** argv, const char* prelude, const char*
             if (step.err.kind == FC_ERR_NATIVE) { fprintf(stderr, "%s: error E7001: Not supported by the native backend yet: %s\n", (title), step.err.message); compileFailed = true; } \
             else if (pjIsCompileErrorKind(step.err.kind) || step.err.kind == FC_ERR_PROJECT) { trDescribe(&step, (title), stderr, (unnamed)); compileFailed = true; } \
             else if (step.err.kind == FC_ERR_INTERNAL && step.err.message && fcStartsWith(step.err.message, "native-config: ")) { fprintf(stderr, "%s\n", step.err.message + 15); compileFailed = true; } \
-            else { fprintf(stderr, "%s\n", step.err.message ? step.err.message : "internal error"); fcCtxFree(&step); fcCtxFree(c); return 1; } \
+            else { const char* m_ = step.err.message ? step.err.message : "internal error"; fprintf(stderr, "%s\n", fcStartsWith(m_, "vm: ") ? m_ + 4 : m_); fcCtxFree(&step); fcCtxFree(c); return 1; } \
         } FC_END_TRY; \
         /* (the runs live in the context of their step: it is freed with the command) */ \
     } while (0)
-    if (trIsProjectFile(a.file)) {
+    if (a.files->count == 1 && trIsProjectFile(a.file)) {
         PjWorkspace* volatile w = NULL;
         FcList* volatile projects = NULL;
         FC_TRY(c) {
@@ -504,13 +504,15 @@ static int trTestCommand(int argc, char** argv, const char* prelude, const char*
             PjLoaded* project = (PjLoaded*)projects->items[i];
             PjPlan* plan = pjPlanCreate(w, project, true);
             if (plan->errors->count > 0) { fprintf(stderr, "%s: %s\n", project->project->name, fgJoin(c, plan->errors, "\n")); compileFailed = true; continue; }
+            trPlanOptions(c, &a, plan);
             if (strcmp(engine, "native") == 0) TR_GUARDED(project->project->name, trRunNative(&step, project->project->name, &a, plan, NULL, filter, prelude, storeRoot, config), false);
             else TR_GUARDED(project->project->name, trRunInVm(&step, project->project->name, &a, plan, NULL, filter, prelude, storeRoot), false);
         }
     } else {
         FcList* names = fcListNew(c);
-        const char* title = fcBaseName(a.file);
-        fcListAdd(c, names, (void*)title);
+        const char* title;
+        for (i = 0; i < a.files->count; i++) fcListAdd(c, names, (void*)fcBaseName((const char*)a.files->items[i]));
+        title = fgJoin(c, names, ", ");
         if (strcmp(engine, "native") == 0) TR_GUARDED(title, trRunNative(&step, title, &a, NULL, names, filter, prelude, storeRoot, config), true);
         else TR_GUARDED(title, trRunInVm(&step, title, &a, NULL, names, filter, prelude, storeRoot), true);
     }
