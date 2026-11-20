@@ -14,6 +14,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <process.h>
+#include <io.h>
+#include <fcntl.h>
 typedef CRITICAL_SECTION SvMutex;
 typedef CONDITION_VARIABLE SvCond;
 static void svMutexInit(SvMutex* m) { InitializeCriticalSection(m); }
@@ -939,8 +941,8 @@ static int svServe(int argc, char** argv, const char* prelude, const char* store
     svLangInit(&S->lang, S);
     svLangInit(&S->wlang, S);
 #ifdef _WIN32
-    _setmode(_fileno(stdin), 0x8000);
-    _setmode(_fileno(stdout), 0x8000);
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
 #endif
     svThreadStart(&reader, svReaderThread, S);
     svThreadStart(&worker, svAnalysisThread, S);
