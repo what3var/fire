@@ -764,6 +764,226 @@ static int tcNative(FcCtx* c, const TcOptions* o, const char* prelude, const cha
     return result;
 }
 
+/* ---- `forge data` (DataCommand.cs): the migrations and the schema of a database, done by the program itself in the VM ---- */
+static const char* const tcDataUsage =
+    "forge data migrate|status|diff|import [<file>... | <project.fireproj> | <solution.firesln>] --url <url> [options]\n"
+    "\n"
+    "migrate  runs the migrations ([Migration n, \"title\"] classes) that have not run on the database, each in a transaction; --to N goes up or\n"
+    "         down (their Down methods) to the migration N (0: before the first).\n"
+    "status   lists the migrations of the program and whether they ran.\n"
+    "diff     writes the migration that makes the database what the mapping of the [Table] classes says (new tables, columns, indexes, join\n"
+    "         tables; what only the database has is named in comments). The migrations of the program must have run first.\n"
+    "import   writes classes ([Table], [Key], [Required], [Length], [Unique]) for the tables of the database - no program needed; --format fdata\n"
+    "         a data model instead (docs/data/designer.md: entities, the relations guessed from columns like customerId and from join tables).\n"
+    "\n"
+    "--url      the database (sqlite:app.db, mysql://host/db, sqlserver://host/db?trust=true, memory:)\n"
+    "--user     the user; --password (or the environment variable FIRE_DATA_PASSWORD)\n"
+    "--to N     with migrate: the migration to go to\n"
+    "--title T  with diff: the title of the new migration\n"
+    "--namespace NS  with import: the namespace of the classes\n"
+    "--format F with import: fire (classes, the default) or fdata (a data model)\n"
+    "-o file    with diff and import: the file to write (else the output)\n"
+    "-p name    the project of a solution";
+/* DriverPackage: the package of the driver for the scheme of the URL */
+static const char* tcDriverPackage(FcCtx* c, const char* url) {
+    const char* colon = strchr(url, ':');
+    const char* scheme;
+    if (!colon || colon == url) return NULL;
+    scheme = fcAsciiLower(c, fcStrN(c, url, (size_t)(colon - url)));
+    if (streq0(scheme, "sqlite")) return "data.sqlite";
+    if (streq0(scheme, "mysql")) return "data.mysql";
+    if (streq0(scheme, "sqlserver")) return "data.sqlserver";
+    if (streq0(scheme, "postgres") || streq0(scheme, "postgresql")) return "data.postgres";
+    if (streq0(scheme, "memory")) return "data.memory";
+    return NULL;
+}
+/* Lit: a fire string literal */
+static const char* tcLit(FcCtx* c, const char* text) {
+    FcBuf b = {0};
+    const char* p;
+    fcBufStr(&b, "\"");
+    for (p = text; *p; p++) {
+        if (*p == '\\') fcBufStr(&b, "\\\\");
+        else if (*p == '"') fcBufStr(&b, "\\\"");
+        else if (*p == '\n') fcBufStr(&b, "\\n");
+        else if (*p != '\r') fcBufChar(&b, *p);
+    }
+    fcBufChar(&b, '"');
+    return fcBufDone(c, &b);
+}
+static const char* tcDataDriver(FcCtx* c, void* state, FcList* program, int firstUserSource) { (void)c; (void)program; (void)firstUserSource; return (const char*)state; }
+static int tcDataFail(const char* message) { fprintf(stderr, "%s\n", message); return 2; }
+/* RunDriver: the driver (fire, at the top level) with the classes of the sources in the VM in C - the top level of the sources does not run; what it printed,
+ * or the error (*compile: the sources do not compile) */
+static const char* tcRunDriver(FcCtx* c, PjPlan* plan, const char* driver, const char* prelude, const char* storeRoot, const char** error, bool* compile) {
+    FcCtx step;
+    const char* volatile printed = "";
+    *error = NULL;
+    *compile = false;
+    fcCtxInit(&step);
+    step.collecting = true;
+    FC_TRY(&step) {
+        PjLinkIn in;
+        FcStore* store = NULL;
+        FcNatives* registry = NULL;
+        FcLinked* linked;
+        FcList* libraries;
+        FcBuf fbc = {0}, out = {0}, err = {0};
+        const char* vmError = NULL;
+        const char* vm;
+        const char* dir;
+        const char* file;
+        const char* unhandled;
+        char* argv[4];
+        FILE* f;
+        memset(&in, 0, sizeof in);
+        in.plan = plan; in.prelude = prelude; in.storeRoot = storeRoot; in.modeOverride = 1; in.storeOut = &store;
+        step.testDriver = tcDataDriver;
+        step.testDriverState = (void*)driver;
+        linked = pjLink(&step, &in, &registry);
+        step.testDriver = NULL;
+        tcWarnings(&step);
+        nvStoreRoot = storeRoot;
+        libraries = nvEnsureLibraries(&step, linked, store, registry, NULL);
+        vm = nvLocate(&step, linked->intWidth, linked->floatWidth, NULL, &vmError);
+        if (!vm) fcThrow(&step, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(&step, "vm: %s", vmError));
+        dir = trTempFolder(&step, "fire-data-");
+        file = fcFmt(&step, "%s/program.fbc", dir);
+        fcProgramFileWrite(&step, linked, true, &fbc);
+        f = fopen(file, "wb");
+        if (f) { fwrite(fbc.p, 1, fbc.len, f); fclose(f); }
+        fcBufFree(&fbc);
+        argv[0] = (char*)vm; argv[1] = (char*)"run"; argv[2] = (char*)file; argv[3] = NULL;
+        fcBufStr(&out, ""); fcBufStr(&err, "");
+        trPkgPath = tcPkgPath(&step, libraries);
+        trExec(&step, argv, &out, &err);
+        trPkgPath = NULL;
+        trRemoveTree(dir);
+        printed = fcStr(c, out.p);
+        /* (the VM in C reports an exception nobody caught as UncaughtScriptException does) */
+        if ((unhandled = strstr(err.p, "Unhandled exception of type ")) != NULL) {
+            const char* end = strchr(unhandled, '\n');
+            *error = end ? fcStrN(c, unhandled, (size_t)(end - unhandled)) : fcStr(c, unhandled);
+        }
+        fcBufFree(&out); fcBufFree(&err);
+    } FC_CATCH(&step) {
+        tcWarnings(&step);
+        if (!pjIsCompileErrorKind(step.err.kind) && step.err.kind != FC_ERR_PROJECT) { c->err = step.err; c->err.message = fcStr(c, step.err.message); fcCtxFree(&step); fcRethrow(c); }
+        {
+            FcBuf b = {0};
+            fcBufStr(&b, "");
+            pjDescribeErrors(&step, &b);
+            if (b.len > 0 && b.p[b.len - 1] == '\n') b.p[--b.len] = 0;
+            *error = fcStr(c, b.p);
+            fcBufFree(&b);
+        }
+        *compile = true;
+    } FC_END_TRY;
+    fcCtxFree(&step);
+    return printed;
+}
+/* `forge data migrate|status|diff|import [<file>... | <project> | <solution>] --url <url> [...]` (DataCommand.Run) */
+static int tcData(FcCtx* c, int argc, char** argv, const char* prelude, const char* storeRoot) {
+    const char* command;
+    const char* url = NULL; const char* user = NULL; const char* password = getenv("FIRE_DATA_PASSWORD"); const char* to = NULL; const char* title = NULL;
+    const char* ns = NULL; const char* output = NULL; const char* project = NULL; const char* format = NULL;
+    const char* package;
+    const char* arg;
+    const char* driver;
+    const char* printed;
+    const char* error;
+    FcList* files = fcListNew(c);
+    FcList* paths = fcListNew(c);
+    FcList* texts = fcListNew(c);
+    PjPlan* plan;
+    PjSource* extra;
+    bool compile;
+    int i;
+    if (argc < 3 || streq0(argv[2], "-h") || streq0(argv[2], "--help") || streq0(argv[2], "help")) { printf("%s\n", tcDataUsage); return 0; }
+    command = fcAsciiLower(c, argv[2]);
+    if (!(streq0(command, "migrate") || streq0(command, "status") || streq0(command, "diff") || streq0(command, "import")))
+        return tcDataFail(fcFmt(c, "Unknown data command '%s' (expected: migrate, status, diff or import).", argv[2]));
+    for (i = 3; i < argc; i++) {
+        const char* a = argv[i];
+#define TC_DV() (i + 1 < argc ? argv[++i] : NULL)
+        if (streq0(a, "--url")) url = TC_DV();
+        else if (streq0(a, "--user")) user = TC_DV();
+        else if (streq0(a, "--password")) password = TC_DV();
+        else if (streq0(a, "--to")) to = TC_DV();
+        else if (streq0(a, "--title")) title = TC_DV();
+        else if (streq0(a, "--namespace")) ns = TC_DV();
+        else if (streq0(a, "--format")) format = TC_DV();
+        else if (streq0(a, "-o") || streq0(a, "--output")) output = TC_DV();
+        else if (streq0(a, "-p") || streq0(a, "--project")) project = TC_DV();
+        else if (a[0] == '-') return tcDataFail(fcFmt(c, "Unknown option '%s' of forge data.", a));
+        else fcListAdd(c, files, (void*)a);
+#undef TC_DV
+    }
+    if (!url || !*fgTrim(c, url)) return tcDataFail("forge data needs the database: --url <url>.");
+    if (to && !streq0(command, "migrate")) return tcDataFail("--to is only available with migrate.");
+    if (format && (!streq0(command, "import") || !(streq0(format, "fire") || streq0(format, "fdata")))) return tcDataFail("--format is only available with import: fire (classes, the default) or fdata (a data model).");
+    package = tcDriverPackage(c, url);
+    if (!package) return tcDataFail(fcFmt(c, "forge data: no driver for the URL '%s' (sqlite:, mysql://, sqlserver://, postgres://, memory:).", url));
+    if (files->count == 0 && !streq0(command, "import")) {
+        int n;
+        const char* found = trFindHere(c, ".firesln", &n);
+        if (n == 0) found = trFindHere(c, ".fireproj", &n);
+        if (!found) return tcDataFail(n == 0 ? "No program was named and there is no solution or project in this folder." : "There are several solutions or projects in this folder: name one.");
+        fcListAdd(c, files, (void*)found);
+    }
+    for (i = 0; i < files->count; i++) if (!nbFileExists((const char*)files->items[i])) return tcDataFail(fcFmt(c, "File not found: %s", (const char*)files->items[i]));
+    if (files->count == 1 && pjIsProjectFile((const char*)files->items[0])) {
+        const char* volatile failure = NULL;
+        FC_TRY(c) {
+            PjWorkspace* w = pjWorkspaceOpen(c, (const char*)files->items[0]);
+            PjPlan* p = pjPlanOrThrow(w, pjSelectProject(w, project));
+            for (i = 0; i < p->sources->count; i++) {
+                fcListAdd(c, paths, (void*)((PjSource*)p->sources->items[i])->path);
+                fcListAdd(c, texts, (void*)((PjSource*)p->sources->items[i])->text);
+            }
+        } FC_CATCH(c) {
+            if (c->err.kind != FC_ERR_PROJECT) fcRethrow(c);
+            failure = c->err.message;
+        } FC_END_TRY;
+        if (failure) return tcDataFail(failure);
+    } else
+        for (i = 0; i < files->count; i++) {
+            FcU16 t = {0};
+            if (!fcReadText((const char*)files->items[i], &t)) return tcDataFail(fcFmt(c, "File not found: %s", (const char*)files->items[i]));
+            fcListAdd(c, paths, (void*)files->items[i]);
+            fcListAdd(c, texts, (void*)fc8FromU16(c, t.p, t.len));
+            fcU16Free(&t);
+        }
+    /* Execute: the sources, a source with `#import "data"` and the driver's package, then the driver */
+    {
+        TcOptions o;
+        memset(&o, 0, sizeof o);
+        o.defines = fcListNew(c); o.types = -1; o.globalJobs = -1;
+        plan = tcFilesPlan(c, &o, paths, texts, 1, NULL);
+    }
+    extra = (PjSource*)fcAlloc(c, sizeof *extra);
+    extra->path = NULL;
+    extra->text = fcFmt(c, "#import \"data\"\n#import \"%s\"\n", package);
+    extra->projectName = "program";
+    fcListAdd(c, plan->sources, extra);
+    arg = streq0(command, "migrate") ? (to ? to : "") : streq0(command, "diff") ? (title ? title : "") : streq0(command, "import") ? (ns ? ns : "") : "";
+    driver = fcFmt(c, "print(Data.Tools.Run(%s, %s, %s, %s, %s, %s))\n", tcLit(c, command), tcLit(c, url), tcLit(c, user ? user : ""), tcLit(c, password ? password : ""), tcLit(c, arg), tcLit(c, format ? format : ""));
+    printed = tcRunDriver(c, plan, driver, prelude, storeRoot, &error, &compile);
+    if (error) {
+        fputs(printed, stderr);
+        fprintf(stderr, "%s\n", error);
+        return compile ? 2 : 1;
+    }
+    if (output && (streq0(command, "diff") || streq0(command, "import"))) {
+        FILE* f = fopen(output, "wb");
+        if (!f) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: the file cannot be written ('%s')", output));
+        fputs(printed, f);
+        fclose(f);
+        printf("written: %s\n", output);
+    } else fputs(printed, stdout);
+    return 0;
+}
+
 static int tcReportMain(int argc, char** argv, const char* prelude, const char* storeRoot);   /* (tools/report.c) */
 static bool tcWantsReport(int argc, char** argv);
 
@@ -786,7 +1006,20 @@ static int tcMain(int argc, char** argv, const char* prelude, const char* storeR
         fprintf(stderr, "forge-c: unported: stats (NativeStats.FromJson, Compare - with --stats, Phase D 2)\n");
         return 2;
     }
-    if (fcAsciiIEq(cmd, "data")) { fprintf(stderr, "forge-c: unported: data (DataCommand: the driver of the schema in the VM)\n"); return 2; }
+    if (fcAsciiIEq(cmd, "data")) {
+        fcCtxInit(c);
+        FC_TRY(c) {
+            nsEnsureInstalled(prelude, storeRoot, stderr);
+            result = tcData(c, argc, argv, prelude, storeRoot);
+        } FC_CATCH(c) {
+            if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "unported: ")) fprintf(stderr, "forge-c: %s\n", c->err.message);
+            else if (c->err.kind == FC_ERR_INTERNAL && c->err.message && fcStartsWith(c->err.message, "vm: ")) fprintf(stderr, "%s\n", c->err.message + 4);
+            else fprintf(stderr, "%s\n", c->err.message ? c->err.message : "?");
+            result = c->err.kind == FC_ERR_PACKAGE ? 1 : 2;
+        } FC_END_TRY;
+        fcCtxFree(c);
+        return result;
+    }
     if (fcAsciiIEq(cmd, "build") || fcAsciiIEq(cmd, "publish")) {
         /* CommandLineParser.Parse first (its errors with the usage); what the builds of the earlier steps take goes to them */
         bool gap;

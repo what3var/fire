@@ -306,7 +306,9 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     }
     c->sharedIncluded = fcListNew(c);
     for (i = 0; plan->files != 2 && i < plan->sources->count; i++) {
-        const char* full = pjFull(c, ((PjSource*)plan->sources->items[i])->path, ".");
+        const char* full;
+        if (!((PjSource*)plan->sources->items[i])->path) continue;   /* (a text without a file: `forge data`) */
+        full = pjFull(c, ((PjSource*)plan->sources->items[i])->path, ".");
         if (fcSetAdd(done, full)) fcListAdd(c, c->sharedIncluded, (void*)full);
     }
     c->resourcePaths = fcListNew(c);
@@ -321,9 +323,9 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     }
     for (i = 0; i < plan->sources->count; i++) {
         const PjSource* s = (const PjSource*)plan->sources->items[i];
-        const char* full = pjFull(c, s->path, ".");
+        const char* full = s->path ? pjFull(c, s->path, ".") : NULL;
         FcProcessed* p;
-        if (plan->files == 2) {
+        if (plan->files == 2 || !full) {
             /* (texts: from BasePath, else the current folder; no name) */
             char cwd[4096];
             if (!getcwd(cwd, sizeof cwd)) strcpy(cwd, ".");
@@ -477,7 +479,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     for (i = 0; i < libraryPaths->count && 1 + i < total; i++) linked->sourceFiles->items[1 + i] = libraryPaths->items[i];
     for (i = 0; i < plan->sources->count; i++) {
         const PjSource* s = (const PjSource*)plan->sources->items[i];
-        linked->sourceFiles->items[total - plan->sources->count + i] = (void*)pjFull(c, s->path, ".");
+        linked->sourceFiles->items[total - plan->sources->count + i] = s->path ? (void*)pjFull(c, s->path, ".") : NULL;
         linked->sourceHashes->items[total - plan->sources->count + i] = (void*)fcSha256OfText(c, s->text);
     }
     linked->optimize = in->o ? (in->o->optimize >= 0 ? in->o->optimize : t->optimize) : 0;
