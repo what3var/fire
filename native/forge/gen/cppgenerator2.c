@@ -372,8 +372,8 @@ static const char* Run(FgGen* g) {
             }
         dispatchers = fgSortedNameArgc(g, g->dispatchers);
         for (i = 0; i < dispatchers->count; i++) { FgNameArgc* d = (FgNameArgc*)dispatchers->items[i]; fcListAdd(g->c, dispatcherCode, (void*)Dispatcher(g, d->name, d->argc)); }
-        idispatchers = fgKeys(g->c, g->interfaceDispatchers);
-        if (idispatchers->count > 0) FG_UNPORTED("the dispatchers of interfaces");
+        idispatchers = fgSortedIDispatch(g);
+        for (i = 0; i < idispatchers->count; i++) { FgIDisp* x = (FgIDisp*)idispatchers->items[i]; fcListAdd(g->c, dispatcherCode, (void*)InterfaceDispatcher(g, x->iface, x->name, x->argc)); }
         if (fcDictCount(g->overloadSelectors) > 0) FG_UNPORTED("the selectors of overloads");
         (void)selectorCode;
         targTables = TArgTables(g, true);
@@ -410,6 +410,7 @@ static const char* Run(FgGen* g) {
             if (WrapDispatchers) fcBufFmt(&sb, "%s;\n", DispatcherSignature(g, d->name, d->argc, "direct_"));
             if (WrapDispatchers) fcBufFmt(&sb, "static Value msg_%s_%d(Value self, const Value* a, OwnList* list);\n", Mangle(g, d->name), d->argc);
         }
+        for (i = 0; i < idispatchers->count; i++) { FgIDisp* x = (FgIDisp*)idispatchers->items[i]; fcBufFmt(&sb, "%s;\n", InterfaceDispatcherSignature(g, x->iface, x->name, x->argc)); }
         operators = fgSortedKeys(g->c, g->operators, false);
         for (i = 0; i < operators->count; i++) fcBufFmt(&sb, "%sValue %s(Value a, Value b, OwnList* list);\n", HelperStorage, OperatorWrapper(g, (const char*)operators->items[i]));
         fcBufFmt(&sb, "FIRE_MAYBE_UNUSED %sValue aget_g(Value a, Value i, OwnList* list);\n", HelperInline);
@@ -680,7 +681,14 @@ static void RegisterTargets(FgGen* g) {
         FcProto* ctor = fgFindConstructor(enumerator->rc, 2);
         if (ctor && ctor->paramCount == 2) GetFunc(g, ctor, FK_Ctor, 0);
     }
-    if (fcDictCount(g->interfaceDispatchers) > 0) FG_UNPORTED("the dispatchers of interfaces");
+    {
+        FcList* ids = fgSortedIDispatch(g);
+        for (i = 0; i < ids->count; i++) {
+            FgIDisp* x = (FgIDisp*)ids->items[i];
+            FcList* impls = InterfaceImplementations(g, x->iface, x->name, x->argc);
+            for (k = 0; impls && k < impls->count; k++) GetFunc(g, ((FgImpl*)impls->items[k])->proto, FK_Method, 0);
+        }
+    }
     {
         FcList* dispatchers = fgSortedNameArgc(g, g->dispatchers);
         for (i = 0; i < dispatchers->count; i++) {
@@ -1154,8 +1162,55 @@ static const char* Dispatcher(FgGen* g, const char* name, int argc) {
     return fcBufDone(g->c, &sb);
 }
 
-static const char* InterfaceDispatcherSignature(FgGen* g, const char* iface, const char* name, int argc) { (void)iface; (void)name; (void)argc; FG_UNPORTED("the dispatchers of interfaces"); }
-static const char* InterfaceDispatcher(FgGen* g, const char* iface, const char* name, int argc) { (void)iface; (void)name; (void)argc; FG_UNPORTED("the dispatchers of interfaces"); }
+static const char* InterfaceDispatcherSignature(FgGen* g, const char* iface, const char* name, int argc) {
+    FcBuf b = {0};
+    int i;
+    fcBufFmt(&b, "FIRE_MAYBE_UNUSED static Value %s(Value self", InterfaceDispatcherName(g, iface, name, argc));
+    for (i = 0; i < argc; i++) fcBufFmt(&b, ", Value a%d", i);
+    fcBufChar(&b, ')');
+    return fcBufDone(g->c, &b);
+}
+/* `icall_I_name_argc`: the method of the object's class for the classes that implement the interface */
+static const char* InterfaceDispatcher(FgGen* g, const char* iface, const char* name, int argc) {
+    FcList* impls = InterfaceImplementations(g, iface, name, argc);
+    FcBuf args = {0};
+    FcBuf sb = {0};
+    FcList* groups = fcListNew(g->c);
+    const char* argText;
+    int i, k;
+    if (!impls) impls = fcListNew(g->c);
+    fcBufStr(&args, "");
+    for (i = 0; i < argc; i++) fcBufFmt(&args, ", a%d", i);
+    argText = fcBufDone(g->c, &args);
+    fcBufFmt(&sb, "%s\n{\n", InterfaceDispatcherSignature(g, iface, name, argc));
+    if (impls->count == 0 && argc > 0) {
+        FcBuf v = {0};
+        for (i = 0; i < argc; i++) fcBufFmt(&v, "(void)a%d; ", i);
+        fcBufFmt(&sb, "    %s\n", fgTrim(g->c, fcBufDone(g->c, &v)));
+    }
+    fcBufStr(&sb, "    if (FIRE_LIKELY(self.kind == K_Class)) {\n");
+    fcBufStr(&sb, "        if (FIRE_UNLIKELY(!leafAlive(self))) return destroyedError(self);\n");
+    fcBufStr(&sb, "        switch (asObj(self)->cls) {\n");
+    /* GroupBy the proto (in the order of the first of each) */
+    for (i = 0; i < impls->count; i++) {
+        FgImpl* t = (FgImpl*)impls->items[i];
+        bool seen = false;
+        for (k = 0; k < groups->count; k++) if (((FgImpl*)groups->items[k])->proto == t->proto) seen = true;
+        if (!seen) fcListAdd(g->c, groups, t);
+    }
+    for (k = 0; k < groups->count; k++) {
+        FcProto* proto = ((FgImpl*)groups->items[k])->proto;
+        fcBufStr(&sb, "            ");
+        for (i = 0; i < impls->count; i++) if (((FgImpl*)impls->items[i])->proto == proto) fcBufFmt(&sb, "case %d: ", ((FgImpl*)impls->items[i])->cls->id);
+        fcBufFmt(&sb, "return %s(self%s);\n", ((FgFunc*)fcDictGet(g->funcByProto, proto))->name, argText);
+    }
+    fcBufStr(&sb, "            default: break;\n");
+    fcBufStr(&sb, "        }\n");
+    fcBufStr(&sb, "    }\n");
+    fcBufFmt(&sb, "    return missingMethod(self, %s, %d);\n", CString(g, name), argc);
+    fcBufStr(&sb, "}\n");
+    return fcBufDone(g->c, &sb);
+}
 
 /* `Takes.Children` of an object that implements IEnumerable takes its items (SPEC 2.2) */
 static const char* EnumerateItemsFunction(FgGen* g) {

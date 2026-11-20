@@ -830,8 +830,24 @@ static FgStep xCallMethod(FgSC* x) {
             d = slot + 1; return Next();
         }
     }
-    if (!passesAddresses && !WrapDispatchers && !OwnMethodId(method, argc) && !reflected && InterfaceOfType(g, Ty(slot)))
-        FG_UNPORTED("calls on a value of an interface type (%s)", x->fn);
+    {
+        const char* receiverInterface;
+        if (!passesAddresses && !WrapDispatchers && !OwnMethodId(method, argc) && !reflected && (receiverInterface = InterfaceOfType(g, Ty(slot))) != NULL
+            && InterfaceDispatchWorthwhile(g, receiverInterface, method, argc)) {
+            int64_t imask;
+            fgAddIDispatch(g, receiverInterface, method, argc);
+            imask = ArgMask();
+            ArgsBefore(d - argc, argc, imask);
+            {
+                const char* s = S(slot);
+                E("%s = %s(%s%s);", s, InterfaceDispatcherName(g, receiverInterface, method, argc), S(slot), Args(d - argc, argc));
+            }
+            ArgsAfter(argc, imask, S(slot));
+            Check();
+            AdoptResult(slot, DispatchResultType(g, method, argc));
+            d = slot + 1; return Next();
+        }
+    }
     if (!passesAddresses && !WrapDispatchers && !OwnMethodId(method, argc) && !reflected && xHintBefore(x))
         FG_UNPORTED("overload hints (%s)", x->fn);
     xAddDispatcher(x, method, argc);

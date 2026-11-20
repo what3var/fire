@@ -2091,3 +2091,61 @@ static const char* AdaptUnitCall(FgGen* g, const char* value, const char* demand
     if (dimensionOnly || !fgIsIdentifier(value)) return call;
     return fcFmt(g->c, "(FIRE_LIKELY(%s.unit == %s && (%s.kind == K_Float%s)) ? %s : %s)", value, unitC, value, toFloat ? "" : fcFmt(g->c, " || %s.kind == K_Int", value), value, call);
 }
+
+/* ---- the dispatchers of interfaces (CppGenerator.cs) ---- */
+typedef struct FgIDisp { const char* iface; const char* name; int argc; } FgIDisp;
+typedef struct FgImpl { FgClassInfo* cls; FcProto* proto; } FgImpl;
+static const char* InterfaceDispatcherName(FgGen* g, const char* iface, const char* name, int argc) { return fcFmt(g->c, "icall_%s_%s_%d", Mangle(g, iface), Mangle(g, name), argc); }
+static void fgAddIDispatch(FgGen* g, const char* iface, const char* name, int argc) {
+    const char* key = fcFmt(g->c, "%s\x01%s\x01%d", iface, name, argc);
+    FgIDisp* x;
+    if (fcDictHas(g->interfaceDispatchers, key)) return;
+    x = (FgIDisp*)fcAlloc(g->c, sizeof *x);
+    x->iface = iface; x->name = name; x->argc = argc;
+    fcDictPut(g->interfaceDispatchers, key, x);
+}
+/* SortedSet<(string Interface, string Name, int Argc)>: the default comparer of the strings (culture), then the count */
+static int fgIDispCmp(const FgIDisp* a, const FgIDisp* b) {
+    int r = fgCultureCmp(a->iface, b->iface);
+    if (r) return r;
+    if ((r = fgCultureCmp(a->name, b->name)) != 0) return r;
+    return a->argc < b->argc ? -1 : a->argc > b->argc;
+}
+static FcList* fgSortedIDispatch(FgGen* g) {
+    FcList* l = fcListNew(g->c);
+    int i, k;
+    FC_DICT_EACH(g->interfaceDispatchers, e) fcListAdd(g->c, l, e->value);
+    for (i = 1; i < l->count; i++)
+        for (k = i; k > 0 && fgIDispCmp((FgIDisp*)l->items[k - 1], (FgIDisp*)l->items[k]) > 0; k--) { void* t = l->items[k]; l->items[k] = l->items[k - 1]; l->items[k - 1] = t; }
+    return l;
+}
+/* The classes of the program that implement the interface, each with its method `name(argc)` - when every one has exactly one, public, not static and
+ * without default values; NULL otherwise. */
+static FcList* InterfaceImplementations(FgGen* g, const char* iface, const char* name, int argc) {
+    FcList* r = fcListNew(g->c);
+    int i;
+    for (i = 0; i < g->classList->count; i++) {
+        FgClassInfo* c = (FgClassInfo*)g->classList->items[i];
+        FgFound found;
+        FgImpl* t;
+        if (!ClassIs(c->rc, iface)) continue;
+        if (FG_OVERLOADED(c->rc, name, argc)) return NULL;
+        found = FG_FIND(c->rc, name, argc);
+        if (!found.proto || found.proto->isStatic || found.access != ACC_Public || found.proto->paramCount != argc) return NULL;
+        t = (FgImpl*)fcAlloc(g->c, sizeof *t);
+        t->cls = c; t->proto = found.proto;
+        fcListAdd(g->c, r, t);
+    }
+    return r->count > 0 ? r : NULL;
+}
+static bool DispatchNeedsList(FgGen* g, const char* name, int argc);
+static bool InterfaceDispatchWorthwhile(FgGen* g, const char* iface, const char* name, int argc) {
+    int i;
+    if (LibraryRole || g->openWorld || DispatchNeedsList(g, name, argc) || ExtensionMethods(g, name, argc)->count > 0 || !InterfaceImplementations(g, iface, name, argc)) return false;
+    if (RestrictedMethodName(g, name)) return true;
+    for (i = 0; i < g->classList->count; i++) {
+        FgClassInfo* c = (FgClassInfo*)g->classList->items[i];
+        if (!ClassIs(c->rc, iface) && FG_FIND(c->rc, name, argc).proto) return true;
+    }
+    return false;
+}
