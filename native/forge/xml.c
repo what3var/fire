@@ -50,6 +50,7 @@ typedef struct FcXReader {
 #define FCX_XML_NS "http://www.w3.org/XML/1998/namespace"
 #define FCX_XMLNS_NS "http://www.w3.org/2000/xmlns/"
 
+static const char* fcxToken(FcCtx* c, const uint16_t* s, int n, int at);
 static int fcxPos(FcXReader* r, int at) { return at - r->lineStart + 1; }
 
 static _Noreturn void fcxFailAt(FcXReader* r, int line, int pos, const char* message) {
@@ -59,6 +60,12 @@ static _Noreturn void fcxFailAt(FcXReader* r, int line, int pos, const char* mes
     longjmp(r->fail, 1);
 }
 static _Noreturn void fcxFail(FcXReader* r, const char* message) { fcxFailAt(r, r->line, fcxPos(r, r->i), message); }
+/* "'x' is an unexpected token. The expected token is ...", at the reader's place ("" expected: Expecting whitespace) */
+static _Noreturn void fcxUnexpected(FcXReader* r, const char* expected) {
+    const char* t = fcxToken(r->c, r->s, r->n, r->i);
+    if (!expected[0]) fcxFail(r, fcFmt(r->c, "'%s' is an unexpected token. Expecting whitespace.", t));
+    fcxFail(r, fcFmt(r->c, "'%s' is an unexpected token. The expected token is %s.", t, expected));
+}
 
 /* the character as XmlException shows it: the character and its hexadecimal value */
 static const char* fcxCharText(FcCtx* c, uint16_t u) {
@@ -66,6 +73,17 @@ static const char* fcxCharText(FcCtx* c, uint16_t u) {
     fcBufStr(&b, "");
     fcBufUnit(&b, u);
     return fcBufDone(c, &b);
+}
+
+static bool fcxIsNameStart(uint16_t u);
+static bool fcxIsNameChar(uint16_t u);
+/* the token XmlException names at a place: a run of name characters (no ':'), else the one character (ParseUnexpectedToken) */
+static const char* fcxToken(FcCtx* c, const uint16_t* s, int n, int at) {
+    int e = at;
+    if (at >= n) return "";
+    while (e < n && fcxIsNameChar(s[e]) && s[e] != ':') e++;
+    if (e == at) e = at + 1;
+    return fc8FromU16(c, s + at, e - at);
 }
 
 static bool fcxIsSpace(uint16_t u) { return u == ' ' || u == '\t' || u == '\n' || u == '\r'; }
@@ -90,16 +108,37 @@ static bool fcxAt(FcXReader* r, const char* lit) {
 }
 static void fcxSkipSpace(FcXReader* r) { while (r->i < r->n && fcxIsSpace(r->s[r->i])) fcxAdvance(r); }
 
-static const char* fcxName(FcXReader* r) {
+/* the end of the text where the reader expects more: the elements that are open, the innermost first (XmlTextReaderImpl.ThrowUnclosedElements) */
+static _Noreturn void fcxEof(FcXReader* r) {
+    FcBuf b = {0};
+    int k;
+    fcBufStr(&b, "Unexpected end of file has occurred. The following elements are not closed: ");
+    for (k = r->open->count - 1; k >= 0; k--) { fcBufStr(&b, ((FcXNode*)r->open->items[k])->name); fcBufStr(&b, k > 0 ? ", " : "."); }
+    fcxFail(r, fcBufDone(r->c, &b));
+}
+
+/* a name (an attribute's: a wrong first character is that even as the last one of the text) */
+static const char* fcxNameOf(FcXReader* r, bool attribute) {
     int start = r->i;
-    if (r->i >= r->n) fcxFail(r, "Unexpected end of file has occurred.");
-    if (!fcxIsNameStart(r->s[r->i]) || r->s[r->i] == ':') {
-        uint16_t u = r->s[r->i];
-        fcxFail(r, fcFmt(r->c, "Name cannot begin with the '%s' character, hexadecimal value 0x%02X.", fcxCharText(r->c, u), u));
+    bool colon = false;
+    for (;;) {
+        /* (a qualified name: NCName, then once ':' and an NCName - ParseQName) */
+        if (r->i >= r->n) fcxFail(r, "Unexpected end of file while parsing Name has occurred.");
+        if (!fcxIsNameStart(r->s[r->i]) || r->s[r->i] == ':') {
+            uint16_t u = r->s[r->i];
+            if (r->i + 1 >= r->n && !attribute) fcxFail(r, "Unexpected end of file while parsing Name has occurred.");
+            fcxFail(r, fcFmt(r->c, "Name cannot begin with the '%s' character, hexadecimal value 0x%02X.", fcxCharText(r->c, u), u));
+        }
+        while (r->i < r->n && fcxIsNameChar(r->s[r->i]) && r->s[r->i] != ':') r->i++;
+        if (r->i >= r->n) fcxFail(r, "Unexpected end of file while parsing Name has occurred.");
+        if (r->s[r->i] != ':') break;
+        if (colon) fcxFail(r, "The ':' character, hexadecimal value 0x3A, cannot be included in a name.");
+        colon = true;
+        r->i++;
     }
-    while (r->i < r->n && fcxIsNameChar(r->s[r->i])) r->i++;
     return fc8FromU16(r->c, r->s + start, r->i - start);
 }
+static const char* fcxName(FcXReader* r) { return fcxNameOf(r, false); }
 
 /* an entity or a character reference after '&' (the reader stands on '&'); appends the character(s) */
 static void fcxReference(FcXReader* r, FcBuf* out) {
@@ -125,7 +164,8 @@ static void fcxReference(FcXReader* r, FcBuf* out) {
         r->i++;
         if (v > 0x10FFFF || (v < 0x20 && v != 9 && v != 10 && v != 13) || (v >= 0xD800 && v <= 0xDFFF) || v == 0xFFFE || v == 0xFFFF) {
             int line = r->line, pos = fcxPos(r, start + 2);
-            fcxFailAt(r, line, pos, fcFmt(r->c, "Invalid character in the given encoding."));
+            fcxFailAt(r, line, pos, v == 0 ? "'.', hexadecimal value 0x00, is an invalid character."
+                : v < 0x10000 ? fcFmt(r->c, "'%s', hexadecimal value 0x%02X, is an invalid character.", fcxCharText(r->c, (uint16_t)v), v) : "Invalid character in the given encoding.");
         }
         if (v >= 0x10000) { fcBufUnit(out, (uint16_t)(0xD800 + ((v - 0x10000) >> 10))); fcBufUnit(out, (uint16_t)(0xDC00 + ((v - 0x10000) & 0x3FF))); }
         else fcBufUnit(out, (uint16_t)v);
@@ -136,7 +176,8 @@ static void fcxReference(FcXReader* r, FcBuf* out) {
         const char* name;
         if (r->i >= r->n || !fcxIsNameStart(r->s[r->i])) { r->i = start + 1; fcxFail(r, "An error occurred while parsing EntityName."); }
         while (r->i < r->n && fcxIsNameChar(r->s[r->i])) r->i++;
-        if (r->i >= r->n || r->s[r->i] != ';') fcxFail(r, "An error occurred while parsing EntityName.");
+        if (r->i >= r->n) fcxFail(r, "An error occurred while parsing EntityName.");
+        if (r->s[r->i] != ';') fcxUnexpected(r, "';'");
         name = fc8FromU16(r->c, r->s + nameStart, r->i - nameStart);
         r->i++;
         if (strcmp(name, "lt") == 0) fcBufChar(out, '<');
@@ -173,20 +214,33 @@ static void fcxAddNode(FcXReader* r, FcXNode* parent, FcXNode* node) {
     fcListAdd(r->c, parent->nodes, node);
 }
 
+/* a character the reader of a comment or CDATA stops at (not XmlCharType.IsTextChar): at the end of the text its error is there, else at the start of the content */
+static bool fcxSpecial(uint16_t u) { return u == '<' || u == '&' || u == ']' || u == '-' || u == '\t' || u == '\n' || u == '\r'; }
+
 static void fcxComment(FcXReader* r, FcXNode* parent) {
     int start;
+    int line;
+    int lineStart;
     r->i += 4;
     start = r->i;
+    line = r->line;
+    lineStart = r->lineStart;
     {
         FcBuf b = {0};
+        bool special = false;
         fcBufStr(&b, "");
         while (r->i < r->n && !fcxAt(r, "-->")) {
-            if (fcxAt(r, "--")) { r->i += 2; fcxFail(r, "An XML comment cannot contain '--', and '-' cannot be the last character."); }
+            if (fcxAt(r, "--")) fcxFail(r, "An XML comment cannot contain '--', and '-' cannot be the last character.");
+            if (fcxSpecial(r->s[r->i])) special = true;
             if (r->s[r->i] == '\r') { fcBufChar(&b, '\n'); fcxAdvance(r); continue; }
             fcBufUnit(&b, r->s[r->i]);
             fcxAdvance(r);
         }
-        if (r->i >= r->n) { fcBufFree(&b); fcxFail(r, "Unexpected end of file while parsing Comment has occurred."); }
+        if (r->i >= r->n) {
+            fcBufFree(&b);
+            if (special) fcxFail(r, "Unexpected end of file while parsing Comment has occurred.");
+            fcxFailAt(r, line, start - lineStart + 1, "Unexpected end of file while parsing Comment has occurred.");
+        }
         r->i += 3;
         if (parent) {
             FcXNode* node = (FcXNode*)fcAlloc(r->c, sizeof *node);
@@ -229,7 +283,7 @@ static const char* fcxAttrValue(FcXReader* r) {
     r->i++;
     for (;;) {
         uint16_t u;
-        if (r->i >= r->n) { fcBufFree(&b); fcxFail(r, "Unexpected end of file has occurred."); }
+        if (r->i >= r->n) { fcBufFree(&b); fcxFail(r, "There is an unclosed literal string."); }
         u = r->s[r->i];
         if (u == quote) { r->i++; break; }
         if (u == '<') { fcBufFree(&b); fcxFail(r, fcFmt(r->c, "'<', hexadecimal value 0x3C, is an invalid attribute character.")); }
@@ -256,40 +310,40 @@ static FcXNode* fcxElement(FcXReader* r) {
     e->name = fcxName(r);
     e->attrs = fcListNew(c);
     e->nodes = fcListNew(c);
+    if (!fcxIsSpace(r->s[r->i]) && r->s[r->i] != '/' && r->s[r->i] != '>')
+        fcxFail(r, fcFmt(c, "The '%s' character, hexadecimal value 0x%02X, cannot be included in a name.", fcxCharText(c, r->s[r->i]), r->s[r->i]));
     for (;;) {
         bool space = r->i < r->n && fcxIsSpace(r->s[r->i]);
         fcxSkipSpace(r);
-        if (r->i >= r->n) fcxFail(r, "Unexpected end of file has occurred.");
+        if (r->i >= r->n) fcxEof(r);
         if (r->s[r->i] == '>') { r->i++; break; }
         if (r->s[r->i] == '/') {
             r->i++;
             if (r->i >= r->n || r->s[r->i] != '>') {
-                if (r->i >= r->n) fcxFail(r, "Unexpected end of file has occurred.");
-                fcxFail(r, fcFmt(c, "'%s' is an unexpected token. The expected token is '>'.", fcxCharText(c, r->s[r->i])));
+                if (r->i >= r->n) fcxEof(r);
+                if (r->s[r->i] == ' ') r->i--;   /* (then the token is the '/') */
+                fcxUnexpected(r, "'>'");
             }
             r->i++;
             e->empty = true;
             break;
         }
-        if (!space) {
-            fcxFail(r, fcFmt(c, "'%s' is an unexpected token. Expecting white space.", fcxCharText(c, r->s[r->i])));
-        }
+        if (!space && fcxIsNameStart(r->s[r->i])) fcxUnexpected(r, "");
         {
             FcXAttr* a = (FcXAttr*)fcAlloc(c, sizeof *a);
             a->line = r->line;
             a->pos = fcxPos(r, r->i);
-            a->name = fcxName(r);
+            a->name = fcxNameOf(r, true);
             for (k = 0; k < e->attrs->count; k++)
                 if (strcmp(((FcXAttr*)e->attrs->items[k])->name, a->name) == 0)
                     fcxFailAt(r, a->line, a->pos, fcFmt(c, "'%s' is a duplicate attribute name.", a->name));
             fcxSkipSpace(r);
-            if (r->i >= r->n) fcxFail(r, "Unexpected end of file has occurred.");
-            if (r->s[r->i] != '=') fcxFail(r, fcFmt(c, "'%s' is an unexpected token. The expected token is '='.", fcxCharText(c, r->s[r->i])));
+            if (r->i >= r->n) fcxEof(r);
+            if (r->s[r->i] != '=') fcxUnexpected(r, "'='");
             r->i++;
             fcxSkipSpace(r);
             if (r->i >= r->n) fcxFail(r, "Unexpected end of file has occurred.");
-            if (r->s[r->i] != '"' && r->s[r->i] != '\'')
-                fcxFail(r, fcFmt(c, "'%s' is an unexpected token. The expected token is '\"' or '''.", fcxCharText(c, r->s[r->i])));
+            if (r->s[r->i] != '"' && r->s[r->i] != '\'') fcxUnexpected(r, "'\"' or '''");
             a->value = fcxAttrValue(r);
             fcListAdd(c, e->attrs, a);
             fcxSplitName(c, a->name, &a->prefix, &a->local);
@@ -330,14 +384,7 @@ static FcXNode* fcxElement(FcXReader* r) {
 static void fcxContent(FcXReader* r, FcXNode* e) {
     FcCtx* c = r->c;
     for (;;) {
-        if (r->i >= r->n) {
-            /* the elements that are not closed: this one and those around it */
-            FcBuf b = {0};
-            int k;
-            fcBufStr(&b, "");
-            for (k = 0; k < r->open->count; k++) { if (k) fcBufStr(&b, ", "); fcBufStr(&b, ((FcXNode*)r->open->items[k])->name); }
-            fcxFail(r, fcFmt(c, "Unexpected end of file has occurred. The following elements are not closed: %s.", fcBufDone(c, &b)));
-        }
+        if (r->i >= r->n) fcxEof(r);
         if (r->s[r->i] == '<') {
             if (fcxAt(r, "</")) {
                 int line, pos;
@@ -345,13 +392,24 @@ static void fcxContent(FcXReader* r, FcXNode* e) {
                 r->i += 2;
                 line = r->line;
                 pos = fcxPos(r, r->i);
+                /* (the name of the start tag and then the end of the text: the elements are not closed; ParseEndElement) */
+                if (r->i >= r->n) fcxFail(r, "Unexpected end of file while parsing Name has occurred.");
+                {
+                    int k = 0;
+                    const char* p = e->name;
+                    FcU16 u = {0};
+                    int len = fcU16FromFc8(p, &u);
+                    while (k < len && r->i + k < r->n && r->s[r->i + k] == u.p[k]) k++;
+                    fcU16Free(&u);
+                    if (k == len && r->i + k >= r->n) { r->i = r->n; fcxEof(r); }
+                }
                 name = fcxName(r);
                 if (strcmp(name, e->name) != 0) {
                     fcxFailAt(r, line, pos, fcFmt(c, "The '%s' start tag on line %d position %d does not match the end tag of '%s'.", e->name, e->line, e->pos, name));
                 }
                 fcxSkipSpace(r);
-                if (r->i >= r->n) fcxFail(r, "Unexpected end of file has occurred.");
-                if (r->s[r->i] != '>') fcxFail(r, fcFmt(c, "'%s' is an unexpected token. The expected token is '>'.", fcxCharText(c, r->s[r->i])));
+                if (r->i >= r->n) fcxEof(r);
+                if (r->s[r->i] != '>') fcxUnexpected(r, "'>'");
                 r->i++;
                 return;
             }
@@ -359,14 +417,19 @@ static void fcxContent(FcXReader* r, FcXNode* e) {
             if (fcxAt(r, "<![CDATA[")) {
                 FcBuf b = {0};
                 FcXNode* node;
+                int contentAt, contentLine, contentStart;
+                bool special = false;
                 fcBufStr(&b, "");
                 r->i += 9;
+                contentAt = r->i; contentLine = r->line; contentStart = r->lineStart;
                 while (r->i < r->n && !fcxAt(r, "]]>")) {
+                    if (fcxSpecial(r->s[r->i])) special = true;
                     if (r->s[r->i] == '\r') { fcBufChar(&b, '\n'); fcxAdvance(r); continue; }
                     fcBufUnit(&b, r->s[r->i]);
                     fcxAdvance(r);
                 }
-                if (r->i >= r->n) { fcBufFree(&b); fcxFail(r, "Unexpected end of file while parsing CDATA has occurred."); }
+                if (r->i >= r->n && special) { fcBufFree(&b); fcxFail(r, "Unexpected end of file while parsing CDATA has occurred."); }
+                if (r->i >= r->n) { fcBufFree(&b); fcxFailAt(r, contentLine, contentAt - contentStart + 1, "Unexpected end of file while parsing CDATA has occurred."); }
                 r->i += 3;
                 node = (FcXNode*)fcAlloc(c, sizeof *node);
                 node->kind = FCX_CDATA;
@@ -375,7 +438,15 @@ static void fcxContent(FcXReader* r, FcXNode* e) {
                 continue;
             }
             if (fcxAt(r, "<?")) { fcxPi(r, e); continue; }
-            if (fcxAt(r, "<!")) { r->i += 2; fcxFail(r, "Unexpected character in content."); }
+            if (fcxAt(r, "<!")) {
+                /* neither a comment nor CDATA (ParseElementContent: what it needs to decide, else the end of the text) */
+                r->i += 2;
+                if (r->n - r->i < 2) { r->i = r->n; fcxEof(r); }
+                if (r->s[r->i] == '-') { r->i++; fcxUnexpected(r, "'-'"); }
+                if (r->s[r->i] == '[') { r->i++; if (r->n - r->i < 6) { r->i = r->n; fcxEof(r); } fcxUnexpected(r, "'CDATA['"); }
+                fcxUnexpected(r, "'<!--' or '<[CDATA['");
+            }
+            if (r->i + 1 >= r->n) { r->i = r->n; fcxEof(r); }
             fcxAddNode(r, e, fcxElement(r));
             continue;
         }
@@ -453,11 +524,12 @@ static FcXNode* fcXmlParse(FcCtx* c, const uint16_t* s, int n, FcXmlError* error
             if (root) fcxFail(r, "Data at the root level is invalid.");
             fcxFail(r, "Data at the root level is invalid.");
         }
+        if (r->n - r->i < 4) fcxFail(r, "Data at the root level is invalid.");   /* (ParseDocumentContent: the least a tag is, "<a/>") */
         if (fcxAt(r, "<!--")) { fcxComment(r, NULL); continue; }
         if (fcxAt(r, "<?")) {
             if (fcxAt(r, "<?xml") && r->i + 5 < r->n && (fcxIsSpace(r->s[r->i + 5]) || r->s[r->i + 5] == '?')) {
                 r->i += 2;
-                fcxFail(r, "Unexpected XML declaration. The XML declaration must be the first node in the document, and no white space characters are allowed to appear before it.");
+                fcxFail(r, "Unexpected XML declaration. The XML declaration must be the first node in the document, and no whitespace characters are allowed to appear before it.");
             }
             fcxPi(r, NULL);
             continue;
@@ -468,7 +540,13 @@ static FcXNode* fcXmlParse(FcCtx* c, const uint16_t* s, int n, FcXmlError* error
         if (root) { r->i++; fcxFail(r, "There are multiple root elements."); }
         root = fcxElement(r);
     }
-    if (!root) fcxFail(r, "Root element is missing.");
+    if (!root) {
+        /* (an XmlException without a line) */
+        r->error.message = "Root element is missing.";
+        r->error.line = 0;
+        r->error.pos = 0;
+        longjmp(r->fail, 1);
+    }
     return root;
 }
 

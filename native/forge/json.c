@@ -63,7 +63,7 @@ static void fjSkip(FjReader* r) {
         while (r->i < r->n && (r->s[r->i] == ' ' || r->s[r->i] == '\t' || r->s[r->i] == '\n' || r->s[r->i] == '\r')) r->i++;
         if (r->i < r->n && r->s[r->i] == '/') {
             size_t at = r->i;
-            if (r->i + 1 >= r->n) fjFailAt(r, at, "Unexpected end of data while reading a comment.");
+            if (r->i + 1 >= r->n) fjFailAt(r, at, "'/' is an invalid start of a value.");
             if (r->s[r->i + 1] == '/') {
                 r->i += 2;
                 while (r->i < r->n && r->s[r->i] != '\n' && r->s[r->i] != '\r') r->i++;
@@ -72,11 +72,11 @@ static void fjSkip(FjReader* r) {
             if (r->s[r->i + 1] == '*') {
                 size_t k = r->i + 2;
                 while (k + 1 < r->n && !(r->s[k] == '*' && r->s[k + 1] == '/')) k++;
-                if (k + 1 >= r->n) fjFailAt(r, r->n, "Expected end of comment, but instead reached end of data.");
+                if (k + 1 >= r->n) fjFailAt(r, at, "Expected end of comment, but instead reached end of data.");
                 r->i = k + 2;
                 continue;
             }
-            fjFailAt(r, at + 1, fcFmt(r->c, "'%s' is invalid after '/' at the beginning of the comment. Expected either '/' or '*'.", fjPrintable(r->c, r->s[r->i + 1])));
+            fjFailAt(r, at, "'/' is an invalid start of a value.");
         }
         return;
     }
@@ -173,27 +173,41 @@ static const char* fjNumber(FjReader* r) {
         if (r->i < r->n && (r->s[r->i] == '+' || r->s[r->i] == '-')) r->i++;
         if (r->i >= r->n) fjFailAt(r, r->n, "Expected a digit ('0'-'9'), but instead reached end of data.");
         if (!(r->s[r->i] >= '0' && r->s[r->i] <= '9'))
-            fjFailAt(r, r->i, fcFmt(r->c, "'%s' is invalid within a number, immediately after an exponent ('E' or 'e'). Expected a digit ('0'-'9').", fjPrintable(r->c, r->s[r->i])));
+            fjFailAt(r, r->i, fcFmt(r->c, "'%s' is invalid within a number, immediately after a sign character ('+' or '-'). Expected a digit ('0'-'9').", fjPrintable(r->c, r->s[r->i])));
         while (r->i < r->n && r->s[r->i] >= '0' && r->s[r->i] <= '9') r->i++;
     }
     if (r->i < r->n && !fjDelimiter(r->s[r->i]))
         fjFailAt(r, r->i, fcFmt(r->c, "'%s' is an invalid end of a number. Expected a delimiter.", fjPrintable(r->c, r->s[r->i])));
+    /* (a number that ends with the data inside an object or array: the reader cannot know it ended) */
+    if (r->i >= r->n && r->depth > 0)
+        fjFailAt(r, r->n, fcFmt(r->c, "'%s' is an invalid end of a number. Expected a delimiter.", fjPrintable(r->c, r->s[r->n - 1])));
     return fcStrN(r->c, (const char*)r->s + start, r->i - start);
 }
 
+/* a literal: a mismatch shows the rest of the data from its start (CheckLiteral) */
 static void fjLiteral(FjReader* r, const char* lit, const char* what) {
     size_t k, len = strlen(lit);
-    for (k = 0; k < len; k++) {
-        if (r->i + k >= r->n) fjFailAt(r, r->i + k, fcFmt(r->c, "'%.*s' is an invalid JSON literal. Expected the literal '%s'.", (int)k, (const char*)r->s + r->i, what));
-        if (r->s[r->i + k] != (unsigned char)lit[k])
-            fjFailAt(r, r->i + k, fcFmt(r->c, "'%.*s' is an invalid JSON literal. Expected the literal '%s'.", (int)(k + 1), (const char*)r->s + r->i, what));
-    }
+    for (k = 0; k < len; k++)
+        if (r->i + k >= r->n || r->s[r->i + k] != (unsigned char)lit[k]) {
+            FcBuf b = {0};
+            fcBufStr(&b, "'");
+            fcBufPut(&b, (const char*)r->s + r->i, r->n - r->i);
+            fcBufFmt(&b, "' is an invalid JSON literal. Expected the literal '%s'.", what);
+            fjFailAt(r, r->i + k, fcBufDone(r->c, &b));
+        }
     r->i += len;
-    if (r->i < r->n && !fjDelimiter(r->s[r->i]))
-        fjFailAt(r, r->i, fcFmt(r->c, "'%.*s' is an invalid JSON literal. Expected the literal '%s'.", (int)(len + 1), (const char*)r->s + r->i - len, what));
 }
 
 static FjValue* fjValue(FjReader* r);
+
+/* past a ',': the data must go on */
+static void fjAfterComma(FjReader* r) {
+    size_t at = r->i;
+    r->i++;
+    if (r->i >= r->n) fjFailAt(r, at, "Expected start of a property name or value, but instead reached end of data.");
+    fjSkip(r);
+    if (r->i >= r->n) fjFailAt(r, r->n, "Expected start of a property name or value, but instead reached end of data.");
+}
 
 static FjValue* fjNew(FjReader* r, FjKind kind) {
     FjValue* v = (FjValue*)fcAlloc(r->c, sizeof *v);
@@ -206,7 +220,7 @@ static FjValue* fjValue(FjReader* r) {
     FjValue* v;
     unsigned char ch;
     fjSkip(r);
-    if (r->i >= r->n) fjFailAt(r, r->n, r->depth == 0 ? "The input does not contain any JSON tokens. Expected the input to start with a valid JSON token, while isFinalBlock is true."
+    if (r->i >= r->n) fjFailAt(r, r->n, r->depth == 0 ? "The input does not contain any JSON tokens. Expected the input to start with a valid JSON token, when isFinalBlock is true."
         : "Expected depth to be zero at the end of the JSON payload. There is an open JSON object or array that should be closed.");
     ch = r->s[r->i];
     if (ch == '{') {
@@ -229,7 +243,7 @@ static FjValue* fjValue(FjReader* r) {
             name = fjString(r);
             fjToken(r, FJT_PROPERTY, at, name);
             fjSkip(r);
-            if (r->i >= r->n) fjFailAt(r, r->n, "Expected depth to be zero at the end of the JSON payload. There is an open JSON object or array that should be closed.");
+            if (r->i >= r->n) fjFailAt(r, r->n, "Expected a value, but instead reached end of data.");
             if (r->s[r->i] != ':')
                 fjFailAt(r, r->i, fcFmt(r->c, "'%s' is invalid after a property name. Expected a ':'.", fjPrintable(r->c, r->s[r->i])));
             r->i++;
@@ -237,7 +251,7 @@ static FjValue* fjValue(FjReader* r) {
             fcListAdd(r->c, v->items, fjValue(r));
             fjSkip(r);
             if (r->i >= r->n) fjFailAt(r, r->n, "Expected depth to be zero at the end of the JSON payload. There is an open JSON object or array that should be closed.");
-            if (r->s[r->i] == ',') { r->i++; continue; }
+            if (r->s[r->i] == ',') { fjAfterComma(r); continue; }
             if (r->s[r->i] == '}') continue;
             if (r->s[r->i] == ']') fjFailAt(r, r->i, "']' is invalid without a matching open.");
             fjFailAt(r, r->i, fcFmt(r->c, "'%s' is invalid after a value. Expected either ',', '}', or ']'.", fjPrintable(r->c, r->s[r->i])));
@@ -259,7 +273,7 @@ static FjValue* fjValue(FjReader* r) {
             fcListAdd(r->c, v->items, fjValue(r));
             fjSkip(r);
             if (r->i >= r->n) fjFailAt(r, r->n, "Expected depth to be zero at the end of the JSON payload. There is an open JSON object or array that should be closed.");
-            if (r->s[r->i] == ',') { r->i++; continue; }
+            if (r->s[r->i] == ',') { fjAfterComma(r); continue; }
             if (r->s[r->i] == ']') continue;
             if (r->s[r->i] == '}') fjFailAt(r, r->i, "'}' is invalid without a matching open.");
             fjFailAt(r, r->i, fcFmt(r->c, "'%s' is invalid after a value. Expected either ',', '}', or ']'.", fjPrintable(r->c, r->s[r->i])));
@@ -272,7 +286,6 @@ static FjValue* fjValue(FjReader* r) {
     if (ch == 't') { v = fjNew(r, FJK_TRUE); fjToken(r, FJT_VALUE, r->i, NULL); fjLiteral(r, "true", "true"); return v; }
     if (ch == 'f') { v = fjNew(r, FJK_FALSE); fjToken(r, FJT_VALUE, r->i, NULL); fjLiteral(r, "false", "false"); return v; }
     if (ch == 'n') { v = fjNew(r, FJK_NULL); fjToken(r, FJT_VALUE, r->i, NULL); fjLiteral(r, "null", "null"); return v; }
-    if ((ch == ']' || ch == '}') && r->depth == 0) fjFailAt(r, r->i, fcFmt(r->c, "'%c' is invalid without a matching open.", ch));
     fjFailAt(r, r->i, fcFmt(r->c, "'%s' is an invalid start of a value.", fjPrintable(r->c, ch)));
 }
 
