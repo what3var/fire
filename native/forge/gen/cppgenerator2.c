@@ -45,6 +45,7 @@ static const char* WithoutSplitMarks(FgGen* g, const char* text);
 static FcList* ProgramSplitSplit(FgGen* g, const char* programText, FcList* splitKeys);
 typedef struct FgFuncKey { const char* module; const char* key; } FgFuncKey;
 static FgFuncKey* SplitKeyOf(FgGen* g, FgFunc* f);
+static const char* SplitNativesGroup(FgGen* g, const char* import);
 typedef struct FgSplitUnit { const char* name; const char* text; int kind; int64_t cost; } FgSplitUnit;
 #define DebugAgent (streq0(g->target->platform, "posix") || streq0(g->target->platform, "windows") || streq0(g->target->platform, "esp32") || streq0(g->target->platform, "freertos"))
 
@@ -159,13 +160,13 @@ static const char* Run(FgGen* g) {
 
     /* The natives in C of the packages ("language": "c") and the bridges of graphics and windows: part of this file, after the runtime - a C compiler is enough
      * (TinyCC, a board without C++). Their platform layers come with them (platformSources, ROADMAP 13.3b). (the bridges of graphics and windows: not ported yet) */
-    if (g->usesGraphics) { if (marks) FG_UNPORTED("the natives of a split program"); AppendStandardNatives(g, &sb, "graphics"); }
-    if (g->usesWindows) { if (marks) FG_UNPORTED("the natives of a split program"); AppendStandardNatives(g, &sb, "windows"); }
+    if (g->usesGraphics) { if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, fcFmt(g->c, "natives %s", SplitNativesGroup(g, "graphics")))); AppendStandardNatives(g, &sb, "graphics"); }
+    if (g->usesWindows) { if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, fcFmt(g->c, "natives %s", SplitNativesGroup(g, "windows")))); AppendStandardNatives(g, &sb, "windows"); }
     for (i = 0; i < g->packageImports->count; i++) {
         FgPkgImportKey* p = (FgPkgImportKey*)g->packageImports->items[i];
         FcList* texts;
         if (!(p->import->native && p->import->native->isC) || fcDictHas(g->standardNativesWritten, fcAsciiLower(g->c, p->import->name))) continue;
-        if (marks) FG_UNPORTED("the natives of a split program");
+        if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, fcFmt(g->c, "natives %s", SplitNativesGroup(g, p->key))));
         texts = fgReadNativeSources(g->c, g->instImports, g->store, p->import, fgPlatformKeys(g));
         for (k = 0; k < texts->count; k++) {
             FgNamedText* t = (FgNamedText*)texts->items[k];
@@ -537,7 +538,7 @@ static const char* Run(FgGen* g) {
     if (PointerCallsOn) programText = PointerCallsPass(g, programText);
     if (marks) {
         /* `auto`: a small program stays one file - the marks go, and the text is the one of a build without them */
-        if (g->splitMode == 2 && (int64_t)strlen(programText) < 2 * 1024 * 1024) programText = WithoutSplitMarks(g, programText);
+        if (g->splitMode == 2 && fc8Units(programText) < 2 * 1024 * 1024) programText = WithoutSplitMarks(g, programText);
         else {
             g->splitUnits = ProgramSplitSplit(g, programText, splitKeys);
             return ((FgSplitUnit*)g->splitUnits->items[1])->text;

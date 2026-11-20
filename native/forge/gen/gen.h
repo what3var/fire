@@ -35,6 +35,9 @@ typedef struct FgTarget {
     bool lineDirectives, supportsThreads;
     bool pointerCalls;            /* NativeTarget.PointerCalls (the PC targets of Open Watcom) */
     const char* memoryModel;
+    /* (the builder, Phase D 2) */
+    const char* const* linkLibs; int linkLibCount;
+    const char* const* toolchains; int toolchainCount;   /* the kinds of toolchain that can build for it; NULL: any */
 } FgTarget;
 
 /* ---- OpInfo.Decode ---- */

@@ -71,12 +71,26 @@ static bool fcStrictTag(const char* path);
 #include "gen/selectors.c"
 #include "gen/json.c"
 #include "gen/misc.c"
+#include "gen/split.c"
 #include "gen/cppgenerator4.c"
 #include "gen/cppgenerator5.c"
 #include "gen/cppgenerator6.c"
 #include "gen/cppgenerator7.c"
 #include "gen/cppgenerator8.c"
 #include "gen/native.c"
+
+/* the native builder (Phase D 2, build/): POSIX for now */
+#ifndef _WIN32
+#include <dirent.h>
+#include <errno.h>
+#include <poll.h>
+#include <pthread.h>
+#include <sys/time.h>
+#include <sys/wait.h>
+#include "build/toolchain.c"
+#include "build/builder.c"
+#include "build/command.c"
+#endif
 
 /* the markup generators (Phase C 5) */
 #include "markupmodel.c"
@@ -199,6 +213,13 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
         fgDumpNative(c, job->command + 5, job->path, job->prelude, job->store, job->out);
         return;
     }
+#ifndef _WIN32
+    if (strncmp(job->command, "buildplan:", 10) == 0) {
+        /* `buildplan <options>`: what a native build of the file would run (Phase D 2, build/) */
+        nbDumpBuildPlan(c, job->command + 10, job->path, job->prelude, job->store, job->out);
+        return;
+    }
+#endif
     if (strncmp(job->command, "fbc:", 4) == 0) {
         /* `fbc <mode>`: the program file `forge bytecode <file> -m <mode>` writes */
         const char* m = job->command + 4;
@@ -257,11 +278,15 @@ static int fcDump(const char* command, const char* path, FILE* out, const char* 
         if (strcmp(command, "ast") == 0) o.len = 0, o.p[0] = 0;   /* (the tree is written only when the parse is done) */
         if (strcmp(command, "diagnostics") == 0) { o.len = 0; o.p[0] = 0; for (i = 0; i < ctx.diags->count; i++) fcDiagLogLine(&o, (const FcDiagnostic*)ctx.diags->items[i]); }
         if (strncmp(command, "fbc:", 4) == 0) { o.len = 0; fcBufStr(&o, "error\n"); }
-        if (strncmp(command, "cgen:", 5) == 0) {
+        if (strncmp(command, "cgen:", 5) == 0 || strncmp(command, "buildplan:", 10) == 0) {
             /* (FrontendDump.DumpNative: a program the backend refuses, a part of the generator in C that is not ported yet, a compile error) */
             o.len = 0;
             if (ctx.err.kind == FC_ERR_NATIVE) { fcBufStr(&o, "unsupported: "); fcOut8(&o, ctx.err.message); fcBufChar(&o, '\n'); diags = fcListNew(&ctx); }
             else if (ctx.err.kind == FC_ERR_INTERNAL && ctx.err.message && fcStartsWith(ctx.err.message, "unported: ")) { fcOut8(&o, ctx.err.message); fcBufChar(&o, '\n'); diags = fcListNew(&ctx); }
+            else if (ctx.err.kind == FC_ERR_INTERNAL && ctx.err.message && fcStartsWith(ctx.err.message, "native-config: ")) {
+                /* (a NativeConfigException of the builder: what FrontendDump prints for an exception that is no compile error) */
+                fcBufStr(&o, "internal: NativeConfigException: "); fcOut8(&o, ctx.err.message + 15); fcBufChar(&o, '\n'); diags = fcListNew(&ctx);
+            }
             else fcBufStr(&o, "error\n");
         }
         for (i = 0; i < diags->count; i++) fcDiagLogLine(&o, (const FcDiagnostic*)diags->items[i]);
@@ -298,15 +323,32 @@ static const char* fcFindStore(const char* exe, char* buf, size_t n) {
 /* forge serve: the language services (docs/spec/FORGE_SERVE.md) - after everything they use, the markup schema included */
 #include "serve.c"
 
-static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0 || strncmp(s, "fbc:", 4) == 0 || strncmp(s, "cgen:", 5) == 0; }
+static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0 || strncmp(s, "fbc:", 4) == 0 || strncmp(s, "cgen:", 5) == 0 || strncmp(s, "buildplan:", 10) == 0; }
 
 int main(int argc, char** argv) {
     char preludeBuf[4096], storeBuf[4096];
     const char* prelude = fcFindPrelude(argv[0], preludeBuf, sizeof preludeBuf);
     const char* store = fcFindStore(argv[0], storeBuf, sizeof storeBuf);
-    char fbcCommand[64];
+    char fbcCommand[256];
+#ifndef _WIN32
+    {
+        /* (the builder, Phase D 2: Toolchain/ next to the program - AppContext.BaseDirectory -, the files of the runtime in native/ next to the tables) */
+        char exeBuf[4096], tablesBuf[4096];
+        const char* root = getenv("FIRE_NATIVE_ROOT");
+        const char* slash;
+        if (realpath(argv[0], exeBuf) && (slash = strrchr(exeBuf, '/')) != NULL) { exeBuf[slash - exeBuf] = 0; nbBaseDirectory = strdup(exeBuf); }
+        if (root && *root) nbNativeRoot = root;
+        else {
+            snprintf(tablesBuf, sizeof tablesBuf, "%s", prelude);
+            if ((slash = strrchr(tablesBuf, '/')) != NULL) { tablesBuf[slash - tablesBuf] = 0; strncat(tablesBuf, "/..", sizeof tablesBuf - strlen(tablesBuf) - 1); }
+            else snprintf(tablesBuf, sizeof tablesBuf, "..");
+            if (realpath(tablesBuf, exeBuf)) nbNativeRoot = strdup(exeBuf);
+        }
+    }
+    if (argc >= 2 && strcmp(argv[1], "build") == 0) return nbBuildMain(argc, argv, prelude, store);   /* Phase D 2 */
+#endif
     /* `fbc <mode> ...`: the mode is part of the command */
-    if (argc >= 4 && (strcmp(argv[1], "fbc") == 0 || strcmp(argv[1], "cgen") == 0) && strlen(argv[2]) < 56) {
+    if (argc >= 4 && (strcmp(argv[1], "fbc") == 0 || strcmp(argv[1], "cgen") == 0 || strcmp(argv[1], "buildplan") == 0) && strlen(argv[2]) < 200) {
         snprintf(fbcCommand, sizeof fbcCommand, "%s:%s", argv[1], argv[2]);
         argv[2] = fbcCommand;
         argv++;

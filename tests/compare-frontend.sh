@@ -21,8 +21,14 @@
 # units of a split program) for every option set of NATIVE_OPTIONS (default: "default"; words joined by `+`: debug, release, performance, split, strip0-3,
 # speed, size, i16, i32, f32, t:<target> - e.g. NATIVE_OPTIONS="default performance split t:esp32+size"). A program the generator in C does not port yet
 # is `unported: ...` - counted apart (NATIVE_STRICT=1: as a difference).
+# `buildplan` (Phase D 2) compares what a native build would run (`forge buildplan <options> <file>`: the toolchain, the lines of the log before the
+# commands, the compiler commands with the folder of the build as <build> and the program as <program>, the key of the program cache and every file of the
+# folder of the build with its SHA-256) for every option set of BUILDPLAN_OPTIONS (default: "default tc:gcc+quick"; the words of `native` and tc:<toolchain>,
+# quick, quick1, nosplit). `build` builds every BUILD_EVERY-th case of tests/cases (default 25) with both forges for real, with each toolchain of
+# BUILD_TOOLCHAINS (default "gcc tcc"; BUILD_FLAGS="--quick" for more switches), without the program cache, and compares the logs (normalized) and what the two
+# programs print - and counts the programs of forge-c that print the case's .expected.
 set -u
-if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|all] [work folder]" >&2; exit 2; fi
+if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [tokens|ast|both|diag|fbc|markup|native|buildplan|build|all] [work folder]" >&2; exit 2; fi
 FORGE_CS=$1
 FORGE_C=$2
 WHAT=${3:-both}
@@ -66,6 +72,51 @@ fbcKinds=(); for m in ${FBC_MODES:-debug release performance}; do fbcKinds+=("fb
 [ "$WHAT" = markup ] && kinds=()
 nativeKinds=(); for o in ${NATIVE_OPTIONS:-default}; do nativeKinds+=("cgen-$o"); done
 [ "$WHAT" = native ] && kinds=("${nativeKinds[@]}")
+planKinds=(); for o in ${BUILDPLAN_OPTIONS:-default tc:gcc+quick}; do planKinds+=("buildplan-$o"); done
+[ "$WHAT" = buildplan ] && kinds=("${planKinds[@]}")
+[ "$WHAT" = build ] && kinds=()
+
+# ---- build (Phase D 2): real native builds of a sample of tests/cases with both forges, their logs and what the programs print ----
+if [ "$WHAT" = build ]; then
+  every=${BUILD_EVERY:-25}
+  sample=$(awk -v e="$every" 'NR % e == 1' "$WORK/cases.lst")
+  normalize() { sed -E -e 's#/tmp/fire-native-[0-9a-f]{32}#<build>#g' -e "s#$1#<program>#g" -e 's#taken from the cache \([0-9a-f]{16}\)#taken from the cache (<key>)#'; }
+  for tc in ${BUILD_TOOLCHAINS:-gcc tcc}; do
+    total=0 sameLog=0 sameRun=0 expected=0 skipped=0 failedBoth=0
+    diffs=()
+    mkdir -p "$WORK/build-$tc"
+    n=0
+    for file in $sample; do
+      n=$((n + 1))
+      base=${file%.fire}
+      if tail -n 12 "$file" | grep -q -e '^//# skip: forge run' -e '^//# output: varies' || [ -f "$base.error" ] || [ -f "$base.diagnostics" ] || [ ! -f "$base.expected" ]; then skipped=$((skipped + 1)); continue; fi
+      total=$((total + 1))
+      group=$(basename "$(dirname "$file")")
+      modeArgs=(); [ "$group" = native ] && modeArgs=(-m RELEASE)
+      d="$WORK/build-$tc/$n"; rm -rf "$d"; mkdir -p "$d"
+      FIRE_PROGRAM_CACHE=0 $FORGE_CS build "$ROOT/$file" --engine native -o "$d/p-cs" --toolchain "$tc" "${modeArgs[@]}" ${BUILD_FLAGS:-} 2> "$d/err-cs.txt" | normalize "$d/p-cs" > "$d/log-cs.txt"
+      FIRE_PROGRAM_CACHE=0 "$FORGE_C" build "$ROOT/$file" --engine native -o "$d/p-c" --toolchain "$tc" "${modeArgs[@]}" ${BUILD_FLAGS:-} 2> "$d/err-c.txt" | normalize "$d/p-c" > "$d/log-c.txt"
+      if cmp -s "$d/log-cs.txt" "$d/log-c.txt"; then sameLog=$((sameLog + 1)); else diffs+=("$n:$file (log)"); fi
+      if [ ! -x "$d/p-cs" ] && [ ! -x "$d/p-c" ]; then failedBoth=$((failedBoth + 1)); continue; fi
+      (cd "$(dirname "$ROOT/$file")" && timeout 60 "$d/p-cs" < /dev/null > "$d/run-cs.txt" 2>&1; echo "exit $?" >> "$d/run-cs.txt")
+      (cd "$(dirname "$ROOT/$file")" && timeout 60 "$d/p-c" < /dev/null > "$d/run-c.txt" 2>&1; echo "exit $?" >> "$d/run-c.txt")
+      if cmp -s "$d/run-cs.txt" "$d/run-c.txt"; then sameRun=$((sameRun + 1)); else diffs+=("$n:$file (run)"); fi
+      head -n -1 "$d/run-c.txt" | cmp -s - "$base.expected" && expected=$((expected + 1))
+    done
+    echo "build $tc: $total cases ($skipped of the sample not run): the log identical $sameLog, the program prints the same $sameRun, as expected $expected (both builds failed: $failedBoth)"
+    if [ ${#diffs[@]} -gt 0 ]; then
+      status=1
+      for x in "${diffs[@]:0:5}"; do
+        idx=${x%%:*}
+        echo "  differs: ${x#*:}"
+        case $x in
+          *"(log)") diff "$WORK/build-$tc/$idx/log-cs.txt" "$WORK/build-$tc/$idx/log-c.txt" | head -6 | sed 's/^/    /' ;;
+          *) diff "$WORK/build-$tc/$idx/run-cs.txt" "$WORK/build-$tc/$idx/run-c.txt" | head -6 | sed 's/^/    /' ;;
+        esac
+      done
+    fi
+  done
+fi
 [ "$WHAT" = all ] && kinds=(tokens ast diagnostics "${fbcKinds[@]}")
 
 # ---- markup (Phase C 5) ----

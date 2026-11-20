@@ -12,19 +12,32 @@ static const char* const fgIncludesEsp32[] = { "freertos/FreeRTOS.h", "freertos/
 static const char* const fgIncludesFreeRtos[] = { "FreeRTOS.h", "task.h", "semphr.h" };
 static const char* const fgDefinesBios16Dos[] = { "FIRE_BIOS_MINIDOS=1" };
 #define FG_N(a) (int)(sizeof(a) / sizeof((a)[0]))
-/* name, symbols, floatWidth, intWidth, wordWidth, optimize, stack, imports, hal, embedded, extension, display, platform, includes, defines, entry, entryKind, externC, toolchain, pointerCalls */
+static const char* const fgArgsPosix[] = { "-pthread" };
+static const char* const fgArgsDos16[] = { "-bdos", "-mcmodel=h", "-march=i86", "-mstack-size=32768", "-Wc,-oe=20", "-Wc,-zt=16", "-Wc,-zu", "-fno-stack-check",
+    "-Wl,option", "-Wl,stack=32768", "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87" };
+static const char* const fgArgsDos32[] = { "-bdos32a", "-march=i386", "-mstack-size=262144" };
+static const char* const fgArgsWin16[] = { "-bwindows", "-mcmodel=h", "-march=i286", "-Wc,-oe=20", "-Wc,-zt=16", "-Wc,-zu", "-fno-stack-check",
+    "-Wl,option", "-Wl,stack=32768", "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87", "-Wl,library", "-Wl,windows", "-Wl,library", "-Wl,shell" };
+static const char* const fgArgsBios16[] = { "-bdos", "-mcmodel=h", "-march=i86", "-Wc,-fpc", "-Wc,-oe=20", "-Wc,-zu", "-fno-stack-check",
+    "-Wl,option", "-Wl,nodefaultlibs", "-Wl,option", "-Wl,start=_cstart_", "-Wl,option", "-Wl,nofarcalls",
+    "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,mathl" };
+static const char* const fgToolchainsWatcom[] = { "watcom" };
+static const char* const fgToolchainsEsp32[] = { "esp-idf" };
+static const char* const fgToolchainsWasm[] = { "emscripten" };
+/* name, symbols, floatWidth, intWidth, wordWidth, optimize, stack, imports, hal, embedded, extension, display, platform, includes, platformPath, defines, entry, entryKind,
+ * externC, compileArgs, toolchain, lineDirectives, supportsThreads, pointerCalls, memoryModel, linkLibs, toolchains (Phase D 2) */
 static const FgTarget fgTargets[] = {
-    { "windows", { "windows" }, 1, 64, 64, 64, 0, 64 * 1024, NULL, -1, "windows", false, ".exe", "Windows", "windows", NULL, 0, NULL, NULL, 0, "main", 0, false, NULL, 0, NULL, true, true, false, NULL },
-    { "linux", { "linux", "posix" }, 2, 64, 64, 64, 0, 64 * 1024, NULL, -1, "posix", false, "", "Linux", "posix", NULL, 0, NULL, NULL, 0, "main", 0, false, NULL, 0, NULL, true, true, false, NULL },
-    { "macos", { "macos", "posix" }, 2, 64, 64, 64, 0, 64 * 1024, NULL, -1, "posix", false, "", "macOS", "posix", NULL, 0, NULL, NULL, 0, "main", 0, false, NULL, 0, NULL, true, true, false, NULL },
-    { "esp32", { "esp32", "freertos" }, 2, 32, 64, 32, 0, 8192, fgImportsEmbedded, FG_N(fgImportsEmbedded), "esp32", true, "", "ESP32", "esp32", fgIncludesEsp32, FG_N(fgIncludesEsp32), NULL, NULL, 0, "app_main", 1, true, NULL, 0, "esp-idf", true, true, false, NULL },
-    { "freertos", { "freertos" }, 1, 32, 64, 32, 0, 8192, fgImportsEmbedded, FG_N(fgImportsEmbedded), "freertos", true, "", "FreeRTOS (sources)", "freertos", fgIncludesFreeRtos, FG_N(fgIncludesFreeRtos), NULL, NULL, 0, "fire_start", 1, true, NULL, 0, "files", true, true, false, NULL },
-    { "wasm", { "wasm", "browser" }, 2, 64, 64, 32, 0, 64 * 1024, NULL, -1, "wasm", false, ".html", "WebAssembly (browser)", "wasm", NULL, 0, NULL, NULL, 0, "main", 0, false, NULL, 0, "emscripten", true, true, false, NULL },
-    { "dos16", { "dos16", "dos" }, 2, 32, 32, 16, 1, 16384, fgImportsDos, FG_N(fgImportsDos), "dos16", false, ".exe", "DOS (16 bit, real mode)", "dos16", NULL, 0, NULL, NULL, 0, "main", 0, false, NULL, 0, "watcom", true, true, true, NULL },
-    { "dos32", { "dos32", "dos" }, 2, 64, 64, 32, 1, 65536, fgImportsDos, FG_N(fgImportsDos), "dos32", false, ".exe", "DOS (32 bit, DOS/32A)", "dos32", NULL, 0, NULL, NULL, 0, "main", 0, false, NULL, 0, "watcom", true, true, true, NULL },
-    { "win16", { "win16", "windows3" }, 2, 32, 32, 16, 1, 16384, fgImportsWin16, FG_N(fgImportsWin16), "win16", false, ".exe", "Windows 3.x", "win16", NULL, 0, NULL, NULL, 0, "fire_win16_main", 0, false, NULL, 0, "watcom", true, true, true, NULL },
-    { "bios16", { "bios16", "bios" }, 2, 32, 32, 16, 1, 16384, fgImportsBios16, FG_N(fgImportsBios16), "bios16", false, "", "BIOS16", "bios16", NULL, 0, NULL, NULL, 0, "main", 0, false, NULL, 0, "watcom", true, true, true, NULL },
-    { "bios16-dos", { "bios16", "bios", "bios16dos" }, 3, 32, 32, 16, 1, 16384, fgImportsBios16Dos, FG_N(fgImportsBios16Dos), "bios16", false, "", "BIOS16 (+IO)", "bios16", NULL, 0, NULL, fgDefinesBios16Dos, FG_N(fgDefinesBios16Dos), "main", 0, false, NULL, 0, "watcom", true, true, true, NULL },
+    { "windows", { "windows" }, 1, 64, 64, 64, 0, 64 * 1024, NULL, -1, "windows", false, ".exe", "Windows", "windows", NULL, 0, NULL, NULL, 0, "main", 0, false, NULL, 0, NULL, true, true, false, NULL, NULL, 0, NULL, 0 },
+    { "linux", { "linux", "posix" }, 2, 64, 64, 64, 0, 64 * 1024, NULL, -1, "posix", false, "", "Linux", "posix", NULL, 0, NULL, NULL, 0, "main", 0, false, fgArgsPosix, FG_N(fgArgsPosix), NULL, true, true, false, NULL, NULL, 0, NULL, 0 },
+    { "macos", { "macos", "posix" }, 2, 64, 64, 64, 0, 64 * 1024, NULL, -1, "posix", false, "", "macOS", "posix", NULL, 0, NULL, NULL, 0, "main", 0, false, fgArgsPosix, FG_N(fgArgsPosix), NULL, true, true, false, NULL, NULL, 0, NULL, 0 },
+    { "esp32", { "esp32", "freertos" }, 2, 32, 64, 32, 0, 8192, fgImportsEmbedded, FG_N(fgImportsEmbedded), "esp32", true, "", "ESP32", "esp32", fgIncludesEsp32, FG_N(fgIncludesEsp32), NULL, NULL, 0, "app_main", 1, true, NULL, 0, "esp-idf", true, true, false, NULL, NULL, 0, fgToolchainsEsp32, FG_N(fgToolchainsEsp32) },
+    { "freertos", { "freertos" }, 1, 32, 64, 32, 0, 8192, fgImportsEmbedded, FG_N(fgImportsEmbedded), "freertos", true, "", "FreeRTOS (sources)", "freertos", fgIncludesFreeRtos, FG_N(fgIncludesFreeRtos), NULL, NULL, 0, "fire_start", 1, true, NULL, 0, "files", true, true, false, NULL, NULL, 0, NULL, 0 },
+    { "wasm", { "wasm", "browser" }, 2, 64, 64, 32, 0, 64 * 1024, NULL, -1, "wasm", false, ".html", "WebAssembly (browser)", "wasm", NULL, 0, NULL, NULL, 0, "main", 0, false, NULL, 0, "emscripten", true, true, false, NULL, NULL, 0, fgToolchainsWasm, FG_N(fgToolchainsWasm) },
+    { "dos16", { "dos16", "dos" }, 2, 32, 32, 16, 1, 16384, fgImportsDos, FG_N(fgImportsDos), "dos16", false, ".exe", "DOS (16 bit, real mode)", "dos16", NULL, 0, NULL, NULL, 0, "main", 0, false, fgArgsDos16, FG_N(fgArgsDos16), "watcom", true, true, true, NULL, NULL, 0, fgToolchainsWatcom, FG_N(fgToolchainsWatcom) },
+    { "dos32", { "dos32", "dos" }, 2, 64, 64, 32, 1, 65536, fgImportsDos, FG_N(fgImportsDos), "dos32", false, ".exe", "DOS (32 bit, DOS/32A)", "dos32", NULL, 0, NULL, NULL, 0, "main", 0, false, fgArgsDos32, FG_N(fgArgsDos32), "watcom", true, true, true, NULL, NULL, 0, fgToolchainsWatcom, FG_N(fgToolchainsWatcom) },
+    { "win16", { "win16", "windows3" }, 2, 32, 32, 16, 1, 16384, fgImportsWin16, FG_N(fgImportsWin16), "win16", false, ".exe", "Windows 3.x", "win16", NULL, 0, NULL, NULL, 0, "fire_win16_main", 0, false, fgArgsWin16, FG_N(fgArgsWin16), "watcom", true, true, true, NULL, NULL, 0, fgToolchainsWatcom, FG_N(fgToolchainsWatcom) },
+    { "bios16", { "bios16", "bios" }, 2, 32, 32, 16, 1, 16384, fgImportsBios16, FG_N(fgImportsBios16), "bios16", false, "", "BIOS16", "bios16", NULL, 0, NULL, NULL, 0, "main", 0, false, fgArgsBios16, FG_N(fgArgsBios16), "watcom", true, true, true, NULL, NULL, 0, fgToolchainsWatcom, FG_N(fgToolchainsWatcom) },
+    { "bios16-dos", { "bios16", "bios", "bios16dos" }, 3, 32, 32, 16, 1, 16384, fgImportsBios16Dos, FG_N(fgImportsBios16Dos), "bios16", false, "", "BIOS16 (+IO)", "bios16", NULL, 0, NULL, fgDefinesBios16Dos, FG_N(fgDefinesBios16Dos), "main", 0, false, fgArgsBios16, FG_N(fgArgsBios16), "watcom", true, true, true, NULL, NULL, 0, fgToolchainsWatcom, FG_N(fgToolchainsWatcom) },
 };
 static const FgTarget* fgHostTarget(void) {
 #if defined(_WIN32)
@@ -58,8 +71,8 @@ typedef struct FgOptions {
     bool split;
 } FgOptions;
 
-/* Linker.CompileAndLink with Engine "native", ToolchainKind "files" for one file */
-static FcLinked* fgLinkNative(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, const FgOptions* o, FcNatives** registry) {
+/* Linker.CompileAndLink with Engine "native" and the ToolchainKind (its symbol for `#if`) for one file */
+static FcLinked* fgLinkNativeKind(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, const FgOptions* o, FcNatives** registry, const char* toolchainKind) {
     FcLinker* L = (FcLinker*)fcAlloc(c, sizeof *L);
     FcList* processed = fcListNew(c);
     const uint16_t* src;
@@ -69,6 +82,7 @@ static FcLinked* fgLinkNative(FcCtx* c, const char* path, const char* preludePat
     FcProcessed* p;
     FcProcessed** arr;
     FcList* program;
+    FcList* sourceModules;
     FcResolveResult* resolved;
     FcCompiled* compiled;
     FcLinked* linked;
@@ -94,7 +108,7 @@ static FcLinked* fgLinkNative(FcCtx* c, const char* path, const char* preludePat
     if ((o->intWidth ? o->intWidth : t->intWidth) == 32) fcSymbolsAdd(c, c->symbols, "int32");
     if ((o->intWidth ? o->intWidth : t->intWidth) == 16) fcSymbolsAdd(c, c->symbols, "int16");
     fcSymbolsAdd(c, c->symbols, fcFmt(c, "word%d", t->wordWidth));
-    fcSymbolsAdd(c, c->symbols, "files");
+    if (toolchainKind && *fgTrim(c, toolchainKind)) fcSymbolsAdd(c, c->symbols, fgTrim(c, toolchainKind));
     c->sharedIncluded = fcListNew(c);
     fcListAdd(c, c->sharedIncluded, (void*)full);
     c->resourcePaths = fcListNew(c);
@@ -111,6 +125,8 @@ static FcLinked* fgLinkNative(FcCtx* c, const char* path, const char* preludePat
     fcListAdd(c, processed, p);
     firstUserSource += fcInsertPreludes(L, processed);
     c->directiveHook = NULL;
+    sourceModules = fcListNew(c);
+    for (i = 0; i < processed->count; i++) fcListAdd(c, sourceModules, i == 0 ? (void*)"core" : (void*)((FcProcessed*)processed->items[i])->module);
     arr = (FcProcessed**)fcAlloc(c, sizeof(FcProcessed*) * (size_t)processed->count);
     for (i = 0; i < processed->count; i++) arr[i] = (FcProcessed*)processed->items[i];
     program = fcParseMultiple(c, arr, processed->count);
@@ -166,9 +182,15 @@ static FcLinked* fgLinkNative(FcCtx* c, const char* path, const char* preludePat
         linked->sourceHashes->items[total - 1] = (void*)fcSha256OfText(c, fc8FromU16(c, userText, userLength));
     }
     linked->optimize = o->optimize >= 0 ? o->optimize : t->optimize;
+    linked->sourceModules = sourceModules;
     *registry = &L->registry;
     (void)userLength;
     return linked;
+}
+
+/* ... with the toolchain `files` (what `forge cgen` and `forge native` build with) */
+static FcLinked* fgLinkNative(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, const FgOptions* o, FcNatives** registry) {
+    return fgLinkNativeKind(c, path, preludePath, storeRoot, strict, o, registry, "files");
 }
 
 /* the generator of a program (the constructor of CppGenerator) */
@@ -199,16 +221,45 @@ static FgGen* fgGenNew(FcCtx* c, FcLinked* program, FcList* natives, const FgTar
     return g;
 }
 
-/* CppGenerator.GenerateSources: the program in C, its natives in C++ (NULL: none), the units of a split program (NULL: one file) */
+/* SplitModes (ProgramSplit.cs): Parse ("auto", "on", "off", ...; -1: none of them), FromEnvironment (FIRE_SPLIT; -1: not set), ToolchainCan, AutoToolchain */
+enum { FG_SPLIT_AUTO = 0, FG_SPLIT_ON = 1, FG_SPLIT_OFF = 2 };
+static int fgSplitModeParse(const char* text) {
+    char b[16];
+    size_t n = 0;
+    if (!text) return -1;
+    while (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r') text++;
+    while (*text && n + 1 < sizeof b) b[n++] = (char)tolower((unsigned char)*text++);
+    while (n > 0 && (b[n - 1] == ' ' || b[n - 1] == '\t' || b[n - 1] == '\n' || b[n - 1] == '\r')) n--;
+    b[n] = 0;
+    if (*text) return -1;
+    if (streq0(b, "auto") || !*b) return FG_SPLIT_AUTO;
+    if (streq0(b, "on") || streq0(b, "true") || streq0(b, "1") || streq0(b, "yes")) return FG_SPLIT_ON;
+    if (streq0(b, "off") || streq0(b, "false") || streq0(b, "0") || streq0(b, "no")) return FG_SPLIT_OFF;
+    return -1;
+}
+static int fgSplitFromEnvironment(void) {
+    const char* v = getenv("FIRE_SPLIT");
+    if (!v || !*v) return -1;
+    return fgSplitModeParse(v) == FG_SPLIT_OFF ? FG_SPLIT_OFF : FG_SPLIT_ON;
+}
+static bool fgSplitToolchainCan(const char* kind) { return kind && (streq0(kind, "gcc") || streq0(kind, "clang") || streq0(kind, "tcc") || streq0(kind, "emscripten") || streq0(kind, "files")); }
+static bool fgSplitAutoToolchain(const char* kind) { return kind && (streq0(kind, "gcc") || streq0(kind, "clang") || streq0(kind, "emscripten")); }
+
+/* CppGenerator.GenerateSources: the program in C, its natives in C++ (NULL: none), the units of a split program (NULL: one file). split: FG_SPLIT_*, -1: null;
+ * toolchainKind: NULL: none */
 typedef struct FgSources { const char* program; const char* natives; FcList* units; } FgSources;
-static FgSources fgGenerateSources(FcCtx* c, FcLinked* program, FcList* natives, const FgTarget* target, int stripping, bool split, FcStore* store) {
+static FgSources fgGenerateSources(FcCtx* c, FcLinked* program, FcList* natives, const FgTarget* target, int stripping, int split, const char* toolchainKind, FcStore* store) {
     FgGen* g = fgGenNew(c, program, natives, target);
     FgSources r;
     const char* text;
+    int env = fgSplitFromEnvironment(), mode = env >= 0 ? env : split >= 0 ? split : FG_SPLIT_OFF;
     /* EffectiveStripping: a debug build keeps everything, otherwise what is asked for, by default level 3 */
     g->strip = program->mode == 0 ? 0 : stripping >= 0 ? stripping : 3;
-    /* (`forge native`: the toolchain `files` splits with `"split": "on"`, `auto` keeps one file there) */
-    if (split) g->splitMode = 1;
+    /* (the units, docs/spec/NATIVE_SPLIT.md: FIRE_SPLIT goes before the configuration; a toolchain that cannot build units stays one file; `auto` decides by the
+     * size of the C once it is made) (gen.h: splitMode -1 null, 0 Off, 1 On, 2 Auto) */
+    if (mode != FG_SPLIT_OFF && (env == FG_SPLIT_ON ? !toolchainKind || fgSplitToolchainCan(toolchainKind)
+            : mode == FG_SPLIT_ON ? fgSplitToolchainCan(toolchainKind) : fgSplitAutoToolchain(toolchainKind)))
+        g->splitMode = mode == FG_SPLIT_ON ? 1 : 2;
     g->store = store;
     CollectPackages(g, store);
     text = Run(g);
@@ -249,8 +300,13 @@ static void fgDumpNative(FcCtx* c, const char* options, const char* path, const 
     linked = fgLinkNative(c, path, prelude, storeRoot, fcStrictTag(path), &o, &registry);
     memset(&store, 0, sizeof store);
     store.root = storeRoot;
-    s = fgGenerateSources(c, linked, registry->names, o.target, o.stripping, o.split, &store);
+    s = fgGenerateSources(c, linked, registry->names, o.target, o.stripping, o.split ? FG_SPLIT_ON : FG_SPLIT_AUTO, "files", &store);
     fcOut8(out, s.program);
     if (s.natives) { fcBufStr(out, "//==== fire_natives.cpp\n"); fcOut8(out, s.natives); }
-    if (s.units) FG_UNPORTED_C(c, "split units");
+    if (s.units)
+        for (i = 0; i < s.units->count; i++) {
+            FgSplitUnit* u = (FgSplitUnit*)s.units->items[i];
+            fcBufFmt(out, "//==== %s %s %" PRId64 "\n", u->name, fgSplitUnitKindNames[u->kind], u->cost);
+            fcOut8(out, u->text);
+        }
 }
