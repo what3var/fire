@@ -6,6 +6,9 @@ static void GenerateChunk(FgGen* g, FgFunc* f);
 static const char* FieldHelpers(FgGen* g, const char* name);
 static const char* Dispatcher(FgGen* g, const char* name, int argc);
 static const char* InterfaceDispatcher(FgGen* g, const char* iface, const char* name, int argc);
+typedef struct FgSelector FgSelector;
+static const char* SelectorFunction(FgGen* g, const FgSelector* selector);
+static const char* SelectorSignature(FgGen* g, const FgSelector* selector);
 static const char* DispatcherSignature(FgGen* g, const char* name, int argc, const char* prefix);
 static const char* InterfaceDispatcherSignature(FgGen* g, const char* iface, const char* name, int argc);
 static const char* DispatchTail(FgGen* g, const char* name, int argc, const char* list, const char* caller);
@@ -374,8 +377,7 @@ static const char* Run(FgGen* g) {
         for (i = 0; i < dispatchers->count; i++) { FgNameArgc* d = (FgNameArgc*)dispatchers->items[i]; fcListAdd(g->c, dispatcherCode, (void*)Dispatcher(g, d->name, d->argc)); }
         idispatchers = fgSortedIDispatch(g);
         for (i = 0; i < idispatchers->count; i++) { FgIDisp* x = (FgIDisp*)idispatchers->items[i]; fcListAdd(g->c, dispatcherCode, (void*)InterfaceDispatcher(g, x->iface, x->name, x->argc)); }
-        if (fcDictCount(g->overloadSelectors) > 0) FG_UNPORTED("the selectors of overloads");
-        (void)selectorCode;
+        FC_DICT_EACH(g->overloadSelectors, e) fcListAdd(g->c, selectorCode, (void*)SelectorFunction(g, (FgSelector*)e->value));
         targTables = TArgTables(g, true);
         isOfTypes = fgSortedKeys(g->c, g->isOfTypes, false);
         for (i = 0; i < isOfTypes->count; i++) fcBufFmt(&sb, "FIRE_MAYBE_UNUSED %sbool isof_%s(Value v);\n", HelperStorage, Mangle(g, (const char*)isOfTypes->items[i]));
@@ -417,11 +419,13 @@ static const char* Run(FgGen* g) {
         fcBufFmt(&sb, "FIRE_MAYBE_UNUSED %sValue aset_g(Value a, Value i, Value v, OwnList* list);\n", HelperInline);
         fcBufStr(&sb, "\n");
 
+        FC_DICT_EACH(g->overloadSelectors, e) fcBufFmt(&sb, "%s;\n", SelectorSignature(g, (FgSelector*)e->value));
         fcBufStr(&sb, OverloadClassFunctions(g, true));
         fcBufStr(&sb, "\n");
 
         for (i = 0; i < fieldHelperCode->count; i++) fcBufFmt(&sb, "%s\n", PointerArgs(g, (const char*)fieldHelperCode->items[i]));
         for (i = 0; i < dispatcherCode->count; i++) fcBufFmt(&sb, "%s\n", PointerArgs(g, (const char*)dispatcherCode->items[i]));
+        for (i = 0; i < selectorCode->count; i++) fcBufFmt(&sb, "%s\n", PointerArgs(g, (const char*)selectorCode->items[i]));
         if (g->usesTakeEnumerate) fcBufStr(&sb, EnumerateItemsFunction(g));
         for (i = 0; i < operators->count; i++) {
             const char* method = (const char*)operators->items[i];

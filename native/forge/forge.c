@@ -68,6 +68,7 @@ static bool fcStrictTag(const char* path);
 #include "gen/packed.c"
 #include "gen/cabi.c"
 #include "gen/overloads.c"
+#include "gen/selectors.c"
 #include "gen/misc.c"
 #include "gen/cppgenerator4.c"
 #include "gen/cppgenerator5.c"

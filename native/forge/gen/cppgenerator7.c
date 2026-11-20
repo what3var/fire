@@ -62,15 +62,59 @@ static const char* xFieldTail(FgSC* x, const char* field) { return FieldTail(g, 
 static const char* xProbedSetter(FgSC* x, const FcRtClass* rc, const char* obj, const char* field, const char* value) {
     return MayBeProbed(g, rc, field) ? fcFmt(g->c, "if (FIRE_UNLIKELY(objAt(%s)->h.flags & 2)) %s(%s, %s%s); else ", obj, FieldFn(g, "sf", field), obj, value, xFieldTail(x, field)) : "";
 }
-static FgStep xOverloadedCall(FgSC* x) { FG_UNPORTED("calls of methods overloaded by type (%s)", x->fn); }
-static bool xHintBefore(FgSC* x) {
-    int i = f->indexOf[ins->addr] - 2;
-    if (i >= 0 && f->decoded.p[i].op == OP_CopyArgs) i--;
-    if (i >= 0 && f->decoded.p[i].op == OP_SetTypeArgs) i--;
-    return i >= 0 && f->decoded.p[i].op == OP_OverloadHint;
+typedef struct FgDenyCtx { FgSC* x; const FcRtClass* rc; const char* method; FgFuncKind kind; const char* what; } FgDenyCtx;
+static const char* fgDenied(void* ctx, const FcRtClass* declaring, int access) {
+    FgDenyCtx* dc = (FgDenyCtx*)ctx;
+    FgSC* x = dc->x;
+    if (!CheckAccess || AccessAllowed(f->chunk->ownerClass, declaring, access)) return NULL;
+    return dc->kind == FK_Ctor ? fcFmt(g->c, "Constructor of '%s' is %s and cannot be called from here.", dc->rc->name, DescribeAccess(access))
+        : fcFmt(g->c, "%s '%s' of '%s' is %s and cannot be called from here.", dc->what, dc->method, declaring->name, DescribeAccess(access));
+}
+/* overloads by type where the target is known up to the overload: the selector scores the arguments (access: per candidate, by the class of this code) */
+static FgStep xOverloadedCall(FgSC* x, const FcRtClass* rc, const char* method, int argc, FgFuncKind kind, int slot, const char* self, const char* what, bool owned, FgClassInfo* newClass) {
+    int64_t argMask = ArgMask(), mask;
+    uint32_t addressBits = 0;
+    int i, first;
+    FgDenyCtx dc;
+    FgSelector* selector;
+    const char* args;
+    for (i = 0; i < (argc < 16 ? argc : 16); i++) if (((argMask >> (4 * i)) & 15) == 3) addressBits |= 1u << i;
+    dc.x = x; dc.rc = rc; dc.method = method; dc.kind = kind; dc.what = what;
+    selector = OverloadSelectorFor(g, rc, method, argc, kind, fgDenied, &dc, addressBits, HintBefore(g, f, ins));
+    mask = ArgMask();
+    first = d - argc;
+    ArgsBefore(first, argc, mask);
+    args = Args(first, argc);
+    if (newClass) {
+        const char* ownerExpr = owned ? fcFmt(g->c, "objOwned(asObj(%s))", S(slot)) : fcFmt(g->c, "&%s", OwnerList());
+        const char* typeArgsSet = g->pendingNewTArgs ? fcFmt(g->c, "objSetTArgs(asObj(o), %s); ", g->pendingNewTArgs) : "";
+        g->pendingNewTArgs = NULL;
+        {
+            const char* make = NewObjectCall(g, newClass, ownerExpr);
+            const char* enter = RecInitEnter(newClass);
+            const char* owner = OwnerList();
+            const char* leave = RecInitLeave(newClass);
+            E("{ Value o = %s; %s%s%s%s(o%s, &%s); %sctorEnd(o); %s = o; }", make, typeArgsSet, newClass->rc->isActor ? "markActor(o); " : "", enter, selector->name, args, owner, leave, S(slot));
+        }
+        ArgsAfter(argc, mask, S(slot));
+        Check();
+        SetR(slot, false);
+        SetT(slot, ObjType(g, newClass->rc)); g->kindsKept = true;
+    } else {
+        {
+            const char* s = S(slot);
+            E("%s = %s(%s%s, &%s);", s, selector->name, self, args, OwnerList());
+        }
+        ArgsAfter(argc, mask, kind == FK_Ctor ? "Undef()" : S(slot));
+        Check();
+        if (kind == FK_Ctor) { E("%s = Undef();", S(slot)); SetR(slot, false); }
+        else AdoptResult(slot, SelectorReturnType(g, selector));
+    }
+    d = slot + 1; return Next();
 }
 static const char* xSlotS(void* ctx, int k) { return xS((FgSC*)ctx, k); }
 static int xSlotTy(void* ctx, int k) { return xTy((FgSC*)ctx, k); }
+static const char* xHintArg(void* ctx, int i) { FgSC* x = (FgSC*)ctx; return S(d - ins->a[1] + i); }
 static void xAddDispatcher(FgSC* x, const char* method, int argc) { if (!fgHasNameArgc(g, g->dispatchers, method, argc)) fgAddNameArgc(g, g->dispatchers, method, argc); }
 
 static FgStep xCallExtern(FgSC* x) {
@@ -181,7 +225,7 @@ static FgStep xCallStaticMethod(FgSC* x) {
     if (FG_OVERLOADED(rc, method, argc)) {
         if (staticNames) FG_NOTSUP("named arguments for %s.%s, which is overloaded by type", cls, method);
         if (helper) ES(ReflectionCallerAssign(g, f));
-        return xOverloadedCall(x);
+        return xOverloadedCall(x, rc, method, argc, FK_Static, d - argc, "Undef()", "Static method", false, NULL);
     }
     if (streq0(cls, "Math") && !staticNames && xMathIntrinsic(x, method, argc)) return Next();
     if (streq0(cls, "Math") && st->scalar != 0 && !CAbiStaticCallee(g, f, ins)) { FgEmit e = xEmitter(x); MaterializeAll(g, f, st, &e, -1, -1); }
@@ -467,7 +511,7 @@ static FgStep xNewObject(FgSC* x) {
     if (fgTreeNodeClass(cls->rc->name) && !fgTreeNodeClass(f->chunk->ownerClass ? f->chunk->ownerClass->name : "")) NoteReflectionLiterals(g, f);
     newNames = xNamesBefore(x);
     if (newNames && fgIsConstructorTypeOverloaded(g->c, cls->rc, argc)) FG_NOTSUP("named arguments for the constructors of %s, which are overloaded by type", cls->rc->name);
-    if (fgIsConstructorTypeOverloaded(g->c, cls->rc, argc)) return xOverloadedCall(x);
+    if (fgIsConstructorTypeOverloaded(g->c, cls->rc, argc)) return xOverloadedCall(x, cls->rc, "new", argc, FK_Ctor, d - argc - (owned ? 1 : 0), "", "", owned, cls);
     ctor = fgFindConstructor(cls->rc, argc);
     if (!ctor) {
         int errorSlot = d - argc - (owned ? 1 : 0);
@@ -513,7 +557,7 @@ static FgStep xConstructBase(FgSC* x) {
     const char* dargs = "";
     Need(argc); xRequireSelf(x);
     rc = FindClass(g, Str(ins->a[0]));
-    if (fgIsConstructorTypeOverloaded(g->c, rc, argc)) return xOverloadedCall(x);
+    if (fgIsConstructorTypeOverloaded(g->c, rc, argc)) return xOverloadedCall(x, rc, "new", argc, FK_Ctor, d - argc, "self", "", false, NULL);
     ctor = fgFindConstructor(rc, argc);
     if (!ctor) FG_NOTSUP("class %s has no constructor with %d argument(s)", rc->name, argc);
     target = GetFunc(g, ctor, FK_Ctor, 0);
@@ -848,8 +892,78 @@ static FgStep xCallMethod(FgSC* x) {
             d = slot + 1; return Next();
         }
     }
-    if (!passesAddresses && !WrapDispatchers && !OwnMethodId(method, argc) && !reflected && xHintBefore(x))
-        FG_UNPORTED("overload hints (%s)", x->fn);
+    {
+        FgHint* callHint;
+        if (!passesAddresses && !WrapDispatchers && !OwnMethodId(method, argc) && !reflected && (callHint = HintBefore(g, f, ins)) != NULL && !fgHintIsConstructor(callHint) && streq0(callHint->method, method)) {
+            FcList* classes;
+            FcList* hinted = fcListNew(g->c);
+            int k;
+            if (ObjSlot(slot)) classes = InstancesOf(g, ObjClass(g, Ty(slot)));
+            else {
+                classes = fcListNew(g->c);
+                for (i = 0; i < g->classList->count; i++) {
+                    FgClassInfo* c = (FgClassInfo*)g->classList->items[i];
+                    const FcRtClass* r;
+                    for (r = c->rc; r; r = r->base) if (streq0(r->name, callHint->declaringClass)) { fcListAdd(g->c, classes, c); break; }
+                }
+            }
+            for (i = 0; i < classes->count; i++) {
+                FgClassInfo* c = (FgClassInfo*)classes->items[i];
+                FcProto* p;
+                FgImpl* t;
+                if (!MethodAllowedOn(g, c->rc, method, argc, f)) continue;
+                p = HintTarget(g, callHint, c->rc);
+                if (!p || p->isStatic) continue;
+                t = (FgImpl*)fcAlloc(g->c, sizeof *t);
+                t->cls = c; t->proto = p;
+                fcListAdd(g->c, hinted, t);
+            }
+            if (hinted->count > 0) {
+                const char* hextra;
+                int64_t hmask;
+                const char* hargs;
+                const char* dispatch;
+                FcBuf line = {0};
+                FcList* groups = fcListNew(g->c);
+                xAddDispatcher(x, method, argc);
+                hextra = DispatchTail(g, method, argc, DispatchNeedsList(g, method, argc) ? fcFmt(g->c, "&%s", OwnerList()) : "", CallerId(g, f));
+                hmask = ArgMask();
+                ArgsBefore(d - argc, argc, hmask);
+                hargs = Args(d - argc, argc);
+                dispatch = fcFmt(g->c, "%s(%s%s%s)", CallFn(g, method, argc, "call_"), S(slot), hargs, hextra);
+                {
+                    const char* s = S(slot);
+                    const char* holds = HintHolds(g, callHint, xHintArg, x);
+                    fcBufFmt(&line, "if (%s.kind == K_Class && leafAlive(%s) && %s) { g_explicitTArgs = 0; switch (objAt(%s)->cls) { ", s, s, holds, s);
+                }
+                for (i = 0; i < hinted->count; i++) {
+                    FgImpl* t = (FgImpl*)hinted->items[i];
+                    bool seen = false;
+                    for (k = 0; k < groups->count; k++) if (((FgImpl*)groups->items[k])->proto == t->proto) seen = true;
+                    if (!seen) fcListAdd(g->c, groups, t);
+                }
+                for (k = 0; k < groups->count; k++) {
+                    FcProto* proto = ((FgImpl*)groups->items[k])->proto;
+                    FgFunc* target = GetFunc(g, proto, FK_Method, 0);
+                    const char* hpre;
+                    const char* hdefaults = "";
+                    {
+                        const char* self = S(slot);
+                        const char* list = xDefaultsList(x, proto, argc);
+                        hpre = DefaultArgsPre(g, proto, argc, self, list, &hdefaults);
+                    }
+                    for (i = 0; i < hinted->count; i++) if (((FgImpl*)hinted->items[i])->proto == proto) fcBufFmt(&line, "case %d: ", ((FgImpl*)hinted->items[i])->cls->id);
+                    fcBufFmt(&line, "{ %s%s%s = %s(%s%s%s); break; } ", hpre, ClearCallTArgs(proto), S(slot), target->name, S(slot), hargs, hdefaults);
+                }
+                fcBufFmt(&line, "default: %s = %s; break; } } else %s = %s;", S(slot), dispatch, S(slot), dispatch);
+                ES(fcBufDone(g->c, &line));
+                ArgsAfter(argc, hmask, S(slot));
+                Check();
+                AdoptResult(slot, DispatchResultType(g, method, argc));
+                d = slot + 1; return Next();
+            }
+        }
+    }
     xAddDispatcher(x, method, argc);
     if (passesAddresses) fgAddNameArgc(g, g->refCallSites, method, argc);
     resultType = DispatchResultType(g, method, argc);
@@ -893,7 +1007,7 @@ static FgStep xCallBaseMethod(FgSC* x) {
     method = Str(ins->a[1]);
     baseNames = xNamesBefore(x);
     if (baseNames && FG_OVERLOADED(rc, method, argc)) FG_NOTSUP("named arguments for base.%s, which is overloaded by type", method);
-    if (FG_OVERLOADED(rc, method, argc)) return xOverloadedCall(x);
+    if (FG_OVERLOADED(rc, method, argc)) return xOverloadedCall(x, rc, method, argc, FK_Method, d - argc, "self", "Method", false, NULL);
     proto = FG_FIND(rc, method, argc).proto;
     if (!proto) FG_NOTSUP("%s.%s with %d argument(s) not found", rc->name, method, argc);
     baseFound = FG_FIND(rc, method, argc);
