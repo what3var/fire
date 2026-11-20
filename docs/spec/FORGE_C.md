@@ -1,6 +1,7 @@
 # forge in C (`native/forge`)
 
-Status: **Phase C, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-c---das-frontend-in-c) (20.11.2026): Lexer,
+Status: **Phase C, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-c---das-frontend-in-c) (20.11.2026), dazu der größte
+Teil von **Phase D Schritt 1**, dem Generator Bytecode -> C ([unten](#phase-d-schritt-1-der-generator)): Lexer,
 Präprozessor mit `#if`, Diagnosen, AST und Parser (1, 2); Resolver, Typprüfer und `SetterClaims` mit dem, was sie vom Linker brauchen - die
 Direktiven eines Builds mit ihrer Wirkung, `#import` mit den Preludes und den Natives der installierten Pakete (3); der Bytecode-Compiler, was die
 Typprüfung ihm hinterlässt (mit der Herleitung von `defined`), der Rest des Linkers und der Schreiber der Programmdatei `.fbc` (4); die
@@ -323,6 +324,80 @@ Parser und Resolver ihren Zustand vom Kontext einer Übersetzung lösen); Highli
   `forge-c` mit der ersten Zeile, die .NET schreibt (`Unhandled exception. System.InvalidOperationException: ...`), ohne Stack.
 * **Kein globaler Zustand**: `[ThreadStatic] s_scope` (die Namespaces beim Lesen) und `s_preview` (die Vorschau) gehen als Parameter durch.
 
+## Phase D Schritt 1: der Generator
+
+Der Generator Bytecode -> C ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-d---backend-und-werkzeuge-in-c), Schritt 1) in `native/forge/gen/`, Stand
+808e9788 von `src/fire.Native`: dasselbe gelinkte Programm (`FcLinked`, wie `forge-c fbc` es schreibt) geht durch denselben Generator wie in C#,
+1:1 (L3) - die Runden bis zum Fixpunkt (`_version`), die zwei Durchgänge je Funktion, der Fluss (`Flow`) mit seinen Kanten, die Schatten der
+Slots als C-Zahlen, das Weglassen, die Tabellen. In derselben Übersetzungseinheit wie das Frontend (`forge.c` bindet `gen/*.c` nach `linker.c` ein).
+
+```
+forge cgen <optionen> x.fire                         (C#: das C von `forge native` - fire_program.c, dann `//==== fire_natives.cpp` und je Einheit `//==== name`)
+forge-c cgen <optionen> x.fire                       (dasselbe aus dem Generator in C; `--list <dateien.txt> --out <ordner>` wie bei `fbc`)
+tests/compare-frontend.sh <forge> <forge-c> native [<ordner>]   (NATIVE_OPTIONS="default size i32 t:esp32+size ...": die Optionssätze;
+                                                     NATIVE_STRICT=1: `unported` zählt als Unterschied)
+```
+
+Die Optionen sind Wörter, mit `+` verbunden: `default`, `debug`/`release`/`performance` (der Modus), `split` (`"split": "on"`), `speed`/`size`
+(`optimize`), `i16`/`i32` (`#intwidth`), `f32` (`#floatwidth`), `strip0` ... `strip3`, `t:<ziel>`. Beide Seiten bauen mit dem Werkzeugsatz
+`files` und einer frischen `NativeConfig`. Fehler: `error` und die Diagnosen; `unsupported: ...` (C#: `NativeNotSupportedException`, in C
+`FC_ERR_NATIVE`); `unported: ...` nur in C - ein Teil, der noch nicht portiert ist (das Skript zählt ihn getrennt).
+
+### Stand
+
+| Optionen | Quellen | gleich | noch nicht portiert | verschieden |
+|---|---|---|---|---|
+| `default`, `tests/cases` | 1129 | 1056 | 73 | 0 |
+| `default`, `packages` | 93 | 92 | 1 | 0 |
+| `default`, `src/fire.Project` | 34 | 30 | 3 | 1 (`Scene3D Models`: die Modelle als Ressourcen - der Linker, siehe oben) |
+| Stichprobe, `default` / `performance` / `size` / `i32` / `f32` (je) | 504 | 473 | 30 | 1 (`Scene3D Models`) |
+| Stichprobe, `strip0` | 504 | 455 | 48 | 1 (`Scene3D Models`) |
+| Stichprobe, `t:esp32` | 504 | 488 | 16 | 0 |
+| Stichprobe, `t:dos16` (Zeigerkonvention) | 504 | 487 | 16 | 1 (`Scene3D Models`) |
+| Stichprobe, `t:win16` (Zeigerkonvention) | 504 | 475 | 28 | 1 (`Scene3D Models`) |
+| Stichprobe, `strip2`, `t:windows`, `t:wasm`, `i16` (Stand vor JSON und `Library.Get`) | 504 | 455 / 473 / 475 / 473 | 48 / 30 / 28 / 30 | 1 (`Scene3D Models`) |
+| Stichprobe, `debug`, `split` | 504 | 131 (die Fehler des Frontends) | 373 | 0 |
+
+(Die Stichprobe: jede dritte Quelle von `tests/cases` und alle von `packages` und `src/fire.Project`, 504 Quellen.)
+
+Noch nicht portiert (`unported: ...`, über die Fälle mit Standardoptionen): die Reflection (`CppGenerator.Reflection.cs`: `__refl_*`, die Selektoren
+der Lambdas, die Probes - alle 73 noch nicht portierten Fälle und das eine Paket, `fire-reflection`), Debug-Builds (`CppGenerator.Debug.cs`), die Teilung in
+Einheiten (`ProgramSplit.cs`, `CppGenerator.Split.cs`), `linkage` static/shared (`CppGenerator.Modules.cs`, `ModuleDispatch.cs`, `StaticLinkage.cs`,
+`Plugins.cs`: der Generator in C kennt nur die eine Rolle des ganzen Programms - `Modular`, `LibraryRole` sind `false`) und `--stats`.
+
+### Dateien
+
+| Datei | Inhalt | Gegenstück in C# |
+|---|---|---|
+| `gen/gen.h` | die Typen: das Ziel (`TargetProfile`, `NativeTarget`), die dekodierte Instruktion, `Func`, `ClassInfo`, `Flow`, `Out`, `Region`, `HEntry`, `StepResult`, `CAbi`, der Generator `FgGen` (die Felder aller Teile der partiellen Klasse) | die geschachtelten Klassen von `CppGenerator`, `OpInfo.Instr` |
+| `gen/support.c` | Texte (`Split`, `Join`, die Kultur-Ordnung der `SortedSet<string>`), Mengen von Zahlen, `OpInfo.Decode`, `DeclaredType`, die Fragen an `RuntimeClass` (Felder, Kandidaten, Konstruktoren), `ArrayElem` | `OpInfo.cs`, `Bytecode/DeclaredType.cs`, `Bytecode/RuntimeClass.cs`, `Values/ArrayElem.cs` (Teile) |
+| `gen/packages.c` | das Manifest der Natives eines Pakets, `SourcesFor`, `PlatformLayerFor`, `LinkLibrariesFor`, `SupportsAny`, `ReadNativeSources` mit den Headern (`Point`, `Inline`), `StripLocalIncludes`, `StripPragmaOnce`, `UsedImports`; `NativeCTypes` | `Package.Manager/Manifest.cs`, `NativeSources.cs`, `PackageStore.cs` (Teile), `fire.Native/NativeCTypes.cs` |
+| `gen/cppgenerator.c` | `CppGenerator.cs` bis zur Zeile 1970: Namen, Funktionen, Spezialisierung, Klassen, Felder, Zugriff, Erweiterungen, Natives der Pakete (`CollectPackages`, `PkgLock`, `BridgeOf`, `AppendStandardNatives`), Einheiten der Anforderungen, die Dispatcher der Interfaces | `CppGenerator.cs` |
+| `gen/cppgenerator2.c` | `Run` (die Runden, der Kopf, die Tabellen, die Helfer, `fire_init`, die Einstiegspunkte), Dispatcher, Feldhelfer, Eigenschaften, Klassendeskriptoren, Records | `CppGenerator.cs` 1971-3512 |
+| `gen/cppgenerator3.c` | der Fluss, `GenerateChunkCore` (beide Durchgänge, Prolog, Rahmen, Catch-Funktionen), Regionen, Ausgänge, Variablen, die Schatten der Slots | `CppGenerator.cs` 3513-4679 |
+| `gen/packed.c`, `gen/cabi.c`, `gen/overloads.c`, `gen/selectors.c` | gepackte Felder; die C-Schnittstelle der Methoden; Überladungen nach Typ, die Selektoren, `OverloadHint` | `CppGenerator.Packed.cs`, `CppGenerator.CAbi.cs`, `CppGenerator.Overloads.cs`, `Bytecode/Overloads.cs` (`OverloadHint`) |
+| `gen/misc.c` | Konstanten (`Constant`, `DoubleLiteral` wie `"R"` von .NET, `CString`), `UnitId`, Prototypen, die Thunks von `Library.Get` (mit `LibraryMethods.Parse`), die Zeigerkonvention der Open-Watcom-Ziele (`PointerFunction`, `PointerCallsPass`), was jedes Programm von der Reflection braucht; die Stummel der nicht portierten Teile | `CppGenerator.cs`, `PointerCalls.cs`, `Modules.cs`, `Debug.cs`, `Reflection.cs`, `Split.cs` (Teile), `Standard/LibraryMethods.cs` |
+| `gen/json.c` | JSON: die Ziele des Lesens, die Tabellen der Klassen und Felder, die Typargumente | `CppGenerator.Json.cs`, `Standard/JsonMethods.cs` (`JsonFieldsOf`) |
+| `gen/cppgenerator4.c` ... `gen/cppgenerator8.c` | `StepCore`: seine lokalen Funktionen über dem Zustand eines Schritts (`FgSC`), `CFields`, dann der `switch` in der Reihenfolge der C#-Datei (Stapel, Variablen, Natives; Rechnen, Einheiten, Vergleiche, Sprünge; Aufrufe, Felder, `new`; Lambdas, Wächter, Arrays, Besitz, Zeiger, Ausnahmen, Threads) | `CppGenerator.cs` 4680-8555, `CppGenerator.CFields.cs` |
+| `gen/native.c` | die Ziele, `NativeBuilder.GenerateLinked` mit `files` (das Linken mit den Symbolen des Ziels), `forge-c cgen` | `NativeConfig.cs`, `Runtime/TargetProfile.cs`, `NativeBuilder` (Teil), `FrontendDump.cs` (`DumpNative`) |
+
+### Entscheidungen
+
+* **Die Reihenfolge der Auswertung**: in C ist sie bei den Argumenten eines Aufrufs offen, in C# von links nach rechts. Jede Interpolation, in der
+  mehr als ein Teil etwas tut - `S`/`SR`/`T` (ein Schatten wird zum Value, eine Zeile wird geschrieben), `Constant` (die Reihenfolge der
+  Stringtabelle), `UnitId`, `GetFunc` (die Nummern der Funktionen), `RegisterClass`, `TArgRef`, `ExitLabel`, `OwnerList` -, geht in C über lokale
+  Variablen in der Reihenfolge der C#-Interpolation.
+* **Die Schritt-Dateien** schreiben den Zustand eines Schritts wie C# (`d`, `f`, `st`, `ins`, `sb`, `locals`, `g` sind Makros über `x`; `E(...)`,
+  `S(k)`, `Need(n)`, `Next()` wie die lokalen Funktionen); am Ende von `cppgenerator8.c` werden sie aufgehoben.
+* **Was eine Bedingung in einem Kommentar hat**, zählt nicht: in `StepCore` steht `&& !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(...) != null)`
+  hinter `//` - der C-Code lässt es weg (mit einem Kommentar an der Stelle).
+* **Ordnungen von .NET**: `Dictionary`/`HashSet` in Einfügereihenfolge (`dict.c`), `SortedSet<string>` und Tupel mit Texten in der Ordnung der
+  Kultur (`fgCultureCmp`), `StringComparer.Ordinal` mit `strcmp`.
+* **Die Pakete**: das Manifest wird für den Generator noch einmal gelesen (`linker.c` behält nur, was der Linker braucht); die regulären Ausdrücke von
+  `NativeHeaders` und `PackageStore` sind Zeile für Zeile ausgeschrieben. Jedes Paket des Stores liegt im Store (`IsInStore`): seine Header werden
+  nach `pkg/<import>/` gezeigt, nicht eingesetzt.
+* **Warnungen**: die Helfer der noch nicht portierten Teile (Reflection, JSON, Debug) sind schon da und noch unbenutzt (`-Wunused-function`).
+
 ## Nachziehen
 
 Ändert sich auf `master` eine der portierten C#-Dateien (`git log <commit>..master -- src/fire.Compiler/Lexer.cs` usw.; Schritt 3:
@@ -333,3 +408,7 @@ Stand 6bc618e7; Schritt 5: `src/fire.UI.Markup/*.cs` außer `DataModelDocument.c
 7a594769), wird die Änderung in die C-Datei übertragen und der Commit im Kopf nachgeführt; `tests/compare-frontend.sh` (mit
 `FRONTEND_MUTANTS=2`, und `fbc`; für das Markup `markup` mit `FRONTEND_MUTANTS=3`) zeigt, ob beide wieder gleich sind.
 Eine neue Knotenart oder ein neues Feld kommt in `ast.h` an dieselbe Stelle wie im Record und in `ast.c` in die Ausgabe.
+Der Generator (Phase D Schritt 1, `native/forge/gen/`): `src/fire.Native/CppGenerator*.cs`, `NativeCTypes.cs`, `NativeConfig.cs`,
+`src/fire/Bytecode/Overloads.cs` (`OverloadHint`), `src/fire/Standard/JsonMethods.cs`, `LibraryMethods.cs` und von `src/fire.Package.Manager`
+`Manifest.cs`, `NativeSources.cs`, `PackageStore.cs` - Stand 808e9788; das Maß ist `tests/compare-frontend.sh ... native` mit den
+Optionssätzen der Tabelle oben.

@@ -22,12 +22,15 @@ namespace fire.Compiler
         public static int Run(IReadOnlyList<string> args)
         {
             string command = args[0];
-            if (command == "fbc" && args.Count >= 3)
+            if ((command == "fbc" || command == "cgen") && args.Count >= 3)
             {
+                // `cgen <options> <file>`: the C `forge native` writes (Phase D 1), the options a word (NativeDump)
+                if (command == "cgen") { command = "cgen:" + args[1]; args = args.Skip(1).ToList(); goto parsed; }
                 // `fbc <debug|release|performance|default> <file>`: the program file `forge bytecode` writes (Phase C 4); the mode is a parameter of the command
                 command = "fbc:" + args[1];
                 args = args.Skip(1).ToList();
             }
+            parsed:
             if (args.Count == 2) { Console.Out.Flush(); return Dump(command, args[1], Console.OpenStandardOutput()); }
             if (args.Count == 5 && args[1] == "--list" && args[3] == "--out")
             {
@@ -56,6 +59,7 @@ namespace fire.Compiler
         {
             if (command == "diagnostics") return DumpDiagnostics(path, output);
             if (command.StartsWith("fbc:", StringComparison.Ordinal)) return DumpProgramFile(command.Substring(4), path, output);
+            if (command.StartsWith("cgen:", StringComparison.Ordinal)) return DumpNative(command.Substring(5), path, output);
             var o = new StringBuilder();
             int result = 0;
             try
@@ -170,6 +174,81 @@ namespace fire.Compiler
                 result = 1;
             }
             finally { Linker.ProcessDefaultTypeChecking = before; }
+            output.Write(bytes, 0, bytes.Length);
+            output.Flush();
+            return result;
+        }
+
+        /// <summary>`forge cgen <options> <file>` (Phase D 1, docs/spec/FORGE_C.md): what `forge native <file>` writes - the program in C, then (when there are) the natives
+        /// in C++ and the units of a split program, each after a line `//==== <name>` - generated as there (`NativeBuilder.GenerateLinked`, the toolchain `files`, a
+        /// configuration without a file). The options are words joined by `+`: `default`; `debug`, `release`, `performance` (`-m`); `split` (`--split on`); `strip0` ...
+        /// `strip3` (`--stripping`); `speed`, `size` (`--optimize`); `i16`, `i32` (`-i`); `f32` (`-f 32`); `t:<target>` (`-t`). A failed compile gives `error` and the
+        /// errors, a program the backend refuses `unsupported: <message>`, any other exception `internal: <type>: <message>`. `//# types: strict` as with `fbc`.</summary>
+        private static int DumpNative(string options, string path, Stream output)
+        {
+            var lines = File.Exists(path) ? File.ReadAllLines(path) : Array.Empty<string>();
+            bool strict = lines.Skip(Math.Max(0, lines.Length - 12)).Any(l => l.Trim() == "//# types: strict");
+            fire.Runtime.VmExecutionMode? mode = null;
+            int? floatWidth = null, intWidth = null;
+            string? targetName = null;
+            var config = new fire.Native.NativeConfig();
+            foreach (var word in options.Split('+', StringSplitOptions.RemoveEmptyEntries))
+            {
+                switch (word)
+                {
+                    case "default": break;
+                    case "debug": mode = fire.Runtime.VmExecutionMode.Debug; break;
+                    case "release": mode = fire.Runtime.VmExecutionMode.Release; break;
+                    case "performance": mode = fire.Runtime.VmExecutionMode.Performance; break;
+                    case "split": config.Split = "on"; break;
+                    case "speed": case "size": config.Optimize = word; config.OptimizeFromCommandLine = true; break;
+                    case "i16": intWidth = 16; break;
+                    case "i32": intWidth = 32; break;
+                    case "f32": floatWidth = 32; break;
+                    default:
+                        if (word.StartsWith("strip", StringComparison.Ordinal) && int.TryParse(word.AsSpan(5), out int level)) { config.Stripping = (fire.Native.StrippingLevel)level; config.StrippingFromCommandLine = true; }
+                        else if (word.StartsWith("t:", StringComparison.Ordinal)) targetName = word.Substring(2);
+                        else throw new ArgumentException("unknown option " + word);
+                        break;
+                }
+            }
+            var before = Linker.ProcessDefaultTypeChecking;
+            var intBefore = Linker.ProcessIntWidth;
+            Linker.ProcessDefaultTypeChecking = strict ? TypeCheckMode.Strict : null;
+            Linker.ProcessIntWidth = intWidth;
+            var o = new StringBuilder();
+            int result = 0;
+            try
+            {
+                string full = Path.GetFullPath(path);
+                var target = config.ResolveTarget(targetName);
+                var program = NativeBuilder.GenerateLinked(new[] { File.ReadAllText(path) }, target, mode, floatWidth, Path.GetDirectoryName(full), null, sourcePaths: new string?[] { full },
+                    stripping: config.Stripping, globalJobs: config.GlobalJobsValue, optimize: NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target), toolchainKind: "files", split: config.SplitValue);
+                o.Append(program.C);
+                if (program.Natives != null) o.Append("//==== ").Append(NativeBuilder.NativesName).Append('\n').Append(program.Natives);
+                if (program.Units != null) foreach (var unit in program.Units) o.Append("//==== ").Append(unit.Name).Append(' ').Append(unit.Kind).Append(' ').Append(unit.Cost).Append('\n').Append(unit.Text);
+            }
+            catch (Exception ex) when (CommandLineRunner.IsCompileError(ex))
+            {
+                o.Clear().Append("error\n").Append(CommandLineRunner.DescribeErrors(ex).Replace("\r\n", "\n")).Append('\n');
+                result = 1;
+            }
+            catch (fire.Native.NativeNotSupportedException ex)
+            {
+                o.Clear().Append("unsupported: ").Append(ex.Message.Replace("\r\n", "\n")).Append('\n');
+                result = 1;
+            }
+            catch (Exception ex)
+            {
+                o.Clear().Append("internal: ").Append(ex.GetType().Name).Append(": ").Append(ex.Message.Replace("\r\n", "\n")).Append('\n');
+                result = 1;
+            }
+            finally
+            {
+                Linker.ProcessDefaultTypeChecking = before;
+                Linker.ProcessIntWidth = intBefore;
+            }
+            var bytes = new UTF8Encoding(false).GetBytes(o.ToString());
             output.Write(bytes, 0, bytes.Length);
             output.Flush();
             return result;
