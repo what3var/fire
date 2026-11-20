@@ -298,6 +298,20 @@ static void fire_dx11_pace(double* last) {
     } else *last = now;
 }
 
+/* A connection to the server of DISPLAY (NULL: none). A server answered fire_dx11_available a moment ago, but a server that was left without clients by the
+ * close of that probe resets (an X server without -noreset: Xvfb, xvfb-run) and hangs up on the connections that come meanwhile - the next one is tried for a
+ * while instead of taking the window or the clipboard away for the rest of the program. */
+static void* fire_dx11_connect(FireXlib* x) {
+    double until = fire_dx11_now() + 2.0;
+    for (;;) {
+        void* d = x->OpenDisplay(NULL);
+        struct timespec s;
+        if (d != NULL || fire_dx11_now() >= until) return d;
+        s.tv_sec = 0; s.tv_nsec = 20 * 1000000L;
+        nanosleep(&s, NULL);
+    }
+}
+
 /* ---- the atoms ---- */
 typedef struct FireDx11Atoms {
     FireXId wmProtocols, wmDelete, netWmName, netWmPid, utf8, clipboard, targets, incr, textPlainUtf8, textPlain, string, text, png, bmp, uriList, gnomeFiles, property,
@@ -560,7 +574,7 @@ static FireDx11Clip* fire_dx11_clipReady(void) {
     if (!c->started && !c->failed) {
         FireXSetAttributes attr;
         pthread_t thread;
-        c->d = x->OpenDisplay(NULL);
+        c->d = fire_dx11_connect(x);
         if (c->d == NULL) { c->failed = 1; return NULL; }
         fire_dx11_atoms(x, c->d, &c->a);
         memset(&attr, 0, sizeof attr);
@@ -1186,7 +1200,7 @@ static int fire_dx11_open(FireDx11Window* w, const char* title, int width, int h
     FireXlib* x = fire_dx11_lib();
     if (x == NULL || width <= 0 || height <= 0) return 0;
     w->x = x;
-    w->d = x->OpenDisplay(NULL);
+    w->d = fire_dx11_connect(x);
     if (w->d == NULL) return 0;
     w->vsync = vsync;
     w->winW = width; w->winH = height;
