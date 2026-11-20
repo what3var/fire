@@ -655,12 +655,10 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             if (Modular)
             {
                 get.AppendLine("    { char n_[200]; strToUtf8(name, n_, sizeof n_); return fireGetField(obj, n_, list, caller); }");
-                // (an object with probes: they hear of it - the member is written by its name)
-                set.AppendLine("    { char n_[200]; strToUtf8(name, n_, sizeof n_);" + (_usesProbes ? " if (FIRE_UNLIKELY(asObj(obj)->h.flags & 2)) { probedSet(obj, n_, value, NULL, NULL, caller); return Undef(); }" : "") + " fireSetField(obj, value, n_, list, caller); return Undef(); }");
             }
-            foreach (var name in Modular ? new List<string>() : fieldNames)
+            foreach (var name in fieldNames)
             {
-                get.AppendLine($"    if (strIs(name, {CStr(name)})) return gf_{Mangle(name)}(obj{tail(name, false)});");
+                if (!Modular) get.AppendLine($"    if (strIs(name, {CStr(name)})) return gf_{Mangle(name)}(obj{tail(name, false)});");
                 // (`byte data[]`/`word w[]`: a store by name gets the buffer a compiled store converts to - so the generator may count on it, FieldTypeIn; a
                 // buffer made of an array belongs to the object, like the one of a compiled store, which the field claims)
                 var bufferArms = _classList.Where(c => c.Rc.FieldIndex.ContainsKey(name) && BufferFieldOf(c.Rc, name) != null)
@@ -668,8 +666,13 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
                     .Select(g => string.Concat(g.Select(c => $"case {c.Id}: ")) + $"{{ Value nb_ = {(g.Key ? "typeWordBuffer" : "typeBuffer")}(value, 1, list); if (nb_.kind == K_Buffer && value.kind == K_Array && ownedOf(nb_) && scopeListOf(ownedOf(nb_))) claimToHolder(obj, nb_, scopeListOf(ownedOf(nb_))); value = nb_; }} break; ").ToList();
                 string toBuffer = bufferArms.Count == 0 ? ""
                     : $"switch (asObj(obj)->cls) {{ {string.Concat(bufferArms)}default: break; }} {(_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return Undef(); " : "")}";
-                set.AppendLine($"    if (strIs(name, {CStr(name)})) {{ {toBuffer}sf_{Mangle(name)}(obj, value{tail(name, true)}); return Undef(); }}");
+                // (modules: the buffer first, then the store by the name - fireSetField does not convert)
+                if (Modular) { if (toBuffer.Length > 0) set.AppendLine($"    if (strIs(name, {CStr(name)})) {{ {toBuffer}}}"); }
+                else set.AppendLine($"    if (strIs(name, {CStr(name)})) {{ {toBuffer}sf_{Mangle(name)}(obj, value{tail(name, true)}); return Undef(); }}");
             }
+            // (an object with probes: they hear of it - the member is written by its name)
+            if (Modular)
+                set.AppendLine("    { char n_[200]; strToUtf8(name, n_, sizeof n_);" + (_usesProbes ? " if (FIRE_UNLIKELY(asObj(obj)->h.flags & 2)) { probedSet(obj, n_, value, NULL, NULL, caller); return Undef(); }" : "") + " fireSetField(obj, value, n_, list, caller); return Undef(); }");
             sb.AppendLine($@"FIRE_MAYBE_UNUSED static Value rf_get(Value obj, Value name, OwnList* list, uint32_t caller) {{
     (void)list; (void)caller;
     if (obj.kind != K_Class) {{ char t[120]; snprintf(t, sizeof t, ""Reflect.Get: expects an object, got: %s."", kindName(obj)); return rfFail(t); }}
