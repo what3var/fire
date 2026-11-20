@@ -72,6 +72,7 @@ static bool fcStrictTag(const char* path);
 #include "gen/cppgenerator5.c"
 #include "gen/cppgenerator6.c"
 #include "gen/cppgenerator7.c"
+#include "gen/cppgenerator8.c"
 #include "gen/native.c"
 
 /* the markup generators (Phase C 5) */

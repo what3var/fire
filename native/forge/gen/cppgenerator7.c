@@ -941,27 +941,3 @@ static FgStep StepCore3(FgSC* x) {
         default: return StepCore4(x);
     }
 }
-
-static FgStep StepCore4(FgSC* x) {
-    switch (ins->op) {
-        default: FG_UNPORTED("the instruction %s", fgOpName(ins->op));
-    }
-}
-
-#undef g
-#undef f
-#undef ins
-#undef st
-#undef sb
-#undef locals
-#undef d
-#undef E
-#undef ES
-#undef S
-#undef SR
-#undef T
-#undef VR
-#undef R
-#undef K
-#undef U
-#undef BK
