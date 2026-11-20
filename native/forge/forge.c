@@ -263,6 +263,9 @@ static const char* fcFindStore(const char* exe, char* buf, size_t n) {
     return buf;
 }
 
+/* forge serve: the language services (docs/spec/FORGE_SERVE.md) - after everything they use, the markup schema included */
+#include "serve.c"
+
 static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0 || strncmp(s, "fbc:", 4) == 0; }
 
 int main(int argc, char** argv) {
@@ -327,6 +330,7 @@ int main(int argc, char** argv) {
             return result;
         }
     }
+    if (argc >= 2 && strcmp(argv[1], "serve") == 0) return svServe(argc, argv, prelude, store);   /* docs/spec/FORGE_SERVE.md */
     if (argc == 3 && fcIsCommand(argv[1])) return fcDump(argv[1], argv[2], stdout, prelude, store);
     if (argc == 3 && fcIsMarkupCommand(argv[1])) {
         FcBuf out = {0}, err = {0};

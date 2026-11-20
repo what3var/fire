@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 5 (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6 (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -387,6 +387,14 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    Ressourcen, Phase D). Nicht portiert (Editor): `DataModelDocument`, `MarkupText`, `MarkupCompletion` (mit Schritt 6), `CircuitSamples`.
 
 6. `forge serve` (L4) auf dem C-Frontend; spark stellt `Language/` (4 300 Zeilen) darauf um, die Completion-Tests wandern auf Protokollebene.
+   **Umgesetzt** ([FORGE_SERVE.md](spec/FORGE_SERVE.md), [FORGE_C.md](spec/FORGE_C.md#forge-serve)): `forge-c serve`, JSON-Zeilen über stdio -
+   Dokumente (ganzer Text oder Edits, Versionen, Overlay), Projekte (Dateien, Bibliotheken mit Namespaces), Diagnosen (entprellt, latest wins,
+   `stale`, gemerkt), Vervollständigung, Hover, Signatur, Definition, Referenzen, Gliederung, Faltung, Markup-Vervollständigung, Abbruch. Die
+   Logik von `ScriptSymbolIndex`, `CompletionEngine`, `NavigationEngine`, `MarkupCompletion` und `LiveDiagnostics` 1:1 in C
+   (`native/forge/serve*.c`); spark (`ServeClient`, `ServeDocuments`) geht für Vervollständigung, Diagnosen, Markup-Vervollständigung, Hover, Signatur und Definition über
+   das Protokoll, `FIRE_SPARK_LANG=inproc` behält den eigenen Prozess bis M2. Die Completion-Tests laufen über das Protokoll (jede Liste gleich der
+   des eigenen Prozesses), dazu ServeTests (Planung der Diagnosen, Projekte; die Diagnosen gleich `LiveDiagnostics`, auch an ruhrpott-raser).
+   Ein Tastendruck 3-8 ms, eine Analyse rund 3-mal so schnell wie im eigenen Prozess. **Offen**: Vergleichsprüfungen für Hover/Signatur/Definition, die Prüfung ganzer Projekte (`AnalyzeProjectFiles`), Natives von Bibliotheksprojekten, übersetzte Einheiten über Analysen merken.
 
 **M2:** `forge run`, `forge test`, `forge ui|biscuit|fdata|falstad` für die VM laufen ganz ohne .NET; spark enthält keinen Compiler mehr.
 

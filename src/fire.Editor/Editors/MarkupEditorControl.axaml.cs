@@ -315,7 +315,8 @@ namespace fire.Editor
         private void ShowOrUpdateCompletion(bool closeIfEmpty)
         {
             int offset = Editor.CaretOffset;
-            var result = MarkupCompletion.Suggest(Editor.Text, offset);
+            // over `forge serve` when the server has the markup schema (docs/spec/FORGE_SERVE.md), else in this process
+            var result = ServeDocuments.CompleteMarkup(ServeDocuments.PathOf(FilePath, this), Editor.Text, offset) ?? MarkupCompletion.Suggest(Editor.Text, offset);
             if (result.Items.Count == 0)
             {
                 if (closeIfEmpty) _completionWindow?.Close();

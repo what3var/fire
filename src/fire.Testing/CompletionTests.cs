@@ -6,14 +6,50 @@ static class CompletionTests
 {
     private static int _failures;
 
-    /// <summary>The suggestions at `|` in `source`, the best first (as the editor sorts them); `projectFiles` are the other files of the project.</summary>
+    private static int _document;
+
+    /// <summary>The suggestions at `|` in `source`, the best first (as the editor sorts them); `projectFiles` are the other files of the project. Over the protocol
+    /// (`forge serve`, docs/spec/FORGE_SERVE.md) unless FIRE_SPARK_LANG=inproc; then in this process (ScriptSymbolIndex, CompletionEngine).</summary>
     private static List<fire.Editor.CompletionItem> Items(string source, IEnumerable<(string, string)>? projectFiles = null)
     {
         int cursor = source.IndexOf('|');
         source = source.Remove(cursor, 1);
+        if (!fire.Editor.ServeClient.InProcess) return Served(source, cursor, projectFiles);
+        return InProcess(source, cursor, projectFiles);
+    }
+
+    private static List<fire.Editor.CompletionItem> InProcess(string source, int cursor, IEnumerable<(string, string)>? projectFiles)
+    {
         var index = fire.Editor.ScriptSymbolIndex.Build(source, Array.Empty<string>(), projectFiles ?? Array.Empty<(string, string)>());
         return fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).OrderByDescending(i => i.Score).ToList();
     }
+
+    private static List<fire.Editor.CompletionItem> Served(string source, int cursor, IEnumerable<(string, string)>? projectFiles)
+    {
+        var serve = fire.Editor.ServeClient.Shared
+            ?? throw new InvalidOperationException("forge serve: " + (fire.Editor.ServeClient.FindExecutable(out var why) == null ? why : "did not start"));
+        string path = Path.Combine(Path.GetTempPath(), $"fire-completion-{Environment.ProcessId}", $"case{++_document}.fire");
+        serve.Open(path, 1, source, includes: (projectFiles ?? Array.Empty<(string, string)>()).Select(f => new fire.Editor.ServeFile(f.Item1, f.Item2)));
+        try
+        {
+            var items = serve.Completion(path, cursor, out _);
+            // the port is 1:1: the same items (text, kind, score, detail) in the same order as in this process
+            var own = InProcess(source, cursor, projectFiles);
+            static string Show(fire.Editor.CompletionItem i) => $"{i.Text}|{i.Kind}|{i.Score:R}|{i.Detail}";
+            if (!items.Select(Show).SequenceEqual(own.Select(Show)))
+            {
+                _differences++;
+                int at = 0;
+                while (at < items.Count && at < own.Count && Show(items[at]) == Show(own[at])) at++;
+                Console.WriteLine($"FEHLER: Vervollstaendigung: Protokoll und eigener Prozess verschieden ({items.Count} / {own.Count} Vorschlaege), ab {at}:"
+                    + $"\n  Protokoll:        {string.Join(", ", items.Skip(at).Take(6).Select(Show))}\n  eigener Prozess: {string.Join(", ", own.Skip(at).Take(6).Select(Show))}");
+            }
+            return items;
+        }
+        finally { serve.Close(path); }
+    }
+
+    private static int _differences;
 
     /// <summary>`expected` must be suggested, `forbidden` must not (comma-separated); `exact`: nothing else.</summary>
     private static void Check(string title, string source, string expected, string forbidden = "", bool exact = false, IEnumerable<(string, string)>? projectFiles = null)
@@ -61,7 +97,9 @@ static class CompletionTests
     {
         Console.WriteLine();
         Console.WriteLine("=== Editor: Vervollstaendigung (Sichtbarkeit, Empfaengertyp, Reihenfolge) ===");
+        Console.WriteLine(fire.Editor.ServeClient.InProcess ? "(im eigenen Prozess: FIRE_SPARK_LANG=inproc)" : "(ueber das Protokoll: forge serve, verglichen mit dem eigenen Prozess)");
         _failures = 0;
+        _differences = 0;
         string bank = Bank.Replace("other.|", "other.balance").Replace("this.| }", "this.rate }");
 
         // ---- private / protected: only where the code may use them ----
@@ -161,6 +199,7 @@ static class CompletionTests
         Check("Markup: Wurzel des Fensters", codeBehind.Replace("this.|", "this.UIRoot.|"), "Add,Run", "defined", projectFiles: project);
         Check("Markup: von aussen", codeBehind.Replace("this.|", "") + "var w = new GreeterWindow()\nw.|", "Run,Show,nameBox", "fxBindAll", projectFiles: project);
 
+        _failures += _differences;
         Console.WriteLine(_failures == 0 ? "Alle Pruefungen der Vervollstaendigung bestanden." : $"FEHLER: {_failures} Pruefung(en) der Vervollstaendigung fehlgeschlagen.");
     }
 }

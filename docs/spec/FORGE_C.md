@@ -5,7 +5,7 @@ Präprozessor mit `#if`, Diagnosen, AST und Parser (1, 2); Resolver, Typprüfer 
 Direktiven eines Builds mit ihrer Wirkung, `#import` mit den Preludes und den Natives der installierten Pakete (3); der Bytecode-Compiler, was die
 Typprüfung ihm hinterlässt (mit der Herleitung von `defined`), der Rest des Linkers und der Schreiber der Programmdatei `.fbc` (4); die
 Markup-Generatoren - `.fxml` (Oberflächen), `.biscuit` (Schaltpläne), `.fdata` (Datenmodelle), der Import von Falstads Schaltungen - hinter
-`#include` und als eigene Befehle (5). Mechanischer Port 1:1 (L3): je C#-Datei eine C-Datei mit denselben Namen in derselben
+`#include` und als eigene Befehle (5); dazu **Schritt 6**, die Sprachdienste als Prozess: `forge-c serve` ([FORGE_SERVE.md](FORGE_SERVE.md), [unten](#forge-serve)). Mechanischer Port 1:1 (L3): je C#-Datei eine C-Datei mit denselben Namen in derselben
 Reihenfolge, im Kopf jeder Datei die C#-Datei und der Commit, dem sie entspricht. Kein globaler Zustand und kein `exit` (L6): alles hängt an
 `FcCtx`, Fehler kommen als Ausnahme auf dem Kontext beim Aufrufer an.
 
@@ -20,6 +20,8 @@ forge-c tokens|ast|diagnostics --list <dateien.txt> --out <ordner>   (eine Ausga
 forge-c ui|biscuit|fdata x.fxml|x.biscuit|x.fdata    (das erzeugte Skript auf stdout, die Fehler des Markups auf stderr - wie `forge ui|biscuit|fdata`)
 forge-c falstad schaltung.txt                        (der Schaltplan auf stdout, die Warnungen auf stderr - wie `forge falstad`)
 forge-c markup --list <dateien.txt> --out <ordner>   (je Datei beide Ströme, der Befehl nach der Endung: .fxml, .biscuit, .fdata, sonst falstad)
+forge-c serve [--tables <ordner>] [--packages <ordner>] [--debounce <ms>] [--log <datei>]   (die Sprachdienste, JSON-Zeilen über stdio: FORGE_SERVE.md;
+                                                     -lpthread auf POSIX)
 tests/compare-frontend.sh <forge> <forge-c> [tokens|ast|both|diag|fbc|markup|all] [<ordner>]   (FRONTEND_MUTANTS=n: dazu n beschädigte Kopien je Quelle;
                                                      FORGE_CS_CACHE=1: Ausgaben des C#-forge aus dem Ordner wiederverwenden;
                                                      FBC_MODES="release": nur diese Modi bei `fbc`)
@@ -151,6 +153,43 @@ Geschwindigkeit von `fbc` (Release) über `tests/cases` und `packages` (1222 Dat
 gegen 87,1 s des C#-forge. gcc und clang mit `-Wall -Wextra` ohne Warnung; ASan/UBSan über den Korpus und die beschädigten Kopien ohne Befund (die eine Meldung, ein
 Linksschieben einer negativen Zahl im Zickzack von `ProgramFile`, ist behoben).
 
+## forge serve
+
+Phase C Schritt 6 (L4): die Sprachdienste von spark als Prozess, eine JSON-Nachricht je Zeile über stdio - das Protokoll steht in
+[FORGE_SERVE.md](FORGE_SERVE.md). Die Logik zog von spark nach forge, 1:1 wie der Rest (je C-Datei die C#-Datei und ihr Commit, 1c549476):
+`serve_index.c` (`ScriptSymbolIndex.cs`: der Index aus den Token, die Preludes, die Importe, die anderen Dateien), `serve_types.c`
+(`ScriptSymbolIndex.Types.cs`, `BuiltinMembers.cs`: der Typ eines Ausdrucks), `serve_complete.c` (`CompletionEngine.cs`), `serve_diag.c`
+(`LiveDiagnostics.cs`, `ProjectLibraries.cs`: die Analyse auf dem Frontend in C - Prelude, Bibliotheken mit ihren Namespaces, die anderen
+Dateien, das Dokument; Resolver, Typprüfung, Compiler), `serve_nav.c` (`NavigationEngine.cs`: Hover, Signatur, Definition; dazu Referenzen,
+Gliederung, Faltung), `serve_markup.c` (`MarkupCompletion.cs` auf `markupschema.c` von Schritt 5 - eingebunden, sobald das Schema Teil von
+forge-c ist), `serve.c` (das Protokoll: ein Lesefaden, der Hauptfaden für Dokumente, Projekte und alle Antworten, ein Analysefaden für die
+Diagnosen mit Entprellen, latest wins, `stale`, den letzten vier Ergebnissen je Dokument; Texte mit Zählern zwischen den Fäden, POSIX-Threads
+bzw. Win32). Der Frontend-Teil ist unverändert: eine Analyse übersetzt in einem Kontext für sich (L6: kein globaler Zustand - darum laufen
+Analysefaden und Hauptfaden nebeneinander).
+
+**Die Prüfungen** (`src/fire.Testing`, gegen `forge-c serve`, das `ServeClient` aus `native/forge/forge.c` baut, oder `FIRE_FORGE_C`):
+
+| Gruppe | was | Stand |
+|---|---|---|
+| `FIRE_TESTS_ONLY=completion` | die 61 Fälle von CompletionTests über das Protokoll; **jede Liste** (Text, Art, Punkte, Detail, Reihenfolge) verglichen mit `CompletionEngine` im eigenen Prozess | alle gleich |
+| `FIRE_TESTS_ONLY=serve` | ServeTests: Entprellen (fünf schnelle Änderungen - eine Analyse, die neueste), danach nichts mehr, eine spätere Version, ein gemerktes Ergebnis, eine überholte Analyse mit `stale`, Edits, `resync`, ein Projekt mit Overlay einer geöffneten anderen Datei, die Fehler des Protokolls; die Diagnosen von 10 Fällen allein und 19 Dokumenten von Projekten (Bibliotheken mit Namespace, kaputte Bibliothek, kaputte andere Datei, unbekannter Import mit Hinweis, der eigene Import einer Bibliothek, je ein Dokument der 14 Projekte von ruhrpott-raser) gleich `LiveDiagnostics`; die Vervollständigung an 27 Stellen der Dokumente von ruhrpott-raser gleich `CompletionEngine`; dazu die CompletionTests | 122 von 122 |
+| `FIRE_TESTS_ONLY=editorchecks` | BackgroundCheckTests (spark plant seine Prüfungen weiter selbst) und der Protokollteil von ServeTests | 62 von 62 |
+| `FIRE_TESTS_ONLY=ui` (Markup) | die 22 Markup-IntelliSense-Prüfungen über das Protokoll, jede der 23 Antworten verglichen mit `MarkupCompletion` im eigenen Prozess | alle gleich - mit `markupschema.c` (gebaut mit dem Stand von Schritt 5 aus dessen Zweig); ohne Schema im eigenen Prozess |
+
+ASan/UBSan (gcc) über ServeTests und die Dokumente von ruhrpott-raser: ohne Befund; gcc, clang mit `-Wall -Wextra` ohne Warnung, tcc baut es.
+
+**Zahlen** (ruhrpott-raser, 104 Dateien, 1,9 MB; 4 Kerne unter Last eines parallelen Testlaufs): die Analyse eines Dokuments mit seinem
+Projekt und allen Bibliotheken 60-590 ms über das Protokoll gegen 160-1850 ms von `LiveDiagnostics` im eigenen Prozess (rund 3-mal so schnell;
+Raser.Game: 64 Dateien, 1,4 MB - 450-800 ms); ein Tastendruck (ein Edit, dann `completion`) 2,6-7,5 ms, die erste Vervollständigung nach dem
+Öffnen 10-150 ms (die Indizes der anderen Dateien, danach gemerkt); eine Antwort auf denselben Text 1,6-4 ms; zurück auf einen geprüften Text 0 ms
+(gemerkt). Die vollständige Analyse beim Tippen: ein Syntaxfehler 40-100 ms (der Parser hält an), sonst die volle Übersetzung.
+
+**Offen**: Hover, Signatur und Definition gehen in spark über den Server, haben aber noch keine Vergleichsprüfung gegen `NavigationEngine`;
+die Prüfung aller Dateien eines Projekts (`AnalyzeProjectFiles`) läuft noch in spark; die C++-Natives eines Bibliotheksprojekts
+(`ProjectNativeOverlay`) kennt die Analyse nicht; eine laufende Analyse lässt sich nicht abbrechen (sie läuft zu Ende, ihr Ergebnis ist
+`stale`); übersetzte Einheiten (Prelude, Bibliotheken) werden nicht über Analysen hinweg gemerkt - jede Analyse übersetzt alles (dafür müssten
+Parser und Resolver ihren Zustand vom Kontext einer Übersetzung lösen); Highlighting (`SyntaxHighlighter`) bleibt in spark.
+
 ## Dateien
 
 | Datei | Inhalt | Gegenstück in C# |
@@ -185,7 +224,8 @@ Linksschieben einer negativen Zahl im Zickzack von `ProgramFile`, ist behoben).
 | `biscuitgenerator.c` | `MarkupFiles` (welcher Generator), der Leser und Generator der `.biscuit` | `BiscuitGenerator.cs` |
 | `datamodelgenerator.c` | der Generator der `.fdata` (mit `LineIndex`, `Plural`, `Snake`) | `DataModelGenerator.cs` |
 | `falstadimport.c` | Falstads Schaltungen (Text und `<cir>`) als `.biscuit` | `FalstadImport.cs` |
-| `forge.c` | das Programm `forge-c` (`tokens`, `ast`, `diagnostics`, `fbc`, `bytecode`, `ui`, `biscuit`, `fdata`, `falstad`, `markup`) | `FrontendDump.cs`, `CommandLine.cs` (`Bytecode`) |
+| `forge.c` | das Programm `forge-c` (`tokens`, `ast`, `diagnostics`, `fbc`, `bytecode`, `ui`, `biscuit`, `fdata`, `falstad`, `markup`, `serve`) | `FrontendDump.cs`, `CommandLine.cs` (`Bytecode`) |
+| `serve.c` ... `serve_markup.c` | `forge serve` (siehe [oben](#forge-serve)) | `Language/` von spark, `MarkupCompletion.cs` |
 
 `native/base/fire_base.h` (Arena, geordnete Map) wird unverändert mitbenutzt.
 
