@@ -56,7 +56,7 @@ static FgStep StepCore(FgGen* gg, FgFunc* ff, FcChunk* fchunk, FgInstr* fins, Fg
     if (st->scalar != 0 && !ScalarAware(ins->op) && !TypedNativeCall(g, ins) && !IntKeyHash(g, f, st, ins)
         && !(ins->op == OP_CallStaticMethod && (CAbiStaticCallee(g, f, ins) || streq0(Str(ins->a[0]), "Math")))
         && !(ins->op == OP_GetStaticField && ConstantStatic(g, Str(ins->a[0]), Str(ins->a[1])))
-        && !(ins->op == OP_CallMethod && CAbiMethodCallee(g, f, st, ins))
+        /* (the C# has `&& !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(...) != null)` here inside the comment of the line before: it does not count) */
         && !(ins->op == OP_GetField && CAbiGetterCallee(g, f, st, ins))
         && !GuardTopProven(st, ins)
         && !(ins->op == OP_Return && f->cabi && f->cabi->retType != 0) && !cfield.ok) MaterializeAll(g, f, st, &e, -1, -1);
@@ -325,7 +325,7 @@ static FgStep StepCore(FgGen* gg, FgFunc* ff, FcChunk* fchunk, FgInstr* fins, Fg
         case OP_SetTimeout:
         case OP_SetAutoSync:
             if (ins->op == OP_SetTimeout) { Need(1); E("setDefaultTimeout(%s);", S(d - 1)); NeedTimeObj(g); d--; }
-            else if (g->usesThreads && ins->a[0] != 0) E("g_globalJobs = %d; g_attnMask &= ~ATTN_SECT;", ins->a[0]);
+            else if (g->usesThreads && ins->a[0] != 1 /* GlobalJobsMode.Safepoints */) E("g_globalJobs = %d; g_attnMask &= ~ATTN_SECT;", ins->a[0]);
             return Next();
         case OP_LoadThis:
             xRequireSelf(x);
