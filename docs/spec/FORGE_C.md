@@ -3,7 +3,7 @@
 Status: **Phase C, Schritte 1 bis 5** aus [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md#phase-c---das-frontend-in-c) (20.11.2026), dazu der größte
 Teil von **Phase D Schritt 1**, dem Generator Bytecode -> C ([unten](#phase-d-schritt-1-der-generator)), und von **Schritt 2**, dem Builder
 ([unten](#phase-d-schritt-2-der-builder): `forge-c build` mit linkage `source`), und **Schritt 3**, Projekte, Solutions und das Paketformat `.fpk`
-([unten](#phase-d-schritt-3-projekte-solutions-pakete): `forge-c build`/`publish` eines Projekts oder einer Solution): Lexer,
+([unten](#phase-d-schritt-3-projekte-solutions-pakete): `forge-c build`/`publish` eines Projekts oder einer Solution, die Engine `vm`, die Standardpakete): Lexer,
 Präprozessor mit `#if`, Diagnosen, AST und Parser (1, 2); Resolver, Typprüfer und `SetterClaims` mit dem, was sie vom Linker brauchen - die
 Direktiven eines Builds mit ihrer Wirkung, `#import` mit den Preludes und den Natives der installierten Pakete (3); der Bytecode-Compiler, was die
 Typprüfung ihm hinterlässt (mit der Herleitung von `defined`), der Rest des Linkers und der Schreiber der Programmdatei `.fbc` (4); die
@@ -512,15 +512,27 @@ von `FireProject`/`FireSolution`: Namen in jeder Schreibung, Kommentare, Kommas 
 Projekts (Muster, `exclude`, die Einstiegsdatei zuletzt, Markup zuerst, `testing/`, `templates/`), die Ordner (eingeschlossen, unentschieden, ausgeschlossen - mit
 `.gitignore`), die Build-Aktionen (`buildActions`: Copy, CopyAlways, Ignore), die Bauordnung (`BuildOrder`), das Startprojekt, der `BuildPlan` mit den Bibliotheken
 und den Natives der Projekte, der Linker mit einem Plan (die Einstellungen vor den Tags, `#import` der Bibliotheken, ihre Namensräume, die Natives der Projekte im
-Overlay des Stores, eine Bibliothek ohne Einstiegspunkt), `ProjectBuilder.Check`/`PackLibrary`, das Paketformat `.fpk` (schreiben und lesen) und Publish.
+Overlay des Stores, eine Bibliothek ohne Einstiegspunkt), `ProjectBuilder.Check`/`PackLibrary`, das Paketformat `.fpk` (schreiben und lesen) und Publish. Dazu
+(20.11.2026) die **Engine `vm`** (`build/cvm.c`: `CVm.cs` 1:1 und `CVmPayload.Append` - ein Programm, das die VM in C trägt, für eine Datei und für Projekte, mit
+`--all` und Publish), die **C++-Natives eines Projekts** in einem nativen Programm und in den Bibliotheken für die VM (`ProjectNativeOverlay` auch im Store des
+Generators), **`settings.globalJobs`** (`Linker.ForcedGlobalJobs`), **Paketreferenzen `github:owner/repo`** (`PackageStore.FindBySpec` mit der Lock-Datei
+`ember-lock.json`, `GitHubSpec.Parse`) und das **Installieren der Standardpakete** in den Store (`StandardSources.EnsureInstalled`, `project/standard.c`).
 
 ```
-forge-c build <projekt.fireproj | solution.firesln> [-p <projekt>] [--engine native] [-o <aus>] [-t <ziel>] [--toolchain <name>] [--quick[=0|1]] [-m <modus>] ...
+forge-c build x.fire [--engine vm] [-o <programm>] [-m <modus>] [--types lax|strict]
+                                                     (CommandLine.Build mit der Engine vm, der Vorgabe: `fire` mit dem Programm und den Bibliotheken seiner Pakete
+                                                     dahinter - Payload FIREVMP1 -, ohne -o `out.exe`; die Ausgabe `<pfad> (<n> bytes)`)
+forge-c build-vm <ordner> [--variant <v>]... [--all] [--rid <rid>]   (CVm.BuildCommand: `fire` und seine Varianten der Breiten mit `fire.key` in einen Ordner)
+forge-c install-standard                             (StandardSources.EnsureInstalled: die Projekte von Source/Packages.firesln neben forge-c, die fehlen oder sich
+                                                     geändert haben, gepackt und in den Store installiert - wie forge läuft das auch vor build, publish, bytecode)
+forge-c build <projekt.fireproj | solution.firesln> [-p <projekt>] [--engine vm|native] [-o <aus>] [-t <ziel>] [--toolchain <name>] [--quick[=0|1]] [-m <modus>] ...
                                                      (CommandLine.RunProject/BuildPlanned: eine Bibliothek wird gepackt - `name-version.fpk` im Ordner von -o, `output`
-                                                     oder `bin/` -, ein Programm nativ gebaut, ohne -o nach `bin/<ziel>-<modus>/<name>`; die Copy-Dateien daneben)
+                                                     oder `bin/` -, ein Programm mit der VM oder nativ gebaut, ohne -o nach `bin/<ziel>-<modus>/<name>` - `vm-rel/` usw.
+                                                     für die VM; die Copy-Dateien daneben)
 forge-c build <...> --check                          (eine Bibliothek nur übersetzen)
-forge-c build <...> --all [--engine native]          (Build Solution: jedes Projekt in der Bauordnung, wie `forge build --all` mit dem Text-Reporter)
-forge-c publish <projekt | solution> [-p <projekt>] [--toolchain <name>] [--quick[=0|1]]   (ProjectPublisher: Programme nativ, Bibliotheken als Paket, in die Zielordner)
+forge-c build <...> --all [--engine vm|native]       (Build Solution: jedes Projekt in der Bauordnung, wie `forge build --all` mit dem Text-Reporter)
+forge-c publish <projekt | solution> [-p <projekt>] [--toolchain <name>] [--quick[=0|1]]   (ProjectPublisher: Programme nativ oder mit der VM - `publish.engine` -,
+                                                     Bibliotheken als Paket, in die Zielordner)
 forge projectplan <datei>   /   forge-c projectplan <datei>   (das Maß: Workspace, Bauordnung, je Projekt Dateien, Ordner, Build-Aktionen, Publish-Ordner und der BuildPlan
                                                      mit Quellen (SHA-256), Bibliotheken, Einstellungen, Natives, Flatten einer Bibliothek)
 forge fpk <datei.fpk>       /   forge-c fpk <datei.fpk>        (ein Paket, wie Fpk.ReadManifest es liest, und jeder Eintrag: Name, Größe, CRC, Attribute, SHA-256)
@@ -528,10 +540,16 @@ forge buildplan <optionen> <projekt>  /  forge fbc <modus|native> <projekt>   (w
                                                      einen nativen Build für diese Maschine - die Eingabe des Generators)
 tests/compare-frontend.sh <forge> <forge-c> project [<ordner>]       (PROJECT_EXTRA="<ordner oder dateien>": weitere Solutions, nur gelesen)
 tests/compare-frontend.sh <forge> <forge-c> projectbuild [<ordner>]  (echte Builds der Programmprojekte; PROJECT_COPY="<ordner>": `build --all` und `publish` an Kopien)
+tests/compare-frontend.sh <forge> <forge-c> vmbuild [<ordner>]       (Programme mit der VM: jeder VMBUILD_EVERY-te Fall - Vorgabe 6 - und die Beispiele als Projekte:
+                                                     Ausgabe, Fehlerausgabe, Exitcode, die Dateien Byte für Byte, was die Programme ausgeben)
 ```
 
-Ohne `--engine` baut `forge build` ein Programm für die VM; forge-c baut nur nativ (`unported: the engine vm`), verglichen wird mit `--engine native` (oder `"engine":
-"native"` im Projekt). Publish hat `native` als Vorgabe.
+**Die Engine `vm`** ist wie im C#-forge die Vorgabe von `build` (Publish: `native`). `fire` kommt von dort, wo das C#-forge es sucht (`CVm.Locate`): `FIRE_VM_EXE`, neben
+forge-c mit einem passenden Stempel `fire.key`, im Cache `<LocalApplicationData>/fire/vm/<rid>/<schlüssel>/` (unter Linux `$XDG_DATA_HOME` bzw. `~/.local/share` wie in .NET),
+sonst jetzt gebaut (`WriteSources`: `native/vm`, `native/base`, `native/tables` und die Laufzeit mit `platform/`, `abi/`; der Compiler der Maschine wie in C#). Der
+Schlüssel (`SourceKey`: die Quellen der VM und `NativeRuntimeFiles.Fingerprint`) ist derselbe - eine VM, die das eine forge gebaut hat, nimmt das andere, und eine von
+forge-c gebaute VM ist byte-gleich mit der des C#-forge. Dahinter das Programm (`ProgramFile.Write` ohne Zeilentabellen), die Bibliotheken der Pakete
+(`PackageImports.EnsureLibraries`: `nlEnsure`) und von graphics/windows (`libfire_gfx`, mit `GraphicsNatives` im Programm), Name für Name, mit Index und Fuß (`FIREVMP1`).
 
 ### Stand
 
@@ -544,6 +562,19 @@ Ohne `--engine` baut `forge build` ein Programm für die VM; forge-c baut nur na
 | echte Builds der 25 Programmprojekte von `src/fire.Project`, gcc / tcc: Protokoll gleich, Programm byte-gleich | 25 je Toolchain | 22 / 21 | 3 (Reflection) | 1 Programm (`Scene3D Models`) |
 | `build --all --engine native` an einer Kopie von ruhrpott-raser | 14 Projekte | 11 (Protokoll, Warnungen gleich) | 3 (Raser.Tool, Raser.Server, Raser.Launcher: Reflection) | 0 |
 | `publish` an Kopien: die Grenzfälle (ein Projekt mit Fehlern, eines mit Copy-Dateien, `clean`, zwei Zielen; zweimal, der zweite Lauf "up to date"), ruhrpott-raser (nichts eingeschaltet), `-p Raser.Core` zweimal | 6 Läufe | 6 (Ausgabe, geschriebene Dateien) | - | 0 |
+| **Engine `vm`** (20.11.2026): `forge-c build-vm` gegen das `fire` des C#-forge (Stempel `fire.key`, Bytes) | 1 | 1 (byte-gleich, derselbe Schlüssel) | - | 0 |
+| `build <fall> -o` ohne `--engine`, jeder 6. Fall von `tests/cases` (mit io, time, graphics, `#intwidth`, Fehlern): Ausgabe, Fehlerausgabe, Exitcode, Programm, was es ausgibt | 188 | 188 (die gebauten Programme byte-gleich, sie geben dasselbe aus) | - | 0 |
+| `build <projekt>` (VM) an Kopien: `src/fire.Project/Samples` (24), `Templates` (4), ruhrpott-raser (15 Projekt- und Solutiondateien) | 43 | 43 (Ausgabe); Programme 28 von 29 byte-gleich | - | 1 Programm (`Scene3D Models`: die Modelle als Ressourcen, Schritt 4) |
+| `build --all` (VM) und `publish` an einer Kopie von ruhrpott-raser: 14 Projekte, die Programme mit Reflection laufen in der VM | 2 Läufe | 2 (Ausgabe; 5 Programme byte-gleich) | - | 0 |
+| **C++-Natives von Projekten**: eine Solution mit einer Bibliothek in C++, einer in C, einem Programm, das beide nutzt, einem Programm mit eigenen Natives - `buildplan` default (tcc: der C++-Ersatz gcc), tc:gcc, tc:gcc+quick, tc:clang, tc:tcc+quick | 10 | 10 | - | 0 |
+| dieselbe Solution gebaut: VM (die Bibliotheken unter `obj/native/<rid>/` mitgepackt), nativ mit gcc, clang, tcc (Fehler: C++), `build --all`, `publish` (VM, zweimal) | 6 Läufe | 6 (Ausgabe; alle Programme byte-gleich, sie rechnen richtig) | - | 0 |
+| **`settings.globalJobs`** (`sync` gegen `#globaljobs sleep`, ungültige Werte, keiner): `fbc release`/`debug`/`native`, `buildplan`, Builds mit der VM | 24 | 24 | - | 0 |
+| **`github:owner/repo`** über `ember-lock.json` (Spec mit Ref, `#name`, `.git`, Großschreibung, Version zu neu/alt, fehlend, kaputte Spec, kaputte Lock-Datei, Format 2): `fbc release`, `build` | 12 | 12 (Meldung, Programm byte-gleich) | - | Art des Fehlers (siehe unten) |
+| **Standardpakete installieren** (`install-standard`): leerer Store (53 Pakete), danach ein geändertes Paket und eines mit Fehlern (Parser, Resolver); gegen den Store des C#-forge | 4 Läufe | 4 (Ausgabe; der Store Datei für Datei gleich, samt `.source-stamps.json` und den Bibliotheken aus `Prebuilt/`) | - | 0 |
+| nach diesen Änderungen: `project` (projectplan, buildplan, Pakete) über `src/fire.Project`, `packages`, ruhrpott-raser und die Natives-Solution | 103 / 33 / 67 | 103 / 23 / 67 | - / 7 (Reflection) | - / 3 (wie oben) / - |
+
+Die Messungen der Engine `vm` liefen mit forge-c neben dem C#-forge (derselbe Ordner: dasselbe `fire`, `Prebuilt/`, derselbe Store) - an einem anderen Ort baut
+forge-c `libfire_gfx` und `fire` selbst, wenn sie im Cache fehlen (dann steht die Zeile "Building ..." nur bei ihm, die Dateien sind trotzdem gleich).
 
 Die drei Unterschiede bei `buildplan` liegen nicht im Projektteil: `Scene3D Models` sind die Modelle als Ressourcen (`ModelConverter`, Schritt 4; schon in Schritt 1 so),
 `Raser.Viewer` und `Raser.Game` vertauschen im erzeugten C die Nummern zweier Klassen (`Raser.Chunk`, `Raser.ChunkManifest`: in C registriert `RegisterJsonTargets`
@@ -565,11 +596,13 @@ außer Zeiten, komprimierter Größe und komprimierten Bytes.
 | `project/projectfiles.c` | die Muster als reguläre Ausdrücke (ein kleiner Matcher über demselben Baum), `Walk`, `Resolve`, `ContentFiles`, `Expand`, `ProjectFolderMap`, `GitIgnore`, `ProjectNotes.Folder` | `ProjectFiles.cs`, `ProjectFolders.cs`, `Notes.cs` (Teil) |
 | `project/manifest.c` | `PackageManifest`: Modell, `ToJson` (Utf8JsonWriter eingerückt), `Parse`, `Validate`, `SemanticVersion`, `IsDocumentName`; `NativeSourceOrder.CheckIncludes`/`CheckAllPlatforms` | `Manifest.cs`, `NativeSources.cs` (Teile) |
 | `project/workspace.c` | `LoadedProject`, `Workspace` (Laden, Startprojekt, Bauordnung), `BuildPlan.Create`, `ProjectNatives`, `ProjectContent`, `PublishSettings.TargetFolders`, `ProjectBuilder` ohne Linker (`SelectProject`, `PlanOrThrow`, `PackageVersion`, `Flatten` mit `MapResourcePaths`) | `Workspace.cs`, `BuildPlan.cs`, `ProjectNatives.cs`, `ProjectPublish.cs`, `ProjectBuilder.cs`, `Preprocessor.cs` (Teil) |
-| `project/linkplan.c` | `Linker.CompileAndLink` mit einem Plan, für die VM (`Check`) und für ein Ziel (`NativeBuilder.Build` über `NbBuild.link`) | `Linker.cs`, `ProjectLibraries.cs`, `ProjectNativeOverlay.cs`, `ImportedPreludes.Insert` (mit `own`) |
+| `project/linkplan.c` | `Linker.CompileAndLink` mit einem Plan, für die VM (`Check`) und für ein Ziel (`NativeBuilder.Build` über `NbBuild.link`); `FindBySpec` mit `github:` (`GitHubSpec.Parse`, `PackageLock.Load`/`ForRepository`) | `Linker.cs`, `ProjectLibraries.cs`, `ProjectNativeOverlay.cs`, `ImportedPreludes.Insert` (mit `own`), `Package.Manager/PackageStore.cs` (`FindBySpec`), `PackageLock.cs`, `GitHubSource.cs` (`GitHubSpec`) |
 | `project/fpk.c` | Zip schreiben und lesen (Deflate von `packages/compression`), `Fpk.Forge`, `ReadManifest`, `Extract` | `Fpk.cs` |
 | `project/command.c` | `build` eines Projekts (`RunProject`, `BuildPlanned`, `--all` mit dem Text-Reporter), `Check`, `PackLibrary`, `ChooseEngine`, der Sammler der Warnungen | `CommandLine.cs`, `CommandLine.Report.cs`, `ProjectBuilder.cs` |
 | `project/publisher.c` | Publish (Stempel, `Companions`, `CleanProblem`, Zusammenfassung) | `ProjectPublisher.cs` |
 | `project/cli.c` | die Optionen von `build`/`publish` mit Projekt, `publish`, `projectplan`, `fpk`, `buildplan`/`fbc` eines Projekts | `CommandLine.cs` (Teile), `ProjectDump.cs`, `FrontendDump.cs` |
+| `build/cvm.c` | die Engine `vm`: `VariantName`, `ParseVariant`, `SourceKey`, `Current`, `CacheFolder`, `Locate`, `WriteSources`, `Build`, `BuildCommand` (`build-vm`), `Pack`, `CVmPayload.Append`, `EnsureLibraries` mit graphics/windows, `CommandLine.Build` mit der Engine vm | `CVm.cs`, `src/fire.Runtime/CVmPayload.cs`, `Linker.cs` (der Teil mit `outname`), `PackageImports.cs`, `GraphicsLibrary.cs` (`Locate`) |
+| `project/standard.c` | `Projects`, `ImportsOf`, `HashOf`, die Stempel, `EnsureInstalled`, `Install`, `UsePrebuilt`, `PackageStore.Install` | `StandardSources.cs`, `Package.Manager/PackageStore.cs` (`Install`) |
 
 Messwerkzeuge auf der C#-Seite (ohne Wirkung auf einen Build): `src/fire.Compiler/ProjectDump.cs` (`forge projectplan`, `forge fpk`), in `FrontendDump.cs` `buildplan`
 und `fbc` (mit dem Modus `native`) für Projekte.
@@ -583,9 +616,26 @@ und `fbc` (mit dem Modus `native`) für Projekte.
 * **Zeiten**: `ProjectContent.CopyFile` setzt die Zeit der letzten Änderung in Ticks (100 ns, wie .NET), nicht die Zugriffszeit; Stempel von Publish und Vergleich
   "neuer" in Ticks.
 * **Der Stempel von Publish** hasht forge-c selbst, wo C# seine zwei Assemblies hasht: was der eine forge veröffentlicht hat, baut der andere neu.
-* **Was fehlt, sagt es** (`unported: ...`): die Engine `vm` (Programme, die die VM tragen), die C++-Natives eines Projekts in einem nativen Programm (der Generator liest
-  Natives aus dem Store), `settings.globalJobs` eines Projekts, eine Paketreferenz `github:...` (die Lock-Datei des Stores). Die Meldungen des Deserialisierers geben den
-  Pfad im JSON nur an der Wurzel genau an (`Path: $` bei Lesefehlern).
+* **Was fehlt, sagt es** (`unported: ...`): `FIRE_VM_ENGINE=dotnet` (ein Programm mit der .NET-Runtime statt `fire`) und `-f` mit der Engine vm für eine einzelne Datei
+  (der Linker einer Datei kennt die Breite der Befehlszeile nicht). Die Meldungen des Deserialisierers geben den Pfad im JSON nur an der Wurzel genau an (`Path: $` bei
+  Lesefehlern).
+* **Die Quellen der VM**: das C#-forge trägt sie als Ressourcen, forge-c liest sie aus `native/` (`FIRE_NATIVE_ROOT`, sonst neben den Tabellen) - der Schlüssel ist gleich,
+  solange beide aus demselben Stand gebaut sind.
+* **Die Natives eines Projekts** stehen im Overlay des Stores auch für den Generator (`NbBuild.overlay`); `FcPkgImport` trägt dafür ihr Manifest, `obj/native` und die
+  Projektdatei (`InstalledPackage.BuildDirectory`/`DescriptionFile`); ihre Quellen haben absolute Pfade (`fgPkgFile`, wie `InstalledImport.FullPath`).
+* **`github:`**: forge liest nur die Lock-Datei (`ember install github:...` schreibt sie, mit dem Netz - das bleibt ember). Gemessen mit einer von Hand geschriebenen
+  Lock-Datei und einem lokal gepackten und installierten Paket, ohne Netz.
+* **Fehler, die das C#-forge nicht fängt** (C#-Fehler, gemeldet): eine Paketreferenz, die fehlt oder zu alt ist, wirft in `Linker.CheckPackageReferences` eine
+  `System.Exception` - `forge build` endet mit "Unhandled exception" (Exitcode 134); forge-c meldet `error E6000: ...` mit Exitcode 1 (derselbe Text; `fbc` druckt darum
+  `internal: Exception: ...` gegen `error E6000`). Ebenso eine Bibliothek eines Pakets, die sich nicht bauen lässt (`PackageException`), und eine VM, die sich nicht bauen
+  lässt (`InvalidOperationException`), beim Build einer Datei: forge-c gibt die Meldung aus, Exitcode 1.
+* **`--types`**: `forge-c build` nahm die Markierung `//# types: strict` der Testfälle (die des Testläufers, nicht von forge) - jetzt `--types lax|strict` wie forge.
+* **Standardpakete**: dieselben Fingerabdrücke und Stempel wie in C# (was das eine installiert hat, installiert das andere nicht noch einmal). Gesperrt wird mit einer
+  Sperrdatei (`flock` auf `<store>/.source-lock`); das C#-forge nimmt einen benannten Mutex - ein C#-forge und ein forge-c, die zur selben Sekunde zum ersten Mal starten,
+  sehen einander nicht. Ein Fehler beim Übersetzen wird wie `CompileErrors.Describe` beschrieben.
+* **Vorlagen und Beispiele**: forge selbst nutzt `TemplateInstaller`, `TemplateCatalog` und `SampleCatalog` nicht (das tun spark - die Dialoge "Neues Projekt",
+  "Beispiele" - und der MCP-Teil von `fire.Project`); was forge davon braucht, ist portiert: der Ordner `templates/` einer Bibliothek geht ins Paket, die Dateilisten eines
+  Projekts lassen ihn aus. Die Vorlagen selbst sind als Projekte gemessen (`Templates`, oben).
 * **Nur POSIX**, wie der Builder.
 
 ## Nachziehen
@@ -612,4 +662,6 @@ Projekte, Solutions, Pakete (Phase D Schritt 3, `native/forge/project/`): `src/f
 `ProjectOutput.cs`, `ProjectFiles.cs`, `ProjectFolders.cs`, `Workspace.cs`, `BuildPlan.cs`, `ProjectNatives.cs`, `Notes.cs` (`Folder`), von `src/fire.Package.Manager`
 `Fpk.cs`, `Manifest.cs`, `NativeSources.cs` (`NativeSourceOrder`), von `src/fire.Compiler` `ProjectBuilder.cs`, `ProjectLibraries.cs`, `ProjectNativeOverlay.cs`,
 `ProjectPublisher.cs`, `CommandLine.cs`/`CommandLine.Report.cs` (die Projektteile) und wieder `Linker.cs` (mit `Plan`) - Stand de45e7e4; das Maß ist
-`tests/compare-frontend.sh ... project` (mit `PROJECT_EXTRA`) und `... projectbuild` (mit `PROJECT_COPY`).
+`tests/compare-frontend.sh ... project` (mit `PROJECT_EXTRA`) und `... projectbuild` (mit `PROJECT_COPY`). Dazu `src/fire.Compiler/CVm.cs`, `src/fire.Runtime/CVmPayload.cs`,
+`GraphicsLibrary.cs` (`Locate`), `StandardSources.cs`, von `src/fire.Package.Manager` `PackageLock.cs`, `GitHubSource.cs` (`GitHubSpec`), `PackageStore.cs` (`FindBySpec`,
+`Install`) - Stand de45e7e4; das Maß ist `... vmbuild`, `install-standard` auf beiden Seiten.
