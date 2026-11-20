@@ -310,7 +310,13 @@ Die Optionen sind Wörter, mit `+` verbunden: `default`, `debug`/`release`/`perf
 | `default`, `tests/cases` | 1129 | 1056 | 73 | 0 |
 | `default`, `packages` | 93 | 92 | 1 | 0 |
 | `default`, `src/fire.Project` | 34 | 30 | 3 | 1 (`Scene3D Models`: die Modelle als Ressourcen - der Linker, siehe oben) |
-@@WIDEN@@
+| Stichprobe, `default` / `performance` / `size` / `i32` / `f32` (je) | 504 | 473 | 30 | 1 (`Scene3D Models`) |
+| Stichprobe, `strip0` | 504 | 455 | 48 | 1 (`Scene3D Models`) |
+| Stichprobe, `t:esp32` | 504 | 488 | 16 | 0 |
+| Stichprobe, `t:dos16` (Zeigerkonvention) | 504 | 487 | 16 | 1 (`Scene3D Models`) |
+| Stichprobe, `t:win16` (Zeigerkonvention) | 504 | 475 | 28 | 1 (`Scene3D Models`) |
+| Stichprobe, `strip2`, `t:windows`, `t:wasm`, `i16` (Stand vor JSON und `Library.Get`) | 504 | 455 / 473 / 475 / 473 | 48 / 30 / 28 / 30 | 1 (`Scene3D Models`) |
+| Stichprobe, `debug`, `split` | 504 | 131 (die Fehler des Frontends) | 373 | 0 |
 
 (Die Stichprobe: jede dritte Quelle von `tests/cases` und alle von `packages` und `src/fire.Project`, 504 Quellen.)
 
