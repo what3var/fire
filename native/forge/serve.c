@@ -127,6 +127,7 @@ typedef struct SvDoc {
     SvText* text;
     SvPFile* includes;  /* generated scripts of `#include`d markup (for the index) */
     int nincludes;
+    bool includesSet;   /* the client said what the index knows (else: the project's files and imported libraries) */
     /* the index (main thread) */
     SvIndex* index;
     uint64_t indexKey;
@@ -536,6 +537,7 @@ static SvIndex* svDocIndex(SvServer* S, SvDoc* d) {
     FcList* imports;
     /* (no lock: the documents and projects change only on this thread) */
     key = d->text->hash;
+    if (d->includesSet) p = NULL;   /* (the client's list instead of the project's) */
     cap = (p ? p->nfiles : 0) + d->nincludes + 1;
     if (p) for (i = 0; i < p->nlibs; i++) cap += p->libs[i].nfiles;
     files = (SvFile*)fcAlloc(S->lang.tmp, sizeof(SvFile) * (size_t)cap);
@@ -779,7 +781,7 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
             free(d->base); d->base = svDup(svJStr(params, "base"));
             svDefaultBase(d, S->lang.tmp);
             d->fxml = svJStr(params, "kind") && strcmp(svJStr(params, "kind"), "fxml") == 0;
-            if (fcJsonGet(params, "includes")) { svFreeFiles(d->includes, d->nincludes); svFileList(&mc, fcJsonGet(params, "includes"), &d->includes, &d->nincludes); }
+            if (fcJsonGet(params, "includes")) { svFreeFiles(d->includes, d->nincludes); svFileList(&mc, fcJsonGet(params, "includes"), &d->includes, &d->nincludes); d->includesSet = true; }
             svSchedule(S, d);
             svRescheduleDependents(S, d);
             svUnlock(&S->mu);
@@ -805,7 +807,7 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
                 fcU16Free(&u);
             }
             d->version = svJNum(params, "version", &num) ? (int)num : d->version + 1;
-            if (fcJsonGet(params, "includes")) { svFreeFiles(d->includes, d->nincludes); svFileList(&mc, fcJsonGet(params, "includes"), &d->includes, &d->nincludes); }
+            if (fcJsonGet(params, "includes")) { svFreeFiles(d->includes, d->nincludes); svFileList(&mc, fcJsonGet(params, "includes"), &d->includes, &d->nincludes); d->includesSet = true; }
             if (fcJsonGet(params, "project")) { free(d->project); d->project = svDup(svJStr(params, "project")); }
             svSchedule(S, d);
             svRescheduleDependents(S, d);
