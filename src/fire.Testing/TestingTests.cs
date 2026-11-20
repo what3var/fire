@@ -170,6 +170,17 @@ static class TestingTests
         string ok = Write(root, "ok.fire", "#import \"testing\"\nclass A {\n    [Test]\n    undefined One() { Testing.Assert.AreEqual(\"x\", \"x\") }\n}\n");
         (exit, output) = Forge("test", ok);
         Check("Alles bestanden: Exitcode 0", exit == 0 && output.Contains("1 test: 1 passed, 0 failed, 0 errors"), output);
+
+        // a file is compiled as a file (as `forge build <file>`): `#include` from its folder, not the current one, and a message names the file
+        Write(root, "sub/inc.fire", "class Inc { static int Two() { return 2 } }\n");
+        string withInclude = Write(root, "sub/inc_tests.fire", "#import \"testing\"\n#include \"inc.fire\"\nclass I {\n    [Test]\n    undefined Two() { Testing.Assert.AreEqual(2, Inc.Two()) }\n}\n");
+        (exit, output) = Forge("test", withInclude);
+        Check("Datei: #include vom Ordner der Datei", exit == 0 && output.Contains("ok      I.Two"), output);
+        (exit, output) = Forge("test", withInclude, "-D", "X");
+        Check("Datei: #include vom Ordner der Datei, auch mit -D", exit == 0 && output.Contains("ok      I.Two"), output);
+        string broken = Write(root, "sub/broken.fire", "class U {\n    [Test]\n    undefined B() { int x = 1 + }\n}\n");
+        (exit, output) = Forge("test", broken);
+        Check("Datei: ein Fehler nennt die Datei", exit == 1 && output.Contains("broken.fire: broken.fire(3): error E3041"), output);
     }
 
     /// <summary>What the Test Explorer of the editor uses: finding the tests without running them, a filter, live events, stopping a run.</summary>

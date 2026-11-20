@@ -6,7 +6,7 @@
  * Where the VM is: FIRE_VM_EXE, else `fire` (`fire-i32`, ...) next to forge-c - as CVm.Locate finds it; building it into the cache when there is none
  * is CVm's (the engine vm of Phase D 3) and not here. The libraries of the program's packages and of a project's own natives (the overlay of the store) are
  * built as for the engine vm and found by the VM through FIRE_PKG_PATH (PackageImports.RegisterForRun). The command line is CommandLineParser.Parse
- * (tools/commands.c): several files (texts, as RuntimeSession.Build has them), -D, -f, -i, --types. Not ported: the spinner of a console (`[\\] ...`
+ * (tools/commands.c): several files (as files: RuntimeSession.Build with their paths), -D, -f, -i, --types. Not ported: the spinner of a console (`[\\] ...`
  * while a test runs, only in a terminal - the output of the VM is read when it has ended); cancelling is TestRunner.Cancel, spark's, not the command
  * line's. */
 
@@ -163,7 +163,7 @@ typedef struct TrArgs {
     const void* options;    /* (the TcOptions of tools/commands.c) */
 } TrArgs;
 /* (tools/commands.c) a plan of texts without a project: the files with the defines and the type checking of the command line */
-static PjPlan* tcTextsPlan(FcCtx* c, FcList* paths, FcList* defines, int types);
+static PjPlan* tcTestFilesPlan(FcCtx* c, FcList* paths, FcList* defines, int types);
 static const char* tcPkgPath(FcCtx* c, FcList* libraries);   /* (tools/commands.c) the folders of the libraries for FIRE_PKG_PATH */
 /* the defines and the type checking of the command line in a project's plan */
 static void trPlanOptions(FcCtx* c, const TrArgs* a, PjPlan* plan) {
@@ -178,7 +178,7 @@ static void trPlanOptions(FcCtx* c, const TrArgs* a, PjPlan* plan) {
     plan->settings = s;
 }
 /* the files need the link of a plan (several, or what the link of one file does not take) */
-static bool trTextsWanted(const TrArgs* a) { return (a->files && a->files->count > 1) || (a->defines && a->defines->count > 0) || a->floatWidth || a->intWidth || a->types >= 0; }
+static bool trPlanWanted(const TrArgs* a) { return (a->files && a->files->count > 1) || (a->defines && a->defines->count > 0) || a->floatWidth || a->intWidth || a->types >= 0; }
 
 /* the VM for the widths of a program (CVm.Locate: FIRE_VM_EXE, next to forge-c, in the cache, or built into it now - build/cvm.c; the C# forge runs the
  * tests in its own VM) */
@@ -220,15 +220,13 @@ static void trRemoveTree(const char* path) {
 }
 
 /* the warnings of a step (the DiagnosticCollector of the command line: each as it is reported) */
-/* (`unnamed`: the sources of a file without a plan are texts in C# - RuntimeSession.Build, NativeBuilder.Build -, their diagnostics name no file) */
-static void trWarnings(FcCtx* step, FILE* err, bool unnamed) {
+static void trWarnings(FcCtx* step, FILE* err) {
     FcBuf b = {0};
     int i;
     fcBufStr(&b, "");
     for (i = 0; i < step->diags->count; i++) {
         FcDiagnostic* d = (FcDiagnostic*)step->diags->items[i];
         if (d->severity != FC_SEV_WARNING) continue;
-        if (unnamed) d->file = NULL;
         fcDiagLogLine(&b, d);
     }
     fwrite(b.p, 1, b.len, err);
@@ -249,7 +247,7 @@ static TrRun* trRunInVm(FcCtx* c, const char* title, const TrArgs* a, PjPlan* pl
     c->testDriver = trDriverText;
     c->testDriverState = &d;
     trPkgPath = NULL;
-    if (!plan && trTextsWanted(a)) { plan = tcTextsPlan(c, a->files, a->defines, a->types); d.plan = NULL; }
+    if (!plan && trPlanWanted(a)) { plan = tcTestFilesPlan(c, a->files, a->defines, a->types); d.plan = NULL; }
     if (plan) {
         PjLinkIn in;
         FcStore* store = NULL;
@@ -320,7 +318,7 @@ static TrRun* trRunNative(FcCtx* c, const char* title, const TrArgs* a, PjPlan* 
     memset(&b, 0, sizeof b);
     b.path = a->file; b.prelude = prelude; b.storeRoot = storeRoot; b.strict = plan ? false : fcStrictTag(a->file); b.mode = a->mode;
     b.floatWidth = a->floatWidth; b.intWidth = a->intWidth;
-    if (!plan && trTextsWanted(a)) { b.link = pjNbLink; b.project = tcTextsPlan(c, a->files, a->defines, a->types); }
+    if (!plan && trPlanWanted(a)) { b.link = pjNbLink; b.project = tcTestFilesPlan(c, a->files, a->defines, a->types); }
     /* (the C++ natives of the project and its libraries: in the store of the generator, ProjectNativeOverlay) */
     if (plan) { pjApplyBuildSettings(c, config, plan); b.link = pjNbLink; b.overlay = pjNbOverlay; b.project = plan; }
     c->testDriver = trDriverText;
@@ -419,14 +417,13 @@ static const char* trFindHere(FcCtx* c, const char* extension, int* count) {
 }
 
 /* the line of a compile error of a run (DescribeErrors, after the title) */
-static void trDescribe(FcCtx* step, const char* title, FILE* err, bool unnamed) {
+static void trDescribe(FcCtx* step, const char* title, FILE* err) {
     FcList* diags = fcDiagnosticsOf(step, &step->err, NULL);
     FcBuf b = {0};
     int i;
     fcBufFmt(&b, "%s: ", title);
     for (i = 0; i < diags->count; i++) {
         FcDiagnostic* d = (FcDiagnostic*)diags->items[i];
-        if (unnamed) d->file = NULL;
         fcDiagLogLine(&b, d);
     }
     if (diags->count == 0) fcBufChar(&b, '\n');
@@ -474,14 +471,14 @@ static int trTestRun(TrArgs* args, const char* prelude, const char* storeRoot) {
             return 2;
         } FC_END_TRY;
     }
-#define TR_GUARDED(title, call, unnamed) do { \
+#define TR_GUARDED(title, call) do { \
         FcCtx step; \
         fcCtxInit(&step); step.collecting = true; \
-        FC_TRY(&step) { TrRun* run_ = (call); trWarnings(&step, stderr, (unnamed)); fcListAdd(c, runs, run_); } \
+        FC_TRY(&step) { TrRun* run_ = (call); trWarnings(&step, stderr); fcListAdd(c, runs, run_); } \
         FC_CATCH(&step) { \
-            trWarnings(&step, stderr, (unnamed)); \
+            trWarnings(&step, stderr); \
             if (step.err.kind == FC_ERR_NATIVE) { fprintf(stderr, "%s: error E7001: Not supported by the native backend yet: %s\n", (title), step.err.message); compileFailed = true; } \
-            else if (pjIsCompileErrorKind(step.err.kind) || step.err.kind == FC_ERR_PROJECT) { trDescribe(&step, (title), stderr, (unnamed)); compileFailed = true; } \
+            else if (pjIsCompileErrorKind(step.err.kind) || step.err.kind == FC_ERR_PROJECT) { trDescribe(&step, (title), stderr); compileFailed = true; } \
             else if (step.err.kind == FC_ERR_INTERNAL && step.err.message && fcStartsWith(step.err.message, "native-config: ")) { fprintf(stderr, "%s\n", step.err.message + 15); compileFailed = true; } \
             else { const char* m_ = step.err.message ? step.err.message : "internal error"; fprintf(stderr, "%s\n", fcStartsWith(m_, "vm: ") ? m_ + 4 : m_); fcCtxFree(&step); fcCtxFree(c); return 1; } \
         } FC_END_TRY; \
@@ -505,16 +502,16 @@ static int trTestRun(TrArgs* args, const char* prelude, const char* storeRoot) {
             PjPlan* plan = pjPlanCreate(w, project, true);
             if (plan->errors->count > 0) { fprintf(stderr, "%s: %s\n", project->project->name, fgJoin(c, plan->errors, "\n")); compileFailed = true; continue; }
             trPlanOptions(c, &a, plan);
-            if (strcmp(engine, "native") == 0) TR_GUARDED(project->project->name, trRunNative(&step, project->project->name, &a, plan, NULL, filter, prelude, storeRoot, config), false);
-            else TR_GUARDED(project->project->name, trRunInVm(&step, project->project->name, &a, plan, NULL, filter, prelude, storeRoot), false);
+            if (strcmp(engine, "native") == 0) TR_GUARDED(project->project->name, trRunNative(&step, project->project->name, &a, plan, NULL, filter, prelude, storeRoot, config));
+            else TR_GUARDED(project->project->name, trRunInVm(&step, project->project->name, &a, plan, NULL, filter, prelude, storeRoot));
         }
     } else {
         FcList* names = fcListNew(c);
         const char* title;
         for (i = 0; i < a.files->count; i++) fcListAdd(c, names, (void*)fcBaseName((const char*)a.files->items[i]));
         title = fgJoin(c, names, ", ");
-        if (strcmp(engine, "native") == 0) TR_GUARDED(title, trRunNative(&step, title, &a, NULL, names, filter, prelude, storeRoot, config), true);
-        else TR_GUARDED(title, trRunInVm(&step, title, &a, NULL, names, filter, prelude, storeRoot), true);
+        if (strcmp(engine, "native") == 0) TR_GUARDED(title, trRunNative(&step, title, &a, NULL, names, filter, prelude, storeRoot, config));
+        else TR_GUARDED(title, trRunInVm(&step, title, &a, NULL, names, filter, prelude, storeRoot));
     }
 #undef TR_GUARDED
     {

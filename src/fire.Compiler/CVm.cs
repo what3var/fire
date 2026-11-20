@@ -4,6 +4,12 @@ using fire.Runtime;
 
 namespace fire.Compiler
 {
+    /// <summary>The VM in C for a program is not there and cannot be built (FIRE_VM_EXE names nothing, no C compiler): its message says what to do.</summary>
+    public sealed class VmUnavailableException : InvalidOperationException
+    {
+        public VmUnavailableException(string message) : base(message) { }
+    }
+
     /// <summary>
     /// The VM in C as the engine of `forge build --engine vm` (docs/ROADMAP_C_PORT.md phase B step 8, docs/spec/VM_C.md "Gepackte Programme"): the program
     /// `fire` (native/vm/fire.c) with the program file and the libraries of its packages behind it (<see cref="CVmPayload"/>) instead of the .NET runtime.
@@ -102,7 +108,7 @@ namespace fire.Compiler
                 // a file: the VM of 64-bit widths; its variants next to it
                 string path = intWidth == 64 && floatWidth == 64 ? given : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(given))!, name);
                 if (File.Exists(path)) return path;
-                if (intWidth == 64 && floatWidth == 64) throw new InvalidOperationException($"FIRE_VM_EXE names '{given}', which does not exist.");
+                if (intWidth == 64 && floatWidth == 64) throw new VmUnavailableException($"FIRE_VM_EXE names '{given}', which does not exist.");
             }
             string beside = Path.Combine(AppContext.BaseDirectory, name);
             if (Current(beside, intWidth, floatWidth)) return beside;
@@ -110,7 +116,7 @@ namespace fire.Compiler
             if (File.Exists(cached)) return cached;
             var (ok, text) = Build(cached, intWidth, floatWidth, log);
             if (!ok)
-                throw new InvalidOperationException($"The VM in C ({VariantName(intWidth, floatWidth)}) for the program could not be built on this machine:\n{text}\n" +
+                throw new VmUnavailableException($"The VM in C ({VariantName(intWidth, floatWidth)}) for the program could not be built on this machine:\n{text}\n" +
                     "Install a C compiler (gcc, clang, tcc or cl), or set FIRE_VM_ENGINE=dotnet to pack the program with the .NET runtime, or build it with --engine native.");
             return cached;
         }

@@ -598,6 +598,9 @@ namespace fire.Compiler
                 stderr.WriteLine(DescribeErrors(ex));
                 return ExitScriptError;
             }
+            // a library of a package that cannot be built, a VM that cannot be had: their messages say why
+            catch (Package.Manager.PackageException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
+            catch (VmUnavailableException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
             stdout.WriteLine($"{Path.GetFullPath(options.OutputFile)} ({new FileInfo(options.OutputFile).Length} bytes)");
             return ExitOk;
         }
@@ -790,9 +793,12 @@ namespace fire.Compiler
             }
 
             var names = files.Select(Path.GetFileName).ToList();   // a problem names the file, without its folder
+            // files (no plan): compiled as files, as `forge build <file>` does - `#include` from the folder of each, a message names its file
+            string? basePath = files.Count > 0 ? Path.GetDirectoryName(Path.GetFullPath(files[0])) : null;
+            var paths = files.Select(f => (string?)Path.GetFullPath(f)).ToList();
             TestRun Run(string title, IReadOnlyList<string> sources, fire.Projects.BuildPlan? plan) => engine == "native"
-                ? runner.RunNative(title, sources, config!, options.ToolchainName, options.Mode, options.FloatWidth, options.Defines, plan, plan == null ? names : null)
-                : runner.RunInVm(title, sources, options.Mode, options.FloatWidth, options.Defines, plan, plan == null ? names : null);
+                ? runner.RunNative(title, sources, config!, options.ToolchainName, options.Mode, options.FloatWidth, options.Defines, plan, plan == null ? names : null, plan == null ? basePath : null, plan == null ? paths : null)
+                : runner.RunInVm(title, sources, options.Mode, options.FloatWidth, options.Defines, plan, plan == null ? names : null, plan == null ? basePath : null, plan == null ? paths : null);
 
             var runs = new List<TestRun>();
             bool compileFailed = false;
@@ -968,6 +974,7 @@ namespace fire.Compiler
             catch (fire.Native.NativeNotSupportedException ex) { stderr.WriteLine($"error {ErrorCatalog.NativeUnsupported}: Not supported by the native backend yet: " + ex.Message); return ExitScriptError; }
             catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
             catch (Package.Manager.PackageException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
+            catch (VmUnavailableException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
             catch (Exception ex) when (IsCompileError(ex)) { stderr.WriteLine(DescribeErrors(ex)); return ExitScriptError; }
         }
 
@@ -1045,6 +1052,6 @@ namespace fire.Compiler
 
         internal static bool IsCompileError(Exception ex) =>
             ex is ParseException or LexException or ResolverException or CompilerException or TypeCheckException
-                or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException;
+                or NotSupportedException or PreprocessorException or LibraryEntryPointException or PackageReferenceException or fire.Projects.ProjectException;
     }
 }

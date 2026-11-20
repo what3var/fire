@@ -383,6 +383,38 @@ static class ProjectTests
         var pkg = Workspace.Open(Path.Combine(s, "Pkg", "Pkg.fireproj"));
         string pkgMessage = Catch(() => ProjectBuilder.Check(BuildPlan.Create(pkg, pkg.Projects[0])));
         Check("Verweis: ein Paket, das nicht installiert ist, wird gemeldet", pkgMessage.Contains("no-such-package-xyz") && pkgMessage.Contains("ember install"), pkgMessage);
+        {
+            // forge build: a diagnostic (E6000) and exit code 1, not an exception of the tool
+            var pkgOut = new StringWriter();
+            int pkgCode = -1;
+            string pkgCrash = "";
+            try { pkgCode = CommandLineRunner.Run(new[] { "build", Path.Combine(s, "Pkg", "Pkg.fireproj"), "-o", Path.Combine(s, "Pkg", "p.out") }, pkgOut, pkgOut); }
+            catch (Exception ex) { pkgCrash = ex.ToString(); }
+            Check("Verweis: forge build mit einem fehlenden Paket ist error E6000, Exitcode 1", pkgCode == 1 && pkgOut.ToString().Contains("error E6000: The project 'Pkg' references the package 'no-such-package-xyz'"), pkgCrash + pkgOut);
+            // a VM that cannot be had (FIRE_VM_EXE names nothing): its message and exit code 1, for a file and for a project
+            string? vmBefore = Environment.GetEnvironmentVariable("FIRE_VM_EXE");
+            string? engineBefore = Environment.GetEnvironmentVariable("FIRE_VM_ENGINE");
+            Environment.SetEnvironmentVariable("FIRE_VM_EXE", Path.Combine(s, "no-such-vm"));
+            Environment.SetEnvironmentVariable("FIRE_VM_ENGINE", null);
+            try
+            {
+                foreach (var (what, input) in new[] { ("Datei", Path.Combine(s, "Gone", "g.script")), ("Projekt", Write(s, "VmP/VmP.fireproj", """{ "name": "VmP" }""")) })
+                {
+                    Write(s, "VmP/v.script", "print(1)\n");
+                    var vmOut = new StringWriter();
+                    int vmCode = -1;
+                    string vmCrash = "";
+                    try { vmCode = CommandLineRunner.Run(new[] { "build", input, "-o", Path.Combine(s, "vm.out") }, vmOut, vmOut); }
+                    catch (Exception ex) { vmCrash = ex.ToString(); }
+                    Check($"forge build ({what}): eine VM, die es nicht gibt, ist eine Meldung mit Exitcode 1", vmCode == 1 && vmOut.ToString().Contains("FIRE_VM_EXE names") && vmOut.ToString().Contains("which does not exist"), vmCrash + vmOut);
+                }
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("FIRE_VM_EXE", vmBefore);
+                Environment.SetEnvironmentVariable("FIRE_VM_ENGINE", engineBefore);
+            }
+        }
         Write(s, "NoRef/NoRef.fireproj", """{ "name": "NoRef" }""");
         Write(s, "NoRef/n.script", "#import \"Core\"\nprint(Core.Greeter.Hello(\"x\"))\n");
         var noref = Workspace.Open(Path.Combine(s, "NoRef", "NoRef.fireproj"));
@@ -940,6 +972,29 @@ static class ProjectTests
                 new Dictionary<string, string> { ["x11.h"] = "pkg/windows/x11.h", ["src.h"] = "pkg/windows/src.h" }, new HashSet<string> { "src.h" });
             Check("native.headers eines installierten Pakets: das #include nennt die Datei im Build (pkg/<import>/), eine Quelle des Builds bleibt", pointed.Contains("#include \"pkg/windows/x11.h\"  /* why */")
                 && pointed.Contains("#include \"src.h\"") && pointed.Contains("<stdio.h>"), pointed);
+        }
+        {
+            // a header of a project put in where it is included, which includes a header of an installed import it uses (`tls` and `fire_net_c.h` of `net`):
+            // that include names the file in the build too (pkg/net/), else a compiler without the folder of the package (tcc) does not find it
+            string un = Path.Combine(t, "UN");
+            Write(un, "UsesNet/native/un_c.h", "#ifndef UN_C_H\n#define UN_C_H\n#include \"fire_net_c.h\"\n#endif\n");
+            Write(un, "UsesNet/native/un.h", "#include \"un_c.h\"\nstatic int un_value(void) { return 1; }\n");
+            Write(un, "UsesNet/un.fire", "namespace UsesNet {\n    class Info { }\n}\n");
+            Write(un, "UsesNet/UsesNet.fireproj", """{ "name": "UsesNet", "type": "library", "native": { "language": "c", "sources": [ "native/un.h" ], "headers": [ "native/un_c.h" ], "uses": [ "net" ], "discover": false } }""");
+            Write(un, "App/App.fireproj", """{ "name": "App", "references": [ { "project": "../UsesNet/UsesNet.fireproj" } ] }""");
+            Write(un, "App/main.script", "#import \"UsesNet\"\nprint(1)\n");
+            Write(un, "UN.firesln", """{ "projects": [ "App/App.fireproj", "UsesNet/UsesNet.fireproj" ], "startup": "App" }""");
+            var unWs = Workspace.Open(Path.Combine(un, "UN.firesln"));
+            string unText;
+            try
+            {
+                ProjectNativeOverlay.Register(BuildPlan.Create(unWs, unWs.FindByName("App")!));
+                unText = string.Join("\n", fire.Package.Manager.PackageStore.Default.FindKey(ProjectNativeOverlay.KeyOf("UsesNet"))!.ReadNativeSources(new[] { "posix", "linux" }).Select(s => s.Text));
+            }
+            catch (Exception ex) { unText = ex.ToString(); }
+            finally { fire.Package.Manager.PackageStore.Default.ClearOverlay(); }
+            Check("native.headers eines Projekts: ein #include eines Headers eines benutzten installierten Pakets darin nennt die Datei im Build (pkg/net/)",
+                unText.Contains("#include \"pkg/net/fire_net_c.h\"") && !unText.Contains("#include \"fire_net_c.h\"") && unText.Contains("un_value"), unText);
         }
         var problems = fire.Package.Manager.NativeSourceOrder.CheckIncludes(new[] { ("native/top.h", "// top\n#include \"mid.h\"\n"), ("native/mid.h", "#include <stdio.h>\n#include \"base.h\"\n"), ("native/base.h", "#include \"base.h\"\n") });
         Check("Bau-Reihenfolge: die Pruefung nennt Datei und Zeile des #include, das auf eine spaetere Quelle zeigt", problems.Count == 2

@@ -163,8 +163,10 @@ namespace fire.Compiler
         /// <summary>Runs the tests of <paramref name="sources"/> in the VM.</summary>
         /// <param name="files">The names of the files of <paramref name="sources"/> (for the messages), when there is no plan.</param>
         /// <param name="basePath">The folder `#include` of a file without a plan starts from (else the current folder).</param>
+        /// <param name="sourcePaths">The files of <paramref name="sources"/>, when there is no plan: each `#include` is relative to the file that has it and a message names its file
+        /// (as `forge build &lt;file&gt;`).</param>
         public TestRun RunInVm(string title, IReadOnlyList<string> sources, VmExecutionMode? mode = null, int? floatWidth = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null,
-            IReadOnlyList<string>? files = null, string? basePath = null)
+            IReadOnlyList<string>? files = null, string? basePath = null, IReadOnlyList<string?>? sourcePaths = null)
         {
             var run = new TestRun { Title = title };
             var protocol = Attach(run);
@@ -179,7 +181,7 @@ namespace fire.Compiler
                 {
                     if (args.Length > 0) protocol.Line(args[0].ToString());
                     return Value.MakeUndefined();
-                }, basePath: basePath, floatWidth: floatWidth, defines: defines, plan: plan);
+                }, basePath: basePath, floatWidth: floatWidth, defines: defines, plan: plan, sourcePaths: sourcePaths);
             }
             finally { Linker.TestDriver = null; }
             if (tests > 0 && !_cancelled)
@@ -196,8 +198,10 @@ namespace fire.Compiler
         }
 
         /// <summary>Runs the tests of <paramref name="sources"/> as a native program for this machine (built with the toolchain of the configuration).</summary>
+        /// <param name="basePath">As in <see cref="RunInVm"/>.</param>
+        /// <param name="sourcePaths">As in <see cref="RunInVm"/>.</param>
         public TestRun RunNative(string title, IReadOnlyList<string> sources, fire.Native.NativeConfig config, string? toolchainName, VmExecutionMode? mode = null, int? floatWidth = null,
-            IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string>? files = null)
+            IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string>? files = null, string? basePath = null, IReadOnlyList<string?>? sourcePaths = null)
         {
             var run = new TestRun { Title = title };
             var protocol = Attach(run);
@@ -214,7 +218,7 @@ namespace fire.Compiler
                 int tests = 0;
                 Linker.TestDriver = (program, first) => Driver(program, first, plan, files, run, out tests);
                 NativeBuildResult result;
-                try { result = NativeBuilder.Build(sources, config, target, toolchain, exe, mode, floatWidth, defines: defines, plan: plan); }
+                try { result = NativeBuilder.Build(sources, config, target, toolchain, exe, mode, floatWidth, basePath: basePath, defines: defines, plan: plan, sourcePaths: sourcePaths); }
                 finally { Linker.TestDriver = null; }
                 if (!result.Ok) { run.Problems.Add("The native build of the tests failed:" + Environment.NewLine + result.Log.TrimEnd()); return run; }
                 if (tests == 0 || _cancelled) return run;

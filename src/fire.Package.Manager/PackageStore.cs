@@ -69,8 +69,10 @@ namespace fire.Package.Manager
                     else inline[name] = imp.PathOf(h);
                 }
             var placed = new HashSet<string>(StringComparer.Ordinal);
+            // (a header put in may include one of an installed import - a project's `tls` the `fire_net_c.h` of `net`, which it uses: that include is pointed too)
+            string ReadHeader(string path) => NativeHeaders.Point(File.ReadAllText(path), inStore, names);
             return used.Concat(texts)
-                .Select(t => (t.Name, StripLocalIncludes(StripPragmaOnce(NativeHeaders.Inline(NativeHeaders.Point(t.Text, inStore, names), inline, names, File.ReadAllText, placed)), names))).ToList();
+                .Select(t => (t.Name, StripLocalIncludes(StripPragmaOnce(NativeHeaders.Inline(NativeHeaders.Point(t.Text, inStore, names), inline, names, ReadHeader, placed)), names))).ToList();
         }
 
         /// <summary>Is the import one of an installed package (its headers are written next to the runtime of every build), not the natives of a project?</summary>
