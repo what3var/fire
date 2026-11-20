@@ -61,6 +61,7 @@ static int fcCmpOrdinal(const void* a, const void* b) { return strcmp(*(const ch
 static bool fcStrictTag(const char* path);
 #include "gen/gen.h"
 #include "gen/support.c"
+#include "gen/packages.c"
 #include "gen/cppgenerator.c"
 #include "gen/cppgenerator2.c"
 #include "gen/cppgenerator3.c"

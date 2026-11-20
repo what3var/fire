@@ -67,7 +67,7 @@ static const char* Run(FgGen* g) {
     const char* prelude;
     const char* programText;
     FcList* splitKeys;
-    bool marks;
+    bool marks, natSources = false;
     int round, i, k;
     main = g->main = fgFuncNew(g, NULL, g->program->program->topLevel, FK_Main, 0);
     if (DebugBuild) UseExceptions(g);
@@ -130,7 +130,14 @@ static const char* Run(FgGen* g) {
         for (k = i; k > 0 && fgCultureCmp((const char*)dimNames->items[k - 1], (const char*)dimNames->items[k]) > 0; k--) { void* t = dimNames->items[k]; dimNames->items[k] = dimNames->items[k - 1]; dimNames->items[k - 1] = t; }
     fcBufStr(&sb, HeadTail(g, dimNames->count));
     prelude = fcStrN(g->c, sb.p, sb.len);
-    /* the system libraries that packages need on this platform (`linkLibraries`): the build links them - (the natives of packages are not ported) */
+    /* the system libraries that packages need on this platform (`linkLibraries`): the build links them */
+    for (i = 0; i < g->packageImports->count; i++) {
+        FgPkgImportKey* p = (FgPkgImportKey*)g->packageImports->items[i];
+        FcList* libs;
+        if (!p->import->native) continue;
+        libs = fgLinkLibrariesFor(g->c, p->import->native, fgPlatformKeys(g));
+        for (k = 0; k < libs->count; k++) fcBufFmt(&sb, "// fire-link: %s\n", (const char*)libs->items[k]);
+    }
     if (g->usesWindows && (streq0(g->target->platform, "posix") || streq0(g->target->platform, "windows"))) {
         FcList* libs = DisplayLibraries(g, g->target);
         for (i = 0; i < libs->count; i++) fcBufFmt(&sb, "// fire-link: %s\n", (const char*)libs->items[i]);
@@ -147,8 +154,22 @@ static const char* Run(FgGen* g) {
     marks = g->splitMode >= 0 && !g->separate && !Modular && !g->openWorld && !g->dll && !PointerCallsOn;
     if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, "head-end"));
 
-    /* The natives in C of the packages and the bridges of graphics and windows: part of this file, after the runtime (not ported yet) */
+    /* The natives in C of the packages ("language": "c") and the bridges of graphics and windows: part of this file, after the runtime - a C compiler is enough
+     * (TinyCC, a board without C++). Their platform layers come with them (platformSources, ROADMAP 13.3b). (the bridges of graphics and windows: not ported yet) */
     if (g->usesGraphics || g->usesWindows) FG_UNPORTED("the natives of graphics and windows in the generated file");
+    for (i = 0; i < g->packageImports->count; i++) {
+        FgPkgImportKey* p = (FgPkgImportKey*)g->packageImports->items[i];
+        FcList* texts;
+        if (!(p->import->native && p->import->native->isC) || fcDictHas(g->standardNativesWritten, fcAsciiLower(g->c, p->import->name))) continue;
+        if (marks) FG_UNPORTED("the natives of a split program");
+        texts = fgReadNativeSources(g->c, g->instImports, g->store, p->import, fgPlatformKeys(g));
+        for (k = 0; k < texts->count; k++) {
+            FgNamedText* t = (FgNamedText*)texts->items[k];
+            fcBufFmt(&sb, "// ---- package %s %s, import \"%s\" (C): %s\n", p->import->pkgName, p->import->pkgVersion, p->import->name, t->name);
+            fcBufFmt(&sb, "%s\n", PackageNativeText(g, t->text));
+            fcBufFmt(&sb, "// ---- end of %s\n", t->name);
+        }
+    }
     if (marks) fcBufFmt(&sb, "%s\n", ProgramSplitMarker(g, "program"));
 
     /* The natives in C++ (the packages that are still C++): a file of their own, built with a C++ compiler and linked with the program. */
@@ -156,7 +177,21 @@ static const char* Run(FgGen* g) {
     fcBufFmt(&nat, "#define FIRE_PLATFORM_HEADER \"platform/%s/fire_platform.h\"\n", g->target->platform);
     fcBufFmt(&nat, "#define FIRE_PLATFORM_CPP_HEADER \"platform/%s/fire_platform.hpp\"\n", g->target->platform);
     fcBufStr(&nat, "#include \"fire_rt_cpp.hpp\"   // the runtime (fire_rt.h, the program has its state) and what C++ code expects of it\n");
-    if (fcDictCount(g->nativeThunks) > 0) {
+    /* the C++ source of the packages the program imports: after the runtime, at the top level (the files include what they need and put their functions into namespace fire) */
+    for (i = 0; i < g->packageImports->count; i++) {
+        FgPkgImportKey* p = (FgPkgImportKey*)g->packageImports->items[i];
+        FcList* texts;
+        if ((p->import->native && p->import->native->isC) || fcDictHas(g->standardNativesWritten, fcAsciiLower(g->c, p->import->name))) continue;
+        texts = fgReadNativeSources(g->c, g->instImports, g->store, p->import, fgPlatformKeys(g));
+        for (k = 0; k < texts->count; k++) {
+            FgNamedText* t = (FgNamedText*)texts->items[k];
+            fcBufFmt(&nat, "// ---- package %s %s, import \"%s\": %s\n", p->import->pkgName, p->import->pkgVersion, p->import->name, t->name);
+            fcBufFmt(&nat, "%s\n", PackageNativeText(g, t->text));
+            fcBufFmt(&nat, "// ---- end of %s\n", t->name);
+            natSources = true;
+        }
+    }
+    if (natSources || fcDictCount(g->nativeThunks) > 0) {
         FcList* thunks = fcListNew(g->c);
         fcBufStr(&nat, "\n");
         fcBufStr(&sb, "// the natives in C++ (fire_natives.cpp)\n");

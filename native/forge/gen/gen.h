@@ -237,7 +237,9 @@ struct FgGen {
     FcDict* needsDefaults;      /* "name\x01argc" -> 1/2 */
     FcDict* nativeThunks;       /* function -> FgNativeThunk* */
     FcDict* packageNatives;     /* native -> FgPkgNative* */
-    FcList* packageImports;     /* FgPkgImportKey* */
+    FcList* packageImports;     /* FgPkgImportKey* (gen/packages.c) */
+    FcStore* store;             /* the installed packages */
+    FcDict* instImports;        /* FcPkgImport* -> FgInstImport* */
     /* CppGenerator.CAbi.cs */
     FcDict* cRet;               /* FgFunc* -> int + 1 */
     FcDict* cAbiParams;         /* FgFunc* -> FgCAbi* (NULL value: none) */

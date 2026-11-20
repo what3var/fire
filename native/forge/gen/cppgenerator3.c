@@ -1206,4 +1206,13 @@ static bool IntKeyHash(FgGen* g, FgFunc* f, FgFlow* st, const FgInstr* ins) {
     if (c->kind != CK_Int || c->i != 15) return false;
     return key >= 0 && key < 64 && ((st->scalar >> key) & 1) != 0 && KindOfType(st->types[key]) == KindInt && UnitOfType(st->types[key]) == 0;
 }
-static bool TypedNativeCall(FgGen* g, const FgInstr* ins) { (void)g; (void)ins; return false;   /* (the natives of packages are not ported) */ }
+static bool TypedNativeCall(FgGen* g, const FgInstr* ins) {
+    FgPkgNative* pn;
+    const char* native;
+    int i;
+    if (ins->op != OP_CallNative || ins->a[0] >= g->natives->count || !(pn = (FgPkgNative*)fcDictGet(g->packageNatives, (native = (const char*)g->natives->items[ins->a[0]]))) || pn->argc != ins->a[1]) return false;
+    if (!fgNativeIsTyped(pn->fn, pn->isC)) return false;   /* (NativeIsHere: one file) */
+    if (PkgLock(g, native) >= 0) return false;   /* (its call is a statement between the package's lock) */
+    for (i = 0; i < pn->argc; i++) if (!fgNativeParamCType(pn->fn, i)) return false;
+    return true;
+}

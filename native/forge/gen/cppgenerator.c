@@ -1796,7 +1796,6 @@ static bool AnyClassHasMethod(FgGen* g, const char* name, int argc) {
 }
 
 /* ---- the natives of the packages ---- */
-/* (not ported yet: the natives of packages - InstalledImport.ReadNativeSources, NativeHeaders; a program that imports a package with natives is refused) */
 #define FG_UNPORTED(...) fcThrow(g->c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(g->c, "unported: " __VA_ARGS__))
 typedef struct FgNativeThunk { int index, argc; bool needsList; } FgNativeThunk;
 /* The name of the C function that calls the C++ native `cppFunction`. */
@@ -1819,17 +1818,64 @@ static const char* ThunkParams(FgGen* g, int argc, bool needsList) {
     if (needsList) fcListAdd(g->c, l, (void*)"OwnList* list");
     return fgJoin(g->c, l, ", ");
 }
-/* The lock of the package of a native in a program with fire threads: -1 for none (the natives of packages are not ported) */
-static int PkgLock(FgGen* g, const char* native) { (void)g; (void)native; return -1; }
+/* (the packages of the program: what CollectPackages finds) */
+typedef struct FgPkgImportKey { FgInstImport* import; const char* key; } FgPkgImportKey;
+typedef struct FgPkgNative { int argc; const char* function; bool needsList, returnsReference, host, throws, isC; const char* returns; FgPkgFn* fn; } FgPkgNative;
+/* the keys of the platform of the target: its platform package and its name */
+static FcList* fgPlatformKeys(FgGen* g) { FcList* l = fcListNew(g->c); fcListAdd(g->c, l, (void*)g->target->platform); fcListAdd(g->c, l, (void*)g->target->name); return l; }
+/* The lock of the package of a native in a program with fire threads: its index in `fire_pkgM`, -1 for none (no threads, or `"threadSafe": true`). */
+static int PkgLock(FgGen* g, const char* native) {
+    const char* key;
+    void* v;
+    int i;
+    if (!g->usesThreads || Modular || !(key = (const char*)fcDictGet(g->nativeImportOf, native))) return -1;
+    for (i = 0; i < g->packageImports->count; i++) {
+        FgPkgImportKey* p = (FgPkgImportKey*)g->packageImports->items[i];
+        if (streq0(p->key, key)) { if (p->import->native && p->import->native->threadSafe) return -1; break; }
+    }
+    if (fcDictTry(g->pkgLocks, key, &v)) return FC_VALI(v) - 1;
+    fcDictPut(g->pkgLocks, key, FC_IVAL(fcDictCount(g->pkgLocks) + 1));
+    g->version++;
+    return fcDictCount(g->pkgLocks) - 1;
+}
 /* Looks at the imports of packages the program uses: their native functions, and whether the target is one the C++ source is written for. */
 static void CollectPackages(FgGen* g, FcStore* store) {
-    FC_DICT_EACH(g->program->nativeImports, e) {
-        const char* key = (const char*)e->key;
-        FcPkgImport* import;
-        if (!fcStartsWith(key, "pkg:")) continue;
-        import = fcStoreFindKey(g->c, store, key);
-        if (!import) FG_NOTSUP("the import '%s' belongs to a package that is not installed (`ember list`)", key + 4);
-        if (import->hasNative) FG_UNPORTED("the natives of the package of the import '%s'", import->name);
+    FcDict* keySet = fcDictNew(g->c, FC_KEY_STR);
+    FcList* keys;
+    FcList* platformKeys = fgPlatformKeys(g);
+    int i, k;
+    FC_DICT_EACH(g->program->nativeImports, e) if (fcStartsWith((const char*)e->key, "pkg:")) fcSetAdd(keySet, e->key);
+    keys = fgSortedKeys(g->c, keySet, true);
+    for (i = 0; i < keys->count; i++) {
+        const char* key = (const char*)keys->items[i];
+        FcPkgImport* pi = fcStoreFindKey(g->c, store, key);
+        FgInstImport* import;
+        FgPkgImportKey* pk;
+        FgPkgNativeM* native;
+        if (!pi) FG_NOTSUP("the import '%s' belongs to a package that is not installed (`ember list`)", key + 4);
+        import = fgInstalledImport(g->c, g->instImports, pi);
+        pk = (FgPkgImportKey*)fcAlloc(g->c, sizeof *pk);
+        pk->import = import; pk->key = key;
+        fcListAdd(g->c, g->packageImports, pk);
+        native = import->native;
+        if (!native) continue;
+        if (!fgSupportsAny(native, platformKeys))
+            FG_NOTSUP("the package '%s' (import '%s') has native code for %s, not for the platform '%s' of the target '%s'", import->pkgName, import->name, fgJoin(g->c, native->platforms, ", "), g->target->platform, g->target->name);
+        if (fgSourcesFor(g->c, native, platformKeys, false)->count == 0)
+            FG_NOTSUP("the package '%s' (import '%s') has no C++ source for the target '%s' (platform '%s')", import->pkgName, import->name, g->target->name, g->target->platform);
+        for (k = 0; k < native->functions->count; k++) {
+            FgPkgFn* fn = (FgPkgFn*)native->functions->items[k];
+            if (fn->parameters && (!native->isC || fn->parameters->count != fn->arguments))
+                FG_NOTSUP("the native '%s' of the package '%s' lists %d parameter type(s) for %d argument(s)%s", fn->name, import->pkgName, fn->parameters->count, fn->arguments, native->isC ? "" : " - typed functions (\"parameters\") are for packages in C");
+            if (!fcDictHas(g->packageNatives, fn->name)) {
+                FgPkgNative* pn = (FgPkgNative*)fcAlloc(g->c, sizeof *pn);
+                pn->argc = fn->arguments; pn->function = fgPkgFnSymbol(fn); pn->needsList = fn->needsList; pn->returnsReference = fn->returnsReference; pn->host = fn->host;
+                pn->throws = native->exceptions->count > 0; pn->isC = native->isC; pn->returns = fn->returns ? fgTrim(g->c, fn->returns) : NULL; pn->fn = fn;
+                fcDictPut(g->packageNatives, fn->name, pn);
+            }
+            if (!fcDictHas(g->nativeImportOf, fn->name)) fcDictPut(g->nativeImportOf, fn->name, (void*)key);
+        }
+        for (k = 0; k < native->exceptions->count; k++) if (!fcListHasStr(g->errorClasses, (const char*)native->exceptions->items[k])) fcListAdd(g->c, g->errorClasses, native->exceptions->items[k]);
     }
 }
 

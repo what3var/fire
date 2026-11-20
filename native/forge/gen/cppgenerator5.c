@@ -615,7 +615,81 @@ static FgStep StepCoreNative(FgSC* x) {
     }
     if (fcStartsWith(native, "__refl_")) FG_UNPORTED("reflection (%s)", native);
     if (fcStartsWith(native, "__GRPH")) FG_UNPORTED("the natives of graphics and windows (%s)", native);
-    if (fcDictHas(g->packageNatives, native)) FG_UNPORTED("the natives of packages (%s)", native);
+    if (fcDictHas(g->packageNatives, native) && ((FgPkgNative*)fcDictGet(g->packageNatives, native))->argc == argc) {
+        /* a native of a package (C++ in the generated file): `Value cpp(Value a, ...)`, with the list of the scope as the last argument if it asks for it */
+        FgPkgNative* pn = (FgPkgNative*)fcDictGet(g->packageNatives, native);
+        const char* cFunction = pn->isC ? pn->function : "";   /* (SharedNative: one file) */
+        bool typed = fgNativeIsTyped(pn->fn, pn->isC) && streq0(cFunction, pn->function), awayWrapped = false;
+        FcList* argl = fcListNew(g->c);
+        const char* args;
+        const char* typedRet;
+        const char* pkgEnter;
+        const char* pkgLeave;
+        int pkgLock, k;
+        for (k = first; k < first + argc; k++) {
+            const char* ct = typed ? fgNativeParamCType(pn->fn, k - first) : NULL;
+            fcListAdd(g->c, argl, (void*)(ct ? xNativeArgOf(x, k, ct) : SR(k)));
+        }
+        if (pn->needsList) fcListAdd(g->c, argl, (void*)fcFmt(g->c, "&%s", OwnerList()));
+        args = fgJoin(g->c, argl, ", ");
+        if (pn->throws) UseExceptions(g);
+        if (pn->host) NeedTimeObj(g);
+        typedRet = typed && fgNativeReturnCType(pn->fn) ? fgNativeReturnCType(pn->fn) : "";
+        pkgLock = PkgLock(g, native);
+        pkgEnter = pkgLock >= 0 ? fcFmt(g->c, "{ FIRE_PKG_ENTER(fire_pkgM[%d]) ", pkgLock) : "";
+        pkgLeave = pkgLock >= 0 ? fcFmt(g->c, " FIRE_PKG_LEAVE(fire_pkgM[%d]) }", pkgLock) : "";
+        if (g->usesThreads && (!pn->host || pkgLock >= 0)) {
+            FcList* awayL = fcListNew(g->c);
+            FcList* natL = fcListNew(g->c);
+            const char* freeIf;
+            for (k = first; k < first + argc; k++) {
+                if (typed && fgNativeParamCType(pn->fn, k - first)) continue;
+                fcListAdd(g->c, awayL, (void*)fcFmt(g->c, "fire_awayArg(%s)", SR(k)));
+            }
+            for (k = first; k < first + argc; k++) {
+                if (typed && fgNativeParamCType(pn->fn, k - first)) continue;
+                fcListAdd(g->c, natL, (void*)fcFmt(g->c, "fire_natArg(%s)", SR(k)));
+            }
+            freeIf = pn->host ? "false" : awayL->count == 0 ? "true" : fcFmt(g->c, "g_isThread ? (%s) : (%s)", fgJoin(g->c, natL, " && "), fgJoin(g->c, awayL, " && "));
+            pkgEnter = fcFmt(g->c, "{ int nt_ = fire_natBegin(%s); %s", freeIf, *pkgEnter ? pkgEnter : "{ ");
+            pkgLeave = fcFmt(g->c, "%s fire_natEnd(nt_); }", *pkgLeave ? pkgLeave : " }");
+            awayWrapped = true;
+        }
+        if (*typedRet && (!SlotScalars() || (streq0(typedRet, "int64_t") && g->program->intWidth == 32) || pkgLock >= 0 || awayWrapped)) {
+            int vtype;
+            {
+                const char* t = T(first);
+                E("%s%s = %s;%s", pkgEnter, t, fgNativeToValue(g->c, typedRet, fcFmt(g->c, "%s(%s)", pn->function, args)), pkgLeave);
+            }
+            CheckNative();
+            if (pn->host && g->usesThreads && sb) E("if (FIRE_UNLIKELY(pollSignals())) goto %s;", ExitLabel(g, f, st, locals));
+            d = first + 1; SetR(first, false);
+            vtype = pn->returns && streq0(pn->returns, "float") ? TypeOf(KindFloat, 0) : pn->returns && streq0(pn->returns, "bool") ? TypeOf(KindBool, 0) : TypeOf(KindInt, 0);
+            SetT(first, vtype); g->kindsKept = true;
+            return Next();
+        }
+        if (*typedRet) {
+            int rtype = streq0(typedRet, "Real") ? TypeOf(KindFloat, 0) : streq0(typedRet, "bool") ? TypeOf(KindBool, 0) : TypeOf(KindInt, 0);
+            SetScalar(first, rtype, streq0(typedRet, "Real") || streq0(typedRet, "bool") ? fcFmt(g->c, "%s(%s)", pn->function, args) : fcFmt(g->c, "(FireInt)%s(%s)", pn->function, args));
+            CheckNative();
+            if (pn->host && g->usesThreads && sb) E("if (FIRE_UNLIKELY(pollSignals())) goto %s;", ExitLabel(g, f, st, locals));
+            d = first + 1; SetR(first, false); g->kindsKept = true;
+            return Next();
+        }
+        {
+            const char* t = T(first);
+            const char* callee = pn->isC ? cFunction : NativeThunk(g, pn->function, argc, pn->needsList);
+            E("%s%s = %s(%s);%s", pkgEnter, t, callee, args, pkgLeave);
+        }
+        CheckNative();
+        if (pn->host && g->usesThreads && sb) E("if (FIRE_UNLIKELY(pollSignals())) goto %s;", ExitLabel(g, f, st, locals));
+        d = first + 1; SetR(first, pn->returnsReference);
+        {
+            int nativeType = !pn->returns ? TypeUnknown : streq0(pn->returns, "float") ? TypeOf(KindFloat, 0) : streq0(pn->returns, "bool") ? TypeOf(KindBool, 0) : streq0(pn->returns, "int") ? TypeOf(KindInt, 0) : TypeUnknown;
+            if (nativeType != TypeUnknown && !pn->returnsReference) { SetT(first, nativeType); g->kindsKept = true; }
+        }
+        return Next();
+    }
 #undef FG_UNDEF_OR
     FG_NOTSUP("native function '%s' (called in %s)", native, x->fn);
 }
