@@ -72,7 +72,8 @@ static const char* SectionEnd(FgGen* g, const char* variable) { return *SectionF
 
 static const char* GlobalVar(FgGen* g, int slot, FcDict* locals) {
     FgFunc* f = g->cur;
-    if (LibraryRole) FG_NOTSUP("the library module '%s' uses a global variable of the program", g->self->name);
+    /* (a library: the slots of a fire body of its own are its thread's variables - only a slot of the program's globals is not possible) */
+    if (LibraryRole && (f->kind != FK_FireBody || slot < f->globalSlotCount)) FG_NOTSUP("the library module '%s' uses a global variable of the program", g->self->name);
     if (f->kind != FK_FireBody || slot < f->globalSlotCount) { fgISetAdd(g->c, g->globals, slot); return fcFmt(g->c, "G%d", slot); }
     fgISetAdd(g->c, f->threadVars, slot);
     fcSetAdd(locals, fcFmt(g->c, "T%d", slot));

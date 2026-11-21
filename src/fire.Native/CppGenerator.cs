@@ -3679,7 +3679,8 @@ namespace fire.Native
         private string GlobalVar(int slot, ISet<string> locals)
         {
             var f = _cur;
-            if (LibraryRole) throw new NativeNotSupportedException($"the library module '{_self!.Name}' uses a global variable of the program");
+            // (a library: the slots of a fire body of its own are its thread's variables - only a slot of the program's globals is not possible)
+            if (LibraryRole && (f.Kind != FuncKind.FireBody || slot < f.GlobalSlotCount)) throw new NativeNotSupportedException($"the library module '{_self!.Name}' uses a global variable of the program");
             if (f.Kind != FuncKind.FireBody || slot < f.GlobalSlotCount) { _globals.Add(slot); return $"G{slot}"; }
             f.ThreadVars.Add(slot);
             locals.Add($"T{slot}");
