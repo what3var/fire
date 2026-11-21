@@ -1,0 +1,5 @@
+thread failed: boom
+   at Job.Run (0110-catch-threads.fire:7)
+   at <fire> (0110-catch-threads.fire:9)
+   in thread 'Fire #1', started at 0110-catch-threads.fire:9
+main done

@@ -1,1 +1,2 @@
 Unhandled exception of type 'ArgumentException': Type String is not numeric.
+   at <main> (0720-abbruch-unbehandelte-argumentexception-programm.fire:2)

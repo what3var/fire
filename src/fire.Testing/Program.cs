@@ -58,6 +58,8 @@ Directory.CreateDirectory(fontTestDir);
 File.WriteAllBytes(Path.Combine(fontTestDir, "FireSans.ttf"), fireTestFont);
 Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 
+// FIRE_TESTS_ONLY=trace: stack traces of exceptions - the cases tests/cases/trace in the VM, the format, the clickable lines of spark, forge test (TraceTests.cs; seconds)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "trace") { Environment.ExitCode = TestResume.Group("TraceTests", TraceTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=projects runs only the tests of projects, templates and packing (a quick run while working on them).
 // (TestResume.Group: a group of checks is one unit of FIRE_TESTS_RESUME/FIRE_TESTS_SHARD - not run again when it passed with the same build)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { TestResume.Group("ProjectTests.Run", () => { ProjectTests.Run(); }); return; }
@@ -503,6 +505,8 @@ Console.WriteLine("=== Sprachtests als Dateien (tests/cases/smoke) ===");
     }
     Console.WriteLine(smokeFailures == 0 ? "Alle Sprachtests aus Dateien bestanden." : $"FEHLER: {smokeFailures} Sprachtest(s) aus Dateien fehlgeschlagen.");
 }
+
+TestResume.Group("TraceTests", TraceTests.Run, 0);   // (the stack traces: tests/cases/trace)
 
 Console.WriteLine();
 Console.WriteLine("=== Typsystem-Test: Bitbreiten / Arrays / Pointer+unsafe / extern (gültig) ===");
@@ -12071,6 +12075,9 @@ else
 
     var vmUnhandled = new Dictionary<string, string>();
     const string NotCompiled = "WIRD NICHT UEBERSETZT: ";
+    // (the file of a case: its stack traces name it relative to its folder, as `forge run <case>.fire` does - docs/spec/STACKTRACE.md)
+    var vmCaseFiles = new Dictionary<string, string>();
+    foreach (var f in TestCases.Load("native")) vmCaseFiles.TryAdd(f.Source, f.File);
     string vmOutput(string source)
     {
         // `terminate` and `catch threads/terminate` are process-wide state of the VM: an earlier case must not leave its handlers behind
@@ -12078,7 +12085,8 @@ else
         GlobalHandlers.ResetForTests();
         var lines = new List<string>();
         RuntimeSession session;
-        try { session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); }); }
+        try { session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); },
+            sourcePaths: vmCaseFiles.TryGetValue(source, out var caseFile) ? new string?[] { caseFile } : null); }
         catch (Exception ex) when (fire.Compiler.CompileDiagnostics.Of(ex).Count > 0)
         {
             // a case that is not a program (any more): its check fails with the errors of the compiler - it does not end the whole run
@@ -12086,7 +12094,7 @@ else
         }
         session.Run();
         // what the command line runner writes to stderr for an exception that nothing catches (an "Abbruch:" case compares it with the native program)
-        if (session.VirtualMachine?.UnhandledException is { } unhandled) lock (vmUnhandled) vmUnhandled[source] = new UncaughtScriptException(unhandled).Message;
+        if (session.VirtualMachine?.UnhandledException is { } unhandled) lock (vmUnhandled) vmUnhandled[source] = session.VirtualMachine.UnhandledReport(unhandled);
         return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "");
     }
 
@@ -13479,7 +13487,8 @@ else
             {
                 // an exception that nothing catches: the program ends with exit code 1 after the output so far and writes the text of the VM's command line runner to
                 // stderr ("Unhandled exception of type 'Class': message")
-                expected += "stderr: " + vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
+                // (the native build writes the line without the stack trace until it records frames: docs/spec/STACKTRACE.md step 4)
+                expected += "stderr: " + vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)").Split('\n')[0];
                 actual = exit == 1 ? stdout + "stderr: " + stderr.TrimEnd('\n', '\r') : $"Exitcode {exit}: {stdout}{stderr}";
             }
             // (the end of the program ended a thread: the line on stderr is checked on its own - the VM writes it to the console, not to the output)

@@ -5,10 +5,15 @@ using Avalonia.Input;
 namespace fire.Editor
 {
     /// <summary>The output of the running program: a read-only text that only ever grows at the end (and scrolls along). Below it, while a program takes
-    /// input from here (<see cref="InputTarget"/>: a program on a board, whose console is its standard input), a line for its standard input.</summary>
+    /// input from here (<see cref="InputTarget"/>: a program on a board, whose console is its standard input), a line for its standard input. A double click on a
+    /// line of a stack trace (`   at Store.Find (main.fire:16)`, docs/spec/STACKTRACE.md) jumps to its place (<see cref="LocationActivated"/>).</summary>
     public partial class OutputPanelControl : UserControl
     {
         private Func<string, bool>? _inputTarget;
+
+        /// <summary>Fires when a line of a stack trace is double clicked: its file as the trace names it (relative to the folder of the program's first source) and
+        /// its line. A frame of the prelude or one without a line has no place.</summary>
+        public event Action<string, int>? LocationActivated;
 
         public OutputPanelControl()
         {
@@ -16,6 +21,15 @@ namespace fire.Editor
             Editor.TextArea.Options.EnableHyperlinks = false;
             Editor.TextArea.Options.EnableEmailHyperlinks = false;
             InputBox.KeyDown += InputBox_KeyDown;
+            Editor.TextArea.DoubleTapped += (_, _) => ActivateCurrentLine();
+        }
+
+        private void ActivateCurrentLine()
+        {
+            int number = Editor.TextArea.Caret.Line;
+            if (number < 1 || number > Editor.Document.LineCount) return;
+            var line = Editor.Document.GetLineByNumber(number);
+            if (fire.Compiler.OutputLocations.TraceFrame(Editor.Document.GetText(line.Offset, line.Length)) is { } at) LocationActivated?.Invoke(at.File, at.Line);
         }
 
         public void Append(string text)

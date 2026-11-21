@@ -1,0 +1,4 @@
+UNBEHANDELT: Unhandled exception of type 'Exception': in thread 2
+   at Work.Step (0100-fire-thread-unbehandelt.fire:3)
+   at <fire> (0100-fire-thread-unbehandelt.fire:6)
+   in thread 'Fire #1', started at 0100-fire-thread-unbehandelt.fire:5

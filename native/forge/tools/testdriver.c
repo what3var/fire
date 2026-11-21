@@ -116,8 +116,14 @@ static const char* tdGenerate(FcCtx* c, FcList* program, int firstUserSource, Td
     fcBufStr(&sb, "        if (e is of Exception) { if (e.message == undefined) { return \"\" } return \"\" + e.message }\n");
     fcBufStr(&sb, "        return \"\" + e\n");
     fcBufStr(&sb, "    }\n");
+    /* (the stack trace behind the message, docs/spec/STACKTRACE.md) */
+    fcBufStr(&sb, "    static string Trace(any e) {\n");
+    fcBufStr(&sb, "        string t = __EnvCall(9, e)\n");
+    fcBufStr(&sb, "        if (t == \"\") { return \"\" }\n");
+    fcBufStr(&sb, "        return \"\\n\" + t\n");
+    fcBufStr(&sb, "    }\n");
     fcBufStr(&sb, "    static undefined Failed(any e) {\n");
-    fcBufStr(&sb, "        if (e is of Assertion) { __Tests.Say(\"F|\" + __Tests.Describe(e)) } else { __Tests.Say(\"E|\" + __Tests.Describe(e)) }\n");
+    fcBufStr(&sb, "        if (e is of Assertion) { __Tests.Say(\"F|\" + __Tests.Describe(e) + __Tests.Trace(e)) } else { __Tests.Say(\"E|\" + __Tests.Describe(e) + __Tests.Trace(e)) }\n");
     fcBufStr(&sb, "    }\n");
     for (si = 0; si < program->count; si++) {
         const FcStmt* s = (const FcStmt*)program->items[si];

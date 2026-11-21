@@ -1,7 +1,7 @@
 class Use {
-    static int Third(List<int> l) { return l[3] }
+    static undefined Twice(Dictionary<string, int> d) { d.Add("a", 2) }
 }
-var l = new List<int>()
-l.Add(1)
-try { Use.Third(l) } catch (e) { print(e.StackTrace) }
+var d = new Dictionary<string, int>()
+d.Add("a", 1)
+try { Use.Twice(d) } catch (e) { print(e); print(e.StackTrace) }
 //# name: Trace: Frames des Preludes stehen ohne Zeile da (prelude)

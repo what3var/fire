@@ -57,7 +57,7 @@ tests ran will of course complain when only some of them run.
 `-m`, `-f`, `-D`, `--types`, `--config` and `--toolchain` work as with `run`/`build`. The tests run in the virtual machine unless `--engine native` is given.
 
 While the tests run, a console shows a spinner (`\ - / |`) with the test that is running and the count so far. At the end comes the list of the tests:
-`ok`, `FAILED` (an `Assertion`: a check did not hold) or `ERROR` (any other exception, or a `[CleanTest]` that threw), with the message, the description of the
+`ok`, `FAILED` (an `Assertion`: a check did not hold) or `ERROR` (any other exception, or a `[CleanTest]` that threw), with the message and its stack trace (docs/spec/STACKTRACE.md: from the test on - the frames of `Assert` and of the driver are left out, so a `FAILED` starts at the line of the `Assert`), the description of the
 test and what the test printed. Problems that are not a single test (an attribute in the wrong place, a class whose object could not be made, a `[PrepareTesting]`
 that threw) are listed as `PROBLEM`. The exit code is 0 when everything passed, otherwise 1.
 

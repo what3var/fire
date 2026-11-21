@@ -70,7 +70,7 @@ namespace fire.Compiler
                     break;
                 case "F":
                 case "E":
-                    if (_current != null) { _current.Status = parts[0] == "F" ? TestStatus.Failed : TestStatus.Error; _current.Message = Rest(parts, 1); _current.Finished = true; }
+                    if (_current != null) { _current.Status = parts[0] == "F" ? TestStatus.Failed : TestStatus.Error; _current.Message = WithTrace(Rest(parts, 1)); _current.Finished = true; }
                     break;
                 case "C":
                     if (_current != null && _current.Status != TestStatus.Error)
@@ -107,6 +107,16 @@ namespace fire.Compiler
             if (!_current.Finished && _current.Message == "") _current.Message = "the test did not finish";
             Finished?.Invoke(_current);
             _current = null;
+        }
+
+        /// <summary>The message of a failed test with the stack trace below it - up to the test: without the frames of `Testing.Assert` and of the driver
+        /// (OutputLocations.WithoutTestDriver, docs/spec/STACKTRACE.md).</summary>
+        private static string WithTrace(string text)
+        {
+            int at = text.IndexOf("\n   at ", StringComparison.Ordinal);
+            if (at < 0) return text;
+            string trace = OutputLocations.WithoutTestDriver(text.Substring(at + 1));
+            return trace.Length == 0 ? text.Substring(0, at) : text.Substring(0, at) + "\n" + trace.TrimEnd('\n');
         }
 
         private static string Rest(string[] parts, int from) => string.Join("|", parts.Skip(from)).Replace("\\n", "\n");

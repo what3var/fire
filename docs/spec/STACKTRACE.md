@@ -404,3 +404,37 @@ Traces in allen drei Wegen gleich.
 * `e.StackTrace` als `string` reicht für die meisten; `e.Frames` als Records braucht ein Record im Prelude - Name `StackFrame` frei?
 * Sollen Frames des Preludes ganz wegfallen (wie "Just My Code")? Vorschlag: nein, ohne Zeile; spark kann sie grau zeigen.
 * Ein Absturz (Signal, `fatal`) ist keine Ausnahme: dort könnte später (c) einen Trace der C-Ebene drucken, wo es geht.
+
+## 13. Stand
+
+Gebaut (21.11.2026), Schritte 1-3, die Einstellung beider forge und der Teil von 7, der die VMs betrifft:
+
+* **Format** (C#: `ExceptionTrace` in `src/fire/Runtime`, C: `FireTrace`/`fire_traceFormat` in `fire_rt.h`): wie in [2](#2-was-der-benutzer-sieht);
+  `e.StackTrace` ohne den letzten Zeilenumbruch. Die Datei eines Frames ist der Name aus `LinkedProgram.TraceFiles` (`ExceptionTrace.DisplayFiles`, in
+  forge-c `fcLinkTrace`): relativ zum Ordner der ersten Quelle, eine Bibliothek mit ihrem Dateinamen (**noch ohne** den Paketnamen aus Schritt 5), eine
+  Quelle ohne Datei `fire:source/N`, Prelude und Test-Treiber keine. **Abweichung**: `StackFrame.file` ist dieser Name, nicht der volle Pfad - die VM in C
+  und ein gepacktes Programm kennen keinen vollen Pfad, und der Name ist auf jeder Maschine derselbe.
+* **Sprache**: `StackTrace`, `Frames` (Getter an `Exception` im Prelude), `record StackFrame`; dahinter **`__EnvCall` 9 und 10** statt eigener Natives
+  (`EnvironmentMethod.ExceptionTrace`/`ExceptionFrames`): der native Generator reicht `__EnvCall` schon an `envCall` der Runtime weiter, ein Programm mit
+  `e.Frames` baut damit auch nativ (dort heute `""` und keine Frames). `print(e)`/`e.ToString()`: `Klasse: message` über die Runtime (C#:
+  `Value.ToString`, C: `pieceOf` mit dem Bit 2 in `FireClassDesc.flags`, das die C-VM für Ausnahmeklassen setzt - **der native Generator setzt es
+  noch nicht**, nativ bleibt es `<object X>`).
+* **Am Objekt**: C# `ObjectInstance.Trace`, C `ObjExt.trace` (gezählt, freigegeben mit dem Objekt); die Kopierer (`ObjectCopier`, `ObjectCloner`,
+  `SyncEngine`, `flatCopy`, der tiefe Kopierer) teilen ihn.
+* **C#-VM**: `VM.Trace.cs` (`TraceContext` je Programm: Einstellung, Dateien, Namen nach `TraceNames`, Zähler der Threads), `StampTrace` in
+  `ThrowException`, `StampAwaited` bei `Completion.Wait` und `WaitReply` (Aktor, `await on`), der Thread-Abschnitt über `FireVmTaking`.
+* **C-VM**: `native/vm/vm_trace.c` (`vmTraceNames` beim Laden, `fire_vmTraceThrow`/`fire_vmTraceAwaited`, die Haken hinter `FIRE_VM` in `throwValueR`,
+  `actorAwait`, `awaitReplyOf`, `fire_completion_wait`), `VmFireStart.trailer` für die Zeile des Threads. Gepackte Programme behalten ihre Zeilentabellen,
+  außer bei `off` (**auch bei `calls`**: ohne Zeilentabelle kennt ein Frame seine Datei nicht).
+* **`.fbc`**: Flag 4 hinter den Quellen: ein Byte `StackTraceMode`, dann die Namen der Quellen (nicht bei `off`). Beide forge schreiben es gleich.
+* **Einstellung**: `#stacktrace` (`StackTraceDirective`, E3167), `settings.stackTrace`, `--stacktrace`, `"stackTrace"` eines Ziels in fire.native.json
+  (nur C#: `TargetProfile.StackTrace`; forge-c liest es noch nicht - es wirkt erst mit dem nativen Teil).
+* **Korpus**: die 16 `.unhandled` haben ihren Trace (`tests/run-cases.sh` und `run-cases-vm.sh` vergleichen sie ganz); die Gruppe `trace` (16 Fälle) in
+  C#-VM und C-VM gleich. Die Gruppen `vm-*` vergleichen `UNBEHANDELT:` **ohne** den Trace (sie laufen in fire.Testing in allen drei Modi, Performance
+  hat keinen); fire.Testing vergleicht beim nativen Lauf nur die erste Zeile, bis der Generator Frames hat.
+* **spark/forge test**: `OutputLocations` (fire.Compiler): die Zeilen `at ... (datei:zeile)` im Output-Panel sind per Doppelklick ein Sprung; `forge test`
+  hängt den Trace an die Meldung (`__Tests.Trace`) und lässt die Frames von `Assert`/`Testing` und des Treibers weg (C# und forge-c gleich).
+
+Offen: Schritte 4-6 (nativ, Module mit Paketnamen, forge-c-Generator), der Frame eines Natives bei Rückrufen (`at Window.Tick (native)`), der Abschnitt
+`--- awaited at ---` bei `await [...]` (dort wirft der Prelude `throw fails[i]`, ein Rethrow), die Funktionsnamen im Dialog von spark und der
+Test-Explorer (klickbar), `fire.native.json` in forge-c.

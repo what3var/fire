@@ -1,1 +1,2 @@
 Unhandled exception of type 'DivideByZeroException': Division by zero.
+   at <main> (0770-abbruch-unbehandelte-dividebyzeroexception-progr.fire:2)

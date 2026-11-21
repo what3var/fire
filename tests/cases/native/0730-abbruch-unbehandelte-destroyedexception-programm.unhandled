@@ -1,1 +1,2 @@
 Unhandled exception of type 'DestroyedException': Access to a destroyed object.
+   at <main> (0730-abbruch-unbehandelte-destroyedexception-programm.fire:5)

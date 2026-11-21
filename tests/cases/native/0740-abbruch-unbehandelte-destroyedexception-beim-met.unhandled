@@ -1,1 +1,2 @@
 Unhandled exception of type 'DestroyedException': Access to a destroyed object.
+   at <main> (0740-abbruch-unbehandelte-destroyedexception-beim-met.fire:4)

@@ -1,11 +1,11 @@
 class Calc {
-    static int At(int[] a, int i) { return a[i] }
+    static int At(int a[], int i) { return a[i] }
     static int Div(int a, int b) { return a / b }
     static any Add(any a, any b) { return a + b }
     static any Member(any o) { return o.nothing }
     static int Convert(string s) { return s!int }
 }
-int[] xs = [1, 2, 3]
+int xs[] = [1, 2, 3]
 try { Calc.At(xs, 7) } catch (IndexOutOfBoundsException e) { print(e); print(e.StackTrace) }
 try { Calc.Div(1, 0) } catch (DivideByZeroException e) { print(e); print(e.StackTrace) }
 try { Calc.Add(5mm, 2kg) } catch (UnitMismatchException e) { print(e); print(e.StackTrace) }

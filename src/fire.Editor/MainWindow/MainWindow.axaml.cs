@@ -280,6 +280,7 @@ namespace fire.Editor
             ErrorsText.PointerPressed += (_, _) => RevealTool("errors");
             _errorList.ItemActivated += item => ShowLocation(item.Path, item.File, item.Line);
             _buildLog.LocationActivated += (file, line) => ShowLocation(null, file, line);
+            _output.LocationActivated += ShowTraceLocation;
 
             _session.OutputWritten += OnScriptOutput;
             // IMPORTANT: Post (non-blocking), NOT Invoke - these handlers can fire from the OWN background thread of a fire thread that is just starting/pausing while the
@@ -771,6 +772,18 @@ namespace fire.Editor
                 d.File == null ? defaultPath : Path.IsPathRooted(d.File) ? d.File : null);   // (a file of its own that is not a path: no path, not the document's)
 
         /// <summary>Opens the file (when it is not open yet) and puts the caret on the line: a double click in the error list or in the build log. Without a file it is the active script.</summary>
+        /// <summary>A line of a stack trace in the output (docs/spec/STACKTRACE.md): its file is relative to the folder of the program's first source - an open
+        /// document whose path ends with it, else the file next to the active document (or the project), else by its name.</summary>
+        private void ShowTraceLocation(string file, int line)
+        {
+            string tail = file.Replace('/', Path.DirectorySeparatorChar);
+            var open = _documents.FirstOrDefault(d => FullPathOf(d) is { } p && (p.EndsWith(Path.DirectorySeparatorChar + tail, StringComparison.Ordinal) || p == tail));
+            if (open != null) { ShowLocation(FullPathOf(open), null, line); return; }
+            foreach (var dir in new[] { ActiveDocument is { } a && FullPathOf(a) is { } ap ? Path.GetDirectoryName(ap) : null, Directory.GetCurrentDirectory() })
+                if (dir != null && File.Exists(Path.Combine(dir, tail))) { ShowLocation(Path.Combine(dir, tail), null, line); return; }
+            ShowLocation(null, Path.GetFileName(tail), line);
+        }
+
         private void ShowLocation(string? path, string? file, int line)
         {
             OpenDocument? doc = null;

@@ -1,1 +1,5 @@
 Unhandled exception of type 'Boom': 
+   at T.F (0660-abbruch-nicht-gefangene-ausnahme-beendet-das-pro.fire:12)
+   at T.F (0660-abbruch-nicht-gefangene-ausnahme-beendet-das-pro.fire:13)
+   at T.F (0660-abbruch-nicht-gefangene-ausnahme-beendet-das-pro.fire:13)
+   at <main> (0660-abbruch-nicht-gefangene-ausnahme-beendet-das-pro.fire:18)

@@ -5839,13 +5839,38 @@ FIRE_COLD FIRE_FN void reportUnhandledIn(Value exception, const char* before, co
 }
 FIRE_COLD FIRE_FN void reportUnhandled(Value exception) { reportUnhandledIn(exception, "", ""); }
 
+/* A text of the traces (UTF-8) as a string of `list` (the runtime's other helpers for it are not in every build: a package's library has only these). */
+FIRE_FN Value fire_traceStr(const char* utf8, OwnList* list) {
+    size_t n = strlen(utf8), i = 0;
+    uint32_t k = 0;
+    fire_char16 small[256];
+    fire_char16* d = n <= 256 ? small : (fire_char16*)malloc(n * sizeof(fire_char16));
+    Value r;
+    if (!d) fatal("Out of memory.");
+    while (i < n) {
+        uint32_t c = (unsigned char)utf8[i++];
+        if (c >= 0xC0 && c < 0xE0 && i < n) c = ((c & 0x1F) << 6) | ((unsigned char)utf8[i++] & 0x3F);
+        else if (c >= 0xE0 && c < 0xF0 && i + 1 < n) { c = ((c & 0x0F) << 12) | (((unsigned char)utf8[i] & 0x3F) << 6) | ((unsigned char)utf8[i + 1] & 0x3F); i += 2; }
+        else if (c >= 0xF0 && i + 2 < n) {
+            c = ((c & 0x07) << 18) | (((unsigned char)utf8[i] & 0x3F) << 12) | (((unsigned char)utf8[i + 1] & 0x3F) << 6) | ((unsigned char)utf8[i + 2] & 0x3F);
+            i += 3;
+            c -= 0x10000;
+            d[k++] = (fire_char16)(0xD800 + (c >> 10));
+            c = 0xDC00 + (c & 0x3FF);
+        }
+        d[k++] = (fire_char16)c;
+    }
+    r = newStrFrom(d, k, list);
+    if (d != small) free(d);
+    return r;
+}
 FIRE_FN bool fire_isExceptionObj(const Obj* o) { return o->cls < g_classDescCount && (g_classDescs[o->cls].flags & 2u) != 0; }
 FIRE_FN Value fire_exceptionText(Value v, OwnList* list) {
     Obj* o = asObj(v);
     int32_t index = excMessageIndex(o->cls);
     const char* cls = className(o->cls);
     Value m = index >= 0 ? objFields(o)[index] : Undef();
-    Value msg = m.kind == K_String ? m : index >= 0 ? toStringValue(m, list) : strFromUtf8("", list);
+    Value msg = m.kind == K_String ? m : index >= 0 ? toStringValue(m, list) : fire_traceStr("", list);
     uint32_t cn = (uint32_t)strlen(cls), mn = strOf(msg)->length;
     Str* s = allocStr(cn + 2 + mn, list);
     fire_char16* d = strChars(s);
@@ -5859,7 +5884,7 @@ FIRE_FN Value fire_exc_trace(Value e, OwnList* list) {
     char* text = e.kind == K_Class && leafAlive(e) ? fire_traceFormat(fire_traceOf(asObj(e)), g_stackTrace) : NULL;
     Value r;
     if (text && *text) text[strlen(text) - 1] = 0;   /* (the lines without the last line feed) */
-    r = strFromUtf8(text ? text : "", list);
+    r = fire_traceStr(text ? text : "", list);
     free(text);
     return r;
 }
@@ -5871,9 +5896,9 @@ FIRE_FN Value fire_exc_frames(Value e, Value index, Value part, OwnList* list) {
     if (index.kind != K_Int || index.i < 0) return Int((int64_t)fire_traceCount(t));
     f = fire_traceFrameAt(t, (uint32_t)index.i);
     if (!f) return Undef();
-    if (part.kind == K_Int && part.i == 1) return strFromUtf8(f->fn && f->fn->file ? f->fn->file : "", list);
+    if (part.kind == K_Int && part.i == 1) return fire_traceStr(f->fn && f->fn->file ? f->fn->file : "", list);
     if (part.kind == K_Int && part.i == 2) return Int(g_stackTrace == FIRE_TRACE_LINES && f->fn && f->fn->file ? f->line : 0);
-    return strFromUtf8(f->fn && f->fn->name ? f->fn->name : "?", list);
+    return fire_traceStr(f->fn && f->fn->name ? f->fn->name : "?", list);
 }
 
 #ifdef FIRE_THREADS

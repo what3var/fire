@@ -1,1 +1,2 @@
 Unhandled exception of type 'ArgumentException': Field access on a value of type Undefined which is not an object.
+   at <main> (0760-abbruch-unbehandelter-zugriff-auf-undefined-prog.fire:2)

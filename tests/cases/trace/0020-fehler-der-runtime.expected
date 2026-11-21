@@ -1,0 +1,13 @@
+IndexOutOfBoundsException: Array index 7 out of range (length 3).
+   at Calc.At (0020-fehler-der-runtime.fire:2)
+   at <main> (0020-fehler-der-runtime.fire:9)
+DivideByZeroException: Division by zero.
+   at Calc.Div (0020-fehler-der-runtime.fire:3)
+   at <main> (0020-fehler-der-runtime.fire:10)
+UnitMismatchException: Incompatible units: 'mm' cannot be converted to 'kg'.
+   at Calc.Add (0020-fehler-der-runtime.fire:4)
+   at <main> (0020-fehler-der-runtime.fire:11)
+   at Calc.Member (0020-fehler-der-runtime.fire:5)
+   at <main> (0020-fehler-der-runtime.fire:12)
+   at Calc.Convert (0020-fehler-der-runtime.fire:6)
+   at <main> (0020-fehler-der-runtime.fire:13)

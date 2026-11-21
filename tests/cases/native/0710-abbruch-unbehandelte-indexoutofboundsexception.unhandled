@@ -1,1 +1,2 @@
 Unhandled exception of type 'IndexOutOfBoundsException': Array index -1 out of range (length 3).
+   at <main> (0710-abbruch-unbehandelte-indexoutofboundsexception.fire:3)

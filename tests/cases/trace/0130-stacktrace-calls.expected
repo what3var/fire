@@ -1,0 +1,6 @@
+   at S.F (0130-stacktrace-calls.fire)
+   at <main> (0130-stacktrace-calls.fire)
+0
+UNBEHANDELT: Unhandled exception of type 'Exception': calls only
+   at S.F (0130-stacktrace-calls.fire)
+   at <main> (0130-stacktrace-calls.fire)

@@ -28,6 +28,48 @@ static const char* trRest(FcCtx* c, FcList* parts, int from) {
     for (i = from; i < parts->count; i++) { if (i > from) fcBufChar(&b, '|'); fcBufStr(&b, (const char*)parts->items[i]); }
     return trUnescape(c, fcBufDone(c, &b));
 }
+/* a line of a stack trace `   at <fn> (<where>)` (OutputLocations.AnyFrame): its function and what stands in the brackets; false: not a frame */
+static bool trFrame(FcCtx* c, const char* line, const char** fn, const char** where) {
+    const char* p = line;
+    const char* open;
+    size_t n = strlen(line);
+    while (*p == ' ' || *p == '\t') p++;
+    if (p == line || strncmp(p, "at ", 3) != 0) return false;
+    p += 3;
+    while (n > 0 && (line[n - 1] == ' ' || line[n - 1] == '\t')) n--;
+    if (n == 0 || line[n - 1] != ')') return false;
+    for (open = line + n - 1; open > p && *open != '('; open--) { }
+    if (open <= p + 1 || open[-1] != ' ' || memchr(open + 1, '(', (size_t)(line + n - 1 - (open + 1))) || memchr(open + 1, ')', (size_t)(line + n - 1 - (open + 1)))) return false;
+    *fn = fcFmt(c, "%.*s", (int)(open - 1 - p), p);
+    *where = fcFmt(c, "%.*s", (int)(line + n - 1 - (open + 1)), open + 1);
+    return true;
+}
+/* OutputLocations.WithoutTestDriver and TestProtocol.WithTrace: the message of a failed test with its trace up to the test (without the frames of Testing.Assert
+ * and of the driver) */
+static const char* trWithTrace(FcCtx* c, const char* text) {
+    const char* at = strstr(text, "\n   at ");
+    FcList* lines;
+    FcBuf b = {0};
+    const char* s;
+    const char *fn, *where;
+    int i, first = 0, cut;
+    if (!at) return text;
+    lines = fcListNew(c);
+    for (s = at + 1; ; ) {
+        const char* e = strchr(s, '\n');
+        fcListAdd(c, lines, (void*)fcFmt(c, "%.*s", (int)(e ? e - s : (long)strlen(s)), s));
+        if (!e) break;
+        s = e + 1;
+    }
+    if (lines->count > 0 && !*(const char*)lines->items[lines->count - 1]) lines->count--;
+    while (first < lines->count && trFrame(c, (const char*)lines->items[first], &fn, &where)
+        && (strncmp(fn, "Assert.", 7) == 0 || strncmp(fn, "Testing.", 8) == 0 || strcmp(fn, "Assertion.construct") == 0)) first++;
+    for (cut = first; cut < lines->count; cut++)
+        if (trFrame(c, (const char*)lines->items[cut], &fn, &where) && (strncmp(fn, "__Tests.", 8) == 0 || (strcmp(where, "prelude") == 0 && strcmp(fn, "<main>") == 0))) break;
+    fcBufStr(&b, fcFmt(c, "%.*s", (int)(at - text), text));
+    for (i = first; i < cut; i++) { fcBufChar(&b, '\n'); fcBufStr(&b, (const char*)lines->items[i]); }
+    return fcBufDone(c, &b);
+}
 static void trClose(TrProtocol* p) {
     if (!p->current) return;
     if (!p->current->finished && !p->current->message[0]) p->current->message = "the test did not finish";
@@ -56,7 +98,7 @@ static void trLine(TrProtocol* p, const char* line) {
     } else if (strcmp(kind, "P") == 0) {
         if (p->current) { p->current->status = TR_PASSED; p->current->finished = true; }
     } else if (strcmp(kind, "F") == 0 || strcmp(kind, "E") == 0) {
-        if (p->current) { p->current->status = kind[0] == 'F' ? TR_FAILED : TR_ERROR; p->current->message = trRest(c, parts, 1); p->current->finished = true; }
+        if (p->current) { p->current->status = kind[0] == 'F' ? TR_FAILED : TR_ERROR; p->current->message = trWithTrace(c, trRest(c, parts, 1)); p->current->finished = true; }
     } else if (strcmp(kind, "C") == 0) {
         if (p->current && p->current->status != TR_ERROR) {
             p->current->message = fcFmt(c, "%s[CleanTest] threw: %s", p->current->status == TR_FAILED ? fcFmt(c, "%s; ", p->current->message) : "", trRest(c, parts, 1));

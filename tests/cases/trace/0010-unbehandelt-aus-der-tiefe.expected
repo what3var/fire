@@ -1,0 +1,6 @@
+1
+UNBEHANDELT: Unhandled exception of type 'NotFound': not found: b
+   at Store.Find (0010-unbehandelt-aus-der-tiefe.fire:7)
+   at Store.Lookup (0010-unbehandelt-aus-der-tiefe.fire:10)
+   at Loader.construct (0010-unbehandelt-aus-der-tiefe.fire:17)
+   at <main> (0010-unbehandelt-aus-der-tiefe.fire:21)

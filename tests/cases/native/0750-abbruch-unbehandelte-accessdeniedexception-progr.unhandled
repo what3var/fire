@@ -1,1 +1,2 @@
 Unhandled exception of type 'AccessDeniedException': Field 'x' of 'P' is private and cannot be accessed from here.
+   at <main> (0750-abbruch-unbehandelte-accessdeniedexception-progr.fire:4)

@@ -37,8 +37,14 @@ namespace fire.Compiler
             sb.AppendLine("        if (e is of Exception) { if (e.message == undefined) { return \"\" } return \"\" + e.message }");
             sb.AppendLine("        return \"\" + e");
             sb.AppendLine("    }");
+            // (the stack trace behind the message, docs/spec/STACKTRACE.md: `__EnvCall(9, e)` is `e.StackTrace` - also for a program with an `Exception` of its own)
+            sb.AppendLine("    static string Trace(any e) {");
+            sb.AppendLine("        string t = __EnvCall(9, e)");
+            sb.AppendLine("        if (t == \"\") { return \"\" }");
+            sb.AppendLine("        return \"\\n\" + t");
+            sb.AppendLine("    }");
             sb.AppendLine("    static undefined Failed(any e) {");
-            sb.AppendLine("        if (e is of Assertion) { __Tests.Say(\"F|\" + __Tests.Describe(e)) } else { __Tests.Say(\"E|\" + __Tests.Describe(e)) }");
+            sb.AppendLine("        if (e is of Assertion) { __Tests.Say(\"F|\" + __Tests.Describe(e) + __Tests.Trace(e)) } else { __Tests.Say(\"E|\" + __Tests.Describe(e) + __Tests.Trace(e)) }");
             sb.AppendLine("    }");
 
             int classIndex = 0;

@@ -1,1 +1,2 @@
 Unhandled exception of type 'UnitMismatchException': Incompatible units: 'm' cannot be converted to 's'.
+   at <main> (0670-abbruch-unbehandelte-unitmismatchexception-progr.fire:3)

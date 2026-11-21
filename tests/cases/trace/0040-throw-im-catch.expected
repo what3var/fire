@@ -1,0 +1,3 @@
+Exception: second: first
+   at B.Handle (0040-throw-im-catch.fire:7)
+   at <main> (0040-throw-im-catch.fire:11)

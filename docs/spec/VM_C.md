@@ -108,7 +108,7 @@ Index: uint32 Anzahl; je Eintrag: uint8 Art (0 die Programmdatei, 1 eine Bibliot
        uint64 Offset, uint64 Länge, uint64 FNV-1a (64 Bit) der Bytes
 ```
 
-Alles little-endian, nichts komprimiert (die VM hat keinen Entpacker; das Programm ist die `.fbc` ohne Zeilentabellen wie beim .NET-Packer). Beim Start
+Alles little-endian, nichts komprimiert (die VM hat keinen Entpacker; das Programm ist die `.fbc` mit ihren Zeilentabellen für die Stack-Traces - ohne nur bei `#stacktrace off`, [STACKTRACE.md](STACKTRACE.md)). Beim Start
 liest `fire` den Fuß seiner eigenen Datei (`fire_plat_programPath`): ist ein Payload da, gehört jedes Argument dem Programm.
 
 * **Bibliotheken der Pakete** (`LinkedProgram.PackageLibraryFiles`: `libfire_pkg_*`, für graphics/windows `libfire_gfx`, das die C-VM immer braucht):

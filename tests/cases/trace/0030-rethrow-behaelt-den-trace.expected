@@ -1,0 +1,13 @@
+caught in Middle
+finally in Outer
+   at A.Inner (0030-rethrow-behaelt-den-trace.fire:2)
+   at A.Middle (0030-rethrow-behaelt-den-trace.fire:4)
+   at A.Outer (0030-rethrow-behaelt-den-trace.fire:10)
+   at <main> (0030-rethrow-behaelt-den-trace.fire:13)
+caught in Middle
+finally in Outer
+UNBEHANDELT: Unhandled exception of type 'Exception': inner
+   at A.Inner (0030-rethrow-behaelt-den-trace.fire:2)
+   at A.Middle (0030-rethrow-behaelt-den-trace.fire:4)
+   at A.Outer (0030-rethrow-behaelt-den-trace.fire:10)
+   at <main> (0030-rethrow-behaelt-den-trace.fire:14)

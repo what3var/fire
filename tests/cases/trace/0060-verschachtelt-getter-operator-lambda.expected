@@ -1,0 +1,7 @@
+   at V.get_Half (0060-verschachtelt-getter-operator-lambda.fire:4)
+   at <main> (0060-verschachtelt-getter-operator-lambda.fire:13)
+   at V.operator+ (0060-verschachtelt-getter-operator-lambda.fire:5)
+   at <main> (0060-verschachtelt-getter-operator-lambda.fire:14)
+   at <lambda> (0060-verschachtelt-getter-operator-lambda.fire:15)
+   at Run.Apply (0060-verschachtelt-getter-operator-lambda.fire:11)
+   at <main> (0060-verschachtelt-getter-operator-lambda.fire:15)

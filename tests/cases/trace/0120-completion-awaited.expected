@@ -1,0 +1,10 @@
+Exception: failed in producer
+   at Producer.Make (0120-completion-awaited.fire:3)
+   at <main> (0120-completion-awaited.fire:10)
+   --- awaited at ---
+   at Completion.Wait (prelude)
+   at Consumer.Take (0120-completion-awaited.fire:7)
+   at <main> (0120-completion-awaited.fire:11)
+   at Completion.Wait (prelude)
+   at Consumer.Take (0120-completion-awaited.fire:7)
+   at <main> (0120-completion-awaited.fire:14)

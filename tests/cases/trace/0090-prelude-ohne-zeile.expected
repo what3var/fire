@@ -1,0 +1,4 @@
+ArgumentException: The key 'a' is already in the dictionary.
+   at Dictionary.Add (prelude)
+   at Use.Twice (0090-prelude-ohne-zeile.fire:2)
+   at <main> (0090-prelude-ohne-zeile.fire:6)
