@@ -1391,7 +1391,12 @@ Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code ste
   sehen die Setter jedes Moduls selbst nach, Reflect.Set auf ein Objekt mit Probes schreibt über den Namen (`probedSet` ohne Rohfunktion).
 * **Zahlen, die erst das Programm festlegt**, liest eine Library aus Tabellen des Programms: Einheiten (`fire_units_<m>[k]`), Enums (`fire_enums_<m>[k]`), die Typen
   von `catch` (`fire_exct_<m>`, `HandlerInfo.typeMap`), die Quellen für den Debugger (`fire_dbgsrc_<m>[k]`, k ist die Stelle unter den Quellen des Moduls),
-  die Basis ihrer Klassen-Ids (`fire_mb_<m>`). `FIRE_NDIMS` ist mit `static` fest 16.
+  die Basis ihrer Klassen-Ids (`fire_mb_<m>`), die Einträge der Arrays einer Klasse in `g_arrClasses` (`fire_arrc_<m>[k]`: ein `string[]` von `Split` in core,
+  die Elemente einer `List<Data.Row>` von data - die Tabelle schreibt das Programm mit den Arrays jedes Moduls; in den statischen Tabellen einer Library, `TArg`
+  und `JsonFieldInfo`, bleibt ihre Nummer und `arrMap` nennt `fire_arrc_<m>`). Was eine Library als JSON liest (`Json.Deserialize(text, name)` - data's
+  `QueryList("Person", ...)`), sagt ihre Schnittstelle (`JsonReads`): das Programm behält dann die Klassen, die das Lesen machen kann, wie mit einer Datei.
+  `FIRE_NDIMS` ist mit `static` fest 16. Die Module stehen in Dateien für sich: `FIRE_SPLIT` (der Zustand der Plattform, `FIRE_ONCE` - unter TinyCC der Schlüssel
+  des Zustands eines Threads - lebt einmal in der Datei des Programms, nicht je Modul).
 * **Natives in C** (Packages in C, die Bridges von graphics und windows) stehen in der Datei des Moduls ihres Imports, wenn sie für sich stehen: ihr C ruft keine
   Funktion der Natives eines anderen Imports des Programms und keiner ruft ihre (hash, compression, io, time; nicht graphics und windows zusammen - die Bridge von
   windows benutzt die Framebuffer von graphics -, nicht scene3d). Ihr Zustand gibt es so einmal; jedes andere Modul und das Programm rufen sie über die
@@ -1448,7 +1453,7 @@ Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Except
     (`ThreadLocals`, wie bei `FIRE_TLS_STRUCT`); das Programm und die Module fragen sie mit `fire_tl()` danach (`g_unwind` ist dort `fire_tl()->g_unwind`;
     `__attribute__((const))`: einmal je Funktion).
   * Was die Runtime und ein Modul **vom Programm** brauchen - die Hooks der Header (`makeClassError`, `make…Error`, die JSON-Tabellen `jsonClassAt` …, die Klassen
-    für den Debugger, `g_dimNames`), die Tabellen, die das Programm für ein Modul anlegt (`fire_mb_M`, `fire_units_M`, `fire_enums_M`, `fire_exct_M`, `fire_dbgsrc_M`),
+    für den Debugger, `g_dimNames`), die Tabellen, die das Programm für ein Modul anlegt (`fire_mb_M`, `fire_units_M`, `fire_enums_M`, `fire_exct_M`, `fire_dbgsrc_M`, `fire_arrc_M`),
     die Reflection-Funktionen `rf_*`, die Thunks der Natives in C++ und die `fire_cn_` der Natives im Programm -, sind **Zeiger der DLL** (`FIRE_DLL_LINKED`: der Kopf
     der Datei schreibt `#define makeClassError (*fire_hp_makeClassError)`, eine Tabelle von Zahlen ist ein Array der DLL, auf das ihre statischen Tabellen zeigen).
     Jede DLL hat eine Funktion `fire_link_<modul>(find)`, die sie füllt: das Programm hat eine nach Namen sortierte Tabelle (`kHostSyms`, `fire_hostFind`) und ruft

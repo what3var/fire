@@ -282,6 +282,7 @@ static class LinkageTests
             else if (filter.Contains("cancel", StringComparison.OrdinalIgnoreCase)) ProgressAndCancel(root);
             else if (filter.Contains("vmgraphics", StringComparison.OrdinalIgnoreCase)) VmGraphicsForWindows(root);
             else if (filter.Contains("tlsengine", StringComparison.OrdinalIgnoreCase)) TlsEngineBackends(root);
+            else if (filter.Contains("boundaries", StringComparison.OrdinalIgnoreCase)) ModuleBoundaries(root);
             else { RunIn(root); ProgressAndCancel(root); VmGraphicsForWindows(root); TlsEngineBackends(root); }
         }
         catch (Exception ex) { Check("ohne Ausnahme", false, ex.ToString()); }
@@ -535,6 +536,74 @@ static class LinkageTests
         print("lib " + Reflect.Call(l, N.Of("Index", "Of"), [2]))
         """;
 
+    /// <summary>Values that cross the modules (FIRE_TESTS_FILTER=boundaries: only these): an array of a class that a library makes (`string.Split` of core, the items of a
+    /// `List<Dog>`) in a program with arrays of classes of its own - the entries of g_arrClasses are the program's for every module (the circuits and data cases
+    /// failed with "An element of an array of ..."); a library that reads JSON into a class it gets by name makes an object of a class of the program that nothing
+    /// else makes (data's QueryList: the class was stripped); the CLI program with TinyCC and linkage static (every module had a thread state of its own: FIRE_ONCE).</summary>
+    private static void ModuleBoundaries(string root)
+    {
+        const string arrays = """
+            class Dog {
+                string name
+                construct(string n) { this.name = n }
+            }
+            class Cat { int lives = 7 }
+            Dog dogs[] = [new Dog("rex")]
+            Cat cats[] = [new Cat()]
+            var parts = "a,b,c".Split(",")
+            print(dogs[0].name + " " + cats[0].lives + " " + parts.length + " " + parts[2])
+            var l = new List<Dog>()
+            l.Add(new Dog("bello"))
+            l.Add(new Dog("fido"))
+            print(l[1].name + " " + l.Count)
+            var words = new List<string>()
+            words.Add("w")
+            print(words[0] + " " + "x y".Split(" ")[1])
+            """;
+        string arraysVm = Vm(new[] { arrays });
+        foreach (var linkage in new[] { "static", "shared" })
+        {
+            var built = Build(new[] { arrays }, linkage, Path.Combine(root, "arrays-" + linkage));
+            string got = built.Ok ? Exec(built.Exe) : "";
+            Check($"Module ({linkage}): Arrays einer Klasse, die eine Bibliothek macht (string.Split, List<Dog>), neben eigenen Arrays von Klassen des Programms wie die VM",
+                built.Ok && got == arraysVm && arraysVm == "rex 7 3 c\nfido 2\nw y\n", $"{built.Log}\nnativ:\n{got}\nVM:\n{arraysVm}");
+        }
+        string? modulesBefore = Environment.GetEnvironmentVariable("FIRE_MODULES");
+        Environment.SetEnvironmentVariable("FIRE_MODULES", "1");
+        try
+        {
+            var one = Build(new[] { arrays }, "source", Path.Combine(root, "arrays-modules"));
+            string got = one.Ok ? Exec(one.Exe) : "";
+            Check("Module (FIRE_MODULES=1, eine Datei): Arrays einer Klasse ueber die Module wie die VM", one.Ok && got == arraysVm, $"{one.Log}\nnativ:\n{got}\nVM:\n{arraysVm}");
+        }
+        finally { Environment.SetEnvironmentVariable("FIRE_MODULES", modulesBefore); }
+
+        // a library of the solution reads JSON into a class it gets by name (like data's QueryList): the program keeps the class (nothing else makes it)
+        string s = Path.Combine(root, "sln-json");
+        Write(s, "Reader/Reader.fireproj", """{ "name": "Reader", "type": "library" }""");
+        Write(s, "Reader/reader.script", "#import \"json\"\nnamespace Reader {\n    class R {\n        static any Read(string text, string cls) { return Json.Deserialize(text, cls) }\n    }\n}\n");
+        Write(s, "App/App.fireproj", """{ "name": "App", "references": [ { "project": "../Reader/Reader.fireproj" } ], "settings": { "linkage": "static" } }""");
+        Write(s, "App/main.script", "#import \"Reader\"\nrecord Pt {\n    int x\n    int y\n}\nPt p = Reader.R.Read(\"{\\\"x\\\": 3, \\\"y\\\": 4}\", \"Pt\")\nprint(p.x + p.y)\n");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Reader/Reader.fireproj", "App/App.fireproj"], "startup": "App" }""");
+        var ws = Workspace.Open(sln);
+        var plan = BuildPlan.Create(ws, ws.FindByName("App")!);
+        string jsonVm = Vm(plan.SourceTexts, plan);
+        var json = Build(plan.SourceTexts, "static", Path.Combine(root, "json-reader"), plan: plan);
+        string jsonOut = json.Ok ? Exec(json.Exe) : "";
+        Check("Module: eine Bibliothek liest JSON in eine Klasse des Programms, deren Namen sie bekommt (Json.Deserialize(text, \"Pt\")) - das Programm behaelt die Klasse, wie die VM",
+            json.Ok && jsonOut == jsonVm && jsonVm == "7\n", $"{json.Log}\nnativ:\n{jsonOut}\nVM:\n{jsonVm}");
+
+        // TinyCC with linkage static: the CLI program (threads, so the state of a thread hangs on a key of pthreads - one for all modules)
+        if (ToolchainDetector.Find(ToolchainDef.BuiltIn["tcc"]) != null)
+        {
+            var tcc = Build(new[] { Cli }, "static", Path.Combine(root, "cli-tcc"), ToolchainDef.BuiltIn["tcc"]);
+            string tccOut = tcc.Ok ? Exec(tcc.Exe) : "";
+            string cliVm = Vm(new[] { Cli });
+            Check("TinyCC: das CLI-Programm mit linkage static laeuft wie die VM (FIRE_ONCE einmal im Programm, nicht je Modul)", tcc.Ok && tccOut == cliVm, $"{tcc.Log}\nnativ:\n{tccOut}\nVM:\n{cliVm}");
+        }
+        else Console.WriteLine("(TinyCC: uebersprungen - tcc fehlt)");
+    }
+
     private static void RunIn(string root)
     {
         // ---- a program with several packages: the same output as "source" and the VM; the second build takes every library from the cache ----
@@ -590,6 +659,8 @@ static class LinkageTests
             Check($"Stripping {n} mit static: das Programm laesst weg wie mit source (klare Fehler), eine Library behaelt ihre Schnittstelle (List.IndexOf per Laufzeitname)",
                 built.Ok && got == expected && !built.Log.Contains("not possible"), $"{built.Log}\nnativ:\n{got}\nerwartet:\n{expected}");
         }
+
+        ModuleBoundaries(root);
 
         var linkedCli = new Linker { Engine = "native" }.CompileAndLink(new[] { Cli });
         string sourceC = CppGenerator.Generate(linkedCli);
