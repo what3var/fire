@@ -1335,8 +1335,10 @@ static const char* ClassGuard(FgGen* g, const char* value, const char* spec, con
             FcBuf fill = {0};
             fcBufStr(&fill, "");
             for (k = 0; k < wanted->count; k++) fcBufFmt(&fill, " tw_[%d] = %s; th_[%d] = %s;", k, (const char*)wanted->items[k], k, TArgOfExpr(g, genericRc->name, k, fcFmt(g->c, "objAt(%s)", value)));
-            altCheck = fcFmt(g->c, "%s if (%s.kind == K_Class && leafAlive(%s)) { const TArg* tw_[%d]; const TArg* th_[%d]; int ti_;%s for (ti_ = 0; ti_ < %d; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_] && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) { guardTypeArgsFailed(%s, tw_, th_, %d, %s); break; } }",
-                altCheck, value, value, wanted->count, wanted->count, fcBufDone(g->c, &fill), wanted->count, CString(g, parsed->display), wanted->count, CString(g, what));
+            altCheck = fcFmt(g->c, "%s if (%s.kind == K_Class && leafAlive(%s)) { const TArg* tw_[%d]; const TArg* th_[%d]; int ti_;%s for (ti_ = 0; ti_ < %d; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_]%s && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) { guardTypeArgsFailed(%s, tw_, th_, %d, %s); break; } }",
+                altCheck, value, value, wanted->count, wanted->count, fcBufDone(g->c, &fill), wanted->count,
+                /* (per module: with modules the texts count - a `Dictionary<string, string>` of the program in a field of a library) */
+                Modular ? " && strcmp(tw_[ti_]->display, th_[ti_]->display) != 0" : "", CString(g, parsed->display), wanted->count, CString(g, what));
         }
     }
     if (parsed->typeParamIndex < 0) return altCheck;
