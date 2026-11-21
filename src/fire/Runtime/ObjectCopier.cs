@@ -165,7 +165,7 @@ namespace fire.Runtime
                 if (_copies.TryGetValue(obj, out var existing)) return existing;
                 // (the ownership tree has no cycles, so the recursion over the owners terminates)
                 IOwner owner = obj.Owner is ObjectInstance ownerObj && _found.ContainsKey(ownerObj) ? Materialize(ownerObj) : _owner;
-                var copy = new ObjectInstance(obj.ClassName, owner, obj.RtClass) { IsTakingCopy = true, TypeArgs = obj.TypeArgs };
+                var copy = new ObjectInstance(obj.ClassName, owner, obj.RtClass) { IsTakingCopy = true, TypeArgs = obj.TypeArgs, Trace = obj.Trace };   // (an exception's trace is shared, STACKTRACE.md 3)
                 _copies[obj] = copy;
                 return copy;
             }

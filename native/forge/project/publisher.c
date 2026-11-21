@@ -98,7 +98,7 @@ static const char* pjSettingsJson(FcCtx* c, const PjSettings* s) {
     else if (strlen(s->stripping) == 1 && isdigit((unsigned char)s->stripping[0])) fcBufFmt(&b, "%d", s->stripping[0] - '0');
     else fjEscape(&b, s->stripping, false);
     fcBufChar(&b, ',');
-    PJS("Optimize", s->optimize); PJS("Output", s->output); PJS("TypeChecking", s->typeChecking); PJS("GlobalJobs", s->globalJobs); PJL("Arguments", s->arguments); PJS("Port", s->port);
+    PJS("Optimize", s->optimize); PJS("Output", s->output); PJS("TypeChecking", s->typeChecking); PJS("GlobalJobs", s->globalJobs); PJS("StackTrace", s->stackTrace); PJL("Arguments", s->arguments); PJS("Port", s->port);
     fcBufStr(&b, "\"Baud\":");
     if (s->baud != FC_NULL_INT) fcBufFmt(&b, "%d", s->baud); else fcBufStr(&b, "null");
     fcBufStr(&b, "}");

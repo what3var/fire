@@ -50,6 +50,11 @@ typedef struct VmChunk {
     /* inline caches by code offset (made on first use): the class id seen last and what it resolved to */
     uint32_t* icCls;
     void** icPtr;
+    /* stack traces (vm_trace.c): the function's name (TraceNames), its descriptors - one per source its lines are in, the last one without a file */
+    const char* traceName;
+    struct FireFnInfo* traceFns;
+    int32_t* traceSrcs;
+    uint32_t ntraceFns;
 } VmChunk;
 
 struct VmProto {
@@ -211,6 +216,12 @@ struct VmProgram {
     const char** sourceFiles;
     const char** sourceHashes;
     uint32_t nsources;
+    /* stack traces (docs/spec/STACKTRACE.md, vm_trace.c): the setting (FIRE_TRACE_*: the flag "trace" of the file, off without it), the name of each source
+     * in a trace (NULL: the prelude), the threads started so far (`Fire #1`) */
+    uint8_t stackTrace;
+    const char** traceFiles;
+    uint32_t ntraceFiles;
+    fire_atomic32 nthreads;
 };
 
 /* ---- the interpreter ---- */
@@ -336,6 +347,7 @@ typedef struct Vm {
     uint8_t isStrand;       /* not the main program */
     uint8_t awaitNext;      /* AwaitReply: the next method call on an actor gets a way back (`await a.M()`) */
     struct VmDbg* dbg;      /* the debugger's state of this strand (vm_debug.c), NULL: none */
+    char* threadTrailer;    /* a fire thread: the line that ends the traces of its exceptions (`in thread 'Fire #1', started at main.fire:40`), NULL: none */
 } Vm;
 
 /* A type argument of the VM: the runtime's TArg (its `display` is the text, `holds`/`adapt` stay NULL - the VM checks with its own fitsTArg, VM_SPIKE
@@ -348,5 +360,9 @@ static void vmDbgStep(Vm* vm);
 static bool vmDbgUnhandled(Value exception);
 static void vmDbgFree(Vm* vm);
 static void vmDbgSnapshot(Vm* vm);
+
+/* stack traces (vm_trace.c) */
+static void vmTraceNames(VmProgram* p);
+static char* vmTraceThreadLine(Vm* vm, VmFrame* fr);
 
 #endif

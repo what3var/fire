@@ -116,7 +116,7 @@ namespace fire.Runtime
 
         private static ObjectInstance FlatCopy(ObjectInstance node, IOwner owner)
         {
-            var copy = new ObjectInstance(node.ClassName, owner, node.RtClass) { TypeArgs = node.TypeArgs };
+            var copy = new ObjectInstance(node.ClassName, owner, node.RtClass) { TypeArgs = node.TypeArgs, Trace = node.Trace };
             foreach (var (name, value) in Snapshot(node))
                 copy.Fields[name] = value;
             return copy;
@@ -219,7 +219,7 @@ namespace fire.Runtime
             private void Materialize()
             {
                 if (_root != null)
-                    _copies[_root] = new ObjectInstance(_root.ClassName, _rootOwner, _root.RtClass) { TypeArgs = _root.TypeArgs };
+                    _copies[_root] = new ObjectInstance(_root.ClassName, _rootOwner, _root.RtClass) { TypeArgs = _root.TypeArgs, Trace = _root.Trace };
                 foreach (var obj in _order)
                     MaterializeOne(obj);
             }
@@ -231,7 +231,7 @@ namespace fire.Runtime
                 IOwner owner = obj.Owner is ObjectInstance ownerObj && _found.ContainsKey(ownerObj)
                     ? MaterializeOne(ownerObj)
                     : _rootOwner;
-                var copy = new ObjectInstance(obj.ClassName, owner, obj.RtClass) { TypeArgs = obj.TypeArgs };
+                var copy = new ObjectInstance(obj.ClassName, owner, obj.RtClass) { TypeArgs = obj.TypeArgs, Trace = obj.Trace };
                 _copies[obj] = copy;
                 return copy;
             }

@@ -1887,6 +1887,9 @@ namespace fire.Compiler
                 case GlobalJobsDirective:
                     break; // see Compile: `SetAutoSync mode` already stands at the program start
 
+                case StackTraceDirective:
+                    break; // the linker reads it (LinkedProgram.StackTrace)
+
                 case TimeoutDirective:
                 case EndWaitDirective:
                     break; // see Compile: `SetTimeout` already stands at the program start

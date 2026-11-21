@@ -35,6 +35,10 @@ namespace fire.Runtime
         /// <summary>Default width of `int` in bits (32 or 64; 64 on every built-in target); `#intwidth` in the program and `-i` override it.</summary>
         public int IntWidth { get; init; } = 64;
 
+        /// <summary>`"stackTrace"` of the target in fire.native.json (docs/spec/STACKTRACE.md section 7): what an exception shows of its stack when neither the command
+        /// line, `#stacktrace` nor the project say anything; null: the default of the mode (Release `lines`, Performance `off`).</summary>
+        public StackTraceMode? StackTrace { get; init; }
+
         /// <summary>Width of `word` in bits (SPEC 8.10): the target's machine word, unsigned - 16 (AVR, DOS real mode, Win16), 32 (ESP32, Cortex-M, wasm, DPMI,
         /// Win9x), 64 (x86-64, ARM64: the desktop targets). `wordWidth` in a target of fire.native.json changes it; `#if word16|word32|word64` sees it.</summary>
         public int WordWidth { get; init; } = 64;

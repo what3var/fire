@@ -16,6 +16,10 @@ namespace fire.Standard
         NewLine = 6,
         Platform = 7,
         Memory = 8,
+        /// <summary>`e.StackTrace` (docs/spec/STACKTRACE.md): the text of the trace of the exception `a` ("" without one).</summary>
+        ExceptionTrace = 9,
+        /// <summary>`e.Frames`: `b` -1 the number of frames of the exception `a`, else frame b / 4, part b % 4 (0 the function, 1 the file, 2 the line).</summary>
+        ExceptionFrames = 10,
     }
 
     /// <summary>What a program gets from whoever starts it: its arguments (without the program's name) and its path. The environment variables are the
@@ -184,6 +188,14 @@ namespace fire.Standard
                     return Value.MakeArray(array);
                 }
                 case EnvironmentMethod.ProgramPath: return Value.MakeString(env.ProgramPath);
+                case EnvironmentMethod.ExceptionTrace:
+                    return ExceptionTraceMethods.Call(ExceptionTraceMethods.TraceName, args.Skip(1).ToArray());
+                case EnvironmentMethod.ExceptionFrames:
+                {
+                    long at = args.Length > 2 && args[2].Kind == ValueKind.Int ? args[2].AsInt() : -1;
+                    var a = args.Length > 1 ? args[1] : Value.MakeUndefined();
+                    return ExceptionTraceMethods.Call(ExceptionTraceMethods.FramesName, at < 0 ? new[] { a, Value.MakeInt(-1), Value.MakeInt(0) } : new[] { a, Value.MakeInt(at / 4), Value.MakeInt(at % 4) });
+                }
                 case EnvironmentMethod.Get: return env.Get(Name()) is { } found ? Value.MakeString(found) : Value.MakeUndefined();
                 case EnvironmentMethod.Set:
                 {

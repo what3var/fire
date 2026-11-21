@@ -257,6 +257,7 @@ namespace fire.Compiler
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,
                 externs: externs, externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: linkedProgram.ExecutionMode);
 
+            mainVm.ConfigureTrace(linkedProgram.StackTrace, linkedProgram.TraceFiles);   // (docs/spec/STACKTRACE.md)
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, rendererManager, linkedProgram.FirstUserSource);
             session.SourceFiles = linkedProgram.SourceFiles;
             session.IoResources = ioResources;

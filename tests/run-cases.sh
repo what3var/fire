@@ -6,7 +6,7 @@
 #
 # A case is right when `forge run <case>.fire`
 #   - prints the lines of <case>.expected (and, in a group vm-*, ends with the line `UNBEHANDELT: <message>` where the program ends with an exception nothing
-#     catches; in the group native the message is <case>.unhandled),
+#     catches - without its stack trace; in the group trace with it, as stderr has it; in the group native the message and the trace are <case>.unhandled),
 #   - or, with <case>.error, does not compile and names that part of the message,
 #   - or, with <case>.diagnostics, writes exactly that to the error output (warnings, errors, the exception it ends with) and prints <case>.expected;
 #     `//# types: strict` runs it with --types strict.
@@ -46,7 +46,8 @@ one() {   # <group> <case file>
         actual=$out
         if [ "$code" != 0 ] && [ -n "$err" ]; then
             if [ "$group" = native ]; then [ -f "$n.unhandled" ] && [ "$err" = "$(cat "$n.unhandled")" ] || bad="$bad $mode(end)"
-            else actual="${actual}UNBEHANDELT: $err"$'\n'; fi
+            elif [ "$group" = trace ]; then actual="${actual}UNBEHANDELT: $err"$'\n'
+            else actual="${actual}UNBEHANDELT: $(printf '%s\n' "$err" | grep -v -e '^   at ' -e '^   \.\.\. ' -e '^   --- awaited at ---$' -e "^   in thread '")"$'\n'; fi
         elif [ -f "$n.unhandled" ]; then bad="$bad $mode(end)"; fi
         want=$(cat "$n.expected"; echo x); want=${want%x}
         [ "$actual" = "$want" ] || bad="$bad $mode"

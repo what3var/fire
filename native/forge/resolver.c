@@ -1716,7 +1716,7 @@ static void ResolveStmtCore(FcResolver* r, FcStmt* stmt) {
             }
             break;
         }
-        case SK_NoOpStmt: case SK_NoShadowDirective: case SK_TypeCheckDirective: case SK_GlobalJobsDirective: break;
+        case SK_NoOpStmt: case SK_NoShadowDirective: case SK_TypeCheckDirective: case SK_GlobalJobsDirective: case SK_StackTraceDirective: break;
         case SK_EndWaitDirective: case SK_TimeoutDirective: ResolveExpr(r, ((FcTimeoutDirective*)stmt)->value); break;
         case SK_VarDeclStmt: {
             FcVarDeclStmt* vd = (FcVarDeclStmt*)stmt;

@@ -1619,6 +1619,9 @@ namespace fire.Compiler
                 case GlobalJobsDirective:
                     break; // takes effect only at runtime (see Compiler.Compile: SetAutoSync)
 
+                case StackTraceDirective:
+                    break; // read by the linker (LinkedProgram.StackTrace)
+
                 case EndWaitDirective ew:
                     ResolveExpr(ew.Value);
                     break; // takes effect only at runtime (see Compiler.Compile: SetEndWait)

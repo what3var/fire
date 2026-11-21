@@ -482,4 +482,6 @@ typedef struct FcLinked {
     FcDict* moduleDeps;       /* LinkedProgram.ModuleDeps: module -> FcList* of the modules it needs; NULL: none */
     FcList* sourceTextHashes; /* LinkedProgram.SourceTextHashes: the SHA-256 of each processed source (fc8); NULL: none */
     FcAsmInfo* asmInfo;       /* (the directives of the version info; NULL: none - set by the linkers of linker.c and gen/native.c) */
+    int stackTrace;           /* LinkedProgram.StackTrace (docs/spec/STACKTRACE.md): STM_Off, STM_Calls, STM_Lines (fcLinkTrace) */
+    FcList* traceFiles;       /* LinkedProgram.TraceFiles: the name of each source in a trace (fc8, NULL entries: the prelude); NULL: none */
 } FcLinked;

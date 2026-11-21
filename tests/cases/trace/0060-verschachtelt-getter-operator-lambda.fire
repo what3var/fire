@@ -1,0 +1,16 @@
+class V {
+    int x
+    construct(int x) { this.x = x }
+    int Half { get { if (this.x == 3) { throw new Exception("odd") } return this.x / 2 } }
+    V operator+(V o) { if (o.x == 0) { throw new Exception("plus zero") } return new V(this.x + o.x) }
+}
+class Res {
+    destruct() { print("destruct Res") }
+}
+class Run {
+    static int Apply(any f, int v) { return f(v) }
+}
+try { var v = new V(3); print(v.Half) } catch (e) { print(e.StackTrace) }
+try { var s = new V(1) + new V(0) } catch (e) { print(e.StackTrace) }
+try { Run.Apply((int v) => { if (v > 1) { throw new Exception("lambda") } return v }, 2) } catch (e) { print(e.StackTrace) }
+//# name: Trace: Getter, Operator, Destruktor und Lambda sind gewoehnliche Frames

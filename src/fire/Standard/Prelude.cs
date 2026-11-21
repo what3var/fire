@@ -66,6 +66,30 @@ namespace fire.Standard
                 construct(string message = "") {
                     this.message = message
                 }
+
+                /// (`__EnvCall` 9 and 10: EnvironmentMethod.ExceptionTrace / ExceptionFrames)
+                /// The stack of its first `throw` (docs/language/14-exceptions.md "Stack traces"): a line `   at Function (file:line)` per frame, the innermost
+                /// first; "" when it was never thrown or the program shows no traces (`#stacktrace off`). As text `e` is only `Class: message`.
+                string StackTrace { get { return __EnvCall(9, this) } }
+
+                /// The frames of StackTrace as records (function, file - "" for the prelude -, line - 0 without lines).
+                StackFrame[] Frames {
+                    get {
+                        int n = __EnvCall(10, this, -1)
+                        StackFrame frames[] = new StackFrame[n]
+                        for (int i = 0; i < n; i++) { frames[i] = new StackFrame(__EnvCall(10, this, i * 4), __EnvCall(10, this, i * 4 + 1), __EnvCall(10, this, i * 4 + 2)) }
+                        return frames
+                    }
+                }
+            }
+
+            /// A frame of the stack trace of an exception (`e.Frames`): the function (`Store.Find`, `<main>`, `<lambda>`), its file as the trace shows it
+            /// (relative to the folder of the program's first source; "" for the prelude) and its line (0: not known, or `#stacktrace calls`).
+            record StackFrame {
+                string function
+                string file
+                int line
+                construct(string function, string file, int line) { this.function = function; this.file = file; this.line = line }
             }
 
             // Cancellation (docs/ROADMAP_TASKS.md section 6): what a wait throws when the token of the task is cancelled - or its time limit (`until 5s`) ran out.

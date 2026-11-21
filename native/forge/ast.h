@@ -18,6 +18,8 @@ typedef enum FcAccess { ACC_Public, ACC_Private, ACC_Protected } FcAccess;
 typedef enum FcCoerceDirection { COE_Factor, COE_From, COE_To } FcCoerceDirection;
 typedef enum FcConstraintKind { TCK_IsOf, TCK_IsIn } FcConstraintKind;
 typedef enum FcGlobalJobsMode { GJM_Sync, GJM_Safepoints, GJM_Sleep } FcGlobalJobsMode;
+/* StackTraceMode (docs/spec/STACKTRACE.md): the byte of the program file */
+typedef enum FcStackTraceMode { STM_Off, STM_Calls, STM_Lines } FcStackTraceMode;
 
 /* ---- values (a LiteralExpr's Value) ---- */
 typedef enum FcValueKind { VK_Bool, VK_Int, VK_Float, VK_Char, VK_String, VK_Undefined } FcValueKind;
@@ -89,7 +91,7 @@ typedef struct { FcExpr h; FcExpr* target; bool isIncrement; bool isPrefix; } Fc
 
 /* ---- statements ---- */
 #define FC_STMT_KINDS(X) \
-    X(BlockStmt) X(ExprStmt) X(NoOpStmt) X(NoShadowDirective) X(GlobalJobsDirective) X(TypeCheckDirective) X(TimeoutDirective) X(EndWaitDirective) \
+    X(BlockStmt) X(ExprStmt) X(NoOpStmt) X(NoShadowDirective) X(GlobalJobsDirective) X(StackTraceDirective) X(TypeCheckDirective) X(TimeoutDirective) X(EndWaitDirective) \
     X(EnumDecl) X(VarDeclStmt) X(IfStmt) X(WhileStmt) X(DoWhileStmt) X(UnitDeclStmt) X(ForStmt) X(ForeachStmt) X(ReturnStmt) X(ThrowStmt) \
     X(DeleteStmt) X(BreakStmt) X(ContinueStmt) X(FireStmt) X(SectionEnterStmt) X(SectionExitStmt) X(SilenceStmt) X(PostGlobalStmt) X(ProcessStmt) \
     X(LeaveStmt) X(TerminateStmt) X(CatchThreadsDecl) X(CatchTerminateDecl) X(TryStmt) X(FieldDecl) X(MethodDecl) X(ConstructorDecl) \
@@ -107,6 +109,7 @@ struct FcBlockStmt { FcStmt h; FcList* statements; };
 typedef struct { FcStmt h; FcExpr* expression; } FcExprStmt;
 typedef struct { FcStmt h; } FcNoOpStmt, FcNoShadowDirective, FcSectionEnterStmt, FcSectionExitStmt, FcLeaveStmt;
 typedef struct { FcStmt h; FcGlobalJobsMode mode; } FcGlobalJobsDirective;
+typedef struct { FcStmt h; FcStackTraceMode mode; } FcStackTraceDirective;
 typedef struct { FcStmt h; bool strict; } FcTypeCheckDirective;
 typedef struct { FcStmt h; FcExpr* value; } FcTimeoutDirective, FcEndWaitDirective;
 typedef struct FcEnumMember { const char* name; FcExpr* valueExpr; } FcEnumMember;

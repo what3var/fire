@@ -12,7 +12,7 @@ typedef struct PjSettings {
     const char* version; const char* fileVersion;
     FcList* defines;               /* NULL: not set */
     const char* engine; const char* target; const char* toolchain; const char* linkage; const char* stripping; const char* optimize; const char* output;
-    const char* typeChecking; const char* globalJobs;
+    const char* typeChecking; const char* globalJobs; const char* stackTrace;
     FcList* arguments;             /* NULL: not set */
     const char* port; int baud;
 } PjSettings;
@@ -359,6 +359,7 @@ static PjSettings* pjReadSettings(PjJson* j, const FjValue* v, const char* path)
     s->output = pjStr(j, v, "output", path);
     s->typeChecking = pjStr(j, v, "typeChecking", path);
     s->globalJobs = pjStr(j, v, "globalJobs", path);
+    s->stackTrace = pjStr(j, v, "stackTrace", path);
     s->arguments = pjStrList(j, v, "arguments", path);
     s->port = pjStr(j, v, "port", path);
     s->baud = pjInt(j, v, "baud", path, FC_NULL_INT);
@@ -367,7 +368,7 @@ static PjSettings* pjReadSettings(PjJson* j, const FjValue* v, const char* path)
 static FC_LATER bool pjSettingsEmpty(const PjSettings* s) {
     return !s->subsystem && !s->mode && s->floatWidth == FC_NULL_INT && s->intWidth == FC_NULL_INT && !s->name && !s->codename && !s->description && !s->author && !s->license
         && !s->comments && !s->icon && !s->version && !s->fileVersion && (!s->defines || s->defines->count == 0) && !s->engine && !s->target && !s->toolchain && !s->linkage
-        && !s->stripping && !s->optimize && !s->output && !s->typeChecking && !s->globalJobs && !s->arguments && !s->port && s->baud == FC_NULL_INT;
+        && !s->stripping && !s->optimize && !s->output && !s->typeChecking && !s->globalJobs && !s->stackTrace && !s->arguments && !s->port && s->baud == FC_NULL_INT;
 }
 
 /* ProjectSettings.Merge(high, low) */
@@ -379,7 +380,7 @@ static PjSettings* pjSettingsMerge(FcCtx* c, const PjSettings* high, const PjSet
     int k, i;
     PJ_PICK(subsystem); PJ_PICK(mode); PJ_PICKI(floatWidth); PJ_PICKI(intWidth); PJ_PICK(name); PJ_PICK(codename); PJ_PICK(description); PJ_PICK(author);
     PJ_PICK(license); PJ_PICK(comments); PJ_PICK(icon); PJ_PICK(version); PJ_PICK(fileVersion); PJ_PICK(engine); PJ_PICK(target); PJ_PICK(toolchain);
-    PJ_PICK(linkage); PJ_PICK(stripping); PJ_PICK(optimize); PJ_PICK(output); PJ_PICK(typeChecking); PJ_PICK(globalJobs); PJ_PICK(arguments); PJ_PICK(port); PJ_PICKI(baud);
+    PJ_PICK(linkage); PJ_PICK(stripping); PJ_PICK(optimize); PJ_PICK(output); PJ_PICK(typeChecking); PJ_PICK(globalJobs); PJ_PICK(stackTrace); PJ_PICK(arguments); PJ_PICK(port); PJ_PICKI(baud);
     for (k = 0; k < 2; k++) {
         const PjSettings* s = k == 0 ? high : low;
         if (s && s->defines) for (i = 0; i < s->defines->count; i++) if (!fcListHasStr(defines, (const char*)s->defines->items[i])) fcListAdd(c, defines, s->defines->items[i]);
@@ -400,6 +401,7 @@ static const char* const pjSubsystems[] = { "console", "gui" };
 static const char* const pjModes[] = { "debug", "release", "performance" };
 static const char* const pjEngines[] = { "vm", "native" };
 static const char* const pjGlobalJobsModes[] = { "safepoints", "sleep", "sync" };
+static const char* const pjStackTraceModes[] = { "off", "calls", "lines" };
 static const char* const pjOptimizations[] = { "speed", "size" };
 static const char* const pjStrippings[] = { "none", "protected", "methods", "all" };
 static bool pjIn(const char* const* names, int n, const char* s) { int i; for (i = 0; i < n; i++) if (streq0(names[i], s)) return true; return false; }
@@ -413,6 +415,7 @@ static void pjSettingsValidate(FcCtx* c, const PjSettings* s, FcList* problems) 
     if (s->intWidth != FC_NULL_INT && s->intWidth != 16 && s->intWidth != 32 && s->intWidth != 64) fcListAdd(c, problems, (void*)"settings.intWidth must be 16, 32 or 64.");
     if (s->typeChecking && !streq0(s->typeChecking, "lax") && !streq0(s->typeChecking, "strict")) fcListAdd(c, problems, (void*)"settings.typeChecking must be lax or strict.");
     if (s->globalJobs && !pjIn(pjGlobalJobsModes, 3, pjLower(c, s->globalJobs))) fcListAdd(c, problems, (void*)fcFmt(c, "settings.globalJobs '%s' is not one of: %s.", s->globalJobs, pjNames(c, pjGlobalJobsModes, 3)));
+    if (s->stackTrace && !pjIn(pjStackTraceModes, 3, pjLower(c, s->stackTrace))) fcListAdd(c, problems, (void*)fcFmt(c, "settings.stackTrace '%s' is not one of: %s.", s->stackTrace, pjNames(c, pjStackTraceModes, 3)));
     if (s->engine && !pjIn(pjEngines, 2, s->engine)) fcListAdd(c, problems, (void*)fcFmt(c, "settings.engine '%s' is not one of: %s.", s->engine, pjNames(c, pjEngines, 2)));
     if (s->stripping && !(strlen(s->stripping) == 1 && s->stripping[0] >= '0' && s->stripping[0] <= '3') && !pjIn(pjStrippings, 4, pjLower(c, s->stripping)))
         fcListAdd(c, problems, (void*)fcFmt(c, "settings.stripping '%s' is not one of: 0, 1, 2, 3, %s.", s->stripping, pjNames(c, pjStrippings, 4)));

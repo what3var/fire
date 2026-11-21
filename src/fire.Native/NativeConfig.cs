@@ -334,6 +334,8 @@ namespace fire.Native
         public string? Toolchain { get; set; }
         /// <summary>`#line` directives in the generated C (null: on, see NativeTarget.LineDirectives).</summary>
         public bool? LineDirectives { get; set; }
+        /// <summary>`"stackTrace"`: `off`, `calls` or `lines` - the default of the programs built for the target (docs/spec/STACKTRACE.md section 7).</summary>
+        public string? StackTrace { get; set; }
         /// <summary>A board: its serial port (ESP32: Run and Debug in spark).</summary>
         public string? Port { get; set; }
         /// <summary>A board: the baud rate of its console.</summary>
@@ -378,6 +380,8 @@ namespace fire.Native
                     : Enum.TryParse<TargetCategory>(Category, ignoreCase: true, out var category) ? category
                     : throw new NativeConfigException($"Target '{name}': \"category\" must be \"os\", \"native\" or \"embedded\", not \"{Category}\"."),
                 Toolchains = Toolchains ?? b.Toolchains,
+                StackTrace = StackTrace == null ? b.StackTrace : StackTraceModes.Parse(StackTrace)
+                    ?? throw new NativeConfigException($"Target '{name}': \"stackTrace\" must be \"off\", \"calls\" or \"lines\", not \"{StackTrace}\"."),
                 HalPackage = Platform ?? b.HalPackage,
                 Native = native,
             };

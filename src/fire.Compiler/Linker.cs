@@ -51,6 +51,10 @@ namespace fire.Compiler
         /// fire.native.json. Process-wide, like <see cref="ProcessDefaultTypeChecking"/>.</summary>
         public static GlobalJobsMode? ProcessGlobalJobs { get; set; }
 
+        /// <summary>What an exception shows of its stack (`--stacktrace`, docs/spec/STACKTRACE.md section 7): goes before `#stacktrace`, the project and fire.native.json.
+        /// Process-wide, like <see cref="ProcessGlobalJobs"/>.</summary>
+        public static StackTraceMode? ProcessStackTrace { get; set; }
+
         /// <summary>`"globalJobs"` of fire.native.json (a native build): used when neither the command line, the project nor `#globaljobs`/`#nosync` say anything.</summary>
         public GlobalJobsMode? GlobalJobsDefault { get; set; }
 
@@ -311,7 +315,7 @@ namespace fire.Compiler
 
         /// <summary>A statement at the top level that only declares (runs nothing): a class, interface, enum, function, namespace, extension or a directive.</summary>
         private static bool IsDeclaration(Ast.Stmt stmt) =>
-            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective or Ast.EndWaitDirective;
+            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.StackTraceDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective or Ast.EndWaitDirective;
 
         /// <summary>`forge test` (docs/tools/testing.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
         /// statements at the top level of the program's files are left out and the driver is the last source.</summary>
@@ -679,7 +683,13 @@ namespace fire.Compiler
                 graphicsNatives = natives.Names.Where(n => n.StartsWith("__GRPH", StringComparison.Ordinal)).OrderBy(natives.IndexOf).ToList();
                 (packageLibraryFiles ??= new List<string>()).Add(gfxLibrary);
             }
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, IntWidth = intWidth, WordWidth = target?.WordWidth ?? 64, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GraphicsNatives = graphicsNatives, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, Optimize = Optimize, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
+            var linkedMode = executionModeOverride ?? assemblyInfo.ExecutionMode;
+            int linkedSources = processedSources.Count - driverSources;
+            var linkedFiles = SourceFilesOf(linkedSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList();
+            // (docs/spec/STACKTRACE.md section 7: Debug always lines; the command line, `#stacktrace`, the project, the target of fire.native.json, the mode)
+            var stackTrace = StackTraceModes.Effective(linkedMode, ProcessStackTrace, program.OfType<Ast.StackTraceDirective>().LastOrDefault()?.Mode,
+                StackTraceModes.Parse(Plan?.Settings?.StackTrace), target?.StackTrace);
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, linkedMode) { StackTrace = stackTrace, TraceFiles = ExceptionTrace.DisplayFiles(linkedFiles, linkedSources - sources.Count, sources.Count), NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, IntWidth = intWidth, WordWidth = target?.WordWidth ?? 64, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GraphicsNatives = graphicsNatives, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, Optimize = Optimize, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = linkedFiles,
                 SourceHashes = SourceHashesOf(processedSources.Count - driverSources, sources).Concat(new string?[driverSources]).ToList(),
                 SourceModules = processedSources.Select((p, i) => i == 0 ? "core" : p.Module).ToList(), ModuleDeps = ModuleDependencies(processedSources),
                 SourceTextHashes = processedSources.Select(p => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(p.Source))).ToLowerInvariant()).ToList() };

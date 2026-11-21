@@ -1,0 +1,7 @@
+#stacktrace off
+class S {
+    static undefined F() { throw new Exception("no trace") }
+}
+try { S.F() } catch (e) { print("[" + e.StackTrace + "] " + e.Frames.Length) }
+S.F()
+//# name: Trace: #stacktrace off zeigt keinen Trace, e.StackTrace ist leer

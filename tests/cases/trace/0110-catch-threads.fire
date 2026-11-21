@@ -1,0 +1,12 @@
+#import "time"
+catch threads(Exception e) {
+    print("thread failed: " + e.message)
+    print(e.StackTrace)
+}
+class Job {
+    static undefined Run() { throw new Exception("boom") }
+}
+fire { Job.Run() }
+Sleep(300ms)
+print("main done")
+//# name: Trace: catch threads sieht den Trace des Threads, mit der Zeile seines Starts

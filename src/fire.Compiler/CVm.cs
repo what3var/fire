@@ -243,7 +243,7 @@ namespace fire.Compiler
             {
                 File.Copy(vm, temp, true);
                 customizeExe?.Invoke(temp);
-                var items = new List<(byte, string, byte[])> { (CVmPayload.ProgramKind, "program.fbc", fire.Bytecode.ProgramFile.Write(program, lineTables: false)) };
+                var items = new List<(byte, string, byte[])> { (CVmPayload.ProgramKind, "program.fbc", fire.Bytecode.ProgramFile.Write(program, lineTables: program.StackTrace != fire.Runtime.StackTraceMode.Off)) };   // (a stack trace needs the line tables: docs/spec/STACKTRACE.md)
                 var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (string library in program.PackageLibraryFiles ?? new List<string>())
                     if (names.Add(Path.GetFileName(library)))

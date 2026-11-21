@@ -315,6 +315,8 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("'handover' needs a running program.")).LambdaHandoverNow(args);
             fire.Standard.CancelMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("Cancellation needs a running program.")).CancelNative(name, args);
+            fire.Standard.ExceptionTraceMethods.Implementation = (name, args) =>
+                (_currentThreadVm ?? throw new InvalidOperationException("A stack trace needs a running program.")).ExcTraceNative(name, args);
             fire.Standard.TypeArgMethods.Implementation = args =>
             {
                 var vm = _currentThreadVm ?? throw new InvalidOperationException("__type_arg needs a running program.");
@@ -6025,7 +6027,7 @@ namespace fire.Runtime
                     _pendingFireToken = null;
                     FireRuntime.FireVmTaking(
                         fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValues,
-                        executionMode: ExecutionMode, handoverCount: handoverCount, token: fireToken);
+                        executionMode: ExecutionMode, handoverCount: handoverCount, token: fireToken, trace: TraceForThread());
                     break;
                 }
 
@@ -6562,6 +6564,7 @@ namespace fire.Runtime
             var excInstance = RequireObjectInstance(exceptionValue, "throw");
             // (a destroyed object cannot be thrown: what is thrown is the DestroyedException - natively its class is not known any more)
             if (IsDeadObject(excInstance)) { ThrowDestroyedObject(excInstance); return; }
+            StampTrace(excInstance);   // (the stack of its first throw: docs/spec/STACKTRACE.md)
             if (CaptureErrorTrace) RecordThrowTrace();
 
             if (PauseOnUnhandled && _nestedDepth == 0 && _callbackBoundaries.Count == 0 && !WouldBeCaught(excInstance))
@@ -7301,7 +7304,7 @@ namespace fire.Runtime
                 // (cancelled: the caller stops waiting - what it waited for may still run)
                 if (CancelledClass() is { } cancelled) { NativeFail(cancelled, cancelled == "TimeoutException" ? "The time limit ran out." : "The task was cancelled."); _nativeRedirected = false; return; }
             }
-            if (reply.Exception != null) { ThrowException(Value.MakeClassRef(reply.Exception)); return; }
+            if (reply.Exception != null) { StampAwaited(reply.Exception); ThrowException(Value.MakeClassRef(reply.Exception)); return; }
             if (reply.Failure != null) { ThrowArgumentError(reply.Failure); return; }
             var result = reply.Result;
             if (ReferenceEquals(OwnerOfValue(result), reply.Holder))

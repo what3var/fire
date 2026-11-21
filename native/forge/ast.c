@@ -18,6 +18,7 @@ static const char* const fcAccessNames[] = { "Public", "Private", "Protected" };
 static const char* const fcCoerceNames[] = { "Factor", "From", "To" };
 static const char* const fcConstraintNames[] = { "IsOf", "IsIn" };
 static const char* const fcGlobalJobsNames[] = { "Sync", "Safepoints", "Sleep" };
+static const char* const fcStackTraceNames[] = { "Off", "Calls", "Lines" };
 static const char* const fcWarnTargetNames[] = { "Class", "Constructor", "Method", "Member" };
 
 typedef struct FcDumper { FcBuf* o; } FcDumper;
@@ -304,6 +305,7 @@ static void dStmt(FcDumper* d, int ind, const char* label, const FcStmt* s) {
         case SK_ExprStmt: dExpr(d, k, "Expression", ((const FcExprStmt*)s)->expression); break;
         case SK_NoOpStmt: case SK_NoShadowDirective: case SK_SectionEnterStmt: case SK_SectionExitStmt: case SK_LeaveStmt: break;
         case SK_GlobalJobsDirective: dEnum(d, k, "Mode", fcGlobalJobsNames[((const FcGlobalJobsDirective*)s)->mode]); break;
+        case SK_StackTraceDirective: dEnum(d, k, "Mode", fcStackTraceNames[((const FcStackTraceDirective*)s)->mode]); break;
         case SK_TypeCheckDirective: dBool(d, k, "Strict", ((const FcTypeCheckDirective*)s)->strict); break;
         case SK_TimeoutDirective: case SK_EndWaitDirective: dExpr(d, k, "Value", ((const FcTimeoutDirective*)s)->value); break;
         case SK_EnumDecl: {

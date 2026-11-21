@@ -602,9 +602,18 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
         p->sourceHashes = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
         for (i = 0; i < n; i++) { p->sourceFiles[i] = rdStr(&r); p->sourceHashes[i] = rdStr(&r); }
     }
+    p->stackTrace = FIRE_TRACE_OFF;
+    if (flags & 4) {                         /* the stack traces (docs/spec/STACKTRACE.md): the setting and the name of each source in a trace */
+        p->stackTrace = (uint8_t)rdU8(&r);
+        n = rdCount(&r);
+        p->ntraceFiles = n;
+        p->traceFiles = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
+        for (i = 0; i < n; i++) p->traceFiles[i] = rdStr(&r);
+    }
     if (r.at != r.len) rdFail(&r, "bytes behind its end");
     free(r.protos);
     p->chunks = r.chunks; p->nchunks = r.nchunks;
+    if (p->stackTrace != FIRE_TRACE_OFF) vmTraceNames(p);
     /* the base-type extensions (`class extends string`, BaseTypeExtensions.ClassNameFor) */
     p->extClass[K_String] = (VmClass*)fbMapGet(&p->classByName, "$string");
     p->extClass[K_Char] = (VmClass*)fbMapGet(&p->classByName, "$char");

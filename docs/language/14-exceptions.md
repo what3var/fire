@@ -36,9 +36,10 @@ try {
 - `finally` runs **always** when the `try` is left: normally, after a `catch`, when an exception passes on, on `return`, `break`, `continue`, `leave`
   and `terminate`.
 - An exception that nobody catches stops the program with its message (in the editor a dialog shows it and offers to go on). On the command line
-  the program ends with the exit code `1` and writes `Unhandled exception of type 'NotFound': not found: b` to stderr - the same text for the VM
-  and a native build, for the exceptions of the runtime (`UnitMismatchException`, `IndexOutOfBoundsException`, `ArgumentException`,
-  `DestroyedException`, `DivideByZeroException`, ...), for own classes and for an exception of a thread that no `catch threads` handles.
+  the program ends with the exit code `1` and writes `Unhandled exception of type 'NotFound': not found: b` to stderr, followed by its
+  [stack trace](#stack-traces) - the same text for the VM in C# and the VM in C, for the exceptions of the runtime (`UnitMismatchException`,
+  `IndexOutOfBoundsException`, `ArgumentException`, `DestroyedException`, `DivideByZeroException`, ...), for own classes and for an exception of a
+  thread that no `catch threads` handles. (A native build writes the first line; its traces follow, docs/spec/STACKTRACE.md.)
 
 ## `finally` and `return`
 
@@ -152,6 +153,62 @@ try {
 }
 ```
 
+## Stack traces
+
+An exception remembers where it was thrown: the functions on the stack at its **first** `throw`, the innermost first, each with its file and line.
+
+```fire
+class Store {
+    static int Find(string key) { throw new NotFound(key) }
+    static int Lookup(string key) { return Store.Find(key) }
+}
+try {
+    Store.Lookup("b")
+} catch (NotFound e) {
+    print(e)                       // NotFound: not found: b
+    print(e.StackTrace)            //    at Store.Find (main.fire:2)
+                                   //    at Store.Lookup (main.fire:3)
+                                   //    at <main> (main.fire:6)
+    foreach (f in e.Frames) {      // StackFrame: function, file, line
+        print(f.function + " " + f.file + ":" + f.line)
+    }
+}
+```
+
+An exception that nobody catches writes the same lines below its message:
+
+```
+Unhandled exception of type 'NotFound': not found: b
+   at Store.Find (main.fire:2)
+   at Store.Lookup (main.fire:3)
+   at <main> (main.fire:6)
+```
+
+| Member | What |
+|---|---|
+| `e.StackTrace` | the trace as text: a line `   at Function (file:line)` per frame (without a line feed at the end); `""` for an exception that was never thrown or a program without traces |
+| `e.Frames` | the same frames as `StackFrame` records: `function`, `file` (`""` for the prelude), `line` (`0`: not known, or `#stacktrace calls`) |
+| `e.ToString()`, `print(e)`, `"" + e` | `Class: message` - without the trace (a class with a `ToString()` of its own keeps it) |
+
+- **The function**: `Class.Method` (a getter or setter by its method, `Class.get_Name`), `Class.construct`, `Class.destruct`, `Class.<init>` (the
+  initializer of a field, the default value of a parameter), `<main>` (the code at the top level), `<lambda>`, `<fire>` (the body of a `fire` block); a
+  generic class without its type arguments (`List.Add`).
+- **The file** is relative to the folder of the program's first file (`main.fire`, `lib/util.fire`); a source without a file is `fire:source/0`; the code
+  of the prelude shows `(prelude)` without a line.
+- **The first throw counts**: `catch (e) { ...; throw e }` keeps the original trace, so does an exception that passes a `finally` and one that is
+  `resume`d and thrown again; a `throw` inside a `catch` block shows the stack from the function the `catch` belongs to. Whoever wants a new trace
+  throws a new exception.
+- **Deep stacks** show at most 64 frames: the 48 innermost, a line `   ... 1234 more frames ...`, the 16 outermost.
+- **Threads**: the trace of an exception of a `fire` thread ends with the thread's line, `   in thread 'Fire #1', started at main.fire:40` (the threads
+  are counted in the order they start). An exception of a task that is thrown again where it is awaited (`Completion.Wait()`, `await actor.M()`, `await on`)
+  gets a second part: `   --- awaited at ---` and the stack of the one that waited.
+- **The setting** `#stacktrace off | calls | lines` ([Directives](17-preprocessor.md)), `"stackTrace"` in the project, `--stacktrace` on the command line,
+  `"stackTrace"` of a target in fire.native.json: `lines` (the default in **release**) shows functions and lines, `calls` only the functions
+  (`   at Store.Find (main.fire)`), `off` (the default in **performance**) nothing - `e.StackTrace` is `""`. A debug build always shows lines. The VMs
+  record every throw, but show what the setting says; the design and its costs: docs/spec/STACKTRACE.md.
+- `StackTrace` and `Frames` are not fields: reflection, JSON and `==` do not see them, a copy of the exception (`taking`, the end of a thread, a
+  `Completion`) has the same trace.
+
 ## Exceptions and ownership
 
 When an exception leaves a block or a method, the objects of that scope are destroyed as usual (destructors run) before the exception is caught.
@@ -160,7 +217,8 @@ With `resume` nothing is left, so nothing is destroyed. See [Ownership](13-owner
 ## Exceptions in threads
 
 An exception that is not caught in a `fire` thread ends that thread and is delivered to the main program. There, `catch threads(Type e) { ... }`
-catches it; without such a handler the program stops. See [Threads and actors](15-threads-and-actors.md#errors-in-threads).
+catches it; without such a handler the program stops - its trace ends with the line of the thread (`in thread 'Fire #1', started at main.fire:2`). See
+[Threads and actors](15-threads-and-actors.md#errors-in-threads).
 
 ## Exceptions in callbacks
 

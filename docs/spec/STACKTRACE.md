@@ -1,6 +1,6 @@
 # Stack-Traces für Ausnahmen
 
-Status: **Konzept** (20.11.2026), nichts davon ist gebaut. Heute hat eine Ausnahme keinen Stack-Trace: `print(e)` gibt `<object NotFound>`, eine
+Status: **im Bau** (20.11.2026): Format, Sprache, die C#-VM, die C-VM und die Einstellung (`#stacktrace`, Projekt, `--stacktrace`, `fire.native.json`) in beiden forge sind gebaut ([Stand](#13-stand)); der native Build (Schritte 4-6) noch nicht. Vorher: Heute hat eine Ausnahme keinen Stack-Trace: `print(e)` gibt `<object NotFound>`, eine
 unbehandelte Ausnahme schreibt eine Zeile (`Unhandled exception of type 'NotFound': not found: b`, [Exceptions](../language/14-exceptions.md)). Dieses
 Dokument legt fest, was ein Trace ist, wo er entsteht, was die Sprache davon zeigt, was er in jedem Ausführungsweg kostet (gemessen, [unten](#5-kosten-im-nativen-build-gemessen))
 und in welchen Schritten er kommt.
@@ -299,16 +299,22 @@ tcc-Code nicht hinaus.
 |---|---|---|
 | **Debug** | Trace mit Zeilen über den vorhandenen Schatten-Stack (`DbgFrame` hat `fn`, `src`, `line` schon) | kostet nichts zusätzlich |
 | **Release** | **(a1)**: Frames mit Zeile | der Trace soll genau dort da sein, wo der Fehler beim Benutzer passiert; gemessen 0-7 % |
-| **Performance** | **(a1)** wie Release | gemessen: ohne Zeilen spart es 0,6 Prozentpunkte (2,1 % statt 2,7 % Instruktionen) - das ist einen schlechteren Trace nicht wert |
+| **Performance** | **`off`** - entschieden (20.11.2026): der Trace ist hier **opt-in** (`#stacktrace lines` oder `calls`, `"stackTrace"` im Projekt, `--stacktrace`, `fire.native.json`) | wer Performance wählt, zahlt nichts, was er nicht verlangt; gemessen kosten die Frames 2-3 % (Zeilen allein 0,6 Prozentpunkte) - wer den Trace will, schaltet ihn mit `lines` ein (ohne Zeilen lohnt sich `calls` kaum) |
 | die kleinen Ziele (Open Watcom: dos16, win16, dos32, bios16) | (a1); `calls` ist der Weg, wenn der Code nicht passt | die Speicherungen der Zeilen kosten dort Code (gcc: +1,1 Punkte über (b)); zu messen |
 | C-VM, C#-VM | immer mit Zeilen | der Trace entsteht nur beim Wurf; die Frames hat die VM ohnehin |
 
 **Die Direktive** `#stacktrace off | calls | lines` (wie `#globaljobs`: für das ganze Programm, im Projekt `"stackTrace"`, auf der Befehlszeile `--stacktrace`,
 in `fire.native.json` je Ziel; die Quelle geht vor dem Projekt und der Konfiguration, wie bei den anderen Einstellungen des Programms):
 
-* `lines` - Frames mit Zeilen (der Standard in jedem Modus; Debug immer);
+* `lines` - Frames mit Zeilen (der Standard in Release; Debug immer);
 * `calls` - Frames ohne Zeilen (für Code, der knapp ist);
-* `off` - keine Frames, die Ausgabe wie heute (für die kleinsten Ziele, für eine Schleife, die jedes Prozent zählt).
+* `off` - keine Frames, die Ausgabe wie heute (der Standard in Performance; für die kleinsten Ziele, für eine Schleife, die jedes Prozent zählt).
+
+**Entschieden** (20.11.2026): Release hat den Trace mit Zeilen **an** (abschaltbar mit `#stacktrace off`/`calls`), Performance hat ihn **aus**
+(einschaltbar mit `#stacktrace lines`/`calls`); der Debug-Build und die beiden VMs nehmen ihn immer mit Zeilen auf. Die Reihenfolge, wenn mehrere etwas
+sagen: `--stacktrace` auf der Befehlszeile, dann `#stacktrace` in der Quelle (die letzte im Code der obersten Ebene), dann `"stackTrace"` im Projekt, dann
+`"stackTrace"` des Ziels in `fire.native.json`, dann der Standard des Modus. Eine VM nimmt den Trace bei jedem Wurf mit Zeilen auf, zeigt ihn aber nach der
+Einstellung des Programms (`calls`: ohne Zeilen, `off`: gar nicht, auch `e.StackTrace` ist dann `""`) - damit der Korpus in der VM und nativ derselbe ist.
 
 Die VMs halten sich daran **in der Ausgabe** (dieselben Traces wie der native Build derselben Einstellung: `calls` druckt keine Zeilen, `off` keinen Trace),
 damit der Korpus in beiden Wegen gleich bleibt; ihre Kosten hängen nicht davon ab. Der Debug-Build hat immer `lines` (die Direktive gilt dort nicht).

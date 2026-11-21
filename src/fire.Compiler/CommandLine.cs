@@ -68,6 +68,9 @@ namespace fire.Compiler
         /// <summary>`--global-jobs safepoints|sleep|sync`: when the main program runs the `fire global` jobs by itself (docs/spec/THREADING_DESIGN.md section 7); goes before the
         /// project's `globalJobs`, `#globaljobs`/`#nosync` and fire.native.json. Null: those decide.</summary>
         public fire.Runtime.GlobalJobsMode? GlobalJobs { get; init; }
+        /// <summary>`--stacktrace off|calls|lines`: what an exception shows of its stack (docs/spec/STACKTRACE.md section 7); goes before `#stacktrace`, the project's
+        /// `stackTrace` and fire.native.json. Null: those decide.</summary>
+        public fire.Runtime.StackTraceMode? StackTrace { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
         public string? ProjectName { get; init; }
         /// <summary>`--report json`: build and publish write their report as JSON lines on stdout instead of the text for people (ForgeReport, docs/tools/forge.md "Report").</summary>
@@ -166,6 +169,9 @@ namespace fire.Compiler
                     safepoints (the default: at a loop's jump back, Sleep and the wait functions), sleep (only at Sleep and the wait functions) or sync (only at `sync globals`);
                     `sync globals` and the end of the program always do. Goes before the project's globalJobs, #globaljobs / #nosync in the source and "globalJobs" in
                     fire.native.json (docs/spec/THREADING_DESIGN.md section 7). The VM and a native build behave the same.
+            --stacktrace off|calls|lines  What an exception shows of its stack: the functions with their lines (lines, the default in release), without lines (calls) or
+                    nothing (off, the default in performance); debug always shows lines. Goes before #stacktrace in the source, the project's stackTrace and "stackTrace"
+                    of the target in fire.native.json (docs/spec/STACKTRACE.md).
             --report json  build and publish write a report for tools instead of the text: one JSON object per line on stdout (progress, log, errors and warnings with
                     file, line and column, what was written, the end) - what spark reads (docs/tools/forge.md). The line "cancel" on the input (or SIGTERM) cancels the build.
             --overlay <source>=<file>  The text of the source file is read from <file> (an editor's unsaved text); repeatable.
@@ -218,6 +224,7 @@ namespace fire.Compiler
             int? intWidth = null;
             TypeCheckMode? typeChecking = null;
             fire.Runtime.GlobalJobsMode? globalJobs = null;
+            fire.Runtime.StackTraceMode? stackTrace = null;
             TargetProfile? target = null;
             string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
             bool keep = false, keepAll = false, stats = false, debugInfo = false, checkOnly = false, all = false;
@@ -395,6 +402,12 @@ namespace fire.Compiler
                     globalJobs = fire.Runtime.GlobalJobsModes.Parse(value == null ? null : Unquote(value));
                     if (globalJobs == null) return Fail(command, "--global-jobs must be followed by safepoints, sleep or sync.");
                 }
+                else if (TryOption(arg, "--stacktrace", "--stacktrace", out var traceInline))
+                {
+                    string? value = traceInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    stackTrace = fire.Runtime.StackTraceModes.Parse(value == null ? null : Unquote(value));
+                    if (stackTrace == null) return Fail(command, "--stacktrace must be followed by off, calls or lines.");
+                }
                 else if (TryOption(arg, "-f", "--float", out var floatInline))
                 {
                     string? value = floatInline ?? (i + 1 < args.Count ? args[++i] : null);
@@ -448,6 +461,7 @@ namespace fire.Compiler
                 IntWidth = intWidth,
                 TypeChecking = typeChecking,
                 GlobalJobs = globalJobs,
+                StackTrace = stackTrace,
                 Defines = defines,
                 Target = target,
                 TargetName = targetName,
@@ -543,6 +557,7 @@ namespace fire.Compiler
             }
             Linker.ProcessDefaultTypeChecking = options.TypeChecking;
             Linker.ProcessGlobalJobs = options.GlobalJobs;
+            Linker.ProcessStackTrace = options.StackTrace;
             Linker.ProcessIntWidth = options.IntWidth;
             if (options.Command == CommandKind.Help)
             {
@@ -901,7 +916,7 @@ namespace fire.Compiler
             var vm = session.VirtualMachine!;
             if (vm.UnhandledException != null)
             {
-                stderr.WriteLine(new UncaughtScriptException(vm.UnhandledException).Message);
+                stderr.WriteLine(vm.UnhandledReport(vm.UnhandledException));   // (the line and the stack trace: docs/spec/STACKTRACE.md)
                 return ExitScriptError;
             }
             var exit = VM.ExitValue;
@@ -1034,7 +1049,7 @@ namespace fire.Compiler
             var vm = session.VirtualMachine!;
             if (vm.UnhandledException != null)
             {
-                stderr.WriteLine(new UncaughtScriptException(vm.UnhandledException).Message);
+                stderr.WriteLine(vm.UnhandledReport(vm.UnhandledException));   // (the line and the stack trace: docs/spec/STACKTRACE.md)
                 return ExitScriptError;
             }
 

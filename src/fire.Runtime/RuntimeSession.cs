@@ -129,6 +129,7 @@ namespace fire.Runtime
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,
                 externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: executionMode);
 
+            mainVm.ConfigureTrace(linkedProgram.StackTrace, linkedProgram.TraceFiles);   // (docs/spec/STACKTRACE.md)
             session.SetVM(mainVm, globalScope, natives, linkedProgram.FirstUserSource);
 
             return session;

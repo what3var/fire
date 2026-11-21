@@ -89,7 +89,7 @@ configuration of the native build, a toolchain that is missing).
 | `E3010` | Expected 'var' or a type declaration after 'readonly' |
 | `E3011` | 'byte' already has a fixed width of 8 bits - no additional '[...]' may follow |
 | `E3012` | For variables, fields and parameters an array is written with the brackets after the name ('int values[]'); 'int[]' as a type only exists as the return type of a method or property |
-| `E3013` | Unknown preprocessor directive '#…' (known: '#extern "libName"', '#noshadow', '#nosync', '#globaljobs safepoints\|sleep\|sync', '#timeout value') |
+| `E3013` | Unknown preprocessor directive '#…' (known: '#extern "libName"', '#noshadow', '#nosync', '#globaljobs safepoints\|sleep\|sync', '#stacktrace off\|calls\|lines', '#timeout value') |
 | `E3014` | Multiple 'case default' in one switch are not allowed |
 | `E3015` | 'with' does not exist for 'fire global' |
 | `E3016` | 'with' was already used in this 'fire' |
@@ -243,6 +243,7 @@ configuration of the native build, a toolchain that is missing).
 | `E3164` | Expected the C body '{ ... }' of the 'inline c' function |
 | `E3165` | 'replace' needs an assignment with '=': replace this.field = value (`replace x += 1`, `replace f()`) |
 | `E3166` | 'replace' assigns a field (replace this.field = value, replace Class.field = value) - not an element or a pointer (`replace a[i] = v`) |
+| `E3167` | '#stacktrace' expects off, calls or lines |
 
 ### E4xxx - Resolver: names, types, declarations
 

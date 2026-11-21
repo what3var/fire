@@ -17,6 +17,9 @@
 static void vmFreeDead(Vm* vm);
 static Vm* g_vmMain;              /* the main program of the script that runs (its globals are the shared domain) */
 
+/* What `fire` hands its thread besides the values: the flag that it runs, the line that ends its traces (malloc'ed, NULL: none). */
+typedef struct VmFireStart { fire_atomic32 started; char* trailer; } VmFireStart;
+
 /* ---- strands ---- */
 static Vm* vmStrandNew(Vm* top, uint32_t sharedCount) {
     Vm* vm = (Vm*)malloc(sizeof(Vm));
@@ -41,6 +44,7 @@ static Vm* vmStrandNew(Vm* top, uint32_t sharedCount) {
     vm->sharedCount = sharedCount;
     vm->isStrand = 1;
     vm->awaitNext = 0;
+    vm->threadTrailer = NULL;
     vm->global = scNew(vm, NULL);
     scReserve(vm->global, sharedCount + 16);
     while (vm->global->n < sharedCount) vm->global->slots[vm->global->n++] = Undef();   /* (placeholders: the main program's slots) */
@@ -78,21 +82,23 @@ static void vmStrandFree(Vm* vm, bool keepGlobal) {
     vmDbgFree(vm);
     free(vm->stack);
     free(vm->frames);
+    free(vm->threadTrailer);
     free(vm);
 }
 
 /* The body of a fire thread (the runtime's ThreadStart.fn, on the new thread with the GIL): args[0] the function, args[1] the main program's global
- * slots | the number of arguments << 32, args[2] the flag it sets when it runs, then the arguments (the copies of `taking`, what `handover` moved, the `with` values). */
+ * slots | the number of arguments << 32, args[2] its VmFireStart (the flag it sets when it runs, the line of its traces), then the arguments (the copies of `taking`, what `handover` moved, the `with` values). */
 static void vmThreadBody(const Value* args) {
     VmProto* p = (VmProto*)(uintptr_t)args[0].i;
     uint32_t shared = (uint32_t)(args[1].i & 0xFFFFFFFF), argc = (uint32_t)(args[1].i >> 32), i;
     Vm* vm = vmStrandNew(g_vmMain, shared);
     jmp_buf jb;
+    vm->threadTrailer = ((VmFireStart*)(uintptr_t)args[2].i)->trailer;   /* (its traces end with the line of its start: vm_trace.c) */
     g_vmCur = vm;
     g_globalOwn = &vm->global->own;
     adoptTravel(&vm->global->own);   /* (the copies `taking` made: the thread's own) */
     for (i = 0; i < argc; i++) scDefine(vm->global, args[3 + i]);
-    fire_atomic_storeRelease((fire_atomic32*)(uintptr_t)args[2].i, 1);   /* (it runs: the `fire` that started it goes on) */
+    fire_atomic_storeRelease(&((VmFireStart*)(uintptr_t)args[2].i)->started, 1);   /* (it runs: the `fire` that started it goes on) */
     {
         VmFrame* f = &vm->frames[0];
         memset(f, 0, sizeof *f);
@@ -131,7 +137,7 @@ static bool vmFire(Vm* vm, VmFrame* fr, VmProto* body, uint32_t globalSlots, uin
     uint32_t argc = taking + with, copies = taking - handover, i;
     Value* first = vm->stack + vm->sp - argc;
     Value av[3 + 256];
-    fire_atomic32 started;
+    VmFireStart start;
     OwnList* travel;
     if (argc > 256) fatal("fire: too many values for the thread.");
     if (taking > 0 && !((copies == 0 || takingNoCopyFree(first, copies)) && (handover == 0 || handoverFree(first + copies, handover)))) return false;
@@ -160,14 +166,15 @@ static bool vmFire(Vm* vm, VmFrame* fr, VmProto* body, uint32_t globalSlots, uin
     av[0] = VM_PTRV(body);
     av[1] = Int((int64_t)globalSlots | ((int64_t)argc << 32));
     ensureDomain();
-    av[2] = VM_PTRV(&started);
-    fire_atomic_store(&started, 0);
+    av[2] = VM_PTRV(&start);
+    fire_atomic_store(&start.started, 0);
+    start.trailer = vmTraceThreadLine(vm, fr);   /* (the thread owns it from now on) */
     if (flags & 2) fireThreadDedicated(vmThreadBody, av, argc + 3, travel);
     else fireThread(vmThreadBody, av, argc + 3, travel);
     /* (the thread gets the GIL once before the one that started it goes on: what it does first does not race against how fast the starter runs - a
      * `terminate` at its start stops a short loop of the starter, as in the C# VM, whose threads begin while the interpreter is slower) */
     gilRelease();
-    while (!fire_atomic_loadAcquire(&started)) fire_plat_sleepMs(0);
+    while (!fire_atomic_loadAcquire(&start.started)) fire_plat_sleepMs(0);
     gilAcquire();
     return true;
 }

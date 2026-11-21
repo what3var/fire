@@ -560,7 +560,8 @@ numbers.Send(3)
 ## Errors in threads
 
 An exception that a thread does not catch ends the thread and is delivered to the main program. `catch threads(Type e) { ... }` in the main program
-handles it; `catch threads() { ... }` catches the rest. Without a handler, the program stops.
+handles it; `catch threads() { ... }` catches the rest. Without a handler, the program stops. The exception keeps the stack trace of the thread; it
+ends with the line of the thread, `in thread 'Fire #1', started at main.fire:4` ([Exceptions](14-exceptions.md#stack-traces)).
 
 ```fire
 #import "time"

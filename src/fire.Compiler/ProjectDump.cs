@@ -42,7 +42,7 @@ namespace fire.Compiler
             foreach (var define in s.Defines ?? new List<string>()) d.L(indent, "setting", "define=" + define);
             S("engine", s.Engine); S("target", s.Target); S("toolchain", s.Toolchain); S("linkage", s.Linkage); S("stripping", s.Stripping); S("optimize", s.Optimize);
             if (s.Output != null) d.L(indent, "setting", "output=" + d.P(s.Output));
-            S("typeChecking", s.TypeChecking); S("globalJobs", s.GlobalJobs);
+            S("typeChecking", s.TypeChecking); S("globalJobs", s.GlobalJobs); S("stackTrace", s.StackTrace);
             foreach (var argument in s.Arguments ?? new List<string>()) d.L(indent, "setting", "argument=" + argument);
             S("port", s.Port); I("baud", s.Baud);
         }

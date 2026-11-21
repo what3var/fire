@@ -87,7 +87,7 @@ namespace fire.Runtime
 
             var items = new List<(PayloadKind, string, byte[])>
             {
-                (PayloadKind.Program, "program", fire.Bytecode.ProgramFile.Write(program, lineTables: false)),
+                (PayloadKind.Program, "program", fire.Bytecode.ProgramFile.Write(program, lineTables: program.StackTrace != fire.Runtime.StackTraceMode.Off)),   // (the lines of a stack trace: docs/spec/STACKTRACE.md)
             };
             foreach (var (name, path) in plan.Assemblies)
                 items.Add((PayloadKind.Assembly, name, File.ReadAllBytes(path)));

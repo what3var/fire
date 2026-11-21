@@ -1866,6 +1866,24 @@ static FcStmt* ParseDirective(FcParser* p) {
         ExpectStatementTerminator(p);
         return (FcStmt*)FC_NEW(C_, FcGlobalJobsDirective, .h = {SK_GlobalJobsDirective, p->sourceIndex, line}, .mode = mode);
     }
+    if (Check(p, TT_Identifier) && streq(Peek(p)->lexeme, "stacktrace")) {
+        FcStackTraceMode mode = STM_Lines;
+        const char* w;
+        char low[32];
+        size_t k;
+        Advance(p);
+        /* StackTraceModes.Parse: the word trimmed, in lower case */
+        w = Peek(p)->lexeme;
+        for (k = 0; w[k] && k < sizeof low - 1; k++) low[k] = (char)(w[k] >= 'A' && w[k] <= 'Z' ? w[k] - 'A' + 'a' : w[k]);
+        low[k] = 0;
+        if (streq(low, "off")) mode = STM_Off;
+        else if (streq(low, "calls")) mode = STM_Calls;
+        else if (streq(low, "lines")) mode = STM_Lines;
+        else Error(p, "'#stacktrace' expects off, calls or lines", Peek(p));
+        Advance(p);
+        ExpectStatementTerminator(p);
+        return (FcStmt*)FC_NEW(C_, FcStackTraceDirective, .h = {SK_StackTraceDirective, p->sourceIndex, line}, .mode = mode);
+    }
     if (Check(p, TT_Identifier) && streq(Peek(p)->lexeme, "endwait")) {
         FcExpr* limit;
         Advance(p);
@@ -1880,7 +1898,7 @@ static FcStmt* ParseDirective(FcParser* p) {
         ExpectStatementTerminator(p);
         return (FcStmt*)FC_NEW(C_, FcTimeoutDirective, .h = {SK_TimeoutDirective, p->sourceIndex, line}, .value = value);
     }
-    Error(p, S(p, "Unknown preprocessor directive '#%s' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#endwait value', '#lax', '#strict')",
+    Error(p, S(p, "Unknown preprocessor directive '#%s' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#stacktrace off|calls|lines', '#timeout value', '#endwait value', '#lax', '#strict')",
         Peek(p)->lexeme), Peek(p));
 }
 

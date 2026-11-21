@@ -59,6 +59,7 @@ The build defines these symbols:
 | `#floatwidth 32` | `float` without explicit width has 32 bits |
 | `#intwidth 32`, `#intwidth 16` | `int` without explicit width has 32 (16) bits (default 64) - see [Types](02-types.md#the-width-of-the-whole-program) |
 | `#globaljobs safepoints\|sleep\|sync` | when the main program runs `fire global` jobs itself - see [Threads and actors](15-threads-and-actors.md) |
+| `#stacktrace off\|calls\|lines` | what an exception shows of its stack: functions with lines (`lines`, the default in release), without lines (`calls`) or nothing (`off`, the default in performance); debug always `lines` - see [Exceptions](14-exceptions.md#stack-traces) |
 | `#endwait 5s` | how long the end of the program waits for threads that are still running (default 60 seconds, `#endwait undefined`: no limit) - see [Threads and actors](15-threads-and-actors.md#the-end-of-the-program) |
 | `#timeout 10s` | default waiting time of the waiting functions of devices and network |
 | `#nosync` | threads may change globals only at an explicit `sync globals` - see [Threads and actors](15-threads-and-actors.md#global-variables) |

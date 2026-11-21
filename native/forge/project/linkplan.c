@@ -201,7 +201,8 @@ static FcProcessed* pjPreprocessText(FcCtx* c, const char* text, const char* fol
 static bool pjIsDeclaration(const FcStmt* s) {
     switch (s->kind) {
         case SK_ClassDecl: case SK_InterfaceDecl: case SK_EnumDecl: case SK_ExternDecl: case SK_ClassExtensionDecl: case SK_NamespaceDecl: case SK_MethodDecl:
-        case SK_NoOpStmt: case SK_NoShadowDirective: case SK_GlobalJobsDirective: case SK_TypeCheckDirective: case SK_TimeoutDirective: case SK_EndWaitDirective:
+        case SK_NoOpStmt: case SK_NoShadowDirective: case SK_GlobalJobsDirective: case SK_StackTraceDirective: case SK_TypeCheckDirective: case SK_TimeoutDirective:
+        case SK_EndWaitDirective:
             return true;
         default: return false;
     }
@@ -531,6 +532,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
         linked->sourceFiles->items[total - plan->sources->count + i] = s->path ? (void*)pjFull(c, s->path, ".") : NULL;
         linked->sourceHashes->items[total - plan->sources->count + i] = (void*)fcSha256OfText(c, s->text);
     }
+    fcLinkTrace(c, linked, program, plan->settings->stackTrace, total - plan->sources->count, plan->sources->count);
     linked->optimize = in->o ? (in->o->optimize >= 0 ? in->o->optimize : t->optimize) : 0;
     linked->sourceModules = sourceModules;
     linked->moduleDeps = pjModuleDependencies(L, plan, processed);

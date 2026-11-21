@@ -597,6 +597,96 @@ static void fcPackageNativesOf(FcLinker* L, FcList** names, FcList** libraries) 
 }
 
 /* Linker.CompileAndLink for one file (as `forge bytecode <file> [-m <mode>]`): the linked program. modeOverride: -1 none */
+/* ---- stack traces (docs/spec/STACKTRACE.md section 7, Linker.CompileAndLink and ExceptionTrace.DisplayFiles) ---- */
+/* `--stacktrace` (Linker.ProcessStackTrace): -1 none, else STM_* */
+static int fcProcessStackTrace = -1;
+/* StackTraceModes.Parse: the name trimmed, any case - STM_*, -1: none */
+static int fcStackTraceParse(const char* text) {
+    char low[16];
+    size_t k = 0, n;
+    if (!text) return -1;
+    while (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r') text++;
+    n = strlen(text);
+    while (n > 0 && (text[n - 1] == ' ' || text[n - 1] == '\t' || text[n - 1] == '\n' || text[n - 1] == '\r')) n--;
+    if (n >= sizeof low) return -1;
+    for (k = 0; k < n; k++) low[k] = (char)(text[k] >= 'A' && text[k] <= 'Z' ? text[k] - 'A' + 'a' : text[k]);
+    low[n] = 0;
+    return streq(low, "off") ? STM_Off : streq(low, "calls") ? STM_Calls : streq(low, "lines") ? STM_Lines : -1;
+}
+/* Path.GetFileName */
+static const char* fcTraceFileName(const char* path) {
+    const char* slash = strrchr(path, '/');
+#ifdef _WIN32
+    const char* back = strrchr(path, '\\');
+    if (back && (!slash || back > slash)) slash = back;
+#endif
+    return slash ? slash + 1 : path;
+}
+/* Path.GetRelativePath(dir, file) with `/` (both full paths): `..` for each part of the folder behind the parts both share, then the rest of the file */
+static void fcTraceSplit(FcCtx* c, const char* path, FcList* parts) {
+    const char* p = path;
+    while (*p) {
+        const char* e = p;
+        char* part;
+#ifdef _WIN32
+        while (*e && *e != '/' && *e != '\\') e++;
+#else
+        while (*e && *e != '/') e++;
+#endif
+        if (e > p || p == path) { part = (char*)fcAlloc(c, (size_t)(e - p) + 1); memcpy(part, p, (size_t)(e - p)); part[e - p] = 0; fcListAdd(c, parts, part); }
+        p = *e ? e + 1 : e;
+    }
+}
+static const char* fcTraceRelative(FcCtx* c, const char* dir, const char* file) {
+    FcList* d = fcListNew(c);
+    FcList* f = fcListNew(c);
+    FcBuf b = {0};
+    char* out;
+    int common = 0, i;
+    fcTraceSplit(c, dir, d);
+    fcTraceSplit(c, file, f);
+    while (common < d->count && common < f->count && streq((const char*)d->items[common], (const char*)f->items[common])) common++;
+    for (i = common; i < d->count; i++) fcBufStr(&b, i + 1 < d->count || common < f->count ? "../" : "..");
+    for (i = common; i < f->count; i++) { fcBufStr(&b, (const char*)f->items[i]); if (i + 1 < f->count) fcBufStr(&b, "/"); }
+    if (b.len == 0) return ".";
+    out = (char*)fcAlloc(c, b.len + 1);
+    memcpy(out, b.p, b.len);
+    out[b.len] = 0;
+    fcBufFree(&b);
+    return out;
+}
+/* LinkedProgram.StackTrace and TraceFiles: Debug always lines; the command line, the last `#stacktrace` of the program, the project, the mode's default
+ * (Performance off, else lines) - StackTraceModes.Effective; the names of the sources (the program's `userCount` from `firstUser`). */
+static void fcLinkTrace(FcCtx* c, FcLinked* linked, const FcList* program, const char* projectSetting, int firstUser, int userCount) {
+    int source = -1, project = fcStackTraceParse(projectSetting), i;
+    FcList* files = linked->sourceFiles;
+    const char* baseDir = NULL;
+    for (i = 0; program && i < program->count; i++)
+        if (((const FcStmt*)program->items[i])->kind == SK_StackTraceDirective) source = (int)((const FcStackTraceDirective*)program->items[i])->mode;
+    linked->stackTrace = linked->mode == 0 ? STM_Lines : fcProcessStackTrace >= 0 ? fcProcessStackTrace : source >= 0 ? source : project >= 0 ? project
+        : linked->mode == 2 ? STM_Off : STM_Lines;
+    linked->traceFiles = fcListNew(c);
+    if (!files) return;
+    if (firstUser >= 0 && firstUser < files->count && files->items[firstUser]) {
+        const char* first = (const char*)files->items[firstUser];
+        const char* name = fcTraceFileName(first);
+        size_t n = (size_t)(name - first);
+        char* d = (char*)fcAlloc(c, n + 1);
+        memcpy(d, first, n);
+        d[n] = 0;
+        while (n > 1 && d[n - 1] == '/') d[--n] = 0;   /* (Path.GetDirectoryName: without the separator) */
+        baseDir = d;
+    }
+    for (i = 0; i < files->count; i++) {
+        const char* file = (const char*)files->items[i];
+        const char* name = NULL;
+        if (i >= firstUser && i < firstUser + userCount)
+            name = !file ? fcFmt(c, "fire:source/%d", i - firstUser) : baseDir ? fcTraceRelative(c, baseDir, file) : fcTraceFileName(file);
+        else if (file && i < firstUser) name = fcTraceFileName(file);
+        fcListAdd(c, linked->traceFiles, (void*)name);
+    }
+}
+
 static FcLinked* fcLinkFileFe(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, int modeOverride, FcFrontend** frontend);
 static FcLinked* fcLinkFile(FcCtx* c, const char* path, const char* preludePath, const char* storeRoot, bool strict, int modeOverride) {
     return fcLinkFileFe(c, path, preludePath, storeRoot, strict, modeOverride, NULL);
@@ -647,6 +737,7 @@ static FcLinked* fcLinkFileFe(FcCtx* c, const char* path, const char* preludePat
         linked->sourceFiles->items[total - 1] = (void*)fcFullPath(c, ".", path);
         linked->sourceHashes->items[total - 1] = (void*)fcSha256OfText(c, fc8FromU16(c, fe->userText, fe->userLength));
     }
+    fcLinkTrace(c, linked, fe->program, NULL, total - 1, 1);
     if (frontend) *frontend = fe;
     return linked;
 }

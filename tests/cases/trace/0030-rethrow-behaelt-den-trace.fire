@@ -1,0 +1,15 @@
+class A {
+    static undefined Inner() { throw new Exception("inner") }
+    static undefined Middle() {
+        try { A.Inner() } catch (e) {
+            print("caught in Middle")
+            throw e
+        }
+    }
+    static undefined Outer() {
+        try { A.Middle() } finally { print("finally in Outer") }
+    }
+}
+try { A.Outer() } catch (e) { print(e.StackTrace) }
+A.Outer()
+//# name: Trace: ein Rethrow (catch und throw e) behaelt den Trace des ersten Wurfs, ein finally dazwischen auch

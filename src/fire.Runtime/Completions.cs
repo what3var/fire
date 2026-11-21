@@ -115,6 +115,7 @@ namespace fire.Runtime
             lock (node) result = CompletionCopy(node.Value, _currentScope.Temp);
             if (Volatile.Read(ref node.Done) == 2 && result.Kind == ValueKind.Class)
             {
+                if (result.AsObjectRef() is ObjectInstance failed) StampAwaited(failed);   // (its trace, then where it was awaited)
                 ThrowException(result);
                 _nativeRedirected = true;
                 return default;

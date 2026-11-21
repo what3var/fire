@@ -1,0 +1,24 @@
+class NotFound : Exception {
+    construct(string key) : base("not found: " + key) { }
+}
+class Store {
+    static int Find(string key) {
+        if (key == "a") { return 1 }
+        throw new NotFound(key)
+    }
+    static int Lookup(string key) {
+        int v = Store.Find(key)
+        return v
+    }
+}
+class Loader {
+    int value
+    construct(string key) {
+        this.value = Store.Lookup(key)
+    }
+}
+print(Store.Lookup("a"))
+var l = new Loader("b")
+print("never")
+//# modes: Release Debug
+//# name: Trace: eine unbehandelte Ausnahme aus der Tiefe - Methoden, Konstruktor, die Zeilen jedes Frames

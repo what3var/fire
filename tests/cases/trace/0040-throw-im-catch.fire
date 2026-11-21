@@ -1,0 +1,12 @@
+class B {
+    static undefined Deep() { throw new Exception("first") }
+    static undefined Handle() {
+        try {
+            B.Deep()
+        } catch (e) {
+            throw new Exception("second: " + e.message)
+        }
+    }
+}
+try { B.Handle() } catch (e) { print(e); print(e.StackTrace) }
+//# name: Trace: ein throw im catch-Block zeigt den Stack ab der Funktion des catch, nicht die Wurfstelle darueber

@@ -79,7 +79,8 @@ one() {   # <group> <case file>
         actual=$out
         if [ "$code" != 0 ] && [ -n "$err" ]; then
             if [ "$group" = native ]; then [ -f "$n.unhandled" ] && [ "$err" = "$(cat "$n.unhandled")" ] || bad="$bad $mode(end)"
-            else actual="${actual}UNBEHANDELT: $err"$'\n'; fi
+            elif [ "$group" = trace ]; then actual="${actual}UNBEHANDELT: $err"$'\n'
+            else actual="${actual}UNBEHANDELT: $(printf '%s\n' "$err" | grep -v -e '^   at ' -e '^   \.\.\. ' -e '^   --- awaited at ---$' -e "^   in thread '")"$'\n'; fi
         elif [ -f "$n.unhandled" ]; then bad="$bad $mode(end)"; fi
         want=$(cat "$n.expected" 2> /dev/null; echo x); want=${want%x}
         [ "$actual" = "$want" ] || bad="$bad $mode"

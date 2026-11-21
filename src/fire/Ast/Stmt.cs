@@ -38,6 +38,10 @@ namespace fire.Ast
     /// `SetAutoSync mode` at the very start; the command line and the project go before it); must be a top-level statement.</summary>
     public sealed record GlobalJobsDirective(int Source, int Line, fire.Runtime.GlobalJobsMode Mode) : Stmt(Source, Line);
 
+    /// <summary>`#stacktrace off|calls|lines` (docs/spec/STACKTRACE.md section 7): what an exception shows of its stack - for the whole program (the last one at the
+    /// top level counts; the command line goes before it, it before the project and fire.native.json); must be a top-level statement. Read by the linker.</summary>
+    public sealed record StackTraceDirective(int Source, int Line, fire.Runtime.StackTraceMode Mode) : Stmt(Source, Line);
+
     /// <summary>`#lax` / `#strict` (docs/spec/TYPES.md): the type checking mode of the file this stands in (`Strict` false = lax: a type conflict is a warning, true = strict: an error). Read by the
     /// type checker only; it takes the place of the project's setting for the statements of its file that follow.</summary>
     public sealed record TypeCheckDirective(int Source, int Line, bool Strict) : Stmt(Source, Line);

@@ -75,6 +75,21 @@ namespace fire.Standard
             (Implementation ?? throw new InvalidOperationException("__type_arg needs a running program."))(args);
     }
 
+    /// <summary>The stack trace of an exception (docs/spec/STACKTRACE.md), behind `__EnvCall` (EnvironmentMethod.ExceptionTrace, ExceptionFrames - so that every engine
+    /// that has `__EnvCall` has them): "trace" (e) is the text of `e.StackTrace` ("" without one), "frames" (e, -1, 0) the number of its frames, (e, i, part) a part
+    /// of frame i (0 the function, 1 the file - "" for the prelude -, 2 the line - 0 without lines). The trace hangs on the object, not in a field. The VM:
+    /// VM.Trace.cs; the VM in C and a native build: fire_rt.h envCall 9 and 10 (fire_exc_trace / fire_exc_frames).</summary>
+    public static class ExceptionTraceMethods
+    {
+        public const string TraceName = "trace", FramesName = "frames";
+
+        /// <summary>Set by the VM: (name, arguments) on the VM of the calling thread.</summary>
+        public static Func<string, Value[], Value>? Implementation;
+
+        public static Value Call(string name, Value[] args) =>
+            (Implementation ?? throw new InvalidOperationException("A stack trace needs a running program."))(name, args);
+    }
+
     public static class FdWaitMethods
     {
         public const string NativeName = "__fd_wait";

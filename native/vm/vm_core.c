@@ -949,6 +949,7 @@ static void vmRegisterClasses(Vm* vm) {
         }
         d->flags = 0;
         for (k = c; k; k = k->base) if (k->flags & VC_NOCOPY) d->flags = 1;
+        if (c->isException) d->flags |= 2;   /* (its text is `Class: message`, docs/spec/STACKTRACE.md) */
         if (c->flags & VC_RECORD) { d->recEq = vmRecEq; d->recHash = vmRecHash; d->recCheck = vmRecCheck; }
     }
     vm->descs = rows;

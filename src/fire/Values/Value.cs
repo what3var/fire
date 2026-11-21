@@ -1159,7 +1159,7 @@ namespace fire.Values
             ValueKind.Float => Unit is { IsUnitless: false } u2 ? $"{FloatText()}{u2}" : FloatText(),
             ValueKind.Char => _charValue.ToString(),
             ValueKind.String => Unsafe.As<string>(_ref) ?? "",
-            ValueKind.Class => $"<object {(_ref as fire.Runtime.ObjectInstance)?.ClassName}>",
+            ValueKind.Class => _ref is fire.Runtime.ObjectInstance { IsException: true } exc ? exc.ExceptionText() : $"<object {(_ref as fire.Runtime.ObjectInstance)?.ClassName}>",
             ValueKind.Lambda => "<lambda>",
             ValueKind.Pointer => "<pointer>",
             ValueKind.Array => "<array>",

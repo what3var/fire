@@ -213,6 +213,10 @@ static TcOptions* tcParse(FcCtx* c, int argc, char** argv) {
             const char* v = TC_NEXT(inl);
             o->globalJobs = v ? nbGlobalJobsParse(c, tcUnquote(c, v)) : -1;
             if (o->globalJobs < 0) TC_FAIL("--global-jobs must be followed by safepoints, sleep or sync.");
+        } else if (tcTryOption(arg, "--stacktrace", "--stacktrace", &inl)) {
+            const char* v = TC_NEXT(inl);
+            fcProcessStackTrace = v ? fcStackTraceParse(tcUnquote(c, v)) : -1;   /* (Linker.ProcessStackTrace: process-wide) */
+            if (fcProcessStackTrace < 0) TC_FAIL("--stacktrace must be followed by off, calls or lines.");
         } else if (tcTryOption(arg, "-f", "--float", &inl)) {
             const char* v = TC_NEXT(inl);
             if (!v) TC_FAIL("-f must be followed by the float precision (32 or 64).");

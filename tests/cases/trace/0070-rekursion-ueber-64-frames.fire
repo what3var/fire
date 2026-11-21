@@ -1,0 +1,8 @@
+class R {
+    static int Down(int n) {
+        if (n == 0) { throw new Exception("bottom") }
+        return R.Down(n - 1) + 1
+    }
+}
+try { R.Down(100) } catch (e) { print(e.StackTrace) }
+//# name: Trace: eine Rekursion ueber 64 Frames zeigt die 48 innersten, eine Zeile mit dem Rest und die 16 aeussersten

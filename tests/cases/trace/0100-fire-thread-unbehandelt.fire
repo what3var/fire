@@ -1,0 +1,10 @@
+#import "time"
+class Work {
+    static undefined Step(int n) { if (n == 2) { throw new Exception("in thread " + n) } }
+}
+fire {
+    for (int i = 0; i < 3; i++) { Work.Step(i) }
+}
+Sleep(300ms)
+print("after")
+//# name: Trace: eine unbehandelte Ausnahme eines fire-Threads endet mit der Zeile des Threads

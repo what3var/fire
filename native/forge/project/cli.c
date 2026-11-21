@@ -146,7 +146,7 @@ static void pjDumpSettings(PjDump* d, const char* indent, const PjSettings* s) {
     if (s->defines) for (i = 0; i < s->defines->count; i++) pjDumpLine(d, indent, "setting", fcFmt(c, "define=%s", (const char*)s->defines->items[i]));
     PJD("engine", s->engine); PJD("target", s->target); PJD("toolchain", s->toolchain); PJD("linkage", s->linkage); PJD("stripping", s->stripping); PJD("optimize", s->optimize);
     if (s->output) pjDumpLine(d, indent, "setting", fcFmt(c, "output=%s", pjDumpPath(d, s->output)));
-    PJD("typeChecking", s->typeChecking); PJD("globalJobs", s->globalJobs);
+    PJD("typeChecking", s->typeChecking); PJD("globalJobs", s->globalJobs); PJD("stackTrace", s->stackTrace);
     if (s->arguments) for (i = 0; i < s->arguments->count; i++) pjDumpLine(d, indent, "setting", fcFmt(c, "argument=%s", (const char*)s->arguments->items[i]));
     PJD("port", s->port); PJDI("baud", s->baud);
 #undef PJD

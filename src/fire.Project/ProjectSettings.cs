@@ -52,6 +52,9 @@ namespace fire.Projects
         /// <summary>When the main program runs the `fire global` jobs (and lets in the sections of its threads, the host callbacks) by itself: `safepoints` (the default),
         /// `sleep` or `sync` (docs/spec/THREADING_DESIGN.md section 7; the tag `#globaljobs`). The same in the VM and in a native build.</summary>
         public string? GlobalJobs { get; set; }
+        /// <summary>What an exception shows of its stack: `off`, `calls` or `lines` (docs/spec/STACKTRACE.md section 7; the tag `#stacktrace` goes before it). Null: the
+        /// default of the mode (Release `lines`, Performance `off`; Debug is always `lines`).</summary>
+        public string? StackTrace { get; set; }
         /// <summary>The arguments a run of the program gets (`forge run`, *Run* in spark; `Environment.Args`); arguments after `--` on the command line replace them.</summary>
         public List<string>? Arguments { get; set; }
         /// <summary>The serial port of a board (ESP32: Run and Debug in spark flash it and talk to it there); null: the only USB serial port, else the one esptool picks.</summary>
@@ -61,13 +64,14 @@ namespace fire.Projects
 
         [JsonIgnore]
         public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && IntWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
-            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Stripping == null && Optimize == null && Output == null && TypeChecking == null && GlobalJobs == null && Arguments == null && Port == null && Baud == null;
+            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Stripping == null && Optimize == null && Output == null && TypeChecking == null && GlobalJobs == null && StackTrace == null && Arguments == null && Port == null && Baud == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
         public static readonly IReadOnlyList<string> Modes = new[] { "debug", "release", "performance" };
         public static readonly IReadOnlyList<string> Engines = new[] { "vm", "native" };
         public static readonly IReadOnlyList<string> TypeCheckings = new[] { "lax", "strict" };
         public static readonly IReadOnlyList<string> GlobalJobsModes = new[] { "safepoints", "sleep", "sync" };
+        public static readonly IReadOnlyList<string> StackTraceModes = new[] { "off", "calls", "lines" };
         public static readonly IReadOnlyList<string> Linkages = new[] { "source", "static", "shared" };
         public static readonly IReadOnlyList<string> Optimizations = new[] { "speed", "size" };
         /// <summary>The stripping levels by their names (index = number; fire.Native.Strippings has the same).</summary>
@@ -99,6 +103,7 @@ namespace fire.Projects
             r.Output = high?.Output ?? low?.Output;
             r.TypeChecking = high?.TypeChecking ?? low?.TypeChecking;
             r.GlobalJobs = high?.GlobalJobs ?? low?.GlobalJobs;
+            r.StackTrace = high?.StackTrace ?? low?.StackTrace;
             r.Arguments = high?.Arguments ?? low?.Arguments;
             r.Port = high?.Port ?? low?.Port;
             r.Baud = high?.Baud ?? low?.Baud;
@@ -148,6 +153,7 @@ namespace fire.Projects
             if (IntWidth != null && IntWidth != 16 && IntWidth != 32 && IntWidth != 64) problems.Add("settings.intWidth must be 16, 32 or 64.");
             if (TypeChecking != null && !TypeCheckings.Contains(TypeChecking)) problems.Add("settings.typeChecking must be lax or strict.");
             if (GlobalJobs != null && !GlobalJobsModes.Contains(GlobalJobs.ToLowerInvariant())) problems.Add($"settings.globalJobs '{GlobalJobs}' is not one of: {string.Join(", ", GlobalJobsModes)}.");
+            if (StackTrace != null && !StackTraceModes.Contains(StackTrace.ToLowerInvariant())) problems.Add($"settings.stackTrace '{StackTrace}' is not one of: {string.Join(", ", StackTraceModes)}.");
             if (Engine != null && !Engines.Contains(Engine)) problems.Add($"settings.engine '{Engine}' is not one of: {string.Join(", ", Engines)}.");
             if (Stripping != null && !(Stripping.Length == 1 && Stripping[0] is >= '0' and <= '3') && !Strippings.Contains(Stripping.ToLowerInvariant()))
                 problems.Add($"settings.stripping '{Stripping}' is not one of: 0, 1, 2, 3, {string.Join(", ", Strippings)}.");

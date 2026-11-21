@@ -387,7 +387,7 @@ static bool nvPack(FcCtx* c, FcLinked* linked, FcList* libraries, const char* ou
     nbPeSetSubsystem(temp, linked->asmInfo && linked->asmInfo->gui ? 2 : 3);
     fcBufStr(&program, "");
     program.len = 0;
-    fcProgramFileWrite(c, linked, false, &program);
+    fcProgramFileWrite(c, linked, linked->stackTrace != STM_Off, &program);   /* (a stack trace needs the line tables: docs/spec/STACKTRACE.md) */
     it = (NvItem*)fcAlloc(c, sizeof *it);
     it->kind = 0; it->name = "program.fbc"; it->size = program.len;
     it->data = (const uint8_t*)fcAlloc(c, program.len + 1);

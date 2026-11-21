@@ -1,0 +1,18 @@
+class NotFound : Exception {
+    construct(string key) : base("not found: " + key) { }
+}
+class Store {
+    static undefined Find(string key) { throw new NotFound(key) }
+}
+try {
+    Store.Find("b")
+} catch (NotFound e) {
+    print(e)
+    print("text: " + e)
+    print(e.ToString())
+    foreach (f in e.Frames) { print(f.function + " | " + f.file + " | " + f.line) }
+    print(e.Frames.Length)
+}
+var fresh = new Exception("never thrown")
+print("[" + fresh.StackTrace + "] " + fresh.Frames.Length)
+//# name: Trace: e.Frames als StackFrame-Records, print(e) und ToString ohne Trace, eine nie geworfene Ausnahme hat keinen

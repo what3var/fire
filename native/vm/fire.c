@@ -50,6 +50,7 @@ void fbOutOfMemory(void) { outOfMemory(); }
 #include "vm_reflect.c"
 #include "vm_json.c"
 #include "vm_debug.c"
+#include "vm_trace.c"
 
 void fire_vmExit(int code) {
     Vm* vm = g_vmCur;
@@ -151,6 +152,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     t1 = fire_plat_unixMicros();
     vm = (Vm*)calloc(1, sizeof(Vm));
     vm->prog = p;
+    g_stackTrace = p->stackTrace;   /* (what the program shows of the stack of an exception, docs/spec/STACKTRACE.md) */
     vm->stack = (Value*)malloc(VM_STACK * sizeof(Value));
     vm->frames = (VmFrame*)calloc(VM_FRAMES, sizeof(VmFrame));
     if (!vm->stack || !vm->frames) outOfMemory();

@@ -1,0 +1,7 @@
+#stacktrace lines
+class S {
+    static undefined F() { throw new Exception("perf") }
+}
+try { S.F() } catch (e) { print(e.StackTrace) }
+//# modes: Performance
+//# name: Trace: Performance mit #stacktrace lines zeigt den Trace

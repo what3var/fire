@@ -1,0 +1,15 @@
+class Producer {
+    static undefined Make(Completion c) {
+        try { throw new Exception("failed in producer") } catch (e) { c.Fail(e) }
+    }
+}
+class Consumer {
+    static any Take(Completion c) { return c.Wait() }
+}
+var c = new Completion()
+Producer.Make(c)
+try { Consumer.Take(c) } catch (e) { print(e); print(e.StackTrace) }
+var d = new Completion()
+d.Fail(new Exception("never thrown"))
+try { Consumer.Take(d) } catch (e) { print(e.StackTrace) }
+//# name: Trace: die Ausnahme einer Completion bekommt beim Wait den Abschnitt des Wartenden

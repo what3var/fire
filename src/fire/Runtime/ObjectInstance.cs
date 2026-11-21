@@ -45,6 +45,23 @@ namespace fire.Runtime
         public IOwner Owner { get; private set; }
         public FieldStore Fields { get; }
 
+        /// <summary>The stack of its first `throw` (an exception, docs/spec/STACKTRACE.md section 3): not a field - reflection, JSON, `==` and `print` do not see it;
+        /// a copy shares it. null: never thrown.</summary>
+        public ExceptionTrace? Trace { get; set; }
+
+        /// <summary>An object of `Exception` or a class derived from it (the text of `print(e)`, `e.ToString()`: <see cref="ExceptionText"/>).</summary>
+        public bool IsException
+        {
+            get
+            {
+                for (var c = RtClass; c != null; c = c.Base) if (c.Name == "Exception") return true;
+                return false;
+            }
+        }
+
+        /// <summary>`Class: message` - what an exception without a ToString() of its own is as text (STACKTRACE.md section 2; without the trace).</summary>
+        public string ExceptionText() => ClassName + ": " + (Fields.TryGetValue("message", out var m) ? m.ToString() : "");
+
         // The owned children (see OwnedSet): most objects own none, the rest mostly exactly one.
         private OwnedSet _owned;
         private List<IOwnedLeaf>? _leaves; // owned arrays and buffers

@@ -1,0 +1,16 @@
+class C {
+    static int Value() {
+        int v = throw new Exception("missing")
+        return v
+    }
+}
+Exception kept = undefined
+try {
+    print(C.Value())
+} catch (e) {
+    kept = e
+    e.resume(42)
+}
+print(kept.StackTrace)
+try { throw kept } catch (e) { print(e.StackTrace) }
+//# name: Trace: nach resume bleibt der Trace am Objekt; derselbe Wurf noch einmal behaelt ihn

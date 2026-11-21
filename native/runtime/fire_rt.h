@@ -3042,15 +3042,26 @@ FIRE_FN Value placeGet(Obj* o, const FirePlace* p) {
 }
 
 /* The part of an object that most objects never need: the list of what it owns and its type arguments. */
-typedef struct ObjExt { OwnList owned; TArgs targs; } ObjExt;
+/* `trace`: the stack trace of an exception (its first throw, docs/spec/STACKTRACE.md; counted, shared by its copies; NULL: none) - not a field, reflection
+ * and `==` do not see it. */
+struct FireTrace;
+FIRE_FN void fire_traceRelease(struct FireTrace* t);
+typedef struct ObjExt { OwnList owned; TArgs targs; struct FireTrace* trace; } ObjExt;
 FIRE_FN ObjExt* objExt(Obj* o) {
     if (FIRE_UNLIKELY(!o->ext)) {
         o->ext = (ObjExt*)malloc(sizeof(ObjExt));
         if (FIRE_UNLIKELY(!o->ext)) fatal("Out of memory.");
         ownListInit(&o->ext->owned, 0, &o->h);
         o->ext->targs = NULL;
+        o->ext->trace = NULL;
     }
     return o->ext;
+}
+FIRE_FN void fire_traceShare(Obj* to, const Obj* from);
+/* The extension of an object as its memory goes (its trace is released). */
+FIRE_FN void objExtFree(Obj* o) {
+    if (o->ext && o->ext->trace) fire_traceRelease(o->ext->trace);
+    free(o->ext);
 }
 /* The list of what the object owns - made now if it has none yet (8 % of the objects of the test programs own something: 40 bytes saved on the others). */
 FIRE_FN OwnList* objOwned(Obj* o) { return &objExt(o)->owned; }
@@ -3096,7 +3107,7 @@ typedef struct FireClassDesc {
     const FireMembers* const* members;   /* the tables of its members, the class first, then its bases (NULL-terminated; NULL: none) */
     const TArg* (*targOf)(Obj* o, const char* cls, int k);   /* the k-th type argument of its generic base `cls` (NULL: no generic class in its chain) */
 #endif
-    uint32_t flags;   /* 1: `[NoCopy]` on the class or a base class - flat/copy refuse to duplicate it */
+    uint32_t flags;   /* 1: `[NoCopy]` on the class or a base class - flat/copy refuse to duplicate it; 2: `Exception` or derived from it (its text, STACKTRACE.md) */
     /* a record (step 9, NULL: no record): `==` by content, the hash of a key by content, the check at the end of its construction (what it holds) */
     bool (*recEq)(Value a, Value b);
     int64_t (*recHash)(Value a);
@@ -3496,7 +3507,7 @@ FIRE_FN void batchEnd(void) {
         for (i = 0; i < obj->nfields; i++) release(f[i]);
         slotRelease(&obj->h);   /* from now on a Value of this object is dead: using it is a DestroyedException */
 #ifndef FIRE_KEEP_DESTROYED
-        free(obj->ext);
+        objExtFree(obj);
         objMemFree(obj, objMemSize(obj));
 #endif
         o = next;
@@ -4332,6 +4343,9 @@ FIRE_FN uint32_t int64ToChars(int64_t value, fire_char16* out) {
     return k;
 }
 
+/* An object of `Exception` or a class derived from it (FireClassDesc.flags 2), and its text `Class: message` (a string of `list`). */
+FIRE_FN bool fire_isExceptionObj(const Obj* o);
+FIRE_FN Value fire_exceptionText(Value v, OwnList* list);
 FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
     char tmp[64];
     switch (v.kind) {
@@ -4356,6 +4370,10 @@ FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
                 out->p = strOf(text)->data; out->n = strOf(text)->length;
             }
             else if (!leafAlive(v)) { destroyedError(v); out->p = out->buf; out->n = 0; return; }   /* (a destroyed object: the DestroyedException, like every other use of it) */
+            else if (fire_isExceptionObj(asObj(v))) {   /* an exception: `Class: message` (docs/spec/STACKTRACE.md - without its trace) */
+                Value text2 = fire_exceptionText(v, list);
+                out->p = strOf(text2)->data; out->n = strOf(text2)->length;
+            }
             else {
                 char t[80];
                 int n = snprintf(t, sizeof t, "<object %s>", className(asObj(v)->cls));
@@ -4976,10 +4994,16 @@ FIRE_FN bool fire_envName(Value v, char* out, uint32_t cap) {
     return out[0] != 0 && strchr(out, '=') == NULL;
 }
 
+FIRE_FN Value fire_exc_trace(Value e, OwnList* list);
+FIRE_FN Value fire_exc_frames(Value e, Value index, Value part, OwnList* list);
 FIRE_FN Value envCall(int64_t id, Value a, Value b, OwnList* list) {
     char name[1024];
     char text[1200];
     switch ((int)id) {
+        case 9: return fire_exc_trace(a, list);   /* e.StackTrace (docs/spec/STACKTRACE.md) */
+        case 10:   /* e.Frames: b -1 the number of frames, else frame b / 4, part b % 4 */
+            if (b.kind != K_Int || b.i < 0) return fire_exc_frames(a, Int(-1), Int(0), list);
+            return fire_exc_frames(a, Int(b.i / 4), Int(b.i % 4), list);
         case 1: {   /* Args */
             FireEnvList l;
             Arr* arr;
@@ -5642,6 +5666,155 @@ FIRE_FN void takeGlobal(Obj* o) {
 
 /* The index of the field `message` of an object of the class, -1 when the class has none (the descriptor of the class). */
 FIRE_RT_FN int32_t excMessageIndex(uint32_t cls);
+
+/* ---- Stack traces (docs/spec/STACKTRACE.md): the frames of the first throw of an exception, innermost first, as (function, line) pairs - the function a
+ * static descriptor (its name, its file as the trace shows it: relative to the folder of the program's first source, NULL for the prelude). Taken where the
+ * exception is thrown (throwValueR: the VM in C walks its frames, fire_vmTraceThrow), kept on the object (ObjExt.trace) and formatted only when someone reads
+ * it - the same text as the VM in C# (ExceptionTrace.Format): `   at Store.Find (main.fire:16)`, `(main.fire)` without lines (`calls`) or with line 0,
+ * `(prelude)`; at most 64 frames (48 innermost, `   ... N more frames ...`, 16 outermost); a section of a thread ends with its line (`in thread 'Fire #1',
+ * started at main.fire:40`), the section of a wait follows `   --- awaited at ---`. */
+typedef struct FireFnInfo { const char* name; const char* file; } FireFnInfo;
+typedef struct FireTraceFrame { const FireFnInfo* fn; int32_t line; } FireTraceFrame;
+typedef struct FireTrace {
+    fire_atomic32 refs;
+    uint32_t n;              /* the frames kept */
+    uint32_t omitted;        /* the frames left out between frames[FIRE_TRACE_INNER - 1] and frames[FIRE_TRACE_INNER] */
+    char* trailer;           /* the line that ends the section (a thread's), malloc'ed; NULL: none */
+    struct FireTrace* next;  /* the section of a wait (`--- awaited at ---`) */
+    FireTraceFrame frames[1];
+} FireTrace;
+#define FIRE_TRACE_MAX 64
+#define FIRE_TRACE_INNER 48
+#define FIRE_TRACE_OUTER 16
+#define FIRE_TRACE_SECTIONS 4
+enum { FIRE_TRACE_OFF, FIRE_TRACE_CALLS, FIRE_TRACE_LINES };
+/* What the program shows (`#stacktrace`): FIRE_TRACE_*. */
+extern FIRE_RT_DATA int g_stackTrace;
+
+/* A trace for a stack of `total` frames (the caller fills frames[0..n), see fire_traceSlot). */
+FIRE_FN FireTrace* fire_traceNew(uint32_t total, const char* trailer) {
+    uint32_t n = total > FIRE_TRACE_MAX ? FIRE_TRACE_MAX : total;
+    FireTrace* t = (FireTrace*)malloc(sizeof(FireTrace) + (n > 0 ? n - 1 : 0) * sizeof(FireTraceFrame));
+    if (FIRE_UNLIKELY(!t)) fatal("Out of memory.");
+    t->refs.v = 1;
+    t->n = n;
+    t->omitted = total - n;
+    t->trailer = NULL;
+    if (trailer) {
+        size_t len = strlen(trailer);
+        t->trailer = (char*)malloc(len + 1);
+        if (t->trailer) memcpy(t->trailer, trailer, len + 1);
+    }
+    t->next = NULL;
+    return t;
+}
+/* Where frame `i` of a stack of `total` frames (0: the throw site) goes in the trace; NULL: it is one of those left out. */
+FIRE_FN FireTraceFrame* fire_traceSlot(FireTrace* t, uint32_t i) {
+    if (t->omitted == 0) return i < t->n ? &t->frames[i] : NULL;
+    if (i < FIRE_TRACE_INNER) return &t->frames[i];
+    if (i >= FIRE_TRACE_INNER + t->omitted) return &t->frames[i - t->omitted];
+    return NULL;
+}
+FIRE_FN void fire_traceRetain(FireTrace* t) { if (t) fire_atomic_add(&t->refs, 1); }
+FIRE_FN void fire_traceRelease(FireTrace* t) {
+    while (t && fire_atomic_addAcqRel(&t->refs, (uint32_t)-1) == 1) {
+        FireTrace* next = t->next;
+        free(t->trailer);
+        free(t);
+        t = next;
+    }
+}
+FIRE_FN FireTrace* fire_traceOf(const Obj* o) { return o->ext ? o->ext->trace : NULL; }
+/* A copy of an exception shares the trace of the original. */
+FIRE_FN void fire_traceShare(Obj* to, const Obj* from) {
+    FireTrace* t = fire_traceOf(from);
+    if (!t || fire_traceOf(to) == t) return;
+    fire_traceRetain(t);
+    if (objExt(to)->trace) fire_traceRelease(to->ext->trace);
+    to->ext->trace = t;
+}
+/* The first throw gives the exception its trace (takes `t`; an exception that has one keeps it - a rethrow, a finally). */
+FIRE_FN void fire_traceSet(Obj* o, FireTrace* t) {
+    if (fire_traceOf(o)) { fire_traceRelease(t); return; }
+    objExt(o)->trace = t;
+}
+/* The exception of a task thrown again where it is awaited: its trace gets `t` as a section behind its last one (at most FIRE_TRACE_SECTIONS); without a trace
+ * `t` is its trace. The sections are shared with the copies: the chain is copied, not changed. */
+FIRE_FN void fire_traceAwaited(Obj* o, FireTrace* t) {
+    FireTrace* old = fire_traceOf(o);
+    FireTrace *head = NULL, **tail = &head, *s;
+    uint32_t depth = 0;
+    if (!old) { objExt(o)->trace = t; return; }
+    for (s = old; s; s = s->next) depth++;
+    if (depth >= FIRE_TRACE_SECTIONS) { fire_traceRelease(t); return; }
+    for (s = old; s; s = s->next) {   /* (a new chain: each section copied, the frames point to the same descriptors) */
+        FireTrace* c = fire_traceNew(s->n + s->omitted, s->trailer);
+        memcpy(c->frames, s->frames, s->n * sizeof(FireTraceFrame));
+        c->n = s->n; c->omitted = s->omitted;
+        *tail = c; tail = &c->next;
+    }
+    *tail = t;
+    fire_traceRelease(old);
+    o->ext->trace = head;
+}
+
+/* A growing text (the formatted trace). */
+typedef struct FireTraceText { char* p; size_t n, cap; } FireTraceText;
+FIRE_FN void fire_traceAdd(FireTraceText* b, const char* s, size_t len) {
+    if (b->n + len + 1 > b->cap) {
+        size_t cap = b->cap ? b->cap * 2 : 256;
+        char* p;
+        while (cap < b->n + len + 1) cap *= 2;
+        p = (char*)realloc(b->p, cap);
+        if (!p) return;
+        b->p = p; b->cap = cap;
+    }
+    memcpy(b->p + b->n, s, len);
+    b->n += len;
+    b->p[b->n] = 0;
+}
+FIRE_FN void fire_traceAddS(FireTraceText* b, const char* s) { fire_traceAdd(b, s, strlen(s)); }
+/* What stands in the brackets of a frame: `main.fire:16`, `main.fire` (without lines, or line 0), `prelude`. */
+FIRE_FN void fire_traceWhere(FireTraceText* b, const char* file, int32_t line, int mode) {
+    char num[24];
+    if (!file) { fire_traceAddS(b, "prelude"); return; }
+    fire_traceAddS(b, file);
+    if (mode == FIRE_TRACE_LINES && line > 0) { snprintf(num, sizeof num, ":%ld", (long)line); fire_traceAddS(b, num); }
+}
+/* The lines of the trace, each ended by a line feed (malloc'ed; NULL: no trace, or `#stacktrace off`). */
+FIRE_FN char* fire_traceFormat(const FireTrace* t, int mode) {
+    FireTraceText b = { NULL, 0, 0 };
+    const FireTrace* s;
+    uint32_t i;
+    char num[64];
+    if (!t || mode == FIRE_TRACE_OFF) return NULL;
+    for (s = t; s; s = s->next) {
+        if (s != t) fire_traceAddS(&b, "   --- awaited at ---\n");
+        for (i = 0; i < s->n; i++) {
+            if (s->omitted > 0 && i == FIRE_TRACE_INNER) { snprintf(num, sizeof num, "   ... %lu more frames ...\n", (unsigned long)s->omitted); fire_traceAddS(&b, num); }
+            fire_traceAddS(&b, "   at ");
+            fire_traceAddS(&b, s->frames[i].fn && s->frames[i].fn->name ? s->frames[i].fn->name : "?");
+            fire_traceAddS(&b, " (");
+            fire_traceWhere(&b, s->frames[i].fn ? s->frames[i].fn->file : NULL, s->frames[i].line, mode);
+            fire_traceAddS(&b, ")\n");
+        }
+        if (s->trailer) { fire_traceAddS(&b, "   "); fire_traceAddS(&b, s->trailer); fire_traceAddS(&b, "\n"); }
+    }
+    if (!b.p) fire_traceAddS(&b, "");
+    return b.p;
+}
+/* The frames of a trace, all sections together (`e.Frames`). */
+FIRE_FN uint32_t fire_traceCount(const FireTrace* t) { uint32_t n = 0; for (; t; t = t->next) n += t->n; return n; }
+FIRE_FN const FireTraceFrame* fire_traceFrameAt(const FireTrace* t, uint32_t i) {
+    for (; t; t = t->next) { if (i < t->n) return &t->frames[i]; i -= t->n; }
+    return NULL;
+}
+#ifdef FIRE_VM
+/* The VM in C: the throw of `o` - it takes the stack of the VM as the trace of `o` if `o` has none (vm_run.c). */
+void fire_vmTraceThrow(Obj* o);
+/* The exception of a task thrown again where it is awaited (a Completion, the reply of an actor or a job): the stack of the waiting one as a section. */
+void fire_vmTraceAwaited(Obj* o);
+#endif
 /* An exception that nothing catches: the text of the VM (UncaughtScriptException) - the class and the text of the field `message`. */
 FIRE_COLD FIRE_FN void reportUnhandledIn(Value exception, const char* before, const char* after) {
     Obj* o = asObj(exception);
@@ -5659,8 +5832,49 @@ FIRE_COLD FIRE_FN void reportUnhandledIn(Value exception, const char* before, co
     }
     fflush(stdout);
     fprintf(stderr, "%sUnhandled exception of type '%s': %s%s\n", before, className(o->cls), text, after);
+    if (!*before) {   /* (an exception that ends the program or a thread: its trace below the line; a callback's report is one line) */
+        char* trace = fire_traceFormat(fire_traceOf(o), g_stackTrace);
+        if (trace) { fputs(trace, stderr); free(trace); }
+    }
 }
 FIRE_COLD FIRE_FN void reportUnhandled(Value exception) { reportUnhandledIn(exception, "", ""); }
+
+FIRE_FN bool fire_isExceptionObj(const Obj* o) { return o->cls < g_classDescCount && (g_classDescs[o->cls].flags & 2u) != 0; }
+FIRE_FN Value fire_exceptionText(Value v, OwnList* list) {
+    Obj* o = asObj(v);
+    int32_t index = excMessageIndex(o->cls);
+    const char* cls = className(o->cls);
+    Value m = index >= 0 ? objFields(o)[index] : Undef();
+    Value msg = m.kind == K_String ? m : index >= 0 ? toStringValue(m, list) : strFromUtf8("", list);
+    uint32_t cn = (uint32_t)strlen(cls), mn = strOf(msg)->length;
+    Str* s = allocStr(cn + 2 + mn, list);
+    fire_char16* d = strChars(s);
+    widenAscii(cls, cn, d);
+    d[cn] = (fire_char16)':'; d[cn + 1] = (fire_char16)' ';
+    memcpy(d + cn + 2, strOf(msg)->data, mn * sizeof(fire_char16));
+    return StrV(s);
+}
+/* `__EnvCall(9, e)`: the text of `e.StackTrace` ("" without a trace or with `#stacktrace off`). */
+FIRE_FN Value fire_exc_trace(Value e, OwnList* list) {
+    char* text = e.kind == K_Class && leafAlive(e) ? fire_traceFormat(fire_traceOf(asObj(e)), g_stackTrace) : NULL;
+    Value r;
+    if (text && *text) text[strlen(text) - 1] = 0;   /* (the lines without the last line feed) */
+    r = strFromUtf8(text ? text : "", list);
+    free(text);
+    return r;
+}
+/* `__EnvCall(10, e, ...)`: (e, -1) the number of frames of `e.Frames`; (e, i, part) of frame i the function (0), the file (1, "" for the prelude), the line (2,
+ * 0 without lines). */
+FIRE_FN Value fire_exc_frames(Value e, Value index, Value part, OwnList* list) {
+    const FireTrace* t = e.kind == K_Class && leafAlive(e) && g_stackTrace != FIRE_TRACE_OFF ? fire_traceOf(asObj(e)) : NULL;
+    const FireTraceFrame* f;
+    if (index.kind != K_Int || index.i < 0) return Int((int64_t)fire_traceCount(t));
+    f = fire_traceFrameAt(t, (uint32_t)index.i);
+    if (!f) return Undef();
+    if (part.kind == K_Int && part.i == 1) return strFromUtf8(f->fn && f->fn->file ? f->fn->file : "", list);
+    if (part.kind == K_Int && part.i == 2) return Int(g_stackTrace == FIRE_TRACE_LINES && f->fn && f->fn->file ? f->line : 0);
+    return strFromUtf8(f->fn && f->fn->name ? f->fn->name : "?", list);
+}
 
 #ifdef FIRE_THREADS
 FIRE_FN Value threadUnhandled(Value exception);
@@ -5694,6 +5908,9 @@ FIRE_FN Value throwValueR(Value exception, bool resumable) {
     if (FIRE_UNLIKELY(exception.kind != K_Class)) return kindError("throw on a value of type %s which is not an object.", exception.kind);   /* (the VM's ArgumentException) */
     if (FIRE_UNLIKELY(!leafAlive(exception))) return destroyedError(exception);   /* (a destroyed object: what is thrown is the DestroyedException, like in the VM) */
     takeGlobal(asObj(exception));
+#ifdef FIRE_VM
+    fire_vmTraceThrow(asObj(exception));   /* (the stack of its first throw, docs/spec/STACKTRACE.md) */
+#endif
 #ifdef FIRE_DEBUG
     /* a debugger: an exception that nothing catches stops at the throw, before anything is unwound; `resume` ignores it (the throw gives undefined) */
     if (FIRE_UNLIKELY(g_dbgArmed) && !wouldBeCaught(exception) && fire_dbgUnhandled(exception)) return Undef();
@@ -8377,6 +8594,7 @@ FIRE_FN Value flatCopy(Value v, OwnList* owner) {
             c = newObjectR(src->cls, src->nfields, src->nraw, owner);
             dst = asObj(c);
             objSetTArgs(dst, objTArgs(src));
+            fire_traceShare(dst, src);
             for (i = 0; i < src->nfields; i++) { objFields(dst)[i] = objFields(src)[i]; retain(objFields(dst)[i]); }
             if (src->nraw) memcpy(objRaw(dst), objRaw(src), src->nraw);   /* (the packed fields: numbers) */
             return c;
@@ -8552,6 +8770,7 @@ FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
     }
     copy = newObjectR(o->cls, o->nfields, o->nraw, target);
     objSetTArgs(asObj(copy), objTArgs(o));
+    fire_traceShare(asObj(copy), o);
     if (c->taking) asObj(copy)->h.flags |= 16;   /* a copy for a thread: its destructor does not run when the thread ends */
     *copyMapFind(&c->objects, o) = copy;   /* replaces the "found" marker */
     return copy;
@@ -9160,7 +9379,7 @@ FIRE_FN void lentFree(Owned* h) {
         for (i = 0; i < o->nfields; i++) release(f[i]);   /* (its strings are counted atomically: lentMark) */
         slotRelease(&o->h);
 #ifndef FIRE_KEEP_DESTROYED
-        free(o->ext);
+        objExtFree(o);
         objMemFree(o, objMemSize(o));
 #endif
     }
@@ -11136,6 +11355,9 @@ FIRE_FN Value actorAwait(Value self, MsgFn fn, const Value* args, uint32_t n) {
     if (o && o->owner == &reply->travel) ownUnlink(o);   /* (travels to the caller like a returned value: its adopt takes it) */
     destroyList(&reply->travel);
     free(reply);
+#ifdef FIRE_VM
+    if (failed && r.kind == K_Class) fire_vmTraceAwaited(asObj(r));   /* (where it is awaited: a section of its trace) */
+#endif
     if (failed) return throwValueR(r, false);
     return r;
 }
@@ -11272,7 +11494,12 @@ FIRE_FN Value fire_completion_wait(Value h, Value limit, OwnList* list) {
     r = complCopy(n->value, list);
     fire_mutex_unlock(&g_cancelM);
     if (r.kind == K_String && refOf(r)->rc != IMMORTAL) { retain(r); poolPush(refOf(r)); }
-    if (fire_atomic_loadAcquire(&n->done) == 2 && r.kind == K_Class) return throwValueR(r, false);
+    if (fire_atomic_loadAcquire(&n->done) == 2 && r.kind == K_Class) {
+#ifdef FIRE_VM
+        fire_vmTraceAwaited(asObj(r));   /* (where it is awaited: a section of its trace) */
+#endif
+        return throwValueR(r, false);
+    }
     return r;
 }
 
@@ -12273,6 +12500,9 @@ FIRE_FN Value awaitReplyOf(ActorReply* reply) {
     if (o && o->owner == &reply->travel) ownUnlink(o);
     destroyList(&reply->travel);
     free(reply);
+#ifdef FIRE_VM
+    if (failed && r.kind == K_Class) fire_vmTraceAwaited(asObj(r));   /* (where it is awaited: a section of its trace) */
+#endif
     if (failed) return throwValueR(r, false);
     return r;
 }
@@ -13834,6 +14064,7 @@ uint8_t g_globalJobs = GJ_SAFEPOINTS;
 #if defined(FIRE_RT_IMPLEMENTATION) && !defined(FIRE_LIBRARY) && !defined(__cplusplus)
 const FireClassDesc* g_classDescs = NULL;
 uint32_t g_classDescCount = 0;
+int g_stackTrace = FIRE_TRACE_LINES;
 #ifdef FIRE_MODULES
 const FirePluginHost* g_pluginHost = NULL;
 const void** g_pluginRf = NULL;

@@ -58,6 +58,14 @@ namespace fire.Runtime
         /// a source that is no file. Only known while linking (not serialized): the debugger maps a file to its source index with it.</summary>
         public IReadOnlyList<string?>? SourceFiles { get; init; }
 
+        /// <summary>What an exception shows of its stack (docs/spec/STACKTRACE.md section 7): the setting the program runs with (Debug always `lines`). Serialized
+        /// (`.fbc`, flag "trace").</summary>
+        public StackTraceMode StackTrace { get; init; } = StackTraceMode.Lines;
+
+        /// <summary>The name of each source in a stack trace, by source index (ExceptionTrace.DisplayFiles: relative to the folder of the program's first source; null
+        /// for the prelude). Serialized with <see cref="StackTrace"/> (not with `off`).</summary>
+        public IReadOnlyList<string?>? TraceFiles { get; init; }
+
         /// <summary>The SHA-256 (hex, lower case) of the UTF-8 text of each source of the program as the compiler got it, by source index; null for the prelude, the libraries and
         /// the preludes of imports. Only known while linking (not serialized): a native debug build sends them to the debugger (docs/spec/NATIVE_DEBUG_PROTOCOL.md).</summary>
         public IReadOnlyList<string?>? SourceHashes { get; init; }

@@ -341,7 +341,7 @@ static void fcProgramFileWrite(FcCtx* c, const FcLinked* linked, bool lineTables
     FcPfWriter* w = &W;
     FcBuf body = {0}, tables = {0};
     const FcCompiled* p = linked->program;
-    bool sources;
+    bool sources, trace;
     int i, k;
     memset(w, 0, sizeof W);
     w->c = c;
@@ -404,6 +404,13 @@ static void fcProgramFileWrite(FcCtx* c, const FcLinked* linked, bool lineTables
             pfStr(w, linked->sourceHashes && i < linked->sourceHashes->count ? (const char*)linked->sourceHashes->items[i] : NULL);
         }
     }
+    /* the stack traces (FlagTrace, docs/spec/STACKTRACE.md): the setting and the name of each source in a trace - not with `#stacktrace off` */
+    trace = linked->stackTrace != STM_Off;
+    if (trace) {
+        pfU8(w, linked->stackTrace);
+        pfCount(w, linked->traceFiles ? linked->traceFiles->count : 0);
+        for (i = 0; linked->traceFiles && i < linked->traceFiles->count; i++) pfStr(w, (const char*)linked->traceFiles->items[i]);
+    }
 
     /* the tables: the units and the enums first (they add names), then the names */
     w->out = &tables;
@@ -424,7 +431,7 @@ static void fcProgramFileWrite(FcCtx* c, const FcLinked* linked, bool lineTables
     w->out = result;
     fcBufPut(result, "FBC\x1A", 4);
     pfU8(w, 1);
-    pfU8(w, (lineTables ? 1 : 0) | (sources ? 2 : 0));
+    pfU8(w, (lineTables ? 1 : 0) | (sources ? 2 : 0) | (trace ? 4 : 0));
     pfCount(w, w->stringList->count);
     for (i = 0; i < w->stringList->count; i++) {
         FcBuf utf8 = {0};

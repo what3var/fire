@@ -1851,7 +1851,7 @@ static void CompileStmtCore(FcComp* cm, FcStmt* stmt) {
             CompileDiscardedExpr(cm, ((FcExprStmt*)stmt)->expression);
             EmitReleaseTemps(cm, ((FcExprStmt*)stmt)->expression);
             break;
-        case SK_NoOpStmt: case SK_TypeCheckDirective: case SK_GlobalJobsDirective: case SK_TimeoutDirective: case SK_EndWaitDirective: case SK_NoShadowDirective: break;
+        case SK_NoOpStmt: case SK_TypeCheckDirective: case SK_GlobalJobsDirective: case SK_StackTraceDirective: case SK_TimeoutDirective: case SK_EndWaitDirective: case SK_NoShadowDirective: break;
         case SK_VarDeclStmt: {
             FcVarDeclStmt* vd = (FcVarDeclStmt*)stmt;
             bool autoArrayAlloc = vd->initializer == NULL && vd->arrayRanks->count > 0 && vd->arrayRanks->items[0] != NULL;

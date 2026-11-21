@@ -289,7 +289,8 @@ namespace fire.Runtime
             IReadOnlyList<Value>? withValues = null,
             VmExecutionMode executionMode = VmExecutionMode.Debug,
             int handoverCount = 0,
-            CancelNode? token = null)
+            CancelNode? token = null,
+            (TraceContext Context, string Trailer)? trace = null)
         {
             // The slots 0..sharedGlobalCount-1 are the real globals of the main program (the VM reads/writes them via the broker,
             // see GlobalsBroker/VM.AttachToGlobals) - here only placeholders, so that taking/with lie at the slots assigned by the compiler.
@@ -318,6 +319,7 @@ namespace fire.Runtime
                 // step 7: a task of the pool (VmScheduler) - not a system thread of its own
                 var taskVm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode) { CountsAsThread = true };
                 taskVm.ThreadToken = token;
+                taskVm.InheritTrace(trace);
                 if (broker != null) taskVm.AttachToGlobals(broker, sharedGlobalCount);
                 var poolHandle = new FireThreadHandle(null);
                 lock (_liveThreadsGate) _liveThreads++;
@@ -347,6 +349,7 @@ namespace fire.Runtime
             {
                 var vm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode) { CountsAsThread = true };
                 vm.ThreadToken = token;
+                vm.InheritTrace(trace);
                 if (broker != null) vm.AttachToGlobals(broker, sharedGlobalCount);
                 try { RunVm(vm); }
                 finally { vm.ReleaseGlobalsSections(); }

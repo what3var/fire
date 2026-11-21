@@ -1,0 +1,7 @@
+#stacktrace calls
+class S {
+    static undefined F() { throw new Exception("calls only") }
+}
+try { S.F() } catch (e) { print(e.StackTrace); print(e.Frames[0].line) }
+S.F()
+//# name: Trace: #stacktrace calls zeigt die Funktionen ohne Zeilen

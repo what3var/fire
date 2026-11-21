@@ -1847,6 +1847,16 @@ namespace fire.Compiler
                 return new GlobalJobsDirective(_sourceIndex, line, mode);
             }
 
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "stacktrace")
+            {
+                Advance();
+                if (fire.Runtime.StackTraceModes.Parse(Peek().Lexeme) is not { } traceMode)
+                    throw Error("'#stacktrace' expects off, calls or lines", Peek());
+                Advance();
+                ExpectStatementTerminator();
+                return new StackTraceDirective(_sourceIndex, line, traceMode);
+            }
+
             if (Check(TokenType.Identifier) && Peek().Lexeme == "endwait")
             {
                 Advance();
@@ -1867,7 +1877,7 @@ namespace fire.Compiler
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - a
             // '#using' line is already recognised there and removed from the text,
             // the parser never sees it any more. No case for it needed here any more.
-            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#endwait value', '#lax', '#strict')", Peek());
+            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#stacktrace off|calls|lines', '#timeout value', '#endwait value', '#lax', '#strict')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()

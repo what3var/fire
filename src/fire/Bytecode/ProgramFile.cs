@@ -39,6 +39,9 @@ namespace fire.Bytecode
         /// SourceHashes), what the debugger of the VM in C says in its hello (docs/spec/NATIVE_DEBUG_PROTOCOL.md). Written for a program in the mode Debug with
         /// line tables.</summary>
         private const int FlagSources = 2;
+        /// <summary>Flag of the header: behind the sources the setting of the stack traces (docs/spec/STACKTRACE.md: a byte, StackTraceMode) and the name of each source
+        /// in a trace (LinkedProgram.TraceFiles, by source index; none: the prelude). Written when the program shows traces (not with `#stacktrace off`).</summary>
+        private const int FlagTrace = 4;
 
         // the tags of a constant
         private const byte TagUndefined = 0, TagBool = 1, TagInt = 2, TagFloat = 3, TagChar = 4, TagString = 5, TagWord = 6;
@@ -132,6 +135,15 @@ namespace fire.Bytecode
                     for (int i = 0; i < files.Count; i++) { Str(files[i]); Str(hashes != null && i < hashes.Count ? hashes[i] : null); }
                 }
 
+                bool trace = linked.StackTrace != StackTraceMode.Off;
+                if (trace)
+                {
+                    U8((byte)linked.StackTrace);
+                    var names = linked.TraceFiles ?? Array.Empty<string?>();
+                    Count(names.Count);
+                    foreach (var name in names) Str(name);
+                }
+
                 // the tables are complete only now, and they stand before the program: the units and the enums first (they add names), then the names
                 var body = _out;
                 _out = new MemoryStream();
@@ -149,7 +161,7 @@ namespace fire.Bytecode
                 _out = new MemoryStream();
                 _out.Write(Magic);
                 U8(Version);
-                U8((byte)((_lines ? FlagLines : 0) | (sources ? FlagSources : 0)));
+                U8((byte)((_lines ? FlagLines : 0) | (sources ? FlagSources : 0) | (trace ? FlagTrace : 0)));
                 Count(_stringList.Count);
                 foreach (var s in _stringList) Bytes(Encoding.UTF8.GetBytes(s));
                 tables.WriteTo(_out);
@@ -632,6 +644,14 @@ namespace fire.Bytecode
                     sourceHashes = new List<string?>();
                     for (int n = Count(); n > 0; n--) { sourceFiles.Add(Str()); sourceHashes.Add(Str()); }
                 }
+                var stackTrace = StackTraceMode.Off;
+                List<string?>? traceFiles = null;
+                if ((headerFlags & FlagTrace) != 0)
+                {
+                    stackTrace = (StackTraceMode)U8();
+                    traceFiles = new List<string?>();
+                    for (int n = Count(); n > 0; n--) traceFiles.Add(Str());
+                }
                 if (_at != _in.Length) throw new ProgramFileException("The program file is damaged (bytes behind its end).");
 
                 var compiled = new CompiledProgram { TopLevel = topLevel, Classes = classes, ExternSignatures = externs, Resources = resources, EnumDecls = enumDecls, CustomUnits = customUnits };
@@ -640,7 +660,7 @@ namespace fire.Bytecode
                 {
                     FloatWidth = floatWidth, IntWidth = intWidth, WordWidth = wordWidth,
                     PackageNatives = packageNatives?.ToList()!, PackageNativeLibraries = packageLibraries?.ToList()!, GraphicsNatives = graphicsNatives?.ToList()!,
-                    SourceFiles = sourceFiles, SourceHashes = sourceHashes,
+                    SourceFiles = sourceFiles, SourceHashes = sourceHashes, StackTrace = stackTrace, TraceFiles = traceFiles,
                 };
             }
 
