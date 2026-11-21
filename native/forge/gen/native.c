@@ -249,7 +249,7 @@ static FgGen* fgGenNew(FcCtx* c, FcLinked* program, FcList* natives, const FgTar
     g->excTypes = fcListNew(c); fcListAdd(c, g->excTypes, (void*)"Exception");
     g->enumList = fcListNew(c); FG_D(unitFactorCaches); FG_D(catchCallbacks); FG_D(refCallSites); FG_P(lambdaDefaults); FG_D(callTArgTexts); FG_D(classTArgTexts);
     g->objTypeNames = fcListNew(c); FG_D(objTypeIndex); FG_D(narrowEligible); FG_P(layouts); FG_D(probeTargets); FG_D(varType); FG_D(fieldAddressTaken);
-    FG_D(typeIsOfIds); FG_D(externDecls); FG_D(restrictedMethods); FG_D(restrictedFields); g->errorClasses = fcListNew(c); FG_D(pkgLocks); FG_D(arrClasses);
+    FG_D(typeIsOfIds); FG_D(externDecls); FG_D(restrictedMethods); FG_D(restrictedFields); g->errorClasses = fcListNew(c); FG_D(pkgLocks); FG_D(arrClasses); FG_D(jsonReads);
     FG_D(lineFiles); FG_D(standardNativesWritten); FG_D(knownArrayElem); FG_D(needsDefaults); FG_D(nativeThunks); FG_D(packageNatives); g->packageImports = fcListNew(c);
     FG_P(cRet); FG_P(cAbiParams); FG_P(funcDebug); FG_D(dbgLines); FG_D(globalNames); FG_D(overloadSelectors); FG_D(ovClassNames); FG_D(ovGenericTests); FG_D(rawType); FG_P(rawLayouts);
     FG_D(foreignClasses); FG_P(usedModules); FG_D(demandedClasses); FG_D(madeBy); FG_D(libDispatchers); FG_D(libFields); FG_D(libFieldAddresses);

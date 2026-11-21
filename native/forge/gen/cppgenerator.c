@@ -105,6 +105,10 @@ static const char* LineFileLiteral(FgGen* g, int sourceIndex);
 /* CppGenerator.Modules.cs: the C of a unit id and of an enum number in code (a library: through the tables of the program) */
 static const char* UnitC(FgGen* g, int unit) { return LibraryRole && unit != 0 ? fcFmt(g->c, "fire_units_%s[%d]", g->self->id, unit) : fcFmt(g->c, "%d", unit); }
 static const char* EnumC(FgGen* g, int index) { return LibraryRole && index != 0 ? fcFmt(g->c, "fire_enums_%s[%d]", g->self->id, index) : fcFmt(g->c, "%d", index); }
+/* the entry of an array of a class in g_arrClasses in code (a library: from the program's table fire_arrc_M); in a static table (TArg, JsonFieldInfo) the
+ * module's number stays and `arrMap` names the table (NULL: none) */
+static const char* ArrClassC(FgGen* g, int id) { return LibraryRole && id != 0 ? fcFmt(g->c, "fire_arrc_%s[%d]", g->self->id, id) : fcFmt(g->c, "%d", id); }
+static const char* ArrClassMap(FgGen* g, int id) { return LibraryRole && id != 0 ? fcFmt(g->c, ", fire_arrc_%s", g->self->id) : ", NULL"; }
 static const char* ClassIdExpr(FgGen* g, const FgClassInfo* cls) { return cls->idText ? cls->idText : fcFmt(g->c, "%d", cls->id); }
 static int EnumIndex(FgGen* g, const FcEnumType* type);
 static const FcU* DemandUnit(FgGen* g, const char* demand);
@@ -1331,8 +1335,10 @@ static const char* ClassGuard(FgGen* g, const char* value, const char* spec, con
             FcBuf fill = {0};
             fcBufStr(&fill, "");
             for (k = 0; k < wanted->count; k++) fcBufFmt(&fill, " tw_[%d] = %s; th_[%d] = %s;", k, (const char*)wanted->items[k], k, TArgOfExpr(g, genericRc->name, k, fcFmt(g->c, "objAt(%s)", value)));
-            altCheck = fcFmt(g->c, "%s if (%s.kind == K_Class && leafAlive(%s)) { const TArg* tw_[%d]; const TArg* th_[%d]; int ti_;%s for (ti_ = 0; ti_ < %d; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_] && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) { guardTypeArgsFailed(%s, tw_, th_, %d, %s); break; } }",
-                altCheck, value, value, wanted->count, wanted->count, fcBufDone(g->c, &fill), wanted->count, CString(g, parsed->display), wanted->count, CString(g, what));
+            altCheck = fcFmt(g->c, "%s if (%s.kind == K_Class && leafAlive(%s)) { const TArg* tw_[%d]; const TArg* th_[%d]; int ti_;%s for (ti_ = 0; ti_ < %d; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_]%s && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) { guardTypeArgsFailed(%s, tw_, th_, %d, %s); break; } }",
+                altCheck, value, value, wanted->count, wanted->count, fcBufDone(g->c, &fill), wanted->count,
+                /* (per module: with modules the texts count - a `Dictionary<string, string>` of the program in a field of a library) */
+                Modular ? " && strcmp(tw_[ti_]->display, th_[ti_]->display) != 0" : "", CString(g, parsed->display), wanted->count, CString(g, what));
         }
     }
     if (parsed->typeParamIndex < 0) return altCheck;
@@ -1563,8 +1569,8 @@ static const char* TArgTables(FgGen* g, bool withTargOf) {
         fcBufFmt(&sb, "static bool %stah_%d(Value v) { return %s; }\n", Px, id, holds);
         if (ArrayOfTypeArg(g, text, &elemOfArg, &elemText)) { arrElem = elemOfArg + 1; arrClass = elemText ? ArrClassId(g, elemText) : 0; }
         isA = IsANames(g, text, fcFmt(g->c, "%stai_%d", Px, id), &sb);
-        fcBufFmt(&sb, "static const TArg %sta_%d = {%s, %stah_%d, %s, %s, %s, %d, %d, %s};\n", Px, id, CString(g, fgDisplayOf(g->c, text)), Px, id,
-            fcStartsWith(text, "float") && fgNumberDemand(g->c, text, NULL, NULL) ? "true" : "false", kind, adapt, arrElem, arrClass, isA);
+        fcBufFmt(&sb, "static const TArg %sta_%d = {%s, %stah_%d, %s, %s, %s, %d, %d, %s%s};\n", Px, id, CString(g, fgDisplayOf(g->c, text)), Px, id,
+            fcStartsWith(text, "float") && fgNumberDemand(g->c, text, NULL, NULL) ? "true" : "false", kind, adapt, arrElem, arrClass, isA, ArrClassMap(g, arrClass));
     }
     byId = fgByValue(g, g->targListIds);
     for (i = 0; i < byId->count; i++) {
@@ -2051,7 +2057,7 @@ static const char* TypeArrayUnitArgsOf(FgGen* g, const char* demand, int elemCod
     bool dimensionOnly;
     if (fgAeTypeOf(elemCode) == AE_Class && demand) {
         int id = ArrClassId(g, demand);
-        return fcFmt(g->c, "%d, %d, %s", id, 16 | defined, Constant(g, fcMakeString(g->c, FG_SPEC(fgAeClassText(g->c, demand))->display)));
+        return fcFmt(g->c, "%s, %d, %s", ArrClassC(g, id), 16 | defined, Constant(g, fcMakeString(g->c, FG_SPEC(fgAeClassText(g->c, demand))->display)));
     }
     if (!demand) return fcFmt(g->c, "0, %d, %s", defined, Constant(g, fcMakeString(g->c, "(no unit)")));
     unit = fgTrimStart(demand, '#');

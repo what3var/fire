@@ -544,8 +544,9 @@ static const char* ModFieldHelpers(FgGen* g, const char* name) {
             else if ((getter = FG_FIND(cls->rc, fcFmt(g->c, "get_%s", name), 0).proto) != NULL && !getter->isStatic)
                 fgArmAdd(g, arms, cls->id, fcFmt(g->c, "{ Value r = %s(v); adopt(r, list); return r; }", GetFunc(g, getter, FK_Method, 0)->name));
         }
-        fcBufFmt(&sb, "static Value %s(Value v, OwnList* list) {\n    Obj* o = asObj(v); (void)list;\n    uint32_t k_ = %s;\n    if (!(%s)) return Undef();\n    switch (k_) {\n%s        default: return Undef();\n    }\n}\n",
-            FieldFn(g, "gfp", name), OwnLocal(g, "o->cls"), OwnRangeTest(g, "k_"), MergedCases(g, arms, NULL));
+        /* (an object of a class of another module - a class of the program that extends one of this library: its field through the runtime's tables) */
+        fcBufFmt(&sb, "static Value %s(Value v, OwnList* list) {\n    Obj* o = asObj(v); (void)list;\n    uint32_t k_ = %s;\n    if (!(%s)) return fireProbeRawGet(v, %s, list);\n    switch (k_) {\n%s        default: return Undef();\n    }\n}\n",
+            FieldFn(g, "gfp", name), OwnLocal(g, "o->cls"), OwnRangeTest(g, "k_"), cname, MergedCases(g, arms, NULL));
         fcBufFmt(&sb, "static inline void %s(Value v, Value x, OwnList* list, uint32_t caller) {\n", FieldFn(g, "sf", name));
         fcBufFmt(&sb, "    if (v.kind == K_Class && FIRE_UNLIKELY(asObj(v)->h.flags & 2)) { probedSet(v, %s, x, %s, %s, caller); return; }\n", cname, FieldFn(g, "sfa", name), FieldFn(g, "gfp", name));
         fcBufFmt(&sb, "    %s(v, x, list, caller);\n", plain);

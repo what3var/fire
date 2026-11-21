@@ -627,6 +627,9 @@ static const char* HeadDefines(FgGen* g) {
     }
     if (g->usesExceptions) fcBufStr(&sb, "#define FIRE_EXCEPTIONS 1\n");
     if (Modular) fcBufStr(&sb, "#define FIRE_MODULES 1   // modules (ROADMAP 9): the members of the classes of other modules by name, through the class descriptors\n");
+    /* (the modules in files of their own, linkage static/shared: what the platform keeps once - the key of the thread state of TinyCC, ... - is one, in the
+     * program's file; fire_rt.h FIRE_ONCE) */
+    if (Modular && g->separate && !g->dll) fcBufStr(&sb, "#define FIRE_SPLIT 1   // the modules are units of their own: what the platform keeps once lives in the program's file (fire_rt.h FIRE_ONCE)\n");
     if (DebugBuild) fcBufStr(&sb, "#define FIRE_DEBUG 1   // a debug build: the shadow stack and the hooks of the debugger (fire_debug.h)\n");
     if (DebugBuild && DebugAgent) fcBufStr(&sb, "#define FIRE_DEBUG_AGENT 1   // the debug agent (docs/spec/NATIVE_DEBUG_PROTOCOL.md; the desktop: FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T)\n");
     if (DebugBuild && DebugAgent) {

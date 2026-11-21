@@ -687,17 +687,14 @@ static const char* ReflectionCode(FgGen* g) {
     fcBufStr(&get, ""); fcBufStr(&set, ""); fcBufStr(&callSb, ""); fcBufStr(&newSb, "");
     if (Modular) {
         fcBufStr(&get, "    { char n_[200]; strToUtf8(name, n_, sizeof n_); return fireGetField(obj, n_, list, caller); }\n");
-        /* (an object with probes: they hear of it - the member is written by its name) */
-        fcBufFmt(&set, "    { char n_[200]; strToUtf8(name, n_, sizeof n_);%s fireSetField(obj, value, n_, list, caller); return Undef(); }\n",
-            g->usesProbes ? " if (FIRE_UNLIKELY(asObj(obj)->h.flags & 2)) { probedSet(obj, n_, value, NULL, NULL, caller); return Undef(); }" : "");
     }
-    for (i = 0; i < (Modular ? 0 : fieldNames->count); i++) {
+    for (i = 0; i < fieldNames->count; i++) {
         const char* name = (const char*)fieldNames->items[i];
         const char* tail = fcFmt(g->c, "%s%s", FieldHasList(g, name) ? ", list" : "", FieldHasCaller(g, name) ? ", caller" : "");
         FcBuf arms = {0};
         int bytesFirst = -1, wordsFirst = -1, nArms = 0, pass;
         const char* toBuffer = "";
-        fcBufFmt(&get, "    if (strIs(name, %s)) return gf_%s(obj%s);\n", CString(g, name), Mangle(g, name), tail);
+        if (!Modular) fcBufFmt(&get, "    if (strIs(name, %s)) return gf_%s(obj%s);\n", CString(g, name), Mangle(g, name), tail);
         /* (`byte data[]`/`word w[]`: a store by name gets the buffer a compiled store converts to; the groups in the order of their first class) */
         for (k = 0; k < g->classList->count; k++) {
             FgClassInfo* c = (FgClassInfo*)g->classList->items[k];
@@ -721,8 +718,14 @@ static const char* ReflectionCode(FgGen* g) {
             nArms++;
         }
         if (nArms > 0) toBuffer = fcFmt(g->c, "switch (asObj(obj)->cls) { %sdefault: break; } %s", fcBufDone(g->c, &arms), g->usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return Undef(); " : "");
-        fcBufFmt(&set, "    if (strIs(name, %s)) { %ssf_%s(obj, value%s); return Undef(); }\n", CString(g, name), toBuffer, Mangle(g, name), tail);
+        /* (modules: the buffer first, then the store by the name - fireSetField does not convert) */
+        if (Modular) { if (toBuffer[0]) fcBufFmt(&set, "    if (strIs(name, %s)) { %s}\n", CString(g, name), toBuffer); }
+        else fcBufFmt(&set, "    if (strIs(name, %s)) { %ssf_%s(obj, value%s); return Undef(); }\n", CString(g, name), toBuffer, Mangle(g, name), tail);
     }
+    /* (an object with probes: they hear of it - the member is written by its name) */
+    if (Modular)
+        fcBufFmt(&set, "    { char n_[200]; strToUtf8(name, n_, sizeof n_);%s fireSetField(obj, value, n_, list, caller); return Undef(); }\n",
+            g->usesProbes ? " if (FIRE_UNLIKELY(asObj(obj)->h.flags & 2)) { probedSet(obj, n_, value, NULL, NULL, caller); return Undef(); }" : "");
     fcBufFmt(&sb,
         "FIRE_MAYBE_UNUSED static Value rf_get(Value obj, Value name, OwnList* list, uint32_t caller) {\n"
         "    (void)list; (void)caller;\n"

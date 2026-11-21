@@ -145,6 +145,33 @@ static FcList* JsonTypeArgTexts(FgGen* g, const char* type) {
     return r;
 }
 /* RegisterJsonTargets: what reading JSON can make (see the C#) */
+/* A library (it has no RegisterJsonTargets - the program makes the objects of its classes): what its code reads as JSON - Json.Parse, Json.Deserialize with the
+ * class as a text (a slot without a class) or as the type argument; the calls of the class Json itself do not count (what the program calls of it, it sees). */
+static void CollectJsonReads(FgGen* g) {
+    int i, k;
+    for (i = 0; i < g->funcs->count; i++) {
+        FgFunc* f = (FgFunc*)g->funcs->items[i];
+        FgCode code = f->decoded;
+        if (f->external || (f->chunk->ownerClass && streq0(f->chunk->ownerClass->name, "Json"))) continue;
+        for (k = 0; k < code.n; k++) {
+            const FgInstr* ins = &code.p[k];
+            const char* method;
+            const char* text;
+            int set;
+            if (ins->op != OP_CallStaticMethod || !streq0(fgConstStr(f->chunk, ins->a[0]), "Json")) continue;
+            method = fgConstStr(f->chunk, ins->a[1]);
+            if (!streq0(method, "Deserialize") && !streq0(method, "Parse")) continue;
+            fcSetAdd(g->jsonReads, "$reads");
+            if (streq0(method, "Parse")) continue;
+            if (ins->a[2] >= 2) { fcSetAdd(g->jsonReads, "$any"); continue; }
+            set = k - 1;
+            if (set >= 0 && code.p[set].op == OP_CopyArgs) set--;
+            text = set >= 0 && code.p[set].op == OP_SetTypeArgs ? fgConstStr(f->chunk, code.p[set].a[0]) : NULL;
+            fcSetAdd(g->jsonReads, !text || strchr(text, '$') ? "$any" : text);
+        }
+    }
+}
+
 static void RegisterJsonTargets(FgGen* g) {
     FcRtClass* json;
     int i, k;
@@ -152,6 +179,7 @@ static void RegisterJsonTargets(FgGen* g) {
     if ((json = (FcRtClass*)fcDictGet(g->program->program->classes, "Json")) != NULL) {
         bool reads = false, anySlot = false;
         FcDict* declared = fcDictNew(g->c, FC_KEY_STR);
+        FcDict* libraryReads;
         FC_DICT_EACH(json->methods, e) {
             const char* name = (const char*)e->key;
             FcList* protos = (FcList*)e->value;
@@ -164,6 +192,11 @@ static void RegisterJsonTargets(FgGen* g) {
                 if (proto->paramCount >= 2) anySlot = true;
             }
         }
+        /* (modules: what the libraries read - `db.QueryList("Person", ...)` of data reads into a slot without a class; the program makes the objects of its
+         * classes, as with one file) */
+        libraryReads = fcDictNew(g->c, FC_KEY_STR);
+        if (g->libraries) for (i = 0; i < g->libraries->count; i++) FC_DICT_EACH(((FgModuleOutput*)g->libraries->items[i])->needs->jsonReads, e) fcSetAdd(libraryReads, e->key);
+        if (fcDictHas(libraryReads, "$reads")) reads = true;
         if (reads) {
             FcList* funcs = fcListCopy(g->c, g->funcs);
             fcListAdd(g->c, funcs, g->main);
@@ -182,6 +215,8 @@ static void RegisterJsonTargets(FgGen* g) {
                     else fcSetAdd(declared, text);
                 }
             }
+            if (fcDictHas(libraryReads, "$any")) anySlot = true;
+            FC_DICT_EACH(libraryReads, e) if (((const char*)e->key)[0] != '$') fcSetAdd(declared, e->key);
             if (fcDictHas(g->program->program->classes, "JsonObject")) RegisterClass(g, "JsonObject");
             {
                 FcDict* seen = fcDictNew(g->c, FC_KEY_PTR);
@@ -303,9 +338,9 @@ static const char* JsonRow(FgGen* g, FgClassInfo* ci, const char* fieldTable, in
             raw = fgRawPlaceOf(g, rc, fi);
             FieldPlace(g, rc, fi, &slot2, &half);
             if (!fgFieldRequiredUnit(rc, f->name) && fgFieldRequiredArrayType(rc, f->name)) arrClass = ArrClassId(g, fgFieldRequiredArrayType(rc, f->name));
-            fcBufFmt(sb, "%s{%s, %d, %s, %d, %d, %s, %s, %d, %d}", i ? ", " : "", jn, slot > 0 ? slot : 0, tn, unit, reqArray, defined, raw, half, arrClass);
+            fcBufFmt(sb, "%s{%s, %d, %s, %d, %d, %s, %s, %d, %d%s}", i ? ", " : "", jn, slot > 0 ? slot : 0, tn, unit, reqArray, defined, raw, half, arrClass, ArrClassMap(g, arrClass));
         }
-        fcBufStr(sb, ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1, 0}};\n");
+        fcBufStr(sb, ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1, 0, NULL}};\n");
         if (unitFixups)
             for (i = 0; i < rows->count; i++) {
                 int u = UnitId(g, ((FgJsonField*)rows->items[i])->unit);

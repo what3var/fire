@@ -187,6 +187,8 @@ typedef struct FgModuleNeeds {
     FcList* units;              /* const FcU* */
     FcList* enums;              /* const FcEnumType* */
     FcList* excTypes;           /* fc8 */
+    FcList* arrClasses;         /* fc8: the texts of its arrays of a class, in the order of its numbers for them (the program decides the entries: fire_arrc_M) */
+    FcDict* jsonReads;          /* SortedSet<string> ordinal: what its code reads as JSON - "$reads", "$any" (a slot without a class), the declared types */
     FcDict* reflectionNatives;  /* SortedSet<string> ordinal */
     FcDict* classes;            /* SortedSet<string> ordinal */
     FcDict* madeBy;             /* class -> FcList* of names; NULL: an interface of before */
@@ -282,6 +284,7 @@ struct FgGen {
     FcList* errorClasses;
     FcDict* pkgLocks;           /* native -> index + 1 */
     FcDict* arrClasses;         /* text -> id + 1 */
+    FcDict* jsonReads;          /* a library: what its code reads as JSON (FgModuleNeeds.jsonReads) */
     FcDict* isOfWritten;        /* NULL until made */
     FcDict* derivedFieldNames;  /* NULL until made */
     FcDict* setterProtos;       /* NULL until made */

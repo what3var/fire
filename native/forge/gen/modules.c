@@ -501,7 +501,7 @@ static FgModuleNeeds* fgNeedsNew(FcCtx* c) {
     FgModuleNeeds* n = (FgModuleNeeds*)fcAlloc(c, sizeof *n);
     n->dispatchers = fcDictNew(c, FC_KEY_STR); n->fields = fcDictNew(c, FC_KEY_STR); n->fieldAddresses = fcDictNew(c, FC_KEY_STR); n->isOf = fcDictNew(c, FC_KEY_STR);
     n->targOfs = fcDictNew(c, FC_KEY_STR); n->operators = fcDictNew(c, FC_KEY_STR); n->overloadClasses = fcDictNew(c, FC_KEY_STR); n->errorClasses = fcDictNew(c, FC_KEY_STR);
-    n->refCallSites = fcDictNew(c, FC_KEY_STR); n->staticFields = fcDictNew(c, FC_KEY_STR); n->units = fcListNew(c); n->enums = fcListNew(c); n->excTypes = fcListNew(c);
+    n->refCallSites = fcDictNew(c, FC_KEY_STR); n->staticFields = fcDictNew(c, FC_KEY_STR); n->units = fcListNew(c); n->enums = fcListNew(c); n->excTypes = fcListNew(c); n->arrClasses = fcListNew(c); n->jsonReads = fcDictNew(c, FC_KEY_STR);
     n->reflectionNatives = fcDictNew(c, FC_KEY_STR); n->classes = fcDictNew(c, FC_KEY_STR); n->sharedNatives = fcDictNew(c, FC_KEY_STR);
     return n;
 }
@@ -523,6 +523,9 @@ static FgModuleNeeds* CollectNeeds(FgGen* g) {
     for (i = 0; i < g->units->count; i++) fcListAdd(g->c, n->units, g->units->items[i]);
     for (i = 0; i < g->enumList->count; i++) fcListAdd(g->c, n->enums, g->enumList->items[i]);
     for (i = 0; i < g->excTypes->count; i++) fcListAdd(g->c, n->excTypes, g->excTypes->items[i]);
+    { FcList* byId = fgByValue(g, g->arrClasses); for (i = 0; i < byId->count; i++) fcListAdd(g->c, n->arrClasses, (void*)((FcDictEntry*)byId->items[i])->key); }
+    CollectJsonReads(g);
+    FC_DICT_EACH(g->jsonReads, e) fcSetAdd(n->jsonReads, e->key);
     FC_DICT_EACH(g->reflNativesUsed, e) fcSetAdd(n->reflectionNatives, e->key);
     FC_DICT_EACH(g->demandedClasses, e) fcSetAdd(n->classes, e->key);
     n->madeBy = fcDictNew(g->c, FC_KEY_STR);
@@ -596,6 +599,7 @@ static void AddLibraryNeeds(FgGen* g) {
         for (k = 0; k < n->units->count; k++) UnitId(g, (const FcU*)n->units->items[k]);
         for (k = 0; k < n->enums->count; k++) EnumIndex(g, (const FcEnumType*)n->enums->items[k]);
         for (k = 0; k < n->excTypes->count; k++) ExcTypeId(g, (const char*)n->excTypes->items[k]);
+        for (k = 0; k < n->arrClasses->count; k++) ArrClassId(g, (const char*)n->arrClasses->items[k]);
         l = fgSortedKeys(g->c, n->reflectionNatives, true);
         for (k = 0; k < l->count; k++) {
             const char* native = (const char*)l->items[k];
@@ -630,6 +634,11 @@ static const char* ModuleTables(FgGen* g) {
         if (n->excTypes->count == 0) fcBufStr(&sb, "0");
         for (k = 0; k < n->excTypes->count; k++) fcBufFmt(&sb, "%s%d", k ? ", " : "", ExcTypeId(g, (const char*)n->excTypes->items[k]));
         fcBufStr(&sb, "};\n");
+        if (n->arrClasses->count > 0) {
+            fcBufFmt(&sb, "const uint32_t fire_arrc_%s[] = {0", id);
+            for (k = 0; k < n->arrClasses->count; k++) fcBufFmt(&sb, ", %d", ArrClassId(g, (const char*)n->arrClasses->items[k]));
+            fcBufStr(&sb, "};\n");
+        }
         fcBufFmt(&sb, "const int32_t fire_dbgsrc_%s[] = {", id);
         srcs = fgISetItems(g->c, lib->spec->sources, true, &ns);
         if (ns == 0) fcBufStr(&sb, "0");
@@ -667,6 +676,7 @@ static const char* LibraryDeclarations(FgGen* g) {
     fcBufStr(&sb, HostArray(g, fcFmt(g->c, "fire_enums_%s", id), "uint8_t", g->enumList->count + 1));
     fcBufStr(&sb, HostArray(g, fcFmt(g->c, "fire_exct_%s", id), "int32_t", g->excTypes->count > 1 ? g->excTypes->count : 1));
     fcBufStr(&sb, HostArray(g, fcFmt(g->c, "fire_dbgsrc_%s", id), "int32_t", fcDictCount(g->self->sources) > 1 ? fcDictCount(g->self->sources) : 1));
+    if (fcDictCount(g->arrClasses) > 0) fcBufStr(&sb, HostArray(g, fcFmt(g->c, "fire_arrc_%s", id), "uint32_t", fcDictCount(g->arrClasses) + 1));
     return fcBufDone(g->c, &sb);
 }
 

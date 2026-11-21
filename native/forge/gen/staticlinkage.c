@@ -12,7 +12,7 @@ typedef struct FgStaticPlan { const char* programC; const char* natives; FcList*
 static const char* fgLibraryFile(FcCtx* c, const FgStaticLibrary* l, const char* extension) { return fcFmt(c, "%s/%s%s", l->directory, l->libraryName, extension); }
 
 static const char* fgGeneratorIdentity = "forge-c " __DATE__ " " __TIME__;
-#define FG_INTERFACE_FORMAT 2   /* InterfaceFormat (2: the units as ProgramFile writes them) */
+#define FG_INTERFACE_FORMAT 3   /* InterfaceFormat (2: the units as ProgramFile writes them; 3: ArrClasses, JsonReads) */
 #define FG_INTERFACE_EXTENSION ".fireiface"
 
 /* ---- the natives in C of a library module ---- */
@@ -493,6 +493,8 @@ static const char* InterfaceJson(FgGen* g, const FgModuleOutput* output, const c
         fcBufStr(&b, "]}");
     }
     fcBufStr(&b, "],\"ExcTypes\":"); fgJsonStrList(&b, n->excTypes);
+    fcBufStr(&b, ",\"ArrClasses\":"); fgJsonStrList(&b, n->arrClasses);
+    fcBufStr(&b, ",\"JsonReads\":"); fgJsonStrList(&b, fgSortedKeys(g->c, n->jsonReads, true));
     fcBufStr(&b, ",\"ReflectionNatives\":"); fgJsonStrList(&b, fgSortedKeys(g->c, n->reflectionNatives, true));
     fcBufStr(&b, ",\"Made\":"); fgJsonStrList(&b, fgSortedKeys(g->c, n->classes, true));
     fcBufStr(&b, ",\"MadeBy\":");
@@ -673,6 +675,8 @@ static FgModuleOutput* OutputOf(FcCtx* c, const FcLinked* program, const FcJson*
                 fgJsonStrings2(c, fcJsonGet(e, "Members")), values));
         }
     { FcList* l = fgJsonStrings2(c, fcJsonGet(f, "ExcTypes")); for (k = 0; k < l->count; k++) fcListAdd(c, n->excTypes, l->items[k]); }
+    { FcList* l = fgJsonStrings2(c, fcJsonGet(f, "ArrClasses")); for (k = 0; k < l->count; k++) fcListAdd(c, n->arrClasses, l->items[k]); }
+    FG_SET("JsonReads", n->jsonReads);
     FG_SET("ReflectionNatives", n->reflectionNatives);
     FG_SET("Made", n->classes);
     if ((v = fcJsonGet(f, "MadeBy")) && v->kind == FJ_OBJ) {
@@ -795,7 +799,7 @@ static FgStaticPlan* GenerateStatic(FcCtx* c, FcLinked* program, FcList* natives
                         FcBuf j = {0};
                         fcBufFmt(&j, "{\"Format\":%d,\"Module\":\"runtime\",\"Key\":", FG_INTERFACE_FORMAT); fgJsonStr(&j, rtKey);
                         fcBufStr(&j, ",\"Abi\":"); fgJsonStr(&j, rtKey);
-                        fcBufStr(&j, ",\"Flags\":\"\",\"Classes\":[],\"Exports\":[],\"Dispatchers\":[],\"Fields\":[],\"FieldAddresses\":[],\"IsOf\":[],\"TArgOfs\":[],\"Operators\":[],\"OverloadClasses\":[],\"ErrorClasses\":[],\"RefCallSites\":[],\"StaticFields\":[],\"Units\":[],\"Enums\":[],\"ExcTypes\":[],\"ReflectionNatives\":[],\"Made\":[],\"MadeBy\":null,\"SharedNatives\":[],\"NativeThunks\":\"\",\"JsonEngine\":false,\"HostImports\":[]}");
+                        fcBufStr(&j, ",\"Flags\":\"\",\"Classes\":[],\"Exports\":[],\"Dispatchers\":[],\"Fields\":[],\"FieldAddresses\":[],\"IsOf\":[],\"TArgOfs\":[],\"Operators\":[],\"OverloadClasses\":[],\"ErrorClasses\":[],\"RefCallSites\":[],\"StaticFields\":[],\"Units\":[],\"Enums\":[],\"ExcTypes\":[],\"ArrClasses\":[],\"JsonReads\":[],\"ReflectionNatives\":[],\"Made\":[],\"MadeBy\":null,\"SharedNatives\":[],\"NativeThunks\":\"\",\"JsonEngine\":false,\"HostImports\":[]}");
                         fgWriteAtomically(c, fcFmt(c, "%s.new", lib->interfaceFile), fcBufDone(c, &j));
                     }
                 }

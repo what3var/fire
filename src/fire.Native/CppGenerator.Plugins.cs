@@ -93,6 +93,7 @@ namespace fire.Native
             string flags = (_forced ?? CurrentFlags).ToString();
             sb.AppendLine($"static const FirePluginHost kPluginHost = {{{CString(PluginHeadKey(_libraryHead, flags))}, fire_moduleAbi, kPluginExcNames, {_excTypes.Count}u, {(_dllModules != null ? "fire_hostFind" : "NULL")}}};");
             _initCode.AppendLine("    g_pluginHost = &kPluginHost;   // (it can load fire plugins)");
+            _initCode.AppendLine($"    g_arrClassCount = {_arrClasses.Count};   // (a plugin adds the entries of its arrays of a class)");
             return sb.ToString();
         }
 
@@ -121,6 +122,7 @@ namespace fire.Native
             sb.AppendLine($"static uint16_t fire_units_{id}[{Math.Max(1, _units.Count)}];");
             sb.AppendLine($"static uint8_t fire_enums_{id}[{_enumList.Count + 1}];");
             sb.AppendLine($"static int32_t fire_exct_{id}[{Math.Max(1, _excTypes.Count)}];");
+            sb.AppendLine($"static uint32_t fire_arrc_{id}[{_arrClasses.Count + 1}];");
             // (a debug build: the indexes of its sources among the program's, given when it is registered - fire_dbgPlugin)
             sb.AppendLine(DebugBuild ? $"static int32_t fire_dbgsrc_{id}[{Math.Max(1, _self.Sources.Count)}];"
                 : $"FIRE_MAYBE_UNUSED static const int32_t fire_dbgsrc_{id}[{Math.Max(1, _self.Sources.Count)}] = {{0}};");
@@ -216,6 +218,9 @@ namespace fire.Native
                 exts = $"{extended.Count}u, kPlExtClasses, kPlExtTables";
             }
             string debug = PluginDebugTables(sb);
+            // (its arrays of a class: the entries the runtime gives them in g_arrClasses - fire_arrc_<p>)
+            string arr = $"0u, NULL, fire_arrc_{id}";
+            if (_arrClasses.Count > 0) { sb.Append(ArrClassTable()); arr = $"{_arrClasses.Count}u, {Px}kArrClasses, fire_arrc_{id}"; }
             string link = "NULL";
             if (_dll)
             {
@@ -224,7 +229,7 @@ namespace fire.Native
             }
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}extern const FirePlugin fire_module_info;");
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}const FirePlugin fire_module_info = {{FIRE_PLUGIN_FORMAT, {CString(_self.Name)}, \"{PluginHeadMark}\", {_pluginDeps.Count}u, {depNames}, {depAbis}, "
-                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}, {exts}, {debug}}};");
+                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}, {exts}, {debug}, {arr}}};");
             return sb.ToString();
         }
 

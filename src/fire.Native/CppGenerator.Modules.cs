@@ -57,6 +57,12 @@ namespace fire.Native
             public readonly List<Unit> Units = new();
             public readonly List<EnumType> Enums = new();
             public readonly List<string> ExcTypes = new();
+            /// <summary>The arrays of a class, a string or an enum its code types (their DeclaredType texts, in the order of its numbers for them): the program
+            /// decides their entries in g_arrClasses (<c>fire_arrc_M[k]</c>) - an array goes from module to module with its type.</summary>
+            public readonly List<string> ArrClasses = new();
+            /// <summary>What its code reads as JSON (Json.Deserialize, Json.Parse): "$reads", "$any" (a slot without a class - every class can be made) and the
+            /// declared types; the program registers the classes that can be made (RegisterJsonTargets).</summary>
+            public readonly SortedSet<string> JsonReads = new(StringComparer.Ordinal);
             public readonly SortedSet<string> ReflectionNatives = new(StringComparer.Ordinal);
             /// <summary>The classes whose objects its code can make (of its own and of other modules): the program generates for these.</summary>
             public readonly SortedSet<string> Classes = new(StringComparer.Ordinal);
@@ -199,6 +205,11 @@ namespace fire.Native
         private string UnitC(int unit) => LibraryRole && unit != 0 ? $"fire_units_{_self!.Id}[{unit}]" : unit.ToString(CultureInfo.InvariantCulture);
         /// <summary>The C of an enum number in code.</summary>
         private string EnumC(int index) => LibraryRole && index != 0 ? $"fire_enums_{_self!.Id}[{index}]" : index.ToString(CultureInfo.InvariantCulture);
+        /// <summary>The C of the entry of an array of a class in g_arrClasses (<see cref="ArrClassId"/>) in code: a library takes the program's entry from its
+        /// table (the program writes g_arrClasses with the entries of every module).</summary>
+        private string ArrClassC(int id) => LibraryRole && id != 0 ? $"fire_arrc_{_self!.Id}[{id}]" : id.ToString(CultureInfo.InvariantCulture);
+        /// <summary>The same in a static table (TArg, JsonFieldInfo): the entry stays the module's number, the table of the program follows it (`arrMap`; NULL: none).</summary>
+        private string ArrClassMap(int id) => LibraryRole && id != 0 ? $", fire_arrc_{_self!.Id}" : ", NULL";
         /// <summary>The C of a source index for the debugger.</summary>
         private string DbgSrc(int src) => LibraryRole && _self!.Sources.Contains(src) ? $"fire_dbgsrc_{_self.Id}[{DebugSourceIndex(src)}]" : src.ToString(CultureInfo.InvariantCulture);   // (another source: line 0, an instruction before the first line of the function)
         /// <summary>A source of a library by its place among the module's sources (the same in every program that uses the module).</summary>
@@ -467,6 +478,9 @@ namespace fire.Native
             needs.Units.AddRange(_units);
             needs.Enums.AddRange(_enumList);
             needs.ExcTypes.AddRange(_excTypes);
+            needs.ArrClasses.AddRange(_arrClasses.OrderBy(kv => kv.Value).Select(kv => kv.Key));
+            CollectJsonReads();
+            needs.JsonReads.UnionWith(_jsonReads);
             needs.ReflectionNatives.UnionWith(_reflNativesUsed);
             needs.Classes.UnionWith(_demandedClasses);
             needs.MadeBy = _madeBy.ToDictionary(e => e.Key, e => e.Value.ToArray(), StringComparer.Ordinal);
@@ -492,6 +506,7 @@ namespace fire.Native
                 foreach (var u in n.Units) UnitId(u);
                 foreach (var e in n.Enums) EnumIndex(e);
                 foreach (var t in n.ExcTypes) ExcTypeId(t);
+                foreach (var t in n.ArrClasses) ArrClassId(t);
                 foreach (var native in n.ReflectionNatives)
                 {
                     UseReflection();
@@ -516,6 +531,7 @@ namespace fire.Native
                 sb.AppendLine($"const uint16_t fire_units_{id}[] = {{{string.Join(", ", n.Units.Select(u => UnitId(u).ToString(CultureInfo.InvariantCulture)).DefaultIfEmpty("0"))}}};");
                 sb.AppendLine($"const uint8_t fire_enums_{id}[] = {{0{string.Concat(n.Enums.Select(e => ", " + EnumIndex(e).ToString(CultureInfo.InvariantCulture)))}}};");
                 sb.AppendLine($"const int32_t fire_exct_{id}[] = {{{string.Join(", ", n.ExcTypes.Select(t => ExcTypeId(t).ToString(CultureInfo.InvariantCulture)).DefaultIfEmpty("0"))}}};");
+                if (n.ArrClasses.Count > 0) sb.AppendLine($"const uint32_t fire_arrc_{id}[] = {{0{string.Concat(n.ArrClasses.Select(t => ", " + ArrClassId(t).ToString(CultureInfo.InvariantCulture)))}}};");
                 sb.AppendLine($"const int32_t fire_dbgsrc_{id}[] = {{{string.Join(", ", lib.Spec.Sources.OrderBy(s => s).Select(s => s.ToString(CultureInfo.InvariantCulture)).DefaultIfEmpty("0"))}}};");
             }
             return sb.ToString();
@@ -557,6 +573,7 @@ namespace fire.Native
             sb.Append(HostArray($"fire_enums_{id}", "uint8_t", _enumList.Count + 1));
             sb.Append(HostArray($"fire_exct_{id}", "int32_t", Math.Max(1, _excTypes.Count)));
             sb.Append(HostArray($"fire_dbgsrc_{id}", "int32_t", Math.Max(1, _self.Sources.Count)));
+            if (_arrClasses.Count > 0) sb.Append(HostArray($"fire_arrc_{id}", "uint32_t", _arrClasses.Count + 1));
             return sb.ToString();
         }
 

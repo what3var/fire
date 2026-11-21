@@ -403,7 +403,8 @@ namespace fire.Native
                     if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) arms.Add((cls.Id, $"return {FieldRead(cls.Rc, index, "o")};"));
                     else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) arms.Add((cls.Id, $"{{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}"));
                 }
-                sb.AppendLine($"static Value {FieldFn("gfp", name)}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    uint32_t k_ = {OwnLocal("o->cls")};\n    if (!({OwnRangeTest("k_")})) return Undef();\n    switch (k_) {{\n{MergedCases(arms)}        default: return Undef();\n    }}\n}}");
+                // (an object of a class of another module - a class of the program that extends one of this library: its field through the runtime's tables)
+                sb.AppendLine($"static Value {FieldFn("gfp", name)}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    uint32_t k_ = {OwnLocal("o->cls")};\n    if (!({OwnRangeTest("k_")})) return fireProbeRawGet(v, {cname}, list);\n    switch (k_) {{\n{MergedCases(arms)}        default: return Undef();\n    }}\n}}");
                 sb.AppendLine($"static inline void {FieldFn("sf", name)}(Value v, Value x, OwnList* list, uint32_t caller) {{");
                 sb.AppendLine($"    if (v.kind == K_Class && FIRE_UNLIKELY(asObj(v)->h.flags & 2)) {{ probedSet(v, {cname}, x, {FieldFn("sfa", name)}, {FieldFn("gfp", name)}, caller); return; }}");
                 sb.AppendLine($"    {plain}(v, x, list, caller);");

@@ -1430,7 +1430,9 @@ typedef struct Str {
 /* `arrClass`: for a class, an interface or `string` (arrElem is E_CLASS + 1 then) the 1-based index of the entry in g_arrClasses (ROADMAP 19). */
 /* `isA`: for a class the names of the types it is (itself, its bases, their interfaces; NULL-terminated) - a `List<Dog>` goes where a `List<Animal>` is
  * declared (typeNameIn); NULL for anything else. */
-typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); uint8_t arrElem; uint32_t arrClass; const char* const* isA; } TArg;
+/* `arrMap`: a TArg of a library module (linkage static/shared, FIRE_MODULES): `arrClass` is the module's number, the entry is `arrMap[arrClass]` (the
+ * program's table fire_arrc_M - g_arrClasses has the entries of every module); NULL: `arrClass` is the entry. */
+typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); uint8_t arrElem; uint32_t arrClass; const char* const* isA; const uint32_t* arrMap; } TArg;
 /* The type arguments of an object or a call, one per type parameter (null: not known); interned, never freed. */
 typedef const TArg* const* TArgs;
 
@@ -1537,6 +1539,7 @@ enum { E_CLASS = 13 };
 /* (`isA`: like TArg.isA - a Dog array goes where an Animal array is declared and keeps its element type) */
 typedef struct ArrClass { bool (*fits)(Value v); const char* display; Value (*zero)(void); const char* const* isA; } ArrClass;
 extern FIRE_RT_DATA const ArrClass* g_arrClasses;
+extern FIRE_RT_DATA uint32_t g_arrClassCount;   /* (its entries: set by a program that can load plugins - a plugin adds its own) */
 
 /* What a typed array has more than an untyped one. Its elements are usually packed: one C number per element (int8_t ... int64_t, float, Real, bool as
  * uint8_t, char as uint16_t) instead of a Value. `undefined` is a rarely used value of the type (the hint: INT8_MIN ..., a NaN with a fixed payload, 0xFF for
@@ -3136,7 +3139,7 @@ FIRE_RT_FN Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
  * runs (`Library.Load`). Its file exports `fire_module_info`; the runtime checks it against the program (the configuration of the runtime, the interfaces of the
  * modules it needs - ROADMAP 9.6: the hashes only), gives its classes the next ids (g_classDescs grows), maps its catch types and enums to the program's by name and
  * runs its static initialisers. Only a program with linkage "shared" can load one: it fills g_pluginHost. ---- */
-#define FIRE_PLUGIN_FORMAT 5
+#define FIRE_PLUGIN_FORMAT 6
 /* A plugin that calls a native in C of the program (`fire_cn_<function>`) the program does not export: what Load says (the function: %.*s). */
 #define FIRE_PLUGIN_CNATIVE "it calls the native function '%.*s' in C, which this program does not export to plugins (natives in C are the program's: build the program again with the package of the native; of graphics and windows it exports only those its libraries call)."
 typedef struct FirePlugin {
@@ -3187,6 +3190,11 @@ typedef struct FirePlugin {
     const char* const* srcHashes;
     int32_t* srcMap;
     const void* (*dbgClass)(uint32_t k);
+    /* its arrays of a class (`string a[]`, `List<Dog>`): its entries of g_arrClasses - the program's of the same name, the others added - in arrMap
+     * (fire_arrc_<p>[k + 1]) */
+    uint32_t narr;
+    const ArrClass* arrClasses;
+    uint32_t* arrMap;
 } FirePlugin;
 /* What a program that can load plugins tells the runtime (linkage "shared"; NULL: it cannot). */
 typedef struct FirePluginHost {
@@ -6913,7 +6921,8 @@ FIRE_ALWAYS_INLINE FIRE_FN bool typeArray(Value v, uint8_t elem, int rank, uint3
 }
 /* `T items[]`, `new T[n]` (OpCode.TypeArrayOfParam): the array typed by a type argument that types arrays (TArg.arrElem; a class by TArg.arrClass). */
 FIRE_FN bool typeArrayOfArg(Value v, const TArg* ta) {
-    return typeArray(v, (uint8_t)(ta->arrElem - 1), 1, ta->arrClass, ta->arrClass ? TU_CLASS : 0, Undef(), 1);
+    uint32_t ac = ta->arrClass && ta->arrMap ? ta->arrMap[ta->arrClass] : ta->arrClass;
+    return typeArray(v, (uint8_t)(ta->arrElem - 1), 1, ac, ac ? TU_CLASS : 0, Undef(), 1);
 }
 FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth) {
     Arr* a;
@@ -13992,6 +14001,7 @@ bool g_domainOn = false;
 const ResEntry* g_resources = NULL;
 const FireEnum* g_enums = NULL;
 const ArrClass* g_arrClasses = NULL;
+uint32_t g_arrClassCount = 0;
 uint32_t g_enumCount = 0;
 int g_resourceCount = 0;
 int g_argc = 0;
@@ -14593,6 +14603,21 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
     for (i = 0; i < p->nexc; i++) p->excMap[i] = firePluginExcId(p->excNames[i]);
     p->enumMap[0] = 0;
     for (i = 0; i < p->nenums; i++) p->enumMap[i + 1] = firePluginEnum(&p->enums[i]);
+    /* its arrays of a class: the program's entry of the same name, a new one for what the program does not have (the table copied - it is the program's) */
+    if (p->narr > 0) {
+        ArrClass* t = (ArrClass*)malloc((g_arrClassCount + p->narr) * sizeof(ArrClass));
+        uint32_t n = g_arrClassCount, k, j;
+        if (!t) fatal("out of memory");
+        if (n > 0) memcpy(t, g_arrClasses, n * sizeof(ArrClass));
+        p->arrMap[0] = 0;
+        for (k = 0; k < p->narr; k++) {
+            for (j = 0; j < n && strcmp(t[j].display, p->arrClasses[k].display) != 0; j++) { }
+            if (j == n) t[n++] = p->arrClasses[k];
+            p->arrMap[k + 1] = j + 1;
+        }
+        g_arrClasses = t;
+        g_arrClassCount = n;
+    }
     /* its classes: the next ids */
     base = g_classDescCount;
     rows = (FireClassDesc*)calloc(base + p->nclasses + 1, sizeof *rows);
