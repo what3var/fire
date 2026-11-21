@@ -581,17 +581,19 @@ static class LinkageTests
         // a library of the solution reads JSON into a class it gets by name (like data's QueryList): the program keeps the class (nothing else makes it)
         string s = Path.Combine(root, "sln-json");
         Write(s, "Reader/Reader.fireproj", """{ "name": "Reader", "type": "library" }""");
-        Write(s, "Reader/reader.script", "#import \"json\"\nnamespace Reader {\n    class R {\n        static any Read(string text, string cls) { return Json.Deserialize(text, cls) }\n    }\n}\n");
+        Write(s, "Reader/reader.script", "#import \"json\"\nnamespace Reader {\n    class R {\n        static any Read(string text, string cls) { return Json.Deserialize(text, cls) }\n    }\n    class Box {\n        int n = 0\n        Set(int k) { this.n = k }\n    }\n}\n");
         Write(s, "App/App.fireproj", """{ "name": "App", "references": [ { "project": "../Reader/Reader.fireproj" } ], "settings": { "linkage": "static" } }""");
-        Write(s, "App/main.script", "#import \"Reader\"\nrecord Pt {\n    int x\n    int y\n}\nPt p = Reader.R.Read(\"{\\\"x\\\": 3, \\\"y\\\": 4}\", \"Pt\")\nprint(p.x + p.y)\n");
+        Write(s, "App/main.script", "#import \"Reader\"\n#import \"reflection\"\nrecord Pt {\n    int x\n    int y\n}\nPt p = Reader.R.Read(\"{\\\"x\\\": 3, \\\"y\\\": 4}\", \"Pt\")\nprint(p.x + p.y)\n"
+            // (a class of the program extends one of the library, which writes its field: a probe hears only a change - the old value comes from the runtime's tables)
+            + "class MyBox : Reader.Box { }\nvar b = new MyBox()\nReflect.ProbeAll(b, \"changed\", (any o, any n, any a, any c) => print(\"changed \" + n + \" \" + a + \" -> \" + c))\nb.Set(0)\nb.Set(5)\n");
         string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Reader/Reader.fireproj", "App/App.fireproj"], "startup": "App" }""");
         var ws = Workspace.Open(sln);
         var plan = BuildPlan.Create(ws, ws.FindByName("App")!);
         string jsonVm = Vm(plan.SourceTexts, plan);
         var json = Build(plan.SourceTexts, "static", Path.Combine(root, "json-reader"), plan: plan);
         string jsonOut = json.Ok ? Exec(json.Exe) : "";
-        Check("Module: eine Bibliothek liest JSON in eine Klasse des Programms, deren Namen sie bekommt (Json.Deserialize(text, \"Pt\")) - das Programm behaelt die Klasse, wie die VM",
-            json.Ok && jsonOut == jsonVm && jsonVm == "7\n", $"{json.Log}\nnativ:\n{jsonOut}\nVM:\n{jsonVm}");
+        Check("Module: eine Bibliothek liest JSON in eine Klasse des Programms, deren Namen sie bekommt (Json.Deserialize(text, \"Pt\")) - das Programm behaelt die Klasse; eine Probe auf einem Objekt einer Klasse des Programms, die von einer der Bibliothek erbt, hoert nur Aenderungen - wie die VM",
+            json.Ok && jsonOut == jsonVm && jsonVm == "7\nchanged n 0 -> 5\n", $"{json.Log}\nnativ:\n{jsonOut}\nVM:\n{jsonVm}");
 
         // TinyCC with linkage static: the CLI program (threads, so the state of a thread hangs on a key of pthreads - one for all modules)
         if (ToolchainDetector.Find(ToolchainDef.BuiltIn["tcc"]) != null)
