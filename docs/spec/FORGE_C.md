@@ -433,6 +433,10 @@ Gefunden und in beiden forges korrigiert (mit den Modulen - static, shared, `FIR
   Probe auf einem Objekt einer Klasse eines anderen Moduls war `undefined` (3212: eine Klasse des Programms erbt von `UI.Button`, `UI.Root.Update` malte immer);
   ein fire-Thread im Code einer Bibliothek (http, net.channel, data Pool) wurde zu einem Stub `uses a global variable of the program` (seine Slots sind
   Variablen des Threads).
+* Plugins (nur C#, der Generator eines Plugins ist in C offen): ihre Arrays einer Klasse bekommen beim Registrieren die Einträge des Programms gleichen Namens,
+  neue werden angehängt (`FirePlugin.narr`/`arrClasses`/`arrMap`, `FIRE_PLUGIN_FORMAT` 6; das Programm, das Plugins lädt, setzt `g_arrClassCount`).
+  LinkageTests (`FIRE_TESTS_ONLY=linkage`, neu `FIRE_TESTS_FILTER=boundaries`): alles grün bis auf die Prüfungen unter Wine (Wine bricht hier bei jedem Programm mit
+  `free(): invalid pointer` ab).
 
 `tests/cases` mit gcc static (1109 Fälle mit `.expected` ohne `.error`, ohne `skip`/`output: varies`; ein Fall gilt wie bei `tests/run-cases.sh`, ohne `--types
 strict`): 951 drucken die `.expected`, 135 übersetzen in beiden Linkages nicht (134 mit `.diagnostics`, `vm-sc/0050` mit eigener Klasse `Exception`), 8 sind
