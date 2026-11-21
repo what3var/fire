@@ -107,8 +107,8 @@ static const char* UnitC(FgGen* g, int unit) { return LibraryRole && unit != 0 ?
 static const char* EnumC(FgGen* g, int index) { return LibraryRole && index != 0 ? fcFmt(g->c, "fire_enums_%s[%d]", g->self->id, index) : fcFmt(g->c, "%d", index); }
 /* the entry of an array of a class in g_arrClasses in code (a library: from the program's table fire_arrc_M); in a static table (TArg, JsonFieldInfo) the
  * module's number stays and `arrMap` names the table (NULL: none) */
-static const char* ArrClassC(FgGen* g, int id) { return LibraryRole && !g->plugin && id != 0 ? fcFmt(g->c, "fire_arrc_%s[%d]", g->self->id, id) : fcFmt(g->c, "%d", id); }
-static const char* ArrClassMap(FgGen* g, int id) { return LibraryRole && !g->plugin && id != 0 ? fcFmt(g->c, ", fire_arrc_%s", g->self->id) : ", NULL"; }
+static const char* ArrClassC(FgGen* g, int id) { return LibraryRole && id != 0 ? fcFmt(g->c, "fire_arrc_%s[%d]", g->self->id, id) : fcFmt(g->c, "%d", id); }
+static const char* ArrClassMap(FgGen* g, int id) { return LibraryRole && id != 0 ? fcFmt(g->c, ", fire_arrc_%s", g->self->id) : ", NULL"; }
 static const char* ClassIdExpr(FgGen* g, const FgClassInfo* cls) { return cls->idText ? cls->idText : fcFmt(g->c, "%d", cls->id); }
 static int EnumIndex(FgGen* g, const FcEnumType* type);
 static const FcU* DemandUnit(FgGen* g, const char* demand);

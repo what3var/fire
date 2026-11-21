@@ -39,6 +39,7 @@ static const char* PluginHostCode(FgGen* g) {
     fcBufFmt(&sb, "static const FirePluginHost kPluginHost = {%s, fire_moduleAbi, kPluginExcNames, %du, %s};\n", CString(g, PluginHeadKey(g->c, g->libraryHead, flags)), g->excTypes->count,
         g->dllModules ? "fire_hostFind" : "NULL");
     fcBufStr(&g->initCode, "    g_pluginHost = &kPluginHost;   // (it can load fire plugins)\n");
+    fcBufFmt(&g->initCode, "    g_arrClassCount = %d;   // (a plugin adds the entries of its arrays of a class)\n", fcDictCount(g->arrClasses));
     return fcBufDone(g->c, &sb);
 }
 

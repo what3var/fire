@@ -207,9 +207,9 @@ namespace fire.Native
         private string EnumC(int index) => LibraryRole && index != 0 ? $"fire_enums_{_self!.Id}[{index}]" : index.ToString(CultureInfo.InvariantCulture);
         /// <summary>The C of the entry of an array of a class in g_arrClasses (<see cref="ArrClassId"/>) in code: a library takes the program's entry from its
         /// table (the program writes g_arrClasses with the entries of every module).</summary>
-        private string ArrClassC(int id) => LibraryRole && !_plugin && id != 0 ? $"fire_arrc_{_self!.Id}[{id}]" : id.ToString(CultureInfo.InvariantCulture);
+        private string ArrClassC(int id) => LibraryRole && id != 0 ? $"fire_arrc_{_self!.Id}[{id}]" : id.ToString(CultureInfo.InvariantCulture);
         /// <summary>The same in a static table (TArg, JsonFieldInfo): the entry stays the module's number, the table of the program follows it (`arrMap`; NULL: none).</summary>
-        private string ArrClassMap(int id) => LibraryRole && !_plugin && id != 0 ? $", fire_arrc_{_self!.Id}" : ", NULL";
+        private string ArrClassMap(int id) => LibraryRole && id != 0 ? $", fire_arrc_{_self!.Id}" : ", NULL";
         /// <summary>The C of a source index for the debugger.</summary>
         private string DbgSrc(int src) => LibraryRole && _self!.Sources.Contains(src) ? $"fire_dbgsrc_{_self.Id}[{DebugSourceIndex(src)}]" : src.ToString(CultureInfo.InvariantCulture);   // (another source: line 0, an instruction before the first line of the function)
         /// <summary>A source of a library by its place among the module's sources (the same in every program that uses the module).</summary>
