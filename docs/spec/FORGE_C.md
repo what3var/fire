@@ -416,12 +416,29 @@ erbt von einer der Bibliothek; dann eine Änderung des Codes und der Schnittstel
 `Exception` auf source, das kleine JSON-Programm mit tcc static, `--stats`, `-m DEBUG`, `--quick`, `--toolchain files` (der Ordner gleich), MinGW für Windows static und
 shared (die DLLs der Laufzeit und der Module; die `.exe` bis auf den Zeitstempel des PE-Kopfs gleich - Wine startet hier auch die des C#-forge nicht): Protokoll und Ausgabe
 gleich. Dazu jeder 40. Fall von `tests/cases` mit gcc static (28): Protokoll und Ausgabe gleich, 21 drucken die `.expected`, 4 übersetzen in beiden nicht (wie verlangt),
-3 weichen in beiden forges gleich von der `.expected` ab (zwei Fehler des C#-Generators mit Modulen, unten; `vm-sc/0280-einheiten-...` erwartet das Präfix `UNBEHANDELT:` des Läufers der VM - auch mit linkage source).
+3 weichen in beiden forges gleich von der `.expected` ab (zwei Fehler des C#-Generators mit Modulen, unten - korrigiert; `vm-sc/0280-einheiten-...` erwartet das Präfix `UNBEHANDELT:` des Läufers der VM - auch mit linkage source).
 
-Gefunden (Fehler im C#, nicht korrigiert - beide forges verhalten sich gleich): mit den Modulen (static, shared, `FIRE_MODULES=1`; mit linkage source richtig)
-`tests/cases/.../3360-circuits-potentiometer-transformator-jk-flipflop.fire` (`ArgumentException: An element of an array of Expression must be an Expression (or undefined),
-not String`), `.../4140-data-sqlite-execute-query-zeilen-nacheinander-ro.fire` (`An index must be an int, not String`);
-das CLI-Programm von LinkageTests stürzt mit TinyCC und linkage static beim Start ab (Segfault; mit gcc, mit source und mit `FIRE_MODULES=1` unter tcc richtig).
+Gefunden und in beiden forges korrigiert (mit den Modulen - static, shared, `FIRE_MODULES=1` -; mit linkage source waren sie richtig):
+* `g_arrClasses`: eine Bibliothek nummerierte ihre Arrays einer Klasse selbst, die Laufzeit las die Nummern in der Tabelle des Programms -
+  `.../3360-circuits-potentiometer-transformator-jk-flipflop.fire` (`An element of an array of Expression must be an Expression (or undefined), not String`: das
+  `string[]` von `Split` in core), `.../4140-data-sqlite-execute-query-zeilen-nacheinander-ro.fire` (`An index must be an int, not String`: die Elemente der
+  `List<Data.Row>` von data wurden zu Texten). Jetzt entscheidet das Programm die Einträge (`ModuleNeeds.ArrClasses`, `fire_arrc_M[k]`; in `TArg` und `JsonFieldInfo`
+  einer Bibliothek bleibt ihre Nummer, `arrMap` nennt die Tabelle). Danach in 4140: `QueryList("Person", ...)` - was data als JSON liest, sagt ihre Schnittstelle
+  (`JsonReads`), das Programm behält die Klassen wie mit einer Datei (sonst `Class 'Person' was left out of the build`). Schnittstellenformat 3.
+* Das CLI-Programm von LinkageTests stürzte mit TinyCC und linkage static ab: ohne Thread-lokalen Speicher hängt der Zustand eines Threads an einem Schlüssel von
+  pthreads, `FIRE_ONCE` war `static` - jedes Modul hatte seinen eigenen. Die Module in Dateien für sich (nicht DLL) bekommen `FIRE_SPLIT` (der Schlüssel lebt in
+  der Datei des Programms).
+* Beim Lauf von `tests/cases` mit gcc static (unten): `Reflect.Set` auf ein `byte`/`word`-Feld machte keinen Puffer (1650); die Typargumente einer Deklaration
+  verglich der Guard nach der Adresse des TArg, die je Modul eine andere ist (2630, `Dictionary<string, string> Environment` von process); der alte Wert einer
+  Probe auf einem Objekt einer Klasse eines anderen Moduls war `undefined` (3212: eine Klasse des Programms erbt von `UI.Button`, `UI.Root.Update` malte immer);
+  ein fire-Thread im Code einer Bibliothek (http, net.channel, data Pool) wurde zu einem Stub `uses a global variable of the program` (seine Slots sind
+  Variablen des Threads).
+
+`tests/cases` mit gcc static (1109 Fälle mit `.expected` ohne `.error`, ohne `skip`/`output: varies`; ein Fall gilt wie bei `tests/run-cases.sh`, ohne `--types
+strict`): 951 drucken die `.expected`, 135 übersetzen in beiden Linkages nicht (134 mit `.diagnostics`, `vm-sc/0050` mit eigener Klasse `Exception`), 8 sind
+Fälle von `//# types: strict` (ohne die Option gelaufen), 12 weichen auch mit linkage source ab (Meldungen der VM in `vm-*`, Schriften in 3210/4110). Nur mit den
+Modulen weichen 3 ab - die Module behalten die GIL (fire_rt.h, `FIRE_NO_GIL` nicht mit `FIRE_MODULES`): `native/1810` (600 fire-Threads, richtig, aber 5 Minuten),
+`native/3540` und `native/4424` (ein Thread läuft nicht, während das Hauptprogramm in Natives ist).
 
 ### Dateien
 
