@@ -303,6 +303,7 @@ static FcLinked* LibraryView(FcCtx* c, const FcLinked* program, const FgModuleSp
     view->packageNatives = program->packageNatives; view->packageNativeLibraries = program->packageNativeLibraries;
     view->sourceFiles = program->sourceFiles; view->sourceHashes = program->sourceHashes; view->sourceModules = program->sourceModules;
     view->moduleDeps = program->moduleDeps; view->sourceTextHashes = program->sourceTextHashes;
+    view->stackTrace = program->stackTrace; view->traceFiles = program->traceFiles;   /* (the frames of the functions of the module, docs/spec/STACKTRACE.md) */
     view->asmInfo = program->asmInfo;
     return view;
 }
