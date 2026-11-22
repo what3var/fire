@@ -10826,15 +10826,16 @@ callbackTests:
         print("zweites Run zu Ende, hits " + hits)
         """, new[] { "gefangen boom laeuft False", "zweites Run zu Ende, hits 2" });
 
-    // Performance mode checks nothing: an access outside the array is a raw C# exception. The state of the VM must be right afterwards.
-    CheckCb("Rohe C#-Ausnahme im Callback (Performance): Zustand wiederhergestellt, Programm laeuft weiter", cbHead + """
+    // Performance: an access outside the array is undefined behaviour - the VM throws the exception of Release (as the VM in C), never a raw .NET exception
+    // that ends the host's process (VmExecutionMode.Performance). The state of the VM is right afterwards.
+    CheckCb("Index ausserhalb im Callback (Performance): die Ausnahme von Release, Tick wirft sie, das Programm laeuft weiter", cbHead + """
         win.RegisterMouseDown(func (int b, float x, float y) => { var z = new int[2]; z[5] = 1 })
         __TestEvent(8, 1, 1.0, 1.0)
-        try { win.Tick(); print("nach Tick") } finally { print("finally") }
+        try { win.Tick(); print("nach Tick") } catch (e) { print("gefangen " + e.message) } finally { print("finally") }
         var sum = 0
         for (var i = 0; i < 100; i = i + 1) { sum = sum + i }
         print("sum " + sum)
-        """, new[] { "CB: Index was outside the bounds of the array.", "nach Tick", "finally", "sum 4950" }, new[] { VmExecutionMode.Performance });
+        """, new[] { "gefangen Array index 5 out of range (length 2).", "finally", "sum 4950" }, new[] { VmExecutionMode.Performance });
 
     CheckCb("leave im Callback beendet das Programm geordnet (Destruktoren laufen)", cbHead + """
         class G { destruct() { print("~G") } }

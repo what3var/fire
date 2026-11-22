@@ -458,7 +458,9 @@ Debug: vorher 6 Abweichungen (die Warnung für Verweise auf zerstörte Objekte f
 Performance die Prüfungen weglässt (Index, zerstörte Objekte, übergebene Objekte): die C-VM prüft weiter und wirft die Ausnahme, die C#-VM liest
 ungeprüft - darunter ein Absturz des ganzen Prozesses mit `System.IndexOutOfRangeException` (`ScriptArray.GetUnchecked`, `ByteBuffer.SetUnchecked`),
 statt einer Ausnahme von fire (z. B. `smoke/0140`, `trace/0020`, `native/0630`). Undefiniertes Verhalten nach SPEC, kein Fehler der C-VM; der
-Absturz der C#-VM ist ihrer.
+Absturz der C#-VM ist ihrer - **behoben** (22.11.2026): die C#-VM wirft in Performance bei einem Index außerhalb eines Arrays oder Puffers die
+`IndexOutOfBoundsException` von Release wie die C-VM (ein Vergleich vor den `*Unchecked`-Zugriffen; `VmExecutionMode.Performance`), die drei Fälle
+geben in beiden VMs dasselbe aus.
 
 **Debug: Verweise, die ihr Objekt überleben** (`vm_dangle.c`, wie `DanglingWatch` der C#-VM): ein Objekt, das einem Aufruf gehört (ein Lokal, ein
 mit `take` übergebenes Argument), stirbt mit ihm - auch wenn ein Feld oder ein Array nur einen Verweis darauf bekam. Im Modus Debug wird jedes

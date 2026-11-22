@@ -4736,11 +4736,12 @@ namespace fire.Runtime
             {
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
-                    // See VmExecutionMode.Performance documentation - NO
-                    // bounds check, an invalid index leads to
-                    // a raw .NET IndexOutOfRangeException instead of
-                    // a catchable script exception.
-                    Push(target.AsArray().GetUnchecked(indexVal.AsInt()));
+                    // See VmExecutionMode.Performance documentation: an index outside the array is undefined behaviour (SPEC) - here it is the exception of
+                    // Release (as in the VM in C), not a raw .NET IndexOutOfRangeException that ends the whole process (the host's: spark)
+                    long fastIdx = indexVal.AsInt();
+                    var fastArr = target.AsArray();
+                    if ((ulong)fastIdx < (ulong)fastArr.Length) Push(fastArr.GetUnchecked(fastIdx));
+                    else ThrowIndexOutOfBounds(fastIdx, fastArr.Length);
                 }
                 else
                 {
@@ -4771,8 +4772,10 @@ namespace fire.Runtime
                 // simply an ordinary int value with this width.
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
-                    byte bFast = target.AsBuffer().GetUnchecked(indexVal.AsInt());
-                    Push(Value.MakeInt(bFast, width: NumericWidth.W8));
+                    long fastIdx = indexVal.AsInt();   // (outside: the exception of Release, not a raw .NET exception - see ArrayGet)
+                    var fastBuf = target.AsBuffer();
+                    if ((ulong)fastIdx < (ulong)fastBuf.Length) Push(Value.MakeInt(fastBuf.GetUnchecked(fastIdx), width: NumericWidth.W8));
+                    else ThrowIndexOutOfBounds(fastIdx, fastBuf.Length);
                 }
                 else
                 {
@@ -4883,8 +4886,10 @@ namespace fire.Runtime
             {
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
-                    target.AsArray().SetUnchecked(indexVal.AsInt(), value);
-                    Push(value);
+                    long fastIdx = indexVal.AsInt();   // (outside: the exception of Release, not a raw .NET exception - see ArrayGet)
+                    var fastArr = target.AsArray();
+                    if ((ulong)fastIdx < (ulong)fastArr.Length) { fastArr.SetUnchecked(fastIdx, value); Push(value); }
+                    else ThrowIndexOutOfBounds(fastIdx, fastArr.Length);
                 }
                 else
                 {
@@ -4927,8 +4932,10 @@ namespace fire.Runtime
                 }
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
-                    target.AsBuffer().SetUnchecked(indexVal.AsInt(), (byte)value.AsInt());
-                    Push(value);
+                    long fastIdx = indexVal.AsInt();   // (outside: the exception of Release, not a raw .NET exception - see ArrayGet)
+                    var fastBuf = target.AsBuffer();
+                    if ((ulong)fastIdx < (ulong)fastBuf.Length) { fastBuf.SetUnchecked(fastIdx, (byte)value.AsInt()); Push(value); }
+                    else ThrowIndexOutOfBounds(fastIdx, fastBuf.Length);
                 }
                 else
                 {
