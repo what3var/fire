@@ -657,6 +657,21 @@ static class LinkageTests
             Check($"Module ({linkage}): Net.Channel - die Threads von net.channel haben eigene Enden ihrer Kanaele, nach Close kein DestroyedException (native/3840)",
                 built.Ok && got == "net 15\nclosed\n", $"{built.Log}\nnativ:\n{got}");
         }
+        // (the DLLs of Windows, without the GIL: MinGW under Wine)
+        var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };
+        string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
+        if (ToolchainDetector.Find(mingw) != null && wine != null)
+        {
+            _winePrefix ??= Environment.GetEnvironmentVariable("WINEPREFIX") ?? Path.Combine(root, "wineprefix");
+            foreach (var d in new[] { "relay-win", "netchannel-win" }) Directory.CreateDirectory(Path.Combine(root, d));
+            var relay = Build(plan.SourceTexts, "shared", Path.Combine(root, "relay-win", "relay.exe"), mingw, TargetProfile.Windows, plan);
+            string relayOut = relay.Ok ? Exec(relay.Exe, wine) : "";
+            var built = Build(new[] { net }, "shared", Path.Combine(root, "netchannel-win", "net.exe"), mingw, TargetProfile.Windows);
+            string got = built.Ok ? Exec(built.Exe, wine) : "";
+            Check("Module (MinGW shared, DLLs, unter Wine): fire with in einer Bibliothek (eigene Enden der Kanaele des Programms) und Net.Channel (native/3840)",
+                relay.Ok && relayOut == relayVm && built.Ok && got == "net 15\nclosed\n", $"{relay.Log}\n{built.Log}\nnativ:\n{relayOut}\n{got}");
+        }
+        else Console.WriteLine("(MinGW/Wine: uebersprungen)");
     }
 
     /// <summary>Fire threads in a program of modules run without the GIL like with linkage source (fire_rt.h FIRE_NO_GIL; the locks of the packages by name,
@@ -717,19 +732,31 @@ static class LinkageTests
             print("done " + done)
             """;
         string nativesWant = "thread ran while the main program was in natives: True\nsum 138000, bumps 2000\n";
-        var builds = new List<(string Name, string Linkage, ToolchainDef? Toolchain)> { ("gcc static", "static", null), ("gcc shared", "shared", null) };
-        if (ToolchainDetector.Find(ToolchainDef.BuiltIn["tcc"]) != null) builds.Add(("TinyCC static", "static", ToolchainDef.BuiltIn["tcc"]));
+        var builds = new List<(string Name, string Linkage, ToolchainDef? Toolchain, TargetProfile? Target)> { ("gcc static", "static", null, null), ("gcc shared", "shared", null, null) };
+        if (ToolchainDetector.Find(ToolchainDef.BuiltIn["tcc"]) != null) builds.Add(("TinyCC static", "static", ToolchainDef.BuiltIn["tcc"], null));
         else Console.WriteLine("(TinyCC: uebersprungen - tcc fehlt)");
-        foreach (var (name, linkage, toolchain) in builds)
+        // (the DLLs of Windows without the GIL - one system thread per fire thread, the state of a thread in the runtime's DLL: MinGW under Wine)
+        var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };
+        string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
+        if (ToolchainDetector.Find(mingw) != null && wine != null)
         {
-            string tag = name.Replace(' ', '-');
-            var built = Build(new[] { natives }, linkage, Path.Combine(root, "threads-natives-" + tag), toolchain);
-            string got = built.Ok ? Exec(built.Exe) : "";
+            _winePrefix ??= Environment.GetEnvironmentVariable("WINEPREFIX") ?? Path.Combine(root, "wineprefix");
+            builds.Add(("MinGW shared (DLLs)", "shared", mingw, TargetProfile.Windows));
+        }
+        else Console.WriteLine("(MinGW/Wine: uebersprungen)");
+        foreach (var (name, linkage, toolchain, target) in builds)
+        {
+            string tag = name.Replace(' ', '-').Replace("(", "").Replace(")", "");
+            // (a folder each: the DLLs lie next to the program)
+            string ExeIn(string dir) { Directory.CreateDirectory(Path.Combine(root, dir)); return Path.Combine(root, dir, target != null ? "p.exe" : "p"); }
+            string Run(Built b) => !b.Ok ? "" : target != null ? Exec(b.Exe, wine) : Exec(b.Exe);
+            var built = Build(new[] { natives }, linkage, ExeIn("threads-natives-" + tag), toolchain, target);
+            string got = Run(built);
             Check($"Module ohne GIL ({name}): ein fire-Thread laeuft, waehrend das Hauptprogramm im Native eines Pakets einer Bibliothek steckt (compression), liest und schreibt statische Felder und Objekte des Programms",
                 built.Ok && got == nativesWant, $"{built.Log}\nnativ:\n{got}");
-            var slept = Build(new[] { sleepers }, linkage, Path.Combine(root, "threads-sleep-" + tag), toolchain);
+            var slept = Build(new[] { sleepers }, linkage, ExeIn("threads-sleep-" + tag), toolchain, target);
             var watch = Stopwatch.StartNew();
-            string sleptOut = slept.Ok ? Exec(slept.Exe) : "";
+            string sleptOut = Run(slept);
             double seconds = watch.Elapsed.TotalSeconds;
             Check($"Module ohne GIL ({name}): 400 fire-Threads schlafen in time (einer Bibliothek) und schreiben in Sektionen - fertig in unter 10 s (mit der GIL Minuten), {seconds:0.00} s",
                 slept.Ok && sleptOut == "done 400\n" && seconds < 10, $"{slept.Log}\nnativ:\n{sleptOut}");

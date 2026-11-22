@@ -455,7 +455,7 @@ Eine Bibliothek ist für sich gebaut und über Programme hinweg im Cache: sie ka
 * TinyCC: die Slots von `FIRE_TLS_EMULATED` auch mit Modulen (der Schlüssel einmal: `FIRE_ONCE` mit `FIRE_SPLIT`, wie schon für die GIL);
 * in der Laufzeit, was ohne die GIL ungeschützt war (auch mit einer Datei): `fieldPtrId` (die Deskriptoren der Feldzeiger: `realloc` der Tabelle, während ein anderer
   Thread sie liest) unter `g_registryM`, die alte Tabelle bleibt; `fireRegisterPlugin` unter `g_pluginM` (das `init` des Plugins danach).
-Mit der GIL bleiben die DLLs von Windows (`FIRE_DLL`) und Debug-Builds.
+Mit der GIL bleiben Debug-Builds (die DLLs von Windows seit unten nicht mehr).
 
 | Messung | Quellen | gleich |
 |---|---|---|
@@ -475,9 +475,30 @@ vm-*): 1810 0,1 s (vorher 5 Minuten), 3540 0,01 s, 4424 0,6 s mit gcc static und
 
 `vm-shutdown/0040` und `vm-life/0100` sind Wettläufe der Fälle selbst (ein Thread gegen eine Schleife des Hauptprogramms), mit source genauso (0100 unter Last
 0 von 40, wie shared). `native/3840` (`IChannel<T>` mit `Net.Channel`: `DestroyedException` nach `net.Close()`) ist ein Fehler der Module, den es schon vorher gab:
-auch mit der GIL und auf dem Stand vor dieser Änderung (forge-c von `clippy`, gcc static: 0 von 10 Läufen richtig; mit source 10 von 10) - offen.
+auch mit der GIL und auf dem Stand vor dieser Änderung (forge-c von `clippy`, gcc static: 0 von 10 Läufen richtig; mit source 10 von 10) - behoben, siehe unten.
 LinkageTests (`FIRE_TESTS_FILTER=boundaries`, 11 Prüfungen grün): `ModuleThreads` - ein Thread läuft, während das Hauptprogramm im Native von compression steckt
 (mit `-DFIRE_GIL` gebaut nicht: 5 statt 2000 Schritte), und 400 schlafende fire-Threads in 0,06 s, je mit gcc static, shared und TinyCC static; `FIRE_TESTS_FILTER=plugin`: 25 von 29, die 4 anderen die unter Wine (`free(): invalid pointer`, wie vorher).
+
+**`fire with` in einer Bibliothek; die DLLs von Windows ohne die GIL.** `native/3840`: ein Thread, den der Code einer Bibliothek mit `fire with ch` startet, bekam
+nicht sein eigenes Ende des Kanals (`__End`), sondern die Referenz des Kanals selbst - `RegisterTargets` einer Bibliothek registriert nur ihre bedienten Ziele (der
+Verteiler `__End` fehlte), und `ChannelLikeTest` kannte nur Klassen, die das Modul selbst registriert (`Channel` von core ist in net.channel eine fremde Klasse). Die
+Lese- und Schreib-Threads von `Net.Channel` hatten so `inbox`/`writerDone` des Objekts, die mit ihm zerstört wurden. Jetzt (beide Generatoren gleich): ein `Fire` oder
+ein Job mit `with` in einer Bibliothek holt den Verteiler (`NoteFireWith`), `ChannelClass` nennt die Klassen von core (`ForeignClass`) - auch wenn die Bibliothek
+selbst keinen Kanal macht (ein Kanal des Programms). Dieselbe Art Fehler (ein Ziel aus `RegisterTargets`, das eine Bibliothek nicht bekommt) gab es sonst nicht:
+`GetIndex`/`SetIndex`/`GetEnumerator` holt `RegisterServedTargets` selbst, die Klassen der Fehler registriert das Programm. Die DLLs von Windows (`FIRE_DLL`) laufen
+ohne die GIL, aber ohne Tasks (fire_rt.h; NATIVE_BACKEND.md "Threads"). Wine: `free(): invalid pointer` kam von Wine selbst (Ubuntu 9.0~repack gibt
+`getenv("TMPDIR")` frei) - die Tests nehmen `TMPDIR` aus der Umgebung von Wine; dabei gefunden: `new Net.TcpListener("", 0)` als erster Gebrauch des Netzes
+startete Winsock nicht (`native/4251` unter Windows in jeder Linkage: `Winsock error 10093`; jetzt `fire_net_init` in `fire_net_anyAddress`).
+
+| Messung | Quellen | gleich |
+|---|---|---|
+| `cgen default`, `modules`, `static`, `shared` (`NATIVE_STRICT=1`): die Fälle mit `fire with`, `Channel<`, `net.channel`, `http` | 45 je Wort | 45 |
+| `buildplan t:windows+shared+tc:gcc` (die DLLs), `t:windows+static+tc:gcc`: 1810, 3540, 3840, 4424, die zwei Programme von `ModuleThreads` | 6 je Satz | 6 |
+
+Echte Builds unter Wine (MinGW, linkage shared, DLLs ohne die GIL, ein frisches `WINEPREFIX`): 41 Thread-Fälle aus `native` (mit 1810, 3540, 3840, 4424): 41 drucken die `.expected` (4251 nach
+der Korrektur von net). `native/3840` gcc static 20 von 20, DLL 10 von 10. LinkageTests: `FIRE_TESTS_FILTER=boundaries` 18 von 18 (neu `ModuleChannelEnds`: eine
+Bibliothek ohne eigenen Kanal leitet Kanäle des Programms weiter, deren Bereich vorher endet, und Net.Channel - gcc static, shared, MinGW-DLLs; `ModuleThreads`
+auch mit den DLLs unter Wine: der Thread läuft, während das Hauptprogramm im Native steckt, 400 Threads in 0,7 s), `FIRE_TESTS_FILTER=plugin` 29 von 29, `FIRE_TESTS_ONLY=linkage` ganz 97 von 97 (übersprungen nur die VM von Windows mit Fenster: kein `FIRE_TEST_WIN_FORGE`).
 
 ### Dateien
 
