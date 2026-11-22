@@ -682,6 +682,7 @@ Befehle, Protokoll, die Dateien des Baus mit SHA-256, darunter der `.fireplugin`
 | `cgen plugin` und `cgen pluginhost`, `packages` und `src/fire.Project` mit Klassen | 110 / 110 | 110 / 110 |
 | `buildplan plugin+tc:gcc` (Stichprobe aus beiden: der C-Code, die Befehle, der `.fireplugin` byte-gleich) | 125 | 125 |
 | `cgen plugin`, `pluginhost`, mit `debug`, `strip0`, `t:windows`; `buildplan plugin` mit gcc, clang, `debug` (ein Plugin mit Enum, Basisklasse, statischen Feldern) | 9 | 9 |
+| ohne Rückschritt: `fbc debug/release/performance` ganzer Korpus; `cgen default` (`NATIVE_STRICT=1`) jeder 3. Quelle; `buildplan default` jeder 6.; `cgen shared` (105, Programme mit `fire` und mit Klassen); `cgen default`/`static` der 25 Fälle mit JSON | 1272 / 424 / 212 / 105 / 25 | alle |
 | LinkageTests `FIRE_TESTS_FILTER=plugin` mit `FIRE_TESTS_FORGE=<forge-c>` (Programme mit `"shared"` und Plugins der Projekte von forge-c gebaut, darunter die DLLs unter Wine; die VM von C# lädt die `.fireplugin` von forge-c) | 29 | 29 (in C# ebenso 29) |
 
 Echte Builds: das Plugin `Meter` (Einheiten, Natives in C++ des Projekts, JSON) für ein Programm mit JSON - der C-Code beider forges gleich bis auf den Schlüssel der
