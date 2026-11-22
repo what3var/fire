@@ -336,12 +336,17 @@ static void pfAddClass(FcPfWriter* w, FcRtClass* rc) {
 }
 
 /* ProgramFile.Write: the bytes of the program into `result` */
+/* The interfaces of the library modules of a linked program (ModuleInterface.Modules + Text, ordered by name): name, interface, name, ...; NULL: it does not
+ * carry the modules of its sources (gen/plugins.c). */
+static FcList* fcPfModuleInterfaces(FcCtx* c, const FcLinked* linked);
+
 static void fcProgramFileWrite(FcCtx* c, const FcLinked* linked, bool lineTables, FcBuf* result) {
     FcPfWriter W;
     FcPfWriter* w = &W;
     FcBuf body = {0}, tables = {0};
     const FcCompiled* p = linked->program;
     bool sources, trace;
+    FcList* modules;
     int i, k;
     memset(w, 0, sizeof W);
     w->c = c;
@@ -411,6 +416,12 @@ static void fcProgramFileWrite(FcCtx* c, const FcLinked* linked, bool lineTables
         pfCount(w, linked->traceFiles ? linked->traceFiles->count : 0);
         for (i = 0; linked->traceFiles && i < linked->traceFiles->count; i++) pfStr(w, (const char*)linked->traceFiles->items[i]);
     }
+    /* the interfaces of its library modules (FlagModules): what a fire plugin is checked against when the program loads it (native/vm/vm_plugin.c) */
+    modules = fcPfModuleInterfaces(c, linked);
+    if (modules) {
+        pfCount(w, modules->count / 2);
+        for (i = 0; i + 1 < modules->count; i += 2) { pfStr(w, (const char*)modules->items[i]); pfStr(w, (const char*)modules->items[i + 1]); }
+    }
 
     /* the tables: the units and the enums first (they add names), then the names */
     w->out = &tables;
@@ -431,7 +442,7 @@ static void fcProgramFileWrite(FcCtx* c, const FcLinked* linked, bool lineTables
     w->out = result;
     fcBufPut(result, "FBC\x1A", 4);
     pfU8(w, 1);
-    pfU8(w, (lineTables ? 1 : 0) | (sources ? 2 : 0) | (trace ? 4 : 0));
+    pfU8(w, (lineTables ? 1 : 0) | (sources ? 2 : 0) | (trace ? 4 : 0) | (modules ? 8 : 0));
     pfCount(w, w->stringList->count);
     for (i = 0; i < w->stringList->count; i++) {
         FcBuf utf8 = {0};

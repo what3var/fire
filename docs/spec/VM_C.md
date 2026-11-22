@@ -37,6 +37,7 @@ der Paket-Natives sucht die VM im Ordner von forge (der Runner setzt `FIRE_PKG_P
 | `vm_threads.c` | Threads, Tasks, Aktoren, Sektionen, Jobs, `catch threads`/`catch terminate`, die Natives der Threads (Kanäle, `Completion`, Abbruch, `await [...]`, `handover`, `Sleep`), Anfang und Ende des Programms mit Threads | `FireRuntime`, `GlobalsBroker`, `VM.Tasks`, `Channels`, `Completions`, `Cancellation` |
 | `vm_run.c` | die Schleife (ein `switch` über `opcodes.def`), `DeclaredType`, Arrays einer Klasse, `finally`, Abwicklung | `VM.Execute`, `DeclaredType`, `VM.ThrowException` |
 | `vm_dangle.c` | Debug: die Warnung für Verweise, die ihr Objekt überleben (ein Objekt eines Aufrufs in einem Feld oder Array, das beim Ende des Aufrufs stirbt) | `DanglingWatch`, `VM.NoteStore`/`ReportDangling` |
+| `vm_plugin.c` | fire-Plugins: `Library.Load` einer `.fireplugin` (oder einer Bibliothek mit einer daneben), das Verlinken ihrer Klassen in das laufende Programm (siehe [Plugins](#plugins)) | `VM.Plugins.cs`, `PluginBytecode` |
 | `vm_debug.c` | der Debugger: das Protokoll nativer Programme über den Agenten der Runtime (`fire_debug.h`), die Halte vor jeder Instruktion, die Frames für den Agenten | `VM.StepLine`/`StepInto`/`StepOut`/`RunUntilBreakpoint`, `DebugScopeChain`, `DebugGlobals`, `PauseOnUnhandled` |
 | `fire.c` | das Programm `fire`: Befehlszeile, Programme nacheinander in einem Prozess, Abbau nach jedem (L6), die Varianten der Breiten, das Payload eines gepackten Programms | `fire.Runtime/Program.cs`, `Runtime.cs`, `PayloadLoader` |
 | `src/fire.Compiler/CVm.cs`, `src/fire.Runtime/CVmPayload.cs` | `forge build --engine vm`: `fire` finden oder bauen, das Programm dahinter packen; das Format des Payloads in C# | `Packer`, `PayloadFile` |
@@ -170,8 +171,8 @@ bleibt in spark (die Ansicht reicht die Tasten weiter, das Programm hat kein Fen
   war das `SetField` der C-VM auf ein Objekt mit Sonden - die Elemente der UI bekommen beim ersten Anordnen welche (`Root.Watch`) -, das die Besitzregeln
   des Speicherns überging: `this.gridLayer = new Framebuffer(w, h)` starb mit der Anweisung. Behoben mit `40e81bcb`; `vm-life/0110` und die Live-Sitzung mit
   jedem Beispiel-Schaltplan halten es fest. Jetzt endet die Ansicht eines Programms, das in `fire` scheitert, mit dem Grund (`Ended`, stderr von `fire`);
-  `ChildFailure` und `NoFallback` sind weg. Ohne `fire` (kein C-Compiler) sagt `Start` das, statt still in die C#-VM zu gehen. In der C#-VM bleiben nur
-  `FIRE_SPARK_VM=dotnet` und der Treiber-Agent (`InProcessOnly`, fire-Plugins: M1 (2)).
+  `ChildFailure` und `NoFallback` sind weg. Ohne `fire` (kein C-Compiler) sagt `Start` das, statt still in die C#-VM zu gehen. In der C#-VM bleibt nur
+  `FIRE_SPARK_VM=dotnet`; der Treiber-Agent läuft seit dem 22.11. in `fire` (siehe unten).
 * **Das geteilte Gerät** (M1 (3), 22.11.2026; `native/vm/vm_devhost.c`, `DeviceHostServer` in fire.Device.Manager): ein Programm, das spark in `fire` startet
   (F5/Ctrl+F5/Debug), nimmt die Geräte des `DeviceManager` von spark - dessen Treiber (auch die, die der Treiber-Agent einhängt), das Teilen eines Geräts
   zwischen IDE und Programm, den Paketmitschnitt, das Standardgerät -, wie die C#-VM im Prozess über `fire_host.dev_*`. **Entschieden: ein Protokoll, nicht
@@ -189,7 +190,13 @@ bleibt in spark (die Ansicht reicht die Tasten weiter, das Programm hat kein Fen
     beliebiger Länge, und TCP geht auf Windows wie POSIX (die Sockets des Debug-Agenten, `fire_debug.h`).
   * **Kosten**: ein Aufruf ist ein Rundweg über localhost; das Testprogramm (Start von `fire`, Liste, Verbinden, zwei Echos) braucht 32-40 ms insgesamt.
   * **Offen**: die Live-Sitzung und die Vorschauen bekommen `FIRE_DEVICE_HOST` nicht (sie brauchen keine Geräte); `forge run` außerhalb von spark hat
-    keinen Host (die Geräte der Maschine). Die fire-Plugins des Treiber-Agenten selbst laufen weiter in der C#-VM (M1 (2)).
+    keinen Host (die Geräte der Maschine). Der Treiber-Agent läuft in `fire`; seine Geräte gehen weiter über seine Zeilen (siehe unten).
+* **Treiber-Agent und Geräte**: der Treiber-Agent von spark (`PackageDriverAgent`, eine `LiveSession` ohne Fenster) läuft in `fire`: seine Treiber kommen als
+  fire-Plugins, die die C-VM jetzt lädt ([Plugins](#plugins)); die Befehle über stdin (`__HostCommand`), die Antworten und der Verkehr der Geräte über stdout
+  (`FIRE_PRINT_RECORDS`) - dieselben Zeilen wie vorher im Prozess. Die Geräte, die er macht, sieht der `DeviceManager` von spark über diese Zeilen (`AgentDriver`,
+  `AgentDevice`), also auch die Programme, die spark noch in der C#-VM ausführt. `FIRE_DRIVER_AGENT=dotnet` (oder `FIRE_SPARK_VM=dotnet`) behält ihn in der
+  C#-VM von spark; ohne `fire` oder wenn er in `fire` scheitert, bevor er bereit ist, läuft er dort (der Rückfall der `LiveSession`, `ChildFailure`). Ein Programm
+  in `fire`, das spark startet, nimmt die Geräte von spark über das geteilte Gerät (oben).
 * **Die Vorschauen in `fire`** (M1 (4), 22.11.2026): `UiPreview` (die Entwurfsansicht von FXML) und die Vorschau der Blockmodelle (`BlockPreviewWindow`,
   jetzt über `BlockPreview` in fire.Compiler) laufen als Kindprozess `fire` (`CVmScript`: übersetzt in spark mit `Linker { PackageLibraries }` wie die
   Live-Sitzung, die `.fbc` in einen Ordner unter `/dev/shm`, `fire run` mit `FIRE_PRINT_RECORDS`, stdin zu, eine Zeitgrenze, Abbruch beendet den Prozess).
@@ -365,7 +372,49 @@ ganze Zahlen (Zeiger, bool, char, int jeder Breite - auf 64 Bit erweitert) und F
 Registers) werden getrennt gezählt, die Funktion wird als eine mit 8 ganzzahligen und 8 Float-Parametern gerufen. Das gilt für die Aufrufkonventionen,
 in denen beide eigene Register der Reihe nach haben (System V x86-64, AArch64) - unter Windows x64 ist eine Signatur "nicht bekannt" (Get sagt es).
 `extern` mit `#extern "lib"` geht denselben Weg (CallExtern); `inline c` braucht einen C-Compiler zur Laufzeit und fehlt. Fire-Plugins
-(`.fireplugin`, `__LibCall(5)`) lädt die VM noch nicht: `Library.Load` sagt, dass das Programm keine laden kann.
+(`.fireplugin`, `__LibCall(1)`/`__LibCall(5)`): siehe [Plugins](#plugins).
+
+## Plugins
+
+`vm_plugin.c`, wie `VM.Plugins.cs` der C#-VM ([NATIVE_BACKEND.md](NATIVE_BACKEND.md#plugins-phase-d-b), `FIRE_PLUGIN_FORMAT` 7 nativ). `Library.Load` einer
+`.fireplugin`-Datei - oder einer Bibliothek (`kit.so`, `.dll`, `.dylib`), neben der eine liegt - liest die Datei (`FIREPLG2`, Länge, der JSON-Kopf von
+`PluginBytecode`, dahinter eine Programmdatei) und gibt einen Handle unter -1000 (`__LibCall(2)` gibt darauf 0: keine C-Funktionen); eine Bibliothek ohne
+`.fireplugin` daneben ist eine C-Bibliothek wie bisher (die C-VM registriert keine nativen Plugins: ihr Code ist der eines nativen Programms mit `"shared"`;
+dass `kit.so` geht, liegt an seinem Bytecode daneben - wie in der C#-VM). `__LibCall(5, handle)` verlinkt:
+
+* **Prüfungen** in der Reihenfolge der C#-VM und mit ihren Texten (`The plugin 'Kit' cannot be loaded: ...`): ein Plugin dieses Namens (dieselben Klassen:
+  dieselben Namen zurück - ein zweites `Load`), das Format, **die Schnittstellen der Module** (`Deps` gegen die Programmdatei: sie trägt seit diesem Schritt die
+  Schnittstellen ihrer Library-Module, Bit 3 der Flags, [BYTECODE.md](BYTECODE.md#48-das-dateiformat-fbc), geschrieben von `ProgramFile.Write` und forge-c;
+  eine Datei ohne sie wird nicht geprüft, wie ein gepacktes Programm der C#-VM), Klassen, die das Programm schon hat, Basisklassen, die es nicht hat.
+* **Das Programm des Plugins** wird mit den Namen des Programms gelesen (`vmLoadWith`: dieselbe Intern-Tabelle - ein Name vergleicht sich über den Zeiger), seine
+  Basisklassen sind die des Programms, seine Natives in C++ kommen aus den Bibliotheken neben der Datei (oder dem vollen Pfad, den ein Treiber-Plugin nennt;
+  `vmPkgFind` nimmt einen vollen Pfad), die `CallNative` seines Codes bekommen die Nummern des Programms nach Namen (Platz für 256 weitere Natives, die Tabelle
+  wandert nicht); Top-Level-Variablen, `extern`/versuchbare Natives: die Meldungen der C#-VM. `class extends`: die Methoden kommen an die Klassen des Programms
+  (eine, die die Klasse schon hat: die Meldung), ein Basistyp, den das Programm nicht erweitert (`$int`), wird die Klasse des Plugins; danach vergisst die VM die
+  gefundenen Kandidaten und Inline-Caches.
+* **Einheiten und Enums** werden die des Programms: Dimensionen nach Namen in `g_dimNames` (neue in freie Plätze, `g_dimsAdded`), eine Einheit die des Programms
+  mit denselben Dimensionen, Faktor, Offset, Symbol und denselben Klassen der Umrechnungsfunktionen (eine eigene des Plugins ist immer neu; ihre Klasse bekommt
+  einen der 16 Plätze der Trampoline), Enums nach Namen (neue hinten an); die Konstanten seines Codes werden umgeschrieben; die Einheiten, die ein Text nennen
+  darf, kommen zu `g_textUnits`.
+* **Klassen**: die nächsten Ids (`vmRegisterMore`: die Tabellen wachsen als Kopien, die alten bleiben bis zum Ende des Programms - ein Thread liest
+  `byId` jetzt über `vm->top`), dann die **statischen Initialisierer** in der Reihenfolge ihrer Abhängigkeiten (die `SetStaticFieldOnInit` des Top-Levels des
+  Plugins, `StaticInitSequence`), mit einem eigenen Handler: eine Ausnahme ist `the initialiser of 'C.f' threw X.`; was sie anlegen, gehört dem globalen Scope.
+  Das Teilen der statischen Felder mit fire-Threads (`firePluginShareGlobals` nativ) entfällt: die VM läuft mit der GIL.
+* **Debuggen**: die eigenen Quellen des Plugins (`Sources`) bekommen die nächsten Indizes nach denen des Programms (ein Debug-Programm mit Quellen), seine
+  Zeilentabellen werden umgeschrieben, die Quellen seiner Libraries 0; der Agent schickt `sources` und wartet auf die Haltepunkte (`fire_dbgVmSources` in
+  `fire_debug.h` hinter `FIRE_VM`, dasselbe Ereignis wie `fire_dbgPlugin`); `fire_dbgClass` wächst mit den Klassen.
+* **Ende**: ein Plugin wird nicht entladen, solange sein Programm läuft (wie in der C#-VM); am Ende gehen seine statischen Felder, sein Programm und die
+  ersetzten Tabellen (`vmPluginsEnd`) - das nächste Programm im selben Prozess fängt ohne an.
+
+Tests: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugin` hat zu jedem Fall der C#-VM den der C-VM (das Programm als `.fbc` in `fire run`, `CVmRun`): Kit
+(Interface, Basisklasse, Reflection, Ausnahmen, Enum, statische Felder, `class extends`), `kit.so` mit dem Bytecode daneben, Meter (Einheiten, Natives in C++),
+eine andere Schnittstelle von `Api`, zwei Plugins mit derselben Methode, JSON, Natives in C, gepackte Objekte über Module, Debuggen (`fire --debug`,
+`NativeDebugTarget`, der Plan `DebuggerTests.PluginPlan`) - am 22.11. alle 43 Prüfungen richtig (14 davon die der C-VM; mit MinGW/Wine). Der Treiber-Agent
+(`FIRE_TESTS_ONLY=drivers`, 10 von 10) läuft in `fire` (Plugin und `#import`, ohne Rückfall; ein Plugin gegen eine andere Schnittstelle von `devices` wird
+gemeldet, der Agent startet mit `#import` neu). Korpus: `native/4440` (eine `.fireplugin`, die keine ist: dieselben Meldungen in beiden VMs). Die
+Programmdateien beider forges mit den Schnittstellen der Module sind byte-gleich (Stichprobe des Korpus und ein Projekt mit Library).
+Windows: `fire.exe` (MinGW) unter Wine lädt Kit und Kit2 wie unter Linux (von Hand geprüft, kein Test: Meter braucht die Bibliothek seiner Natives als DLL).
+Offen: ein Test der C-VM unter Windows; ein Plugin, das in einem fire-Thread geladen wird (die Initialisierer laufen dort ohne eigene Sektion).
 
 ## JSON
 
@@ -422,7 +471,7 @@ Step Into/Over bis zum Ende (auch durch den Prelude) -, dazu die Protokoll-Prüf
 Felder, hello mit Quellen und SHA-256, detach, Profiler, pause/terminate, Threads), und ein Fall über stdio. Stand: alle 74 Prüfungen richtig (22 Fälle je Plan, Step Into und Step Over; 7 des Protokolls; stdio); die des nativen Debuggers unverändert. Ohne Debugger kostet der Haken in der Schleife im Rahmen der Messschwankung.
 
 **Offen**: die Eingabe des Programms über den gerahmten Transport erreicht nur, was `fire_dbgStdinRead` liest (die Natives der Pakete lesen stdin
-selbst); fire-Plugins (`sources`) lädt die VM noch nicht; Aufgaben mit `await [...]` auf eigenen Threads melden sich als fire-Threads; ein Frame, der an
+selbst); Aufgaben mit `await [...]` auf eigenen Threads melden sich als fire-Threads; ein Frame, der an
 derselben Stelle des Stapels mit derselben Funktion und demselben (wiederverwendeten) Scope einen verschachtelten ersetzt, behält dessen Einordnung.
 
 ## Stand gegen den Korpus

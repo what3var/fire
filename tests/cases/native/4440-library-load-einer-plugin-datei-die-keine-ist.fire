@@ -1,0 +1,20 @@
+#import "filesystem"
+// (Library.Load of a file named .fireplugin: the VM reads it as a fire plugin - the C# VM and the VM in C say the same when it is none)
+var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire-plugfile-" + DateTime.UtcNow.Ticks)
+IO.Directory.CreateDirectory(dir)
+class Probe {
+    static string Load(string dir, string name) {
+        try { Library.Load(IO.Path.Combine(dir, name)); return "loaded" } catch (LibraryException e) { return e.message.Replace(dir, "<dir>").Replace("\\", "/") }
+    }
+}
+IO.File.WriteAllText(IO.Path.Combine(dir, "text.fireplugin"), "no plugin at all")
+print(Probe.Load(dir, "text.fireplugin"))
+// (the magic, the length of the header, the header, then 4 bytes that are no program file)
+var codes = [70, 73, 82, 69, 80, 76, 71, 50, 14, 0, 0, 0, 123, 34, 78, 97, 109, 101, 34, 58, 34, 66, 97, 100, 34, 125, 1, 2, 3, 4]
+var bytes = new byte[codes.length]
+for (int i = 0; i < codes.length; i++) { bytes[i] = codes[i] }
+IO.File.WriteAllBytes(IO.Path.Combine(dir, "body.fireplugin"), bytes)
+print(Probe.Load(dir, "body.fireplugin"))
+print(Probe.Load(dir, "missing.fireplugin"))
+IO.Directory.Delete(dir, true)
+//# name: Library.Load einer .fireplugin-Datei, die keine ist (kein Kopf, ein Kopf ohne Programm, keine Datei): dieselben Meldungen in beiden VMs

@@ -53,6 +53,7 @@ void fbOutOfMemory(void) { outOfMemory(); }
 #include "vm_debug.c"
 #include "vm_devhost.c"
 #include "vm_trace.c"
+#include "vm_plugin.c"
 
 void fire_vmExit(int code) {
     Vm* vm = g_vmCur;
@@ -227,6 +228,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
         uint32_t k;
         for (k = 0; k < p->classes[i]->nstatic; k++) { release(p->classes[i]->svals[k]); p->classes[i]->svals[k] = Undef(); }
     }
+    vmPluginsReleaseStatics();           /* (and those of the classes of its fire plugins) */
     if (g_pool.top) poolRelease(0);
     vmThreadsEnd();
     if (vm->quiet) g_zombies.quiet--;
@@ -252,6 +254,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     g_textUnits = NULL; g_textUnitCount = 0;
     free(g_vmTextUnits); g_vmTextUnits = NULL;
     vmUnload(p);
+    vmPluginsEnd();                      /* (the programs of its fire plugins, the tables they made grow) */
     free(bytes);
     fflush(stdout);
     if (g_vmTime)   /* (--time: what the benchmarks compare - loading, running, taking down) */

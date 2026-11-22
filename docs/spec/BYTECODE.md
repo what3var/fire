@@ -1926,7 +1926,7 @@ dieses Format. Es löst MemoryPack ab, dessen Bytes nur .NET lesen konnte und da
 **Aufbau.**
 
 ```
-Datei     := 'F' 'B' 'C' 0x1A   version:u8 (= 1)   flags:u8 (Bit 0: mit Zeilentabellen, Bit 1: mit Quellen)
+Datei     := 'F' 'B' 'C' 0x1A   version:u8 (= 1)   flags:u8 (Bit 0: mit Zeilentabellen, Bit 1: mit Quellen, Bit 2: Stack-Traces, Bit 3: Module)
              Namen Einheiten Enums Programm
 Namen     := list< bytes (UTF-8) >
 Einheiten := list< Einheit >
@@ -1944,6 +1944,10 @@ Programm  := mode:u8 (0 Debug, 1 Release, 2 Performance)  floatWidth:u8  intWidt
              classNames:list< name:str klasse:uint >        -- die Tabelle des Programms: Name -> Index in classes
              topLevel:Chunk
              [ sources:list< file:str hash:str > ]          -- nur mit Bit 1 der flags der Datei
+             [ stackTrace:u8  traceFiles:list<str> ]        -- nur mit Bit 2 (docs/spec/STACKTRACE.md)
+             [ modules:list< module:str interface:str > ]   -- nur mit Bit 3: die Schnittstellen der Library-Module (ModuleInterface.Text, nach Namen
+                                                            -- geordnet), wogegen die C-VM ein fire-Plugin prüft (VM_C.md "Plugins"); geschrieben, wenn das
+                                                            -- Programm die Module seiner Quellen kennt (übersetzt, nicht aus einer Datei gelesen)
 
 Klasse    := name:str  base:uint (0 = keine, sonst Index + 1 in classes)
              flags (actor, record, reflectionHelper, keep, notSerializable, noCopy)

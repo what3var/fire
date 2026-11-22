@@ -691,3 +691,26 @@ static FgPluginPlan* GeneratePlugin(FcCtx* c, FcLinked* program, FcList* natives
     plan->c = text; plan->natives = nativesCpp; plan->name = name; plan->deps = deps; plan->log = fcBufDone(c, &log);
     return plan;
 }
+
+/* The interfaces of the library modules of a linked program, as the program file carries them (ProgramFile FlagModules, programfile.c): ModuleInterface.Modules
+ * + Text, ordered by name - name, interface, name, ...; NULL without the modules of its sources. */
+static FcList* fcPfModuleInterfaces(FcCtx* c, const FcLinked* linked) {
+    FcList* out;
+    FcList* specs;
+    FgGen* probe;
+    int i, k;
+    if (!linked->sourceModules) return NULL;
+    specs = fcListCopy(c, ModulesOf(c, linked));
+    for (i = 1; i < specs->count; i++)
+        for (k = i; k > 0 && strcmp(((FgModuleSpec*)specs->items[k - 1])->name, ((FgModuleSpec*)specs->items[k])->name) > 0; k--) {
+            void* t = specs->items[k]; specs->items[k] = specs->items[k - 1]; specs->items[k - 1] = t;
+        }
+    probe = fgGenNew(c, (FcLinked*)linked, fcListNew(c), NULL);   /* (AbiHash reads the layouts only) */
+    out = fcListNew(c);
+    for (i = 0; i < specs->count; i++) {
+        const FgModuleSpec* spec = (const FgModuleSpec*)specs->items[i];
+        fcListAdd(c, out, (void*)spec->name);
+        fcListAdd(c, out, (void*)fcFmt(c, "%d:%s", 1, AbiHash(probe, linked, spec)));
+    }
+    return out;
+}

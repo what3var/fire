@@ -350,9 +350,13 @@ static bool vmPkgFind(const char* file, char* out, size_t cap) {
     const char* path = getenv("FIRE_PKG_PATH");
 #if defined(_WIN32)
     const char sep = ';';
+    bool absolute = file[0] == '/' || file[0] == '\\' || (file[0] && file[1] == ':');
 #else
     const char sep = ':';
+    bool absolute = file[0] == '/';
 #endif
+    /* (a full path: the library of a fire plugin next to its bytecode, a driver plugin's package library - vm_plugin.c) */
+    if (absolute) { snprintf(out, cap, "%s", file); return vmPkgExists(out); }
     while (path && *path) {
         char dir[1024];
         const char* end = strchr(path, sep);

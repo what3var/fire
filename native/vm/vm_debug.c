@@ -436,9 +436,12 @@ const DbgClass* fire_dbgClass(uint32_t cls) {
     Vm* vm = g_vmDbgMain;
     VmClass* c;
     if (!vm || cls < vm->firstId || cls - vm->firstId >= vm->nids) return NULL;
-    if (!g_vmDbgClasses) {
-        g_vmDbgClasses = (DbgClass*)calloc(vm->nids + 1, sizeof(DbgClass));
-        if (!g_vmDbgClasses) return NULL;
+    if (!g_vmDbgClasses || g_vmDbgClassCount < vm->nids) {
+        /* (more classes than before: a fire plugin was linked - vm_plugin.c; the rows so far are kept, the agent may hold them) */
+        DbgClass* grown = (DbgClass*)calloc(vm->nids + 1, sizeof(DbgClass));
+        if (!grown) return NULL;
+        if (g_vmDbgClasses) { memcpy(grown, g_vmDbgClasses, g_vmDbgClassCount * sizeof(DbgClass)); vmPlGarbage(g_vmDbgClasses); }
+        g_vmDbgClasses = grown;
         g_vmDbgClassCount = vm->nids;
     }
     if (cls - vm->firstId >= g_vmDbgClassCount) return NULL;
@@ -449,6 +452,11 @@ const DbgClass* fire_dbgClass(uint32_t cls) {
         if (!dc->name) { dc->name = c->name; dc->nfields = c->nlayout; dc->fields = c->layout; dc->places = NULL; }
         return dc;
     }
+}
+/* A fire plugin's sources got the indexes from `first` on (vm_plugin.c): the debugger hears of them (only the program under the debugger). */
+static void vmDbgPluginSources(const char* plugin, int32_t first, uint32_t n, const char** files, const char** hashes) {
+    if (!g_vmDbgStarted || !g_vmDbgMain || (g_vmCur && g_vmCur->top && g_vmCur->top != g_vmDbgMain)) return;
+    fire_dbgVmSources(plugin, first, n, (const char* const*)files, (const char* const*)hashes);
 }
 /* `set` of a field: like `obj.name = value` in the program (its unit, kind, type, a record, the probes - VM.DebugAssignMember). */
 void fire_dbgSetField(Value o, uint32_t index, Value x) {

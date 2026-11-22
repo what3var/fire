@@ -290,14 +290,14 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    behält (`vm-rf` 18 von 18), Lesen/Schreiben/Aufrufen/Erzeugen nach Namen auf den Wegen des Interpreters; JSON mit der Engine des nativen Builds
    (`fire_json.h`) auf Tabellen, die die VM aus dem Programm baut (`$id`/`$ref`, Einheiten, Enums, Generics); Probes mit dem Probe-Speicher der Runtime
    (`FIRE_REFLECTION` in der VM) und einer eigenen Fassung von `probedSet` nach Namen statt der Rückrufe ohne Kontext; `linq` (bis auf einen Fall von
-   Besitz aus Schritt 2). Offen: Fire-Plugins und Module (das Laden der Klassen eines zweiten Programms in ein laufendes; kein Fall des Korpus).
+   Besitz aus Schritt 2). Fire-Plugins (das Laden der Klassen eines zweiten Programms in ein laufendes): seit dem 22.11.2026 ([VM_C.md](spec/VM_C.md#plugins)).
    Maß: **869 von 1128** (vorher 751); was fehlt, ist Schritt 3 (rund 185) und Schritt 2 (rund 75).
 6. Debug-Agent (L4): Haltepunkte, Schritte, Variablen über die Scope-Ebenen, `set`, Pause, Zeilenprofil.
    **Umgesetzt** ([VM_C.md](spec/VM_C.md#debugger-schritt-6-vm_debugc)): `fire x.fbc` mit `FIRE_DEBUG`/`--debug` spricht das Protokoll nativer Programme über
    den Agenten der Runtime (tcp, stdio), `NativeDebugTarget` debuggt die VM wie ein natives Programm; die Halte entscheidet ein Haken vor jeder Instruktion
    wie die Schrittschleifen der C#-VM (verschachtelte Frames unsichtbar), die Frames und Scopes baut die VM für den Agenten, wenn ein Thread anhält.
    Die `.fbc` eines Debug-Programms trägt seine Quellen (Datei, SHA-256). Tests: `FIRE_TESTS_FILTER=VM-Debugger` - die Fälle des nativen Debuggers gegen
-   die C#-VM und seine Protokoll-Prüfungen. Offen: Eingabe über den gerahmten Transport für Paket-Natives, Plugins.
+   die C#-VM und seine Protokoll-Prüfungen. Offen: Eingabe über den gerahmten Transport für Paket-Natives. Plugins: seit dem 22.11. (ihre Quellen, `sources`).
 7. Programm `fire` (`fire run x.fbc`); der Korpus, vom C#-Compiler übersetzt, läuft mit den erwarteten Ausgaben; Benchmarks gegen die C#-VM.
    **Umgesetzt** ([VM_C.md](spec/VM_C.md#das-programm-fire-schritt-7)): `fire run x.fbc [--] args`, `fire a.fbc b.fbc -- args`, `help`, `version`,
    `--debug`, `--stats`, `--time`; Exitcodes 0, 1 (unbehandelt), der von `terminate`, 2 (nicht ladbar, Befehlszeile). Eine VM je Paar von Breiten
@@ -326,7 +326,7 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    Tests: `FIRE_TESTS_ONLY=cvmrun`, die Live-Sitzung in `circuiteditor`; unter Xvfb mit spark: Konsolen- und Fensterprogramm, Haltepunkt, Schaltplan.
    Der Schaltplan-Editor braucht den Rückfall nicht mehr (22.11.: die `DestroyedException` in `UI.CircuitView.DrawBackground` war das `SetField` auf ein
    Objekt mit Sonden, behoben mit `40e81bcb`; `vm-life/0110`, die Live-Sitzung mit jedem Beispiel-Schaltplan ohne Rückfall).
-   **Offen**: der Treiber-Agent bleibt in der C#-VM (fire-Plugins);
+   **Offen**: das Debuggen der Plugins ist da, der Treiber-Agent läuft seit dem 22.11. in `fire` (fire-Plugins in der C-VM);
    `FIRE_DISPLAY_SHM` und `__HostCommand` unter Windows; "Build virtual" und `check` (MCP) übersetzen noch in spark (M2).
 
 **M1:** forge (noch C#) und spark benutzen nur noch die C-VM. `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget`
@@ -341,7 +341,11 @@ Warnung für Verweise auf zerstörte Objekte (`vm_dangle.c`); der Schaltplan-Edi
 `40e81bcb` behoben). Der Rückfall der Live-Sitzung ist **weg** (22.11.2026: ein Programm, das in `fire` scheitert, beendet seine Ansicht mit dem Grund);
 `FIRE_SPARK_VM=dotnet` bleibt bis zum Entfernen von `fire.Runtime` (es hält den Weg über `DebugSession.CompileAsync`/`VmDebugTarget` und die C#-VM für die
 Live-Sitzung und die Vorschauen offen; nicht nur ein Schalter, sondern mit dem Code von M1 zu entfernen) ([VM_C.md](spec/VM_C.md#stand-gegen-den-korpus));
-(2) fire-Plugins in der C-VM (Treiber-Agent, `Library.Load` von `.fireplugin`); (3) ~~das geteilte Gerät zwischen spark und einem Programm
+(2) ~~fire-Plugins in der C-VM (Treiber-Agent, `Library.Load` von `.fireplugin`)~~ - **erledigt** (22.11.2026,
+[VM_C.md](spec/VM_C.md#plugins)): `vm_plugin.c` lädt den Bytecode eines Plugins wie die C#-VM (Prüfungen und Meldungen, Basisklassen, Natives nach Namen und in
+C++, `class extends`, Einheiten, Enums, statische Initialisierer, Debuggen mit dem Ereignis `sources`); die Programmdatei trägt dafür die Schnittstellen ihrer
+Module (Bit 3, C#-forge und forge-c); der Treiber-Agent läuft in `fire` (`FIRE_DRIVER_AGENT=dotnet` behält die C#-VM); alle Plugin-Fälle von
+`FIRE_TESTS_FILTER=plugin` auch in der C-VM; offen: die C-VM unter Windows; (3) ~~das geteilte Gerät zwischen spark und einem Programm
 (`fire_host.dev_*`, `DeviceManager`)~~ - **erledigt** (22.11.2026): ein Protokoll statt Phase F - die 16 `dev_*` von `fire_host` gehen über eine lokale
 Verbindung zum `DeviceManager` von spark (`FIRE_DEVICE_HOST=tcp:127.0.0.1:PORT;token=T`, `native/vm/vm_devhost.c`, `DeviceHostServer`; Treiber, Teilen,
 Mitschnitt, Standardgerät wie in der C#-VM; ohne die Variable die Geräte der Maschine; [VM_C.md](spec/VM_C.md#spark-auf-der-c-vm-schritt-9), "Das geteilte

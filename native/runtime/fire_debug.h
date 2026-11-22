@@ -65,6 +65,11 @@ FIRE_RT_FN void fire_dbgStart(const DbgProgram* program);
 #ifdef FIRE_MODULES
 FIRE_RT_FN void fire_dbgPlugin(const FirePlugin* p);
 #endif
+#ifdef FIRE_VM
+/* The VM in C (native/vm/vm_plugin.c): a fire plugin's bytecode is linked, its `n` sources got the indexes from `first` on - the debugger hears of them (event
+ * `sources`, like fire_dbgPlugin) and the thread waits for its breakpoints. */
+FIRE_RT_FN void fire_dbgVmSources(const char* plugin, int32_t first, uint32_t n, const char* const* files, const char* const* hashes);
+#endif
 
 FIRE_FN void fire_dbgEnter(DbgFrame* f, const DbgFunc* fn, int hidden) {
     DbgFrame* prev = g_dbgTop;
@@ -103,6 +108,9 @@ void fire_dbgRet(DbgFrame* caller) { (void)caller; }
 void fire_dbgStart(const DbgProgram* program) { (void)program; }
 #ifdef FIRE_MODULES
 void fire_dbgPlugin(const FirePlugin* p) { (void)p; }
+#endif
+#ifdef FIRE_VM
+void fire_dbgVmSources(const char* plugin, int32_t first, uint32_t n, const char* const* files, const char* const* hashes) { (void)plugin; (void)first; (void)n; (void)files; (void)hashes; }
 #endif
 void fire_dbgExited(int code) { (void)code; }
 int fire_dbgUnhandled(Value exception) { (void)exception; return 0; }
@@ -510,6 +518,8 @@ static int g_dbgBpGen = 0;   /* (counts the `breakpoints` commands) */
 static const FirePlugin* g_dbgPlugins[64];
 static int g_dbgPluginCount = 0;
 static int32_t g_dbgPluginSources = 0;
+#endif
+#if defined(FIRE_MODULES) || defined(FIRE_VM)
 #ifndef FIRE_DEBUG_PLUGIN_WAIT_MS
 #define FIRE_DEBUG_PLUGIN_WAIT_MS 2000
 #endif
@@ -1743,11 +1753,37 @@ void fire_dbgThreadEnd(void) {
     free(b.p);
 }
 
-#ifdef FIRE_MODULES
 /* A plugin is registered: its sources get the next indexes after the program's (and the other plugins'), its classes their tables; a debugger hears of them
  * (`sources`) and this thread waits until it has sent its breakpoints again (they may be in the plugin's files) - at most FIRE_DEBUG_PLUGIN_WAIT_MS. */
-void fire_dbgPlugin(const FirePlugin* p) {
+#if defined(FIRE_MODULES) || defined(FIRE_VM)
+/* The event `sources` of a plugin (with the lock, connected): then the thread waits until the debugger has sent its breakpoints (at most FIRE_DEBUG_PLUGIN_WAIT_MS). */
+static void dbgPluginSourcesEvent(const char* plugin, int32_t first, uint32_t n, const char* const* files, const char* const* hashes) {
     DbgBuf b = {NULL, 0, 0};
+    uint32_t i;
+    int gen = g_dbgBpGen;
+    int64_t until = fire_plat_nowMs() + FIRE_DEBUG_PLUGIN_WAIT_MS;
+    dbgPut(&b, "{\"event\":\"sources\",\"plugin\":"); dbgPutS(&b, plugin);
+    dbgPut(&b, ",\"sources\":[");
+    for (i = 0; i < n; i++) {
+        if (i) dbgPut(&b, ",");
+        dbgPut(&b, "{\"index\":"); dbgPutI(&b, first + (int32_t)i);
+        dbgPut(&b, ",\"file\":"); if (files && files[i]) dbgPutS(&b, files[i]); else dbgPut(&b, "null");
+        dbgPut(&b, ",\"hash\":"); if (hashes && hashes[i]) dbgPutS(&b, hashes[i]); else dbgPut(&b, "null");
+        dbgPut(&b, "}");
+    }
+    dbgPut(&b, "]}");
+    dbgSendLine(&b);
+    /* (the agent thread answers without the GIL: waiting here with it is no deadlock) */
+    while (g_dbgBpGen == gen && g_dbgArmed && g_dbgTransport != DBG_T_NONE) {
+        int64_t left = until - fire_plat_nowMs();
+        if (left <= 0) break;
+        dbgWaitMs(&g_dbgCv, &g_dbgM, (int)left);
+    }
+    free(b.p);
+}
+#endif
+#ifdef FIRE_MODULES
+void fire_dbgPlugin(const FirePlugin* p) {
     uint32_t i;
     int32_t first;
     int locked = g_dbgConnected;
@@ -1757,29 +1793,18 @@ void fire_dbgPlugin(const FirePlugin* p) {
     first = (g_dbgProg ? g_dbgProg->nsources : 0) + g_dbgPluginSources;
     if (p->srcMap) for (i = 0; i < p->nsources; i++) p->srcMap[i] = first + (int32_t)i;
     g_dbgPluginSources += (int32_t)p->nsources;
-    if (locked && g_dbgArmed && g_dbgTransport != DBG_T_NONE && !g_dbgGaveUp && p->nsources) {
-        int gen = g_dbgBpGen;
-        int64_t until = fire_plat_nowMs() + FIRE_DEBUG_PLUGIN_WAIT_MS;
-        dbgPut(&b, "{\"event\":\"sources\",\"plugin\":"); dbgPutS(&b, p->name);
-        dbgPut(&b, ",\"sources\":[");
-        for (i = 0; i < p->nsources; i++) {
-            if (i) dbgPut(&b, ",");
-            dbgPut(&b, "{\"index\":"); dbgPutI(&b, first + (int32_t)i);
-            dbgPut(&b, ",\"file\":"); if (p->srcFiles && p->srcFiles[i]) dbgPutS(&b, p->srcFiles[i]); else dbgPut(&b, "null");
-            dbgPut(&b, ",\"hash\":"); if (p->srcHashes && p->srcHashes[i]) dbgPutS(&b, p->srcHashes[i]); else dbgPut(&b, "null");
-            dbgPut(&b, "}");
-        }
-        dbgPut(&b, "]}");
-        dbgSendLine(&b);
-        /* (the agent thread answers without the GIL: waiting here with it is no deadlock) */
-        while (g_dbgBpGen == gen && g_dbgArmed && g_dbgTransport != DBG_T_NONE) {
-            int64_t left = until - fire_plat_nowMs();
-            if (left <= 0) break;
-            dbgWaitMs(&g_dbgCv, &g_dbgM, (int)left);
-        }
-    }
+    if (locked && g_dbgArmed && g_dbgTransport != DBG_T_NONE && !g_dbgGaveUp && p->nsources)
+        dbgPluginSourcesEvent(p->name, first, p->nsources, (const char* const*)p->srcFiles, (const char* const*)p->srcHashes);
     if (locked) dbgUnlock(&g_dbgM);
-    free(b.p);
+}
+#endif
+#ifdef FIRE_VM
+void fire_dbgVmSources(const char* plugin, int32_t first, uint32_t n, const char* const* files, const char* const* hashes) {
+    int locked = g_dbgConnected;
+    if (!n) return;
+    if (locked) dbgLock(&g_dbgM);
+    if (locked && g_dbgArmed && g_dbgTransport != DBG_T_NONE && !g_dbgGaveUp) dbgPluginSourcesEvent(plugin, first, n, files, hashes);
+    if (locked) dbgUnlock(&g_dbgM);
 }
 #endif
 #endif  /* FIRE_DEBUG_AGENT */

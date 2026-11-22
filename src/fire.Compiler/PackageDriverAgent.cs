@@ -46,6 +46,15 @@ namespace fire.Compiler
 
         public bool IsRunning => _session?.IsRunning == true;
 
+        /// <summary>The agent runs in the C# VM of this process (FIRE_DRIVER_AGENT=dotnet), not in `fire` (the VM in C, the default).</summary>
+        public bool InProcessOnly { get; init; } = Environment.GetEnvironmentVariable("FIRE_DRIVER_AGENT") == "dotnet";
+
+        /// <summary>The running agent is a process `fire` (the VM in C), not the C# VM of this process.</summary>
+        public bool RunsInFire => _session is { InProcess: false };
+
+        /// <summary>Why the agent did not run in `fire` and runs in the C# VM here instead (null: it did not fail there).</summary>
+        public string? ChildFailure => _session?.ChildFailure;
+
         /// <summary>The drivers the installed packages offer (the `drivers` of their imports).</summary>
         public static List<PackageDriver> FindDrivers(PackageStore? store = null)
         {
@@ -382,9 +391,10 @@ namespace fire.Compiler
             failedPlugins = new();
             lock (_lock) _pluginFailures.Clear();
             var ready = new ManualResetEventSlim();
-            // (in the C# VM of this process, also with the VM in C as spark's engine: the drivers come as fire plugins, which the VM in C cannot load yet, and the devices
-            // they make are shared with the programs spark runs in its VM - docs/ROADMAP_C_PORT.md, phase B step 9, "Geräte")
-            var session = new LiveSession { InProcessOnly = true };
+            // (in `fire`, the VM in C, as a process of its own - it loads the drivers' plugins like the C# VM, docs/spec/VM_C.md "Plugins"; the devices it makes reach
+            // spark's DeviceManager through the lines of this protocol, AgentDriver. FIRE_DRIVER_AGENT=dotnet - or FIRE_SPARK_VM=dotnet - keeps it in the C# VM of this
+            // process; without a `fire` it runs there too, as when the program fails in `fire` before it is ready - LiveSession's fallback, ChildFailure)
+            var session = new LiveSession { InProcessOnly = InProcessOnly };
             session.Message += line =>
             {
                 if (_session != session) return;

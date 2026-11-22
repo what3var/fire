@@ -222,6 +222,11 @@ struct VmProgram {
     const char** traceFiles;
     uint32_t ntraceFiles;
     fire_atomic32 nthreads;
+    /* fire plugins (vm_plugin.c): the interfaces of the library modules (ModuleInterface.Text, flag 8 of the file) a plugin is checked against */
+    bool hasModules;
+    const char** moduleNames;
+    const char** moduleAbis;
+    uint32_t nmodules;
 };
 
 /* ---- the interpreter ---- */
