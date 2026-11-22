@@ -98,6 +98,8 @@ namespace fire.Debugging
         string? UnhandledError { get; }
         /// <summary>The throw site of that exception as locations, innermost first (null: none or not recorded).</summary>
         IReadOnlyList<(int SourceIndex, int Line)>? UnhandledTrace { get; }
+        /// <summary>The function of each entry of <see cref="UnhandledTrace"/> (`Store.Find`, `&lt;main&gt;`; null: not known).</summary>
+        IReadOnlyList<string?>? UnhandledFunctions => null;
         /// <summary>true while the thread stands at the throw site of an unhandled exception and can go on after it.</summary>
         bool IsPausedOnUnhandled { get; }
         /// <summary>Ignores the unhandled exception: the thread goes on right after the `throw` (like `resume()` in a `catch`). false if it stands at none.</summary>

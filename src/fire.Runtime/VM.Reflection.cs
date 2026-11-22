@@ -23,6 +23,7 @@ namespace fire.Runtime
         // run, and when the native has returned its call throws it (CallNativeGuarded) - the same object. Where nobody waits for the callback (a host service
         // at a safe point, an idle turn, a callback of another thread) the host reports it and the program goes on (EnterCallbackBarrier).
         private int _nativeDepth;              // the natives running on this VM (nested through callbacks)
+        private int[] _nativeAt = new int[8];  // ... their indexes, by depth (the frame of a native below its callbacks in a trace)
         private int _callbackBarrier;          // natives up to this depth wait for no callback (a service or an idle turn runs inside them)
         private ObjectInstance? _callbackFailure;
         private int _callbackFailureDepth;     // the native that throws it when it returns

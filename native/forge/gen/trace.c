@@ -290,6 +290,11 @@ static const char* TraceReturns(FgGen* g, const char* code, const char* leave, c
     return fcBufDone(g->c, &sb);
 }
 
+/* Around the call of a native of a package or of the windows bridge (they can call back into fire: fire_cbCall): the native whose callbacks get its frame -
+ * `at __GRPHWinTick (native)` (fire_rt.h FIRE_TF_NAT). Not for a typed native whose C number is a scalar of the code, not for the graphics bridge. */
+static const char* TraceNat(FgGen* g, const char* native) { return TraceOn ? fcFmt(g->c, "FIRE_TF_NAT(%s); ", CString(g, native)) : ""; }
+static const char* TraceNatEnd(FgGen* g) { return TraceOn ? " FIRE_TF_NAT_END();" : ""; }
+
 /* `fire`: where it stands, as the line of the thread names it (`main.fire:40`; `prelude`; without the line with `calls`). */
 static const char* TraceStartAt(FgGen* g, FcChunk* chunk, FgInstr* ins) {
     int src, line;

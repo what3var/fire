@@ -515,16 +515,18 @@ namespace fire.Editor
             var text = new System.Text.StringBuilder();
             text.Append(ctx.IsMain ? "The program stopped at an error that nothing catches.\n\n" : $"The thread '{ctx.Name}' stopped at an error that nothing catches.\n\n");
             text.Append(error).Append("\n");
+            // the stack as a trace shows it (`   at Store.Find (main.fire:16)`, docs/spec/STACKTRACE.md): a double click on a frame goes to its place
+            List<(string Text, Action? Open)>? frames = null;
             if (ctx.ErrorTrace is { Count: > 0 } trace)
             {
-                text.Append("\nStack (innermost first):\n");
-                foreach (var loc in trace) text.Append($"   at {DocumentOfSourceName(loc.SourceIndex)}line {loc.Line}\n");
+                text.Append("\nStack (innermost first):");
+                frames = trace.Select((loc, i) => (TraceLine(loc, ctx.ErrorFunctions, i), FileOfSource(loc.SourceIndex) != null ? (Action?)(() => ShowSourceLine(loc)) : null)).ToList();
             }
             bool canContinue = ctx.CanIgnoreError;
-            if (canContinue) text.Append("\n'Continue' ignores the error and goes on right after the failing statement.");
+            if (canContinue) text.Append("\n\n'Continue' ignores the error and goes on right after the failing statement.");
             var answer = canContinue
-                ? await Dialogs.Ask(this, text.ToString(), "Error", ("Continue", Dialogs.Answer.Yes), ("Stop program", Dialogs.Answer.No), ("Keep stopped", Dialogs.Answer.Cancel))
-                : await Dialogs.Ask(this, text.ToString(), "Error", ("Stop program", Dialogs.Answer.No), ("Keep stopped", Dialogs.Answer.Cancel));
+                ? await Dialogs.Ask(this, text.ToString(), frames, "Error", ("Continue", Dialogs.Answer.Yes), ("Stop program", Dialogs.Answer.No), ("Keep stopped", Dialogs.Answer.Cancel))
+                : await Dialogs.Ask(this, text.ToString(), frames, "Error", ("Stop program", Dialogs.Answer.No), ("Keep stopped", Dialogs.Answer.Cancel));
             if (answer == Dialogs.Answer.Yes && ctx.IgnoreError())
             {
                 _reportedErrors.Remove(ctx);
@@ -591,8 +593,8 @@ namespace fire.Editor
                     ShowDebugLocation(trace is { Count: > 0 } ? trace[0] : null);
                     var text = new System.Text.StringBuilder($"Runtime error: {error}\n");
                     if (trace != null)
-                        foreach (var loc in trace)
-                            text.Append($"   at {DocumentOfSourceName(loc.SourceIndex)}line {loc.Line}\n");
+                        for (int i = 0; i < trace.Count; i++)
+                            text.Append(TraceLine(trace[i], _session.ErrorFunctions, i)).Append('\n');   // (a line of a trace: clickable in the output, OutputLocations)
                     if (_session.CanIgnoreError) text.Append("   (Run > Ignore Error and Continue, Shift+F8, goes on after the throw)\n");
                     _output.Append(text.ToString());
                     string where = trace is { Count: > 0 } ? $" ({DocumentOfSourceName(trace[0].SourceIndex)}line {trace[0].Line})" : "";
@@ -612,6 +614,37 @@ namespace fire.Editor
                 UpdateStatus($"Paused at {where}line {location.Line}.");
             }
             _debugger.Refresh(BreakpointDescriptions());
+        }
+
+        /// <summary>A frame of the stack of an error as a stack trace writes it (docs/spec/STACKTRACE.md): `   at Store.Find (main.fire:16)` - the file relative to the
+        /// folder of the program's first source, `(prelude)` for code without a file; the function from <paramref name="functions"/> (`?` when it is not known).</summary>
+        private string TraceLine((int SourceIndex, int Line) loc, IReadOnlyList<string?>? functions, int index)
+        {
+            string function = functions != null && index < functions.Count && functions[index] is { Length: > 0 } f ? f : "?";
+            string? file = FileOfSource(loc.SourceIndex);
+            if (file == null) return $"   at {function} (prelude)";
+            var files = _session.SourceFiles;
+            string? first = files.Skip(Math.Max(0, _session.FirstUserSourceIndex)).FirstOrDefault(p => p != null);
+            string shown = first != null && Path.GetDirectoryName(first) is { } dir ? fire.Runtime.ExceptionTrace.Relative(dir, file) : Path.GetFileName(file);
+            return loc.Line > 0 ? $"   at {function} ({shown}:{loc.Line})" : $"   at {function} ({shown})";
+        }
+
+        /// <summary>The path of a source of the run (null: the prelude, a source without a file).</summary>
+        private string? FileOfSource(int sourceIndex)
+        {
+            var files = _session.SourceFiles;
+            return sourceIndex >= 0 && sourceIndex < files.Count ? files[sourceIndex] : null;
+        }
+
+        /// <summary>Opens the source and puts the caret on the line (a frame of the error dialog).</summary>
+        private void ShowSourceLine((int SourceIndex, int Line) loc)
+        {
+            var doc = DocumentOfSource(loc.SourceIndex);
+            if (doc?.Script is not { } script || loc.Line < 1) return;
+            if (!ReferenceEquals(doc, ActiveDocument)) Activate(doc);
+            script.ScrollToLine(loc.Line);
+            script.SetCaretByLineColumn(loc.Line - 1, 0);
+            script.Focus();
         }
 
         /// <summary>"file.script, " for the status bar when the run has several files, else "".</summary>

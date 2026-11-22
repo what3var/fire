@@ -380,6 +380,7 @@ typedef struct DbgFrame DbgFrame;
 typedef struct DbgThread DbgThread;
 /* Stack traces of the native build (docs/spec/STACKTRACE.md section 13): the frame a fire function keeps on the chain of its strand (see FireTFrame). */
 typedef struct FireTFrame FireTFrame;
+typedef struct FireFnInfo FireFnInfo;
 #ifdef FIRE_DEBUG
 extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
 #define FIRE_DEBUG_THREAD_VARS(X) \
@@ -448,7 +449,8 @@ typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCac
     X(RecInit*, g_recInit, NULL)                   /* the records that are being constructed (step 9) */ \
     X(FireTFrame*, g_traceTop, NULL)               /* stack traces: the innermost frame of a fire function on this strand (NULL: none, or `#stacktrace off`) */ \
     X(char*, g_traceTrailer, NULL)                 /* ... a fire thread: the line that ends its traces (`in thread 'Fire #1', started at main.fire:40`) */ \
-    X(const char*, g_traceStartAt, NULL)           /* ... where the `fire` that starts a thread right now stands (set right before fireThread) */
+    X(const char*, g_traceStartAt, NULL)           /* ... where the `fire` that starts a thread right now stands (set right before fireThread) */ \
+    X(const FireFnInfo*, g_traceNat, NULL)         /* ... the native of a package or a bridge that runs right now (its callbacks: `at __GRPHWinTick (native)`) */
 
 #if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL) || defined(FIRE_TASK_STATE))
 typedef struct ThreadLocals {
@@ -567,6 +569,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_traceTop FIRE_TLV(g_traceTop)
 #define g_traceTrailer FIRE_TLV(g_traceTrailer)
 #define g_traceStartAt FIRE_TLV(g_traceStartAt)
+#define g_traceNat FIRE_TLV(g_traceNat)
 #if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
 #define g_slotCache FIRE_TLV(g_slotCache)
 #define g_domReader FIRE_TLV(g_domReader)
@@ -4077,6 +4080,14 @@ FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) 
 #ifdef FIRE_TASKS
 FIRE_FN bool awaitRunTasks(Value* lams, uint32_t n, Value res, Value fails, OwnList* list);
 #endif
+/* (a call that runs here, not in a task: its trace ends at its lambda all the same - the waiting one's frames are the section `--- awaited at ---` that
+ * __Await.All gives the exception, docs/spec/STACKTRACE.md section 4) */
+#ifdef FIRE_VM
+void fire_vmTraceCut(int on);
+#define FIRE_TRACE_CUT(call) do { fire_vmTraceCut(1); call; fire_vmTraceCut(0); } while (0)
+#else
+#define FIRE_TRACE_CUT(call) do { FireTFrame* const tcut_ = g_traceTop; g_traceTop = NULL; call; g_traceTop = tcut_; } while (0)
+#endif
 FIRE_FN Value awaitRun(Value items, Value res, Value fails, OwnList* list) {
     Arr* a;
     Value* lams;
@@ -4093,7 +4104,7 @@ FIRE_FN Value awaitRun(Value items, Value res, Value fails, OwnList* list) {
         Value args[3];
         if (lams[i].kind != K_Lambda) continue;
         args[0] = res; args[1] = fails; args[2] = Int((int64_t)i);
-        callLam(lams[i], 3, args, list);
+        FIRE_TRACE_CUT(callLam(lams[i], 3, args, list));
         if (g_unwind.active) return Undef();   /* (leave, terminate: the lambdas catch the exceptions of their calls) */
     }
     return Undef();
@@ -5060,11 +5071,15 @@ FIRE_FN bool fire_envName(Value v, char* out, uint32_t cap) {
 
 FIRE_FN Value fire_exc_trace(Value e, OwnList* list);
 FIRE_FN Value fire_exc_frames(Value e, Value index, Value part, OwnList* list);
+FIRE_FN void fire_exc_awaited(Value e);
 FIRE_FN Value envCall(int64_t id, Value a, Value b, OwnList* list) {
     char name[1024];
     char text[1200];
     switch ((int)id) {
         case 9: return fire_exc_trace(a, list);   /* e.StackTrace (docs/spec/STACKTRACE.md) */
+        case 11:   /* `await [ ... ]` (__Await.All): the exception of a task thrown again here gets the section of the waiting one (`--- awaited at ---`) */
+            fire_exc_awaited(a);
+            return Undef();
         case 10:   /* e.Frames: b -1 the number of frames, else frame b / 4, part b % 4 */
             if (b.kind != K_Int || b.i < 0) return fire_exc_frames(a, Int(-1), Int(0), list);
             return fire_exc_frames(a, Int(b.i / 4), Int(b.i % 4), list);
@@ -5737,7 +5752,10 @@ FIRE_RT_FN int32_t excMessageIndex(uint32_t cls);
  * it - the same text as the VM in C# (ExceptionTrace.Format): `   at Store.Find (main.fire:16)`, `(main.fire)` without lines (`calls`) or with line 0,
  * `(prelude)`; at most 64 frames (48 innermost, `   ... N more frames ...`, 16 outermost); a section of a thread ends with its line (`in thread 'Fire #1',
  * started at main.fire:40`), the section of a wait follows `   --- awaited at ---`. */
-typedef struct FireFnInfo { const char* name; const char* file; } FireFnInfo;
+struct FireFnInfo { const char* name; const char* file; };
+/* The file of the frame of a native that calls back into fire (fire_cbCall): `   at __GRPHWinTick (native)`; e.Frames: the file "(native)", line 0. */
+#define FIRE_TRACE_NATIVE_FILE "\001native"
+#define FIRE_TRACE_IS_NATIVE(file) ((file) != NULL && (file)[0] == '\001')
 /* The native build (docs/spec/STACKTRACE.md section 13): every fire function that can throw keeps a frame on the C stack - its descriptor and the line it
  * is at (stored where a line begins and at every jump target, the places of the line table) - linked to the frame of its caller (g_traceTop, a value of
  * the strand). The function pushes it at its start (FIRE_TF_ENTER) and takes it off at every return (FIRE_TF_LEAVE); a catch block makes the frame of the
@@ -5749,6 +5767,9 @@ struct FireTFrame { struct FireTFrame* prev; const FireFnInfo* fn; int32_t line;
 #define FIRE_TF_CATCH(f) FireTFrame* const tfTop_ = g_traceTop; const FireFnInfo* const tfFn_ = (f).fn; int32_t const tfLine_ = (f).line; g_traceTop = &(f); \
     (void)tfTop_; (void)tfFn_; (void)tfLine_
 #define FIRE_TF_CATCH_END(f) ((f).fn = tfFn_, (f).line = tfLine_, g_traceTop = tfTop_)
+/* Around the call of a native of a package or a bridge (generated): the native whose callbacks get its frame (fire_cbCall). */
+#define FIRE_TF_NAT(n) do { static const FireFnInfo nI_ = { n, FIRE_TRACE_NATIVE_FILE }; g_traceNat = &nI_; } while (0)
+#define FIRE_TF_NAT_END() (g_traceNat = NULL)
 typedef struct FireTraceFrame { const FireFnInfo* fn; int32_t line; } FireTraceFrame;
 typedef struct FireTrace {
     fire_atomic32 refs;
@@ -5853,6 +5874,7 @@ FIRE_FN void fire_traceAddS(FireTraceText* b, const char* s) { fire_traceAdd(b, 
 FIRE_FN void fire_traceWhere(FireTraceText* b, const char* file, int32_t line, int mode) {
     char num[24];
     if (!file) { fire_traceAddS(b, "prelude"); return; }
+    if (FIRE_TRACE_IS_NATIVE(file)) { fire_traceAddS(b, file + 1); return; }
     fire_traceAddS(b, file);
     if (mode == FIRE_TRACE_LINES && line > 0) { snprintf(num, sizeof num, ":%ld", (long)line); fire_traceAddS(b, num); }
 }
@@ -5899,10 +5921,13 @@ FIRE_COLD FIRE_FN FireTrace* fire_traceCapture(void) {
     uint32_t total = 0, k = 0;
     bool lines = g_stackTrace == FIRE_TRACE_LINES;
     FireTrace* t;
-    for (f = top; f; f = f->prev) total++;
+    for (f = top; f; f = f->prev) if (f->fn) total++;   /* (no descriptor: the cut base of a handler of the group that waited - fire_groupCall) */
     t = fire_traceNew(total, g_traceTrailer);
-    for (f = top; f; f = f->prev, k++) {
-        FireTraceFrame* slot = total <= FIRE_TRACE_MAX ? &t->frames[k] : fire_traceSlot(t, k);
+    for (f = top; f; f = f->prev) {
+        FireTraceFrame* slot;
+        if (!f->fn) continue;
+        slot = total <= FIRE_TRACE_MAX ? &t->frames[k] : fire_traceSlot(t, k);
+        k++;
         if (!slot) continue;
         slot->fn = f->fn;
         slot->line = lines && f->fn && f->fn->file ? f->line : 0;   /* (read only where the code stores it: in a file, with lines) */
@@ -6001,6 +6026,10 @@ FIRE_FN Value fire_exc_trace(Value e, OwnList* list) {
     free(text);
     return r;
 }
+/* `__EnvCall(11, e)`: `await [ ... ]` throws the exception of a task again - its trace gets the section of the waiting one. */
+FIRE_FN void fire_exc_awaited(Value e) {
+    if (e.kind == K_Class && leafAlive(e) && g_stackTrace != FIRE_TRACE_OFF) fire_traceAwaitedHere(asObj(e));
+}
 /* `__EnvCall(10, e, ...)`: (e, -1) the number of frames of `e.Frames`; (e, i, part) of frame i the function (0), the file (1, "" for the prelude), the line (2,
  * 0 without lines). */
 FIRE_FN Value fire_exc_frames(Value e, Value index, Value part, OwnList* list) {
@@ -6009,8 +6038,8 @@ FIRE_FN Value fire_exc_frames(Value e, Value index, Value part, OwnList* list) {
     if (index.kind != K_Int || index.i < 0) return Int((int64_t)fire_traceCount(t));
     f = fire_traceFrameAt(t, (uint32_t)index.i);
     if (!f) return Undef();
-    if (part.kind == K_Int && part.i == 1) return fire_traceStr(f->fn && f->fn->file ? f->fn->file : "", list);
-    if (part.kind == K_Int && part.i == 2) return Int(g_stackTrace == FIRE_TRACE_LINES && f->fn && f->fn->file ? f->line : 0);
+    if (part.kind == K_Int && part.i == 1) return fire_traceStr(f->fn && f->fn->file ? (FIRE_TRACE_IS_NATIVE(f->fn->file) ? "(native)" : f->fn->file) : "", list);
+    if (part.kind == K_Int && part.i == 2) return Int(g_stackTrace == FIRE_TRACE_LINES && f->fn && f->fn->file && !FIRE_TRACE_IS_NATIVE(f->fn->file) ? f->line : 0);
     return fire_traceStr(f->fn && f->fn->name ? f->fn->name : "?", list);
 }
 
@@ -6157,6 +6186,25 @@ FIRE_FN void fire_cbCatch(void* ctx, uint32_t index, Value exception) {
 FIRE_FN void fire_cbDefer(Value exception) {
     g_unwind.active = 1; g_unwind.kind = UW_DEFER; g_unwind.target = NULL; g_unwind.value = exception; g_unwind.label = 0;
 }
+/* The lambda of a callback; during a native (g_traceNat, set at its call site) with the frame of the native below it - `at __GRPHWinTick (native)`
+ * (docs/spec/STACKTRACE.md section 4). (The VM in C pushes its own: vm_pkg.c vmPkgRunLambda.) */
+FIRE_FN Value fire_cbLam(Value lam, int argc, const Value* args, OwnList* list) {
+#ifndef FIRE_VM
+    const FireFnInfo* nat = g_traceNat;
+    if (FIRE_UNLIKELY(nat != NULL) && g_traceTop != NULL) {
+        FireTFrame nf;
+        Value r;
+        nf.line = 0;
+        FIRE_TF_ENTER(nf, nat);
+        g_traceNat = NULL;   /* (a callback of the lambda's own code is no callback of this native) */
+        r = callLam(lam, argc, args, list);
+        g_traceNat = nat;
+        g_traceTop = nf.prev;
+        return r;
+    }
+#endif
+    return callLam(lam, argc, args, list);
+}
 FIRE_FN Value fire_cbCall(Value lam, int argc, const Value* args, OwnList* list) {
 #ifdef FIRE_EXCEPTIONS
     CbCatch c;
@@ -6170,7 +6218,7 @@ FIRE_FN Value fire_cbCall(Value lam, int argc, const Value* args, OwnList* list)
     c.h.fn = fire_cbCatch;
     c.h.ctx = &c;
     pushHandler(&c.h);
-    r = callLam(lam, argc, args, list);
+    r = fire_cbLam(lam, argc, args, list);
     if (g_handlers == &c.h) popHandler();
     if (c.caught) {
         if (g_unwind.active && g_unwind.kind == UW_JUMP && g_unwind.target == &c.h) clearUnwind();
@@ -6179,7 +6227,7 @@ FIRE_FN Value fire_cbCall(Value lam, int argc, const Value* args, OwnList* list)
     }
     return r;
 #else
-    return callLam(lam, argc, args, list);
+    return fire_cbLam(lam, argc, args, list);
 #endif
 }
 /* At the call site of a native (generated, when g_unwind.active after it): the exception of its callback is thrown here. */
@@ -11211,7 +11259,9 @@ FIRE_FN void threadMain(void* boxed) {
 #ifdef FIRE_TASKS
 #define FIRE_RT_GROUP_CALL 1
 /* (sync: the caller - fire_groupCall - still waits for the member; done/exc: it ended, with the exception of the handler, which goes to the caller - SPEC 8.1.4) */
-typedef struct GroupCall { Value lam; Value args[8]; int argc; OwnList* globalOwn; uint32_t attn; uint8_t sync, done, failed; Value exc; } GroupCall;
+/* (nf: the frame of the native below the handler's frames, linked to the caller's frames while the caller waits - a trace of the member goes on with them, as
+ * the VMs' nested callbacks do; cut when the member first waits: its traces then begin at the handler) */
+typedef struct GroupCall { Value lam; Value args[8]; int argc; OwnList* globalOwn; uint32_t attn; uint8_t sync, done, failed; Value exc; FireTFrame nf; } GroupCall;
 FIRE_FN void groupCallMain(void* p) {
     GroupCall* c = (GroupCall*)p;
     OwnList scratch;
@@ -11224,7 +11274,9 @@ FIRE_FN void groupCallMain(void* p) {
     ownListInit(&scratch, poolMark(), NULL);
     for (i = 0; i < c->argc; i++) adopt(c->args[i], &scratch);   /* (what came with it: its own now) */
     g_handlers = NULL;
+    if (c->nf.fn) g_traceTop = &c->nf;
     fire_cbCall(c->lam, c->argc, c->args, &scratch);
+    g_traceTop = NULL;
     if (g_unwind.active && g_unwind.kind == UW_DEFER && c->sync) {
         /* (the handler ended before it waited: its exception goes to the native that called it, like a callback that is no member) */
         c->exc = g_unwind.value;
@@ -11263,6 +11315,7 @@ FIRE_FN bool fire_groupCall(Value lam, int argc, const Value* args) {
     }
     c->globalOwn = g_globalOwn;
     c->attn = g_attnMask;
+    if (g_traceNat && g_traceTop) { c->nf.prev = g_traceTop; c->nf.fn = g_traceNat; }
     t->fn = groupCallMain;
     t->arg = c;
     t->heapAt = -1;
@@ -11280,6 +11333,7 @@ FIRE_FN bool fire_groupCall(Value lam, int argc, const Value* args) {
     homeRun(t);
     strandAcquire();
     c->sync = 0;
+    c->nf.prev = NULL; c->nf.fn = NULL;   /* (the caller goes on: the member's frames end at the handler) */
     if (c->done) {
         if (c->failed) fire_cbDefer(c->exc);
         free(c);
@@ -12465,7 +12519,7 @@ FIRE_FN bool awaitRunTasks(Value* lams, uint32_t n, Value res, Value fails, OwnL
         /* (the last one here, on the caller's strand) */
         Value args[3];
         args[0] = res; args[1] = fails; args[2] = Int((int64_t)(n - 1));
-        callLam(lams[n - 1], 3, args, list);
+        FIRE_TRACE_CUT(callLam(lams[n - 1], 3, args, list));
     }
     {
         /* (waiting for the others even when the last one left: they use the caller's objects) */
@@ -13803,12 +13857,16 @@ FIRE_FN void hostHold(int32_t delta) {
 /* The main program: runs the host services if one was asked for. */
 FIRE_FN void hostServe(void) {
     uint32_t i;
+    const FireFnInfo* nat;
     if (fire_atomic_exchange(&g_hostPending, 0) == 0) return;
     g_noSyncDepth++;   /* (what a service runs - a window's event handler - runs for itself: its own safe points do not serve the queue) */
+    nat = g_traceNat;
+    g_traceNat = NULL;   /* (no native waits for its callbacks: they get no frame of one - a wait in a native runs it too) */
     for (i = 0; i < g_hostServiceCount; i++) {
         g_hostServices[i]();
         fire_cbReport();   /* (an exception of a callback in it: nobody waits for it here - SPEC 8.1.4) */
     }
+    g_traceNat = nat;
     g_noSyncDepth--;
 }
 

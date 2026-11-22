@@ -24,7 +24,7 @@ class __Await {
         any res[] = new any[items.Length]
         any fails[] = new any[items.Length]
         __await_run(items, res, fails)
-        for (int i = 0; i < items.Length; i++) { if (fails[i] != undefined) { throw fails[i] } }
+        for (int i = 0; i < items.Length; i++) { if (fails[i] != undefined) { __EnvCall(11, fails[i]); throw fails[i] } }
         return res
     }
 }

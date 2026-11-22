@@ -49,6 +49,9 @@ static fire_atomic32 g_vmPkgService;
 static fire_atomic32 g_vmPkgHolds;
 static FIRE_TLS int g_vmPkgDepth = 0;  /* the natives of packages running on this thread (nested through callbacks) */
 static FIRE_TLS int g_vmPkgBarrier = 0;   /* natives up to this depth wait for no callback (a service or an idle turn runs inside them) */
+static FIRE_TLS const FireFnInfo* g_vmPkgNat = NULL;   /* the innermost of them: the frame of a native below its callbacks (vm_trace.c) */
+static void vmTraceNatPush(const FireFnInfo* fn);
+static void vmTraceNatPop(void);
 static Value g_vmPkgDeferred;          /* the exception of a callback, kept for the native that waits for it */
 static int g_vmPkgDeferredSet = 0;
 #if defined(_WIN32)
@@ -216,7 +219,12 @@ static int32_t vmPkgRunLambda(int64_t handle, const fire_val* args, int32_t argc
     lam = g_vmPkgLams[handle - 1];
     ownListInit(&list, poolMark(), NULL);
     for (i = 0; i < n; i++) values[i] = vmPkgFromNative(&args[i], &list);
-    fire_cbCall(lam, n, values, &list);
+    if (g_vmPkgDepth > g_vmPkgBarrier && g_vmPkgNat) {
+        /* (during the native the program waits for: its frame below the lambda's - `at __GRPHWinTick (native)`) */
+        vmTraceNatPush(g_vmPkgNat);
+        fire_cbCall(lam, n, values, &list);
+        vmTraceNatPop();
+    } else fire_cbCall(lam, n, values, &list);
     leave(&list);
     if (g_unwind.active && g_unwind.kind == UW_DEFER) {
         if (g_vmPkgDepth > g_vmPkgBarrier) {
@@ -519,7 +527,8 @@ static bool vmPkgAway(VmPkgLib* lib, int argc, const Value* args) {
 }
 
 /* Calls native `index` of `lib` with `argc` values; the result is owned by `list`. An exception is thrown (the unwinding state is set). */
-static Value vmPkgCall(VmPkgLib* lib, int index, const char* name, int argc, const Value* args, OwnList* list) {
+static Value vmPkgCall(VmPkgLib* lib, int index, const char* name, const FireFnInfo* nat, int argc, const Value* args, OwnList* list) {
+    const FireFnInfo* outerNat = g_vmPkgNat;
     fire_val stackArgs[8];
     fire_val* fargs = stackArgs;
     fire_val result;
@@ -535,6 +544,7 @@ static Value vmPkgCall(VmPkgLib* lib, int index, const char* name, int argc, con
     memset(&result, 0, sizeof result);
     if (g_vmPkgPosted || fire_atomic_load(&g_vmPkgService)) vmPkgServe();
     g_vmPkgDepth++;
+    g_vmPkgNat = nat;
     if (vmPkgAway(lib, argc, args)) {
         /* (a native that gets nothing of the shared domain and cannot call back runs beside the other strands - the C# VM's threads call natives at the
          * same time; fire_rt.h fire_natBegin: the main program goes away for it) */
@@ -551,6 +561,7 @@ static Value vmPkgCall(VmPkgLib* lib, int index, const char* name, int argc, con
         if (t0 && fire_atomic_load(&g_gilWaiting) && fire_plat_nowMs() - t0 >= 2) gilYield();
     }
     g_vmPkgDepth--;
+    g_vmPkgNat = outerNat;
     vmPkgArenaFree(&arena);
     if (g_vmPkgDeferredSet && g_vmPkgDepth <= g_vmPkgBarrier) {
         /* a callback of this native threw: thrown here, the same object (SPEC 8.1.4) */

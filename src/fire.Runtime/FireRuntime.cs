@@ -461,7 +461,7 @@ namespace fire.Runtime
                 }
                 try
                 {
-                    var error = vm.CallLambdaInline(callback, args);
+                    var error = vm.CallLambdaFromNative(callback, args);
                     if (error != null && !vm.DeferCallbackFailure(error)) onUnhandled?.Invoke(new UncaughtScriptException(error).Message);
                 }
                 catch (Exception ex)

@@ -664,6 +664,7 @@ namespace fire.Debugging
         private string? _reason;
         private string? _unhandledError;
         private IReadOnlyList<(int SourceIndex, int Line)>? _unhandledTrace;
+        private IReadOnlyList<string?>? _traceFunctions, _unhandledFunctions;
         private bool _unhandled;
         private bool _autoRunPending;
 
@@ -710,6 +711,7 @@ namespace fire.Debugging
                 _reason = e.Str("reason");
                 _unhandled = _reason == "unhandled";
                 _unhandledTrace = null;
+                _unhandledFunctions = null;
                 if (_unhandled)
                 {
                     var ex = e.Obj("exception");
@@ -808,8 +810,9 @@ namespace fire.Debugging
         {
             try
             {
-                return _target.RequestOk("trace", ("thread", Id)).Arr("frames").OfType<Dictionary<string, object?>>()
-                    .Select(f => ((int)(f.Num("source") ?? 0), (int)(f.Num("line") ?? 0))).ToList();
+                var frames = _target.RequestOk("trace", ("thread", Id)).Arr("frames").OfType<Dictionary<string, object?>>().ToList();
+                lock (_lock) _traceFunctions = frames.Select(f => f.Str("function")).ToList();
+                return frames.Select(f => ((int)(f.Num("source") ?? 0), (int)(f.Num("line") ?? 0))).ToList();
             }
             catch (NativeDebugException) { return new[] { CurrentLocation }; }
         }
@@ -869,6 +872,16 @@ namespace fire.Debugging
             }
         }
 
+        /// <summary>The functions of <see cref="UnhandledTrace"/> (the names of the debugger's frames).</summary>
+        public IReadOnlyList<string?>? UnhandledFunctions
+        {
+            get
+            {
+                if (UnhandledTrace == null) return null;
+                lock (_lock) return _unhandled ? _unhandledFunctions ??= _traceFunctions : null;
+            }
+        }
+
         public bool IsPausedOnUnhandled { get { lock (_lock) return _unhandled && !_ended; } }
 
         public bool TryResumeUnhandled()
@@ -881,6 +894,7 @@ namespace fire.Debugging
                 _unhandled = false;
                 _unhandledError = null;
                 _unhandledTrace = null;
+                _unhandledFunctions = null;
                 _reason = "resume";
             }
             return true;

@@ -20,6 +20,9 @@ namespace fire.Standard
         ExceptionTrace = 9,
         /// <summary>`e.Frames`: `b` -1 the number of frames of the exception `a`, else frame b / 4, part b % 4 (0 the function, 1 the file, 2 the line).</summary>
         ExceptionFrames = 10,
+        /// <summary>`await [ ... ]` (the prelude's __Await.All): the exception `a` of a task, thrown again where it is awaited, gets the section of the waiting one
+        /// (`--- awaited at ---`, as at Completion.Wait); undefined.</summary>
+        ExceptionAwaited = 11,
     }
 
     /// <summary>What a program gets from whoever starts it: its arguments (without the program's name) and its path. The environment variables are the
@@ -190,6 +193,8 @@ namespace fire.Standard
                 case EnvironmentMethod.ProgramPath: return Value.MakeString(env.ProgramPath);
                 case EnvironmentMethod.ExceptionTrace:
                     return ExceptionTraceMethods.Call(ExceptionTraceMethods.TraceName, args.Skip(1).ToArray());
+                case EnvironmentMethod.ExceptionAwaited:
+                    return ExceptionTraceMethods.Call(ExceptionTraceMethods.AwaitedName, args.Skip(1).Take(1).ToArray());
                 case EnvironmentMethod.ExceptionFrames:
                 {
                     long at = args.Length > 2 && args[2].Kind == ValueKind.Int ? args[2].AsInt() : -1;

@@ -151,7 +151,7 @@ namespace fire.Runtime
                 int away = vm.NativeAwayPause();   // (the main program away in the native: back for the callback)
                 try
                 {
-                    var error = vm.CallLambdaInline(entry.Lambda, values);
+                    var error = vm.CallLambdaFromNative(entry.Lambda, values);
                     if (error != null)
                     {
                         if (vm.DeferCallbackFailure(error)) return 2;

@@ -341,7 +341,13 @@ namespace fire.Runtime
             for (int i = 0; i < items.Length; i++)
             {
                 if (items[i].Kind != ValueKind.Lambda) continue;
-                var result = CallLambdaNested((LambdaValue)items[i].AsLambda(), new[] { args[1], args[2], Value.MakeInt(i) });
+                // (a trace in the call ends at its lambda, as in a task of its own: the waiting one's frames are the section `--- awaited at ---` that
+                // __Await.All gives the exception - docs/spec/STACKTRACE.md section 4)
+                int cut = _traceCut;
+                _traceCut = _frames.Count;
+                Value? result;
+                try { result = CallLambdaNested((LambdaValue)items[i].AsLambda(), new[] { args[1], args[2], Value.MakeInt(i) }); }
+                finally { _traceCut = cut; }
                 if (result == null) { _nativeRedirected = true; return default; }
             }
             return Value.MakeUndefined();
@@ -413,6 +419,10 @@ namespace fire.Runtime
         public IReadOnlyList<(int SourceIndex, int Line)>? UnhandledTrace { get; private set; }
 
         private List<(int SourceIndex, int Line)>? _lastThrowTrace;
+        private List<string>? _lastThrowNames;
+
+        /// <summary>The functions of <see cref="UnhandledTrace"/>, entry by entry (the names of a stack trace: `Store.Find`, `&lt;main&gt;` - TraceNames).</summary>
+        public IReadOnlyList<string>? UnhandledTraceFunctions { get; private set; }
 
         /// <summary>Debugger mode: a `throw` that no `catch` in this VM would take does not unwind but PAUSES at the throw site
         /// (<see cref="UnhandledException"/> is set, the stepping loops return as for a program end, but nothing is destroyed). The debugger can then
@@ -435,6 +445,7 @@ namespace fire.Runtime
             _stopExecutionRequested = false;
             UnhandledException = null;
             UnhandledTrace = null;
+            UnhandledTraceFunctions = null;
             _currentChunk = _pausedChunk!;
             _ip = _pausedIp;
             _pausedChunk = null;
@@ -450,7 +461,13 @@ namespace fire.Runtime
             return false;
         }
 
-        private void RecordThrowTrace() => _lastThrowTrace = CurrentTrace();
+        private void RecordThrowTrace()
+        {
+            _lastThrowTrace = CurrentTrace();
+            var names = new List<string>(_lastThrowTrace.Count) { Trace.NameOf(_currentChunk) };
+            foreach (var frame in _frames) names.Add(Trace.NameOf(frame.ReturnChunk));
+            _lastThrowNames = names;
+        }
 
         /// <summary>The current call stack as source locations, innermost first (for error reports of the debugger).</summary>
         public List<(int SourceIndex, int Line)> CurrentTrace()
@@ -491,7 +508,9 @@ namespace fire.Runtime
         /// <summary>A lambda that a native call runs nested on THIS VM (see <see cref="CallLambdaInline"/>): where it
         /// began - frame depth, scope and stack height of the caller and how many handlers the caller had already registered
         /// (a `throw` in the callback must not see the caller's try/catch).</summary>
-        private readonly record struct CallbackBoundary(int FrameDepth, Scope Scope, int HandlerFloor, int StackPointer);
+        /// <summary>(Native: the native that calls the lambda back while the program waits for it - its frame below the lambda's in a trace,
+        /// `at __GRPHWinTick (native)`; -1: none.)</summary>
+        private readonly record struct CallbackBoundary(int FrameDepth, Scope Scope, int HandlerFloor, int StackPointer, int Native = -1);
         private readonly Stack<CallbackBoundary> _callbackBoundaries = new();
         private ObjectInstance? _callbackError;
         /// <summary>`await x.Method()` (OpCode.AwaitReply): the next method call waits for the result when x is an actor (Next: set by the prefix, Now: of the running call).</summary>
@@ -994,6 +1013,7 @@ namespace fire.Runtime
             VmExecutionMode executionMode = VmExecutionMode.Debug)
         {
             _currentChunk = chunk;
+            _entryChunk = chunk;
             _globalScope = globalScope;
             globalScope.EarlyAccess = true;   // (a global used before its declaration: see Scope.EarlyAccess)
             _natives = natives;
@@ -6574,7 +6594,7 @@ namespace fire.Runtime
                 _pausedIp = _ip;
                 _unhandledPaused = true;
                 UnhandledException = excInstance;
-                UnhandledTrace = _lastThrowTrace;
+                UnhandledTrace = _lastThrowTrace; UnhandledTraceFunctions = _lastThrowNames;
                 StopExecution();
                 return;
             }
@@ -6658,7 +6678,7 @@ namespace fire.Runtime
                 UnwindTo(boundary.FrameDepth, boundary.Scope);
                 _sp = boundary.StackPointer;
                 _callbackError = excInstance;
-                UnhandledTrace = _lastThrowTrace;
+                UnhandledTrace = _lastThrowTrace; UnhandledTraceFunctions = _lastThrowNames;
                 return;
             }
 
@@ -6670,7 +6690,7 @@ namespace fire.Runtime
             // to the main thread" (docs/spec/THREADING_DESIGN.md 6.2).
             if (IsFireThreadVm)
             {
-                UnhandledTrace = _lastThrowTrace;
+                UnhandledTrace = _lastThrowTrace; UnhandledTraceFunctions = _lastThrowNames;
                 _pendingThreadExceptions.Enqueue(excInstance);
                 RaiseSignal();
                 // The global scope stays: the exception belongs to it (TakeGlobal above) and is still delivered to the main thread.
@@ -6684,7 +6704,7 @@ namespace fire.Runtime
             // thrown, Run() returns quite normally right afterwards via the next
             // CheckShutdownSignals check point).
             UnhandledException = excInstance;
-            UnhandledTrace = _lastThrowTrace;
+            UnhandledTrace = _lastThrowTrace; UnhandledTraceFunctions = _lastThrowNames;
             StopExecution();
         }
 
@@ -6915,6 +6935,11 @@ namespace fire.Runtime
         /// the host reports it, the program keeps running.</summary>
         public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args) => CallInline(lambda, args, out _);
 
+        /// <summary><see cref="CallLambdaInline"/> for the callback of a native (an event of `Window.Tick`, a lambda that a native of a package calls): while
+        /// the program waits for that native its frame stands below the lambda's in a trace (`at __GRPHWinTick (native)`, docs/spec/STACKTRACE.md section 4).</summary>
+        public ObjectInstance? CallLambdaFromNative(LambdaValue lambda, Value[] args) =>
+            CallInlineProto(lambda.Proto, lambda.OnTarget, args, lambda, out _, null, _nativeDepth > _callbackBarrier && _nativeDepth < _nativeAt.Length ? _nativeAt[_nativeDepth] : -1);
+
         /// <summary>CallLambdaInline with the result of the lambda (undefined when it threw or the program ended).</summary>
         private ObjectInstance? CallInline(LambdaValue lambda, Value[] args, out Value result) => CallInlineProto(lambda.Proto, lambda.OnTarget, args, lambda, out result);
 
@@ -6932,7 +6957,7 @@ namespace fire.Runtime
             return CallInlineProto(proto, obj, args, null, out result, argOwner);
         }
 
-        private ObjectInstance? CallInlineProto(FunctionProto proto, object? thisObject, Value[] args, LambdaValue? lambda, out Value result, Scope? argOwner = null)
+        private ObjectInstance? CallInlineProto(FunctionProto proto, object? thisObject, Value[] args, LambdaValue? lambda, out Value result, Scope? argOwner = null, int native = -1)
         {
             result = Value.MakeUndefined();
             CheckArity(proto, args.Length);
@@ -6944,7 +6969,7 @@ namespace fire.Runtime
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             int targetDepth = _frames.Count;
-            _callbackBoundaries.Push(new CallbackBoundary(frameDepth, callerScope, _handlers.Count, stackPointer));
+            _callbackBoundaries.Push(new CallbackBoundary(frameDepth, callerScope, _handlers.Count, stackPointer, native));
             _callbackError = null;
 
             var funcScope = new Scope(_globalScope);
@@ -7211,6 +7236,8 @@ namespace fire.Runtime
         private bool CallNativeGuarded(int nativeIdx, Value[] args, out Value result)
         {
             int depth = ++_nativeDepth;
+            if (depth >= _nativeAt.Length) Array.Resize(ref _nativeAt, depth * 2);
+            _nativeAt[depth] = nativeIdx;
             try
             {
                 result = _natives[nativeIdx](args);

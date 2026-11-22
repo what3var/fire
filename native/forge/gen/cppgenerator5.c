@@ -684,7 +684,7 @@ static FgStep StepCoreNative(FgSC* x) {
             {
                 const char* t = T(first);
                 OwnerList();   /* (the C# asks `args.EndsWith("&" + OwnerList())`: the list of the temporaries is used) */
-                E("%s = %s(%s);", t, SharedNative(g, fcFmt(g->c, "fire_win_%s", name), argc, needsList, "windows"), args);
+                E("%s%s = %s(%s);%s", TraceNat(g, native), t, SharedNative(g, fcFmt(g->c, "fire_win_%s", name), argc, needsList, "windows"), args, TraceNatEnd(g));
             }
             CheckNative();
             d = first + 1; SetR(first, winNative->needsList); return Next();
@@ -754,7 +754,7 @@ static FgStep StepCoreNative(FgSC* x) {
             int vtype;
             {
                 const char* t = T(first);
-                E("%s%s = %s;%s", pkgEnter, t, fgNativeToValue(g->c, typedRet, fcFmt(g->c, "%s(%s)", pn->function, args)), pkgLeave);
+                E("%s%s%s = %s;%s%s", TraceNat(g, native), pkgEnter, t, fgNativeToValue(g->c, typedRet, fcFmt(g->c, "%s(%s)", pn->function, args)), pkgLeave, TraceNatEnd(g));
             }
             CheckNative();
             if (pn->host && g->usesThreads && sb) E("if (FIRE_UNLIKELY(pollSignals())) goto %s;", ExitLabel(g, f, st, locals));
@@ -774,7 +774,7 @@ static FgStep StepCoreNative(FgSC* x) {
         {
             const char* t = T(first);
             const char* callee = pn->isC ? cFunction : NativeThunk(g, pn->function, argc, pn->needsList);
-            E("%s%s = %s(%s);%s", pkgEnter, t, callee, args, pkgLeave);
+            E("%s%s%s = %s(%s);%s%s", TraceNat(g, native), pkgEnter, t, callee, args, pkgLeave, TraceNatEnd(g));
         }
         CheckNative();
         if (pn->host && g->usesThreads && sb) E("if (FIRE_UNLIKELY(pollSignals())) goto %s;", ExitLabel(g, f, st, locals));

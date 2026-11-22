@@ -1,6 +1,6 @@
 # Stack-Traces für Ausnahmen
 
-Status: **gebaut** (22.11.2026): Format, Sprache, die C#-VM, die C-VM, die Einstellung (`#stacktrace`, Projekt, `--stacktrace`, `fire.native.json`) und der native Build mit Modulen (Schritte 4-6) in beiden forge ([Stand](#13-stand)); offen sind der Frame eines Natives bei Rückrufen und Teile von spark. Vorher: Heute hat eine Ausnahme keinen Stack-Trace: `print(e)` gibt `<object NotFound>`, eine
+Status: **gebaut** (22.11.2026): Format, Sprache, die C#-VM, die C-VM, die Einstellung (`#stacktrace`, Projekt, `--stacktrace`, `fire.native.json`) und der native Build mit Modulen (Schritte 4-6) in beiden forge ([Stand](#13-stand)), der Frame eines Natives bei Rückrufen, der Abschnitt des Wartenden bei `await [ ... ]` und spark (Dialog, Test-Explorer, 22.11.2026). Vorher: Heute hat eine Ausnahme keinen Stack-Trace: `print(e)` gibt `<object NotFound>`, eine
 unbehandelte Ausnahme schreibt eine Zeile (`Unhandled exception of type 'NotFound': not found: b`, [Exceptions](../language/14-exceptions.md)). Dieses
 Dokument legt fest, was ein Trace ist, wo er entsteht, was die Sprache davon zeigt, was er in jedem Ausführungsweg kostet (gemessen, [unten](#5-kosten-im-nativen-build-gemessen))
 und in welchen Schritten er kommt.
@@ -49,6 +49,8 @@ Unhandled exception of type 'NotFound': not found: b
 * **Tiefe**: höchstens 64 Frames; bei mehr die innersten 48, eine Zeile `   ... 1234 more frames ...` und die äußersten 16 (eine Endlosrekursion soll nicht
   tausende Zeilen schreiben und beim Wurf nicht tausende Frames kopieren). Dieselbe Regel in allen Wegen.
 * **Ohne Zeilen** (ein Build mit `#stacktrace calls`, [unten](#7-empfehlung-je-modus-und-die-direktive)): `   at Store.Find (main.fire)`.
+* **Ein Native, das zurückruft**: `   at __GRPHWinTick (native)` - der Name des Natives, wie der fire-Code es aufruft (der Prelude von `windows` ruft
+  `__GRPHWinTick` in `Window.Tick`), statt des Orts `native`; in `e.Frames` die Datei `"(native)"`, Zeile 0.
 * **Ohne Trace** (`#stacktrace off`, oder ein Wurf, dessen Frames nicht bekannt sind): nur die erste Zeile, wie heute.
 
 ### Die Sprache
@@ -115,10 +117,10 @@ durchgehen. Hat das Objekt schon einen Trace, bleibt er (siehe Rethrow).
 | `resume` | der Trace bleibt am Objekt; das Programm geht an der Wurfstelle weiter |
 | ein `throw` **in** einem Catch-Block | der Stack ab der Funktion, der der `catch` gehört - **nicht** die eingefrorenen Frames der ersten Wurfstelle, über denen der Catch-Block läuft. Nativ: der Frame des Catch-Blocks hat als Vorgänger den Frame der Funktion mit dem `try` (wie im Debug-Build: `catchName` setzt `g_dbgTop = own_`), C-VM: das Laufen über `VmFrame` springt vom Catch-Frame (`rec`) zur Tiefe des Handlers, C#-VM: `_frames` ist schon so |
 | ein Destruktor, ein Getter, ein Operator, `ToString()` (was die VM "verschachtelt" ausführt) | sie sind gewöhnliche Frames (`Klasse.destruct`, `Klasse.<getter>`); ein Destruktor beim Abrollen wirft ohnehin ins Leere (NATIVE_BACKEND "Bekannte Abweichungen") |
-| **ein Native, das ein Lambda zurückruft** (Ereignis eines Fensters während `win.Tick()`, ein Lambda an ein Paket) | die Frames des Lambdas, darunter **ein Frame für das Native** (`at Window.Tick (native)`), darunter der fire-Code, der das Native rief. Die Ausnahme wird beim Aufruf des Natives geworfen (SPEC 8.1.4) - ein zweiter Wurf desselben Objekts, der Trace bleibt der aus dem Lambda. Den Frame des Natives legt der Weg der Rückrufe in der Runtime (`callLam` aus einem Native, `fire_host` der Pakete) auf; ein Native, das nicht zurückruft, hat keinen |
+| **ein Native, das ein Lambda zurückruft** (Ereignis eines Fensters während `win.Tick()`, ein Lambda an ein Paket) | die Frames des Lambdas, darunter **ein Frame für das Native** (`at __GRPHWinTick (native)`), darunter der fire-Code, der das Native rief (`at Window.Tick (prelude)`, ...). Die Ausnahme wird beim Aufruf des Natives geworfen (SPEC 8.1.4) - ein zweiter Wurf desselben Objekts, der Trace bleibt der aus dem Lambda. Den Frame des Natives legt der Weg der Rückrufe in der Runtime (`callLam` aus einem Native, `fire_host` der Pakete) auf; ein Native, das nicht zurückruft, hat keinen |
 | ein Rückruf aus einem **fremden Thread** eines Pakets (`fire_strandAttach`), an einem sicheren Punkt | der Trace beginnt am Lambda: `at <lambda> (ui.fire:12)` / `   (called from native code)` |
 | **`fire { ... }`, `fire M()`**, ein Job von `fire global`, unbehandelt | die Frames des Threads bis `<fire>` bzw. `M`; darunter eine Zeile `   in thread 'Fire #1', started at main.fire:40` - der Ort des `fire` ist eine Konstante, die der Generator dem Start des Threads mitgibt (kein Trace des Erzeugers: das kostete bei jedem Start). `catch threads(e)` sieht denselben Trace an seiner Kopie |
-| **`await M()`**, `await [ ... ]`, `await actor.M()`, `Completion.Wait()` | der Trace der Ausnahme aus dem Task, dann ein zweiter Abschnitt: `   --- awaited at ---` und der Stack des Wartenden an der Stelle des `await`. Der Wurf beim Wartenden ist ein Wurf eines Objekts mit Trace: statt ihn zu ersetzen, hängt die Runtime **an diesen Stellen** einen Abschnitt an (`FireTrace.next`, höchstens 4 Abschnitte). `Completion.Fail(e)` mit einer nie geworfenen Ausnahme: ihr Trace entsteht erst beim `Wait()` |
+| **`await M()`**, `await [ ... ]`, `await actor.M()`, `Completion.Wait()` | der Trace der Ausnahme aus dem Task (bei `await [ ... ]` bis zum Lambda des Aufrufs, auch wo er nicht in einem Task läuft), dann ein zweiter Abschnitt: `   --- awaited at ---` und der Stack des Wartenden an der Stelle des `await`. Der Wurf beim Wartenden ist ein Wurf eines Objekts mit Trace: statt ihn zu ersetzen, hängt die Runtime **an diesen Stellen** einen Abschnitt an (`FireTrace.next`, höchstens 4 Abschnitte). `Completion.Fail(e)` mit einer nie geworfenen Ausnahme: ihr Trace entsteht erst beim `Wait()` |
 | `until`/Abbruch (`CancelledException`, `TimeoutException`) | die Stelle des Wartens, an der der Task den Abbruch bemerkt (`Sleep`, `Receive`, ...) |
 | ein Kanal | Ausnahmen gehen nicht durch Kanäle, nur Werte; eine Ausnahme als Wert (`Channel<Exception>`) behält ihren Trace wie bei jeder Kopie |
 | **Module** (Linkage `static`/`shared`, Plugins, Pakete in fire) | die Frames einer Bibliothek wie die des Programms, mit ihren Dateien (relativ zum Paket: `(http:server.fire:88)` - der Name des Pakets vor der Datei). `FireFnInfo` liegt im Modul; der Zeiger gilt, solange das Modul geladen ist. Ein Plugin wird nicht entladen; käme das, müsste es die Namen seiner Frames in die Traces kopieren, die noch leben |
@@ -516,8 +518,36 @@ ist byte-gleich dem vor dem Schritt (forge-c von `clippy` gegen das neue, `cgen 
 Ein Wurf (20 Ebenen Rekursion, `catch` außen) kostet mit Trace rund doppelt so viele Instruktionen wie ohne (Aufnehmen von 21 Frames, `malloc` des Traces und
 der Erweiterung des Objekts) - Würfe sind nicht der heiße Weg; wer in einer Schleife wirft, schaltet `#stacktrace off`.
 
-Offen: der Frame eines Natives bei Rückrufen (`at Window.Tick (native)`) - in keinem der drei Wege gebaut: er bräuchte eine dritte Art Frame im Format (`(native)`
-statt Datei/`prelude`) und an der Grenze des Rückrufs den Namen des Natives (C#-VM `_callbackBoundaries`, C-VM, nativ `fire_cbCall`/`callLam`, die nicht
-wissen, welches Native zurückruft); bis dahin folgen die Frames des Lambdas direkt auf die des fire-Codes, der das Native rief, in allen Wegen gleich. Der
-Abschnitt `--- awaited at ---` bei `await [...]` (dort wirft der Prelude `throw fails[i]`, ein Rethrow), die Funktionsnamen im Dialog von spark und der
-Test-Explorer (klickbar). Die kleinen Ziele (Open Watcom) sind nicht gemessen ([12](#12-offen)).
+### Der Frame eines Natives, `await [ ... ]`, spark (22.11.2026)
+
+* **Der Frame eines Natives** (`at __GRPHWinTick (native)`): ein Lambda, das ein Native zurückruft, **während das Programm auf das Native wartet**
+  (SPEC 8.1.4 "synchron"), hat den Frame des Natives unter seinen Frames; darunter der fire-Code, der das Native rief. Ein Rückruf, auf den niemand wartet
+  (ein Dienst am sicheren Punkt, ein Rückruf eines fremden Threads), hat keinen. Gleich in allen Wegen (gemessen mit einem Fenster und den Ereignissen
+  von `FIRE_DISPLAY_SELFTEST`: C#-VM, C-VM, nativ mit gcc und tcc, Release und Debug):
+  * **Format**: der Frame hat als Datei die Marke `"\001native"` (C `FIRE_TRACE_NATIVE_FILE`, C# `ExceptionTrace.NativeFile`): der Text ist
+    `(native)`, `e.Frames` gibt die Datei `"(native)"` und die Zeile 0.
+  * **C#-VM**: `CallNativeGuarded` merkt sich den Index des Natives je Tiefe (`_nativeAt`); die Rückrufe der Natives (`PackageHost.CallLambda` der
+    Bibliotheken, `FireRuntime.RunCallback` der Fenster in C#) laufen über `CallLambdaFromNative`, das ihn - wenn das Native auf den Rückruf wartet,
+    `_nativeDepth > _callbackBarrier` - in die `CallbackBoundary` schreibt; `CaptureTrace` setzt den Frame vor den des Aufrufers.
+  * **C-VM**: `vmPkgCall` merkt sich das laufende Native (`g_vmPkgNat`, `VmNative.trace`), `vmPkgRunLambda` legt für den Rückruf einen Eintrag
+    (Frame des Lambdas, Native) auf (`vmTraceNatPush`, vm_trace.c); `vmTraceCapture` setzt den Frame unter den des Lambdas.
+  * **nativ**: beide Generatoren setzen um den Aufruf eines Natives eines Pakets und der Brücke `windows` `FIRE_TF_NAT("__GRPHWinTick"); ...
+    FIRE_TF_NAT_END();` (`TraceNat`, ein Wert des Strangs `g_traceNat` mit einem statischen Deskriptor; nicht bei `off`); `fire_cbCall` legt den
+    Frame des Natives auf (`fire_cbLam`). Läuft ein Handler eines Fensters als Mitglied der Gruppe des Hauptprogramms (`fire_groupCall`, ein Programm
+    mit Tasks), hängt sein Task-Stack an den Frames des Wartenden (`GroupCall.nf`), bis das Mitglied zum ersten Mal wartet - danach beginnen seine
+    Traces am Handler (ein Frame ohne Deskriptor zählt nicht). Die Dienste am sicheren Punkt (`hostServe`) löschen `g_traceNat` für ihre Rückrufe.
+  * **Nicht** für ein typisiertes Native, dessen C-Zahl ein Skalar des Codes ist (sein Aufruf ist ein Ausdruck, der später steht) und nicht für die
+    Brücke `graphics` (sie ruft keine Lambdas): ruft so eines doch zurück, fehlt nativ sein Frame (die VMs haben ihn) - heute gibt es keins.
+  * **Kosten**: zwei Speicherungen um den Aufruf eines Natives eines Pakets oder von `windows`, nur mit Trace; der Code der Funktionen, der Rest und
+    Performance (`off`) unverändert - kein heißer Weg der Messung oben.
+* **`await [ ... ]`**: `__Await.All` gibt der Ausnahme eines Aufrufs vor dem `throw` den Abschnitt des Wartenden (`__EnvCall(11, e)`,
+  `EnvironmentMethod.ExceptionAwaited`, C `fire_exc_awaited`), wie `Completion.Wait`. Der Trace des Aufrufs endet an seinem Lambda - auch wo er nicht in
+  einem Task läuft (die C#-VM ruft alle nacheinander, nativ und in der C-VM läuft der letzte auf dem Strang des Wartenden): C# `_traceCut`, C
+  `FIRE_TRACE_CUT` (nativ `g_traceTop = NULL` um den Aufruf, die C-VM ein Eintrag ohne Native). Fall `trace/0170`.
+* **spark**: der Dialog einer unbehandelten Ausnahme und die Zeilen im Output-Panel zeigen die Frames im Format des Traces
+  (`   at Store.Find (main.fire:16)`, `(prelude)`), die Namen aus `IDebugThread.UnhandledFunctions` (C#-VM: `UnhandledTraceFunctions`, TraceNames;
+  nativ: das Feld `function` von `trace`, die Namen des Debuggers); im Dialog springt ein Doppelklick auf einen Frame an seine Stelle, im Output-Panel
+  wie jede Zeile eines Traces (`OutputLocations`). Der Test-Explorer: ein Doppelklick auf eine Zeile des Traces im Detail eines Tests springt dorthin
+  (die Datei neben der des Tests, sonst wie im Output-Panel). Nicht in einer Oberfläche geprüft (gebaut; die Tests haben kein Fenster von spark).
+
+Die kleinen Ziele (Open Watcom) sind nicht gemessen ([12](#12-offen)).

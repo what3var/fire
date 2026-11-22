@@ -49,6 +49,9 @@ namespace fire.Editor
         public IReadOnlyList<(int SourceIndex, int Line)>? ErrorTrace => _internalErrorTrace ?? Thread.UnhandledTrace;
         private IReadOnlyList<(int SourceIndex, int Line)>? _internalErrorTrace;
 
+        /// <summary>The function of each entry of <see cref="ErrorTrace"/> (`Store.Find`, `&lt;main&gt;`; null: not known).</summary>
+        public IReadOnlyList<string?>? ErrorFunctions => _internalErrorTrace != null ? null : Thread.UnhandledFunctions;
+
         /// <summary>true while this thread stands at the throw site of an unhandled script exception and could ignore it.</summary>
         public bool CanIgnoreError => Thread.IsPausedOnUnhandled;
 

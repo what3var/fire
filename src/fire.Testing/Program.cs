@@ -10769,6 +10769,17 @@ callbackTests:
         print("nie")
         """, new[] { "UNBEHANDELT: Unhandled exception of type 'Exception': boom" });
 
+    // docs/spec/STACKTRACE.md section 4: below the frames of the lambda the frame of the native that called it back, then the fire code that called the native
+    CheckCb("Trace: der Callback eines Natives hat dessen Frame unter dem des Lambdas", """
+        var fb = new Framebuffer(64, 64)
+        var win = new Window(fb, "t")
+        class H { static undefined Step(Window w) { w.Tick() } }
+        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { H.Step(win) } catch (e) { print(e.StackTrace); foreach (f in e.Frames) { print(f.function + "|" + f.file + "|" + f.line) } }
+        """, new[] { "   at <lambda> (prelude)\n   at __GRPHWinTick (native)\n   at Window.Tick (prelude)\n   at H.Step (prelude)\n   at <main> (prelude)",
+            "<lambda>||0", "__GRPHWinTick|(native)|0", "Window.Tick||0", "H.Step||0", "<main>||0" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+
     CheckCb("Ein try/catch im Callback selbst faengt", cbHead + """
         var caught = 0
         win.RegisterMouseDown(func (int b, float x, float y) => {
@@ -15498,6 +15509,17 @@ else
                 }
                 print("end")
                 """, new[] { "caught keydown same True downs=1 ups=0 clicks=0", "tick 1 downs=1 ups=0 clicks=0", "end" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    // docs/spec/STACKTRACE.md section 4: the trace of the handler's exception has the frame of the native (Tick) below the handler's, then the
+                    // frames of the fire code that called the native - here the handler runs as a member of the main program's group (fire_groupCall)
+                    ("Fenster: der Trace eines Handlers hat den Frame des Natives (at __GRPHWinTick (native)) und die Frames darunter", """
+                #import "windows"
+                class H { static undefined Step(Window w) { w.Tick() } }
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "trace")
+                win.VSync = false
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { throw new Exception("key " + k) })
+                try { H.Step(win) } catch (e) { print(e); print(e.StackTrace) }
+                """, new[] { "Exception: key 97", "   at <lambda> (fire:source/0:6)", "   at __GRPHWinTick (native)", "   at Window.Tick (prelude)", "   at H.Step (fire:source/0:2)", "   at <main> (fire:source/0:7)" }, "-DFIRE_DISPLAY_SELFTEST "),
                     ("Fenster: ein Handler wirft unter WindowManager.Run - Run gibt die Exception weiter, der Manager ist danach wieder bereit", """
                 #import "windows"
                 var fb = new Framebuffer(64, 48)

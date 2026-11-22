@@ -30,6 +30,13 @@ namespace fire.Editor
             _testExplorer.StopRequested += StopTests;
             _testExplorer.RefreshRequested += () => _ = DiscoverTests();
             _testExplorer.LocationRequested += (file, line) => ShowLocation(Path.IsPathRooted(file) ? file : null, file, line);
+            // a frame of a test's trace: next to the test's file first (the folder of the program's first source, as the trace names it), else as in the output
+            _testExplorer.TraceLocationRequested += (file, line, testFile) =>
+            {
+                string? next = testFile != null && Path.IsPathRooted(testFile) && Path.GetDirectoryName(testFile) is { } dir ? Path.GetFullPath(Path.Combine(dir, file)) : null;
+                if (next != null && File.Exists(next)) ShowLocation(next, null, line);
+                else ShowTraceLocation(file, line);
+            };
             _testDiscoveryTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(400), DispatcherPriority.Background, (_, _) => { _testDiscoveryTimer!.Stop(); _ = DiscoverTests(); });
         }
 

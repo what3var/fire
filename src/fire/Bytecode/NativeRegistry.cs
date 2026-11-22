@@ -105,6 +105,13 @@ namespace fire.Bytecode
                 ? idx
                 : throw new InvalidOperationException($"No 'tryable' native function named '{name}' is registered.");
 
+        /// <summary>The name of native <paramref name="index"/> (a trace: the frame of a native that calls back); null: none.</summary>
+        public string? NameOf(int index)
+        {
+            foreach (var (name, i) in _indexByName) if (i == index) return name;
+            return null;
+        }
+
         public bool Has(string name) => _indexByName.ContainsKey(name);
 
         public bool IsTryable(string name) => _tryableIndexByName.ContainsKey(name);

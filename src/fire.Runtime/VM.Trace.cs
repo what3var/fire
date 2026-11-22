@@ -53,14 +53,19 @@ namespace fire.Runtime
     public sealed partial class VM
     {
         private TraceContext? _trace;
+        /// <summary>The chunk the VM was made with (the program's top level: `&lt;main&gt;` - not the chunk that runs when the trace is first asked for).</summary>
+        private readonly Chunk _entryChunk;
         /// <summary>A fire thread: the line that ends the traces of its exceptions (`in thread 'Fire #1', started at main.fire:40`); null: not a thread.</summary>
         private string? _threadTrailer;
+        /// <summary>The depth of the frames below which a trace does not go (the calls of `await [ ... ]`, which run nested here: their traces end at their
+        /// lambda, as in a task); -1: none.</summary>
+        private int _traceCut = -1;
 
         /// <summary>The setting of the program for stack traces (docs/spec/STACKTRACE.md section 7) and the display names of its sources (by source index,
         /// LinkedProgram.TraceFiles). Set by whoever makes the main VM; the VMs of threads take it from the VM that starts them.</summary>
         public void ConfigureTrace(StackTraceMode mode, IReadOnlyList<string?>? files)
         {
-            _trace = new TraceContext(mode, files, _currentChunk, _classes);
+            _trace = new TraceContext(mode, files, _entryChunk, _classes);
             TraceContext.Last = _trace;
         }
 
@@ -70,7 +75,7 @@ namespace fire.Runtime
         private TraceContext Trace => _trace ??=
             (CurrentThreadVm is { } running && !ReferenceEquals(running, this) && running._trace is { } parent && parent.Of(_classes) ? parent : null)
             ?? (TraceContext.Last is { } last && last.Of(_classes) ? last : null)
-            ?? new TraceContext(ExecutionMode == VmExecutionMode.Performance ? StackTraceMode.Off : StackTraceMode.Lines, null, _currentChunk, _classes);
+            ?? new TraceContext(ExecutionMode == VmExecutionMode.Performance ? StackTraceMode.Off : StackTraceMode.Lines, null, _entryChunk, _classes);
 
         /// <summary>What a VM that this one starts (a fire thread) inherits: the context and the line of the start (`started at main.fire:40`, the `fire`
         /// that runs now).</summary>
@@ -96,19 +101,39 @@ namespace fire.Runtime
         private ExceptionTrace CaptureTrace()
         {
             var ctx = Trace;
-            int total = _frames.Count + 1;
             var frames = _frames.ToArray();   // (innermost first)
-            return ExceptionTrace.Of(total, i =>
+            bool cut = _traceCut >= 0 && _traceCut < frames.Length;
+            int total = cut ? frames.Length - _traceCut : frames.Length + 1;
+            // a callback of a native: the native's frame below the lambda's - before the frame of the function that called the native (frames[i - 1] is the frame
+            // CallInlineProto pushed)
+            List<(int At, int Native)>? natives = null;
+            foreach (var b in _callbackBoundaries)
+                if (b.Native >= 0 && b.FrameDepth < frames.Length && frames.Length - b.FrameDepth < total) (natives ??= new()).Add((frames.Length - b.FrameDepth, b.Native));
+            if (natives != null)
+            {
+                var order = new List<int>(total + natives.Count);   // (>= 0: entry i of the stack; < 0: native ~n)
+                for (int i = 0; i < total; i++)
+                {
+                    foreach (var n in natives) if (n.At == i) order.Add(~n.Native);
+                    order.Add(i);
+                }
+                return ExceptionTrace.Of(order.Count, k => order[k] < 0
+                    ? new ExceptionTrace.Frame(_natives.NameOf(~order[k]) ?? "?", ExceptionTrace.NativeFile, 0)
+                    : FrameAt(order[k]), _threadTrailer);
+            }
+            return ExceptionTrace.Of(total, FrameAt, _threadTrailer);
+
+            ExceptionTrace.Frame FrameAt(int i)
             {
                 Chunk chunk; int ip;
                 if (i == 0) { chunk = _currentChunk; ip = Math.Max(0, _ip - 1); }
                 else { chunk = frames[i - 1].ReturnChunk; ip = Math.Max(0, frames[i - 1].ReturnIp - 1); }
                 var (src, line) = chunk.GetLocation(ip);
                 string name = ctx.NameOf(chunk);
-                if (i == total - 1 && IsFireThreadVm && name == TraceNames.Lambda) name = TraceNames.Fire;
+                if (i == total - 1 && !cut && IsFireThreadVm && name == TraceNames.Lambda) name = TraceNames.Fire;
                 string? file = ctx.FileOf(src);
                 return new ExceptionTrace.Frame(name, file, file == null ? 0 : line);
-            }, _threadTrailer);
+            }
         }
 
         /// <summary>The first throw of an exception gives it its trace (a rethrow, a `finally` and `resume` keep it).</summary>
@@ -137,6 +162,12 @@ namespace fire.Runtime
         internal Value ExcTraceNative(string name, Value[] args)
         {
             var trace = args.Length > 0 && args[0].Kind == ValueKind.Class && args[0].AsObjectRef() is ObjectInstance { Trace: { } t } && Trace.Mode != StackTraceMode.Off ? t : null;
+            if (name == fire.Standard.ExceptionTraceMethods.AwaitedName)
+            {
+                // (`await [ ... ]`: the exception of a task thrown again here - the section of the waiting one, as at Completion.Wait)
+                if (args.Length > 0 && args[0].Kind == ValueKind.Class && args[0].AsObjectRef() is ObjectInstance awaited && Trace.Mode != StackTraceMode.Off) StampAwaited(awaited);
+                return Value.MakeUndefined();
+            }
             if (name == fire.Standard.ExceptionTraceMethods.TraceName) return Value.MakeString((trace?.Format(Trace.Mode) ?? "").TrimEnd('\n'));   // (the lines without the last line feed)
             int index = args.Length > 1 && args[1].Kind == ValueKind.Int ? (int)args[1].AsInt() : -1;
             int part = args.Length > 2 && args[2].Kind == ValueKind.Int ? (int)args[2].AsInt() : 0;
@@ -146,7 +177,8 @@ namespace fire.Runtime
                 if (index >= count && index < count + s.Frames.Count)
                 {
                     var f = s.Frames[index - count];
-                    return part == 0 ? Value.MakeString(f.Function) : part == 1 ? Value.MakeString(f.File ?? "") : Value.MakeInt(Trace.Mode == StackTraceMode.Lines ? f.Line : 0);
+                    bool native = ExceptionTrace.IsNative(f.File);
+                    return part == 0 ? Value.MakeString(f.Function) : part == 1 ? Value.MakeString(native ? "(native)" : f.File ?? "") : Value.MakeInt(Trace.Mode == StackTraceMode.Lines && !native ? f.Line : 0);
                 }
                 count += s.Frames.Count;
             }

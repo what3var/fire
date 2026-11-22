@@ -18,6 +18,12 @@ namespace fire.Runtime
     {
         public const int MaxFrames = 64, KeepInner = 48, KeepOuter = 16, MaxSections = 4;
 
+        /// <summary>The file of the frame of a native that calls back into fire (`   at __GRPHWinTick (native)`; fire_rt.h FIRE_TRACE_NATIVE_FILE); `e.Frames`
+        /// shows it as the file "(native)", line 0.</summary>
+        public const string NativeFile = "\u0001native";
+
+        public static bool IsNative(string? file) => file != null && file.Length > 0 && file[0] == '\u0001';
+
         /// <summary>One frame: the function (`Store.Find`, `&lt;main&gt;`, `&lt;lambda&gt;`), its file as the trace shows it (relative to the folder of the program's
         /// first source; null: the prelude) and its line (0: unknown).</summary>
         public readonly record struct Frame(string Function, string? File, int Line);
@@ -80,7 +86,7 @@ namespace fire.Runtime
 
         /// <summary>What stands in the brackets of a frame: `main.fire:16`, `main.fire` (no lines), `prelude`.</summary>
         public static string Location(Frame f, StackTraceMode mode) =>
-            f.File == null ? "prelude" : mode == StackTraceMode.Lines && f.Line > 0 ? f.File + ":" + f.Line : f.File;
+            f.File == null ? "prelude" : IsNative(f.File) ? f.File.Substring(1) : mode == StackTraceMode.Lines && f.Line > 0 ? f.File + ":" + f.Line : f.File;
 
         /// <summary>The display names of the sources (by source index) for a trace: a source of the program relative to the folder of its first source (with `/`;
         /// `fire:source/N` for a source without a file), a library by the name of its module (its import) and its file name (`lib:util.fire`; without a module
