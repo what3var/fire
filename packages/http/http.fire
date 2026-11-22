@@ -2404,8 +2404,17 @@ namespace Http {
             var h = this.home
             string id = await h.Open(asked)
             var session = new Http.Session(h, id, id != asked)
+            // (the context lends the session to the routers after this one while they run: the item goes before the session ends with this call, also when
+            // they throw - as Http.Database does with its scope)
             ctx.SetItem("session", session)
-            Http.Response r = next.Invoke(ctx)
+            Http.Response r = undefined
+            try {
+                r = next.Invoke(ctx)
+            } catch (e) {
+                ctx.SetItem("session", undefined)
+                throw e
+            }
+            ctx.SetItem("session", undefined)
             if (session.id != asked || session.renewed) {
                 var attrs = "; Path=/; HttpOnly; SameSite=Lax"
                 if (this.secure) { attrs = attrs + "; Secure" }
