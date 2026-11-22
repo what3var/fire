@@ -50,7 +50,8 @@ static partial class NativeDebugTests
 
     static void RunVmEngine(Action<string, bool, string?> check, string cxx, string workDir, string sanitize)
     {
-        var selected = Cases.Where(c => TestSelectedName("VM-Debugger: " + c.Name) && TestResume.Pending("VM-Debugger: " + c.Name, CaseKey(c, "vm"))).ToList();
+        // (the cases: the VM in C against the C# VM - with M1 the VM in C is the reference of the native debugger itself, RunVm; FIRE_TESTS_DOTNET_VM=1 compares them)
+        var selected = !DotnetVm.Enabled ? new List<Case>() : Cases.Where(c => TestSelectedName("VM-Debugger: " + c.Name) && TestResume.Pending("VM-Debugger: " + c.Name, CaseKey(c, "vm"))).ToList();
         bool protocol = TestSelectedName("VM-Debugger: Protokoll");
         if (selected.Count == 0 && !TestSelectedName("VM-Debugger: expand") && !protocol) return;
         string? fire = VmFire(cxx, workDir, sanitize, out string fireError);
@@ -63,14 +64,14 @@ static partial class NativeDebugTests
             if (fbc == null) { results.Add(($"VM-Debugger: {c.Name} (Bau)", false, error)); return results; }
             try
             {
-                var (vmStops, vmOut) = RunVm(c.Script, c.Breakpoints, c.Plan, true);
+                var (vmStops, vmOut) = RunCsVm(c.Script, c.Breakpoints, c.Plan, true);
                 var (cStops, cOut, cErr) = RunNative(() => NativeDebugClient.Launch(fbc, workDir, fire), c.Breakpoints, c.Plan, true);
                 results.Add(($"VM-Debugger: {c.Name}: Haltepunkte/Schritte, Aufrufstapel, Scopes, this, Globals wie die C#-VM", vmStops.SequenceEqual(cStops) && vmOut.SequenceEqual(cOut),
                     Diff(vmStops, cStops) + $"  Ausgabe C#-VM: {string.Join("|", vmOut)}\n  Ausgabe C-VM: {string.Join("|", cOut)}\n  stderr: {cErr}"));
                 if (c.StepAll)
                     foreach (var op in new[] { Op.StepInto, Op.StepOver })
                     {
-                        var (vmAll, _) = RunVm(c.Script, Array.Empty<int>(), Array.Empty<Op>(), false, () => op);
+                        var (vmAll, _) = RunCsVm(c.Script, Array.Empty<int>(), Array.Empty<Op>(), false, () => op);
                         var (cAll, _, cErr2) = RunNative(() => NativeDebugClient.Launch(fbc, workDir, fire), Array.Empty<int>(), Array.Empty<Op>(), false, () => op);
                         results.Add(($"VM-Debugger: {c.Name}: jeder {(op == Op.StepInto ? "Step Into" : "Step Over")} bis zum Ende wie die C#-VM ({vmAll.Count} Halte)", vmAll.SequenceEqual(cAll),
                             Diff(vmAll, cAll) + "  stderr: " + cErr2));

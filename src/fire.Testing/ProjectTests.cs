@@ -25,11 +25,8 @@ static class ProjectTests
 
     private static string RunPlan(BuildPlan plan, string? textFor = null)
     {
-        var output = new StringBuilder();
-        var session = RuntimeSession.Build(plan.SourceTexts, null, args => { output.AppendLine(args.Length > 0 ? args[0].ToString() : ""); return Value.MakeUndefined(); }, plan: plan);
-        session.Run();
-        Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
-        return output.ToString().Replace("\r\n", "\n");
+        // (in the VM in C, M1)
+        return CVmTest.Run(plan.SourceTexts, null, plan: plan).Text;
     }
 
     /// <summary>spark's build window for a run in the VM: the natives of the libraries (PackageLibrary) are a phase of their own, counted per package; cancelled while gcc
@@ -58,8 +55,7 @@ static class ProjectTests
             var o = new StringBuilder();
             using (fire.Native.BuildMonitor.Use(monitor))
             {
-                var session = RuntimeSession.Build(plan.SourceTexts, null, args => { o.AppendLine(args.Length > 0 ? args[0].ToString() : ""); return Value.MakeUndefined(); }, plan: plan);
-                session.Run();
+                o.Append(CVmTest.Run(plan.SourceTexts, null, plan: plan).Text);   // (in the VM in C: the libraries are built for it while linking)
             }
             output = o.ToString().Trim();
         });
@@ -205,7 +201,9 @@ static class ProjectTests
                 var lines = new List<string>();
                 try
                 {
-                    RuntimeSession.Build(new[] { File.ReadAllText(Path.Combine(sample.Folder, sample.Open[0])) }, null, args => { lines.Add(args.Length > 0 ? args[0].ToString()! : ""); return Value.MakeUndefined(); }).Run();
+                    var sampleRun = CVmTest.Run(new[] { File.ReadAllText(Path.Combine(sample.Folder, sample.Open[0])) }, null, workingDirectory: sample.Folder);
+                    lines.AddRange(sampleRun.Printed);
+                    if (sampleRun.ExitCode != 0) lines.Add("AUSNAHME " + sampleRun.Errors.Trim());
                 }
                 catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
                 Check($"Beispiele: {sample.Title} laeuft und gibt etwas aus", lines.Count >= 2 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
@@ -219,7 +217,9 @@ static class ProjectTests
                     var circuitWs = new Workspace();
                     circuitWs.Load(Path.Combine(sample.Folder, sample.ProjectFile));
                     var circuitPlan = BuildPlan.Create(circuitWs, circuitWs.Projects[0]);
-                    RuntimeSession.Build(circuitPlan.SourceTexts, null, args => { lines.Add(args.Length > 0 ? args[0].ToString()! : ""); return Value.MakeUndefined(); }, plan: circuitPlan).Run();
+                    var circuitRun = CVmTest.Run(circuitPlan.SourceTexts, null, plan: circuitPlan);
+                    lines.AddRange(circuitRun.Printed);
+                    if (circuitRun.ExitCode != 0) lines.Add("AUSNAHME " + circuitRun.Errors.Trim());
                 }
                 catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
                 Check($"Beispiele: {sample.Title} (Projekt mit Schaltung) laeuft", lines.Count >= 4 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
@@ -233,7 +233,7 @@ static class ProjectTests
                     var s3dWs = new Workspace();
                     s3dWs.Load(Path.Combine(sample.Folder, sample.ProjectFile));
                     var s3dPlan = BuildPlan.Create(s3dWs, s3dWs.Projects[0]);
-                    RuntimeSession.Build(s3dPlan.SourceTexts, null, args => Value.MakeUndefined(), plan: s3dPlan);
+                    new Linker { Plan = s3dPlan, SourcePaths = s3dPlan.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(s3dPlan.SourceTexts, null, null, null, null);
                 }
                 catch (Exception ex) { error = Describe(ex); }
                 Check($"Beispiele: {sample.Title} wird uebersetzt", error == "", error);
@@ -814,9 +814,7 @@ static class ProjectTests
         try
         {
             storeBefore.Install(resLibPack);
-            var usesOutput = new StringBuilder();
-            var usesSession = RuntimeSession.Build(new[] { "#import \"ResLib\"\nprint(ResLib.Greeting())\nprint(ResLib.Second())\n" }, null, args => { usesOutput.AppendLine(args[0].ToString()); return Value.MakeUndefined(); });
-            usesSession.Run();
+            var usesOutput = new StringBuilder(CVmTest.Run(new[] { "#import \"ResLib\"\nprint(ResLib.Greeting())\nprint(ResLib.Second())\n" }, null).Text);
             Check("Paket-Ressourcen: ein Programm, das das installierte Paket importiert, bekommt dessen Dateien eingebettet", usesOutput.ToString().Replace("\r\n", "\n") == "hello from a package\nsecond file\n", usesOutput.ToString());
         }
         catch (Exception ex) { Check("Paket-Ressourcen: ein Programm, das das installierte Paket importiert, bekommt dessen Dateien eingebettet", false, Describe(ex)); }

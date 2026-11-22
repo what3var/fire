@@ -118,4 +118,5 @@ var reportLog = CommandLineRunner.BeginReport(args);
 if (reportLog == null) fire.Native.BackgroundWork.WriteLines(Console.Error);   // (spark shows it in its status bar)
 StandardSources.EnsureInstalled(reportLog ?? (message => Console.Error.WriteLine(message)));
 if (reportLog == null) fire.Compiler.ConsoleToolchainPrompt.Install();
+CommandLineRunner.WritersAreConsole = true;   // (`run`: the program in `fire` gets this console)
 return CommandLineRunner.Run(args, Console.Out, Console.Error);

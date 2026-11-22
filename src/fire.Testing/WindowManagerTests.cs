@@ -141,6 +141,8 @@ static class WindowManagerTests
     public static void Run()
     {
         Console.WriteLine("=== WindowManager ===");
+        // (the window manager of fire.Terminal.Windows in the C# VM - it goes with fire.Runtime, docs/ROADMAP_C_PORT.md M1)
+        if (DotnetVm.Skip("WindowManager der C#-Fenster")) return;
         try
         {
             CurrentThread();

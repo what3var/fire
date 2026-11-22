@@ -435,6 +435,8 @@ objA.Destroy(raceRunner);
 Console.WriteLine($"  d zerstört (obwohl TakeTo mitten in a's Destroy() aufgerufen wurde)? {objD.IsDestroyed}");
 
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Bytecode-Test (Compiler + VM")) goto dotnetVm1;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test (Compiler + VM) ===");
 
@@ -487,32 +489,17 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+dotnetVm1:;
 Console.WriteLine();
-Console.WriteLine("=== Sprachtests als Dateien (tests/cases/smoke) ===");
+Console.WriteLine("=== Sprachtests als Dateien (tests/cases/smoke, vm-*) in der C-VM ===");
 {
     // What used to be printed here for a reader - a script, its output and a sentence about what to expect - is checked now: the cases are files
-    // (TestCases), run like `forge run` runs a program, and what they print is compared with the output recorded next to them.
-    int smokeFailures = 0;
-    foreach (var c in TestCases.Load("smoke"))
-    {
-        var lines = new List<string>();
-        string? unhandled = null;
-        try
-        {
-            VM.ResetTerminateForTests();
-            var session = RuntimeSession.Build(new[] { c.Source }, null, args => { lock (lines) lines.Add(args.Length > 0 ? args[0].ToString()! : ""); return Value.MakeUndefined(); });
-            session.Run();
-            if (session.VirtualMachine?.UnhandledException is { } e) unhandled = new UncaughtScriptException(e).Message;
-        }
-        catch (Exception ex) when (fire.Compiler.CompileDiagnostics.Of(ex).Count > 0) { unhandled = "WIRD NICHT UEBERSETZT: " + string.Join(" | ", fire.Compiler.CompileDiagnostics.Of(ex).Select(d => d.Code + " " + d.Message)); }
-        VM.ResetTerminateForTests();
-        Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
-        string actual = string.Concat(lines.Select(l => l + "\n")) + (unhandled == null ? "" : "UNBEHANDELT: " + unhandled + "\n");
-        bool ok = actual == (c.Expected ?? "");
-        if (!ok) smokeFailures++;
-        Console.WriteLine(ok ? $"OK: {c.Name}" : $"FEHLER: {c.Name} ({c.Id}.expected)\n{TestCases.Difference(c.Expected ?? "", actual)}");
-    }
-    Console.WriteLine(smokeFailures == 0 ? "Alle Sprachtests aus Dateien bestanden." : $"FEHLER: {smokeFailures} Sprachtest(s) aus Dateien fehlgeschlagen.");
+    // (TestCases), run like `forge run` runs a program - in `fire`, the VM in C (TestCasesVm, M1) - and what they print is compared with the output recorded
+    // next to them. The families vm-* are the cases of the checks of the C# VM further down (CheckExt, CheckArr, CheckPerf, CheckClone, CheckLife,
+    // CheckShutdown, CheckGl, CheckLq, CheckRf, CheckSc): with the C# VM they ran there, now here.
+    int caseFailures = TestCasesVm.Run("smoke", "vm-arr", "vm-arr-error", "vm-clone", "vm-clone-error", "vm-ext", "vm-ext-error", "vm-gl", "vm-life", "vm-lq",
+        "vm-perf", "vm-rf", "vm-sc", "vm-sc-checked", "vm-shutdown");
+    Console.WriteLine(caseFailures == 0 ? "Alle Sprachtests aus Dateien bestanden." : $"FEHLER: {caseFailures} Sprachtest(s) aus Dateien fehlgeschlagen.");
 }
 
 TestResume.Group("TraceTests", TraceTests.Run, 0);   // (the stack traces: tests/cases/trace)
@@ -599,6 +586,8 @@ Console.WriteLine($"300 (int64) -> TruncateTo(W8) = {wideVal.TruncateTo(NumericW
 var wideFloat = Value.MakeFloat(3.14159265358979);
 Console.WriteLine($"3.14159265358979 (double) -> TruncateTo(W32) = {wideFloat.TruncateTo(NumericWidth.W32).AsFloat()}");
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Bytecode-Test: Ownership-Politik bei direkter Feldzuweisu")) goto dotnetVm2;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: Ownership-Politik bei direkter Feldzuweisung (SPEC 2.1) ===");
 
@@ -638,6 +627,7 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+dotnetVm2:;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: '&'/'*' außerhalb 'unsafe' (muss fehlschlagen) ===");
 try
@@ -652,6 +642,8 @@ catch (ResolverException ex)
     Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Bytecode-Test: unbehandelte Exception (muss abbrechen")) goto dotnetVm3;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: unbehandelte Exception (muss abbrechen) ===");
 
@@ -757,6 +749,7 @@ print("after")
         Console.WriteLine("Pause + Ignorieren ok");
 }
 
+dotnetVm3:;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: Interface nicht erfüllt (muss fehlschlagen) ===");
 
@@ -780,6 +773,8 @@ catch (ResolverException ex)
     Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Bytecode-Test: extern-Linking (echte WinAPI-Aufrufe per P")) goto dotnetVm4;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: extern-Linking (echte WinAPI-Aufrufe per P/Invoke) ===");
 
@@ -871,6 +866,7 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+dotnetVm4:;
 Console.WriteLine();
 Console.WriteLine("=== #include: relativ zur Datei, die es enthaelt; jede Datei nur einmal (auch eine Datei des Programms) ===");
 {
@@ -901,6 +897,8 @@ Console.WriteLine("=== #include: relativ zur Datei, die es enthaelt; jede Datei 
     try { Directory.Delete(root, true); } catch (IOException) { }
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Bytecode-Test: #extern \"libName\" (dynamisches Linking o")) goto dotnetVm5;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: #extern \"libName\" (dynamisches Linking ohne Host-Registrierung) ===");
 
@@ -956,6 +954,7 @@ static IReadOnlyList<ProcessedSource> Preprocessed(string basePath, params strin
     return sources.Select(s => Preprocessor.Process(s, basePath, alreadyIncluded)).ToList();
 }
 
+dotnetVm5:;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: readonly Zuweisung nach Deklaration (muss fehlschlagen) ===");
 
@@ -1003,6 +1002,8 @@ catch (ResolverException ex)
     Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Bytecode-Test: get-only Property zuweisen (muss zur Laufz")) goto dotnetVm6;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: get-only Property zuweisen (muss zur Laufzeit fehlschlagen) ===");
 
@@ -1040,6 +1041,7 @@ catch (InvalidOperationException ex)
     Console.WriteLine($"Erwarteter Laufzeitfehler: {ex.Message}");
 }
 
+dotnetVm6:;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: doppelte Methode mit GLEICHER Argumentzahl (muss fehlschlagen) ===");
 
@@ -1286,6 +1288,8 @@ catch (ResolverException ex)
     Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Bytecode-Test: Zuweisung an get-only Auto-Property von au")) goto dotnetVm7;
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: Zuweisung an get-only Auto-Property von außen (muss zur Laufzeit fehlschlagen) ===");
 
@@ -1554,6 +1558,7 @@ catch (Exception ex)
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+dotnetVm7:;
 Console.WriteLine();
 Console.WriteLine("=== Multithreading: sync nach Zerstoerung des Ziels -> TargetGone ===");
 
@@ -1605,6 +1610,8 @@ catch (Exception ex)
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Multithreading: ECHTER Bytecode läuft in einer eigenen VM")) goto dotnetVm8;
 Console.WriteLine();
 Console.WriteLine("=== Multithreading: ECHTER Bytecode läuft in einer eigenen VM-Instanz im Fire-Thread ===");
 
@@ -2368,6 +2375,7 @@ catch (Exception ex)
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+dotnetVm8:;
 Console.WriteLine();
 Console.WriteLine("=== Multithreading: Schreiben auf ein Hauptprogramm-Global in 'fire' wird uebersetzt (laeuft als Sektion, siehe Block 'Globals und Fire-Threads') ===");
 
@@ -2396,6 +2404,8 @@ catch (Exception ex)
     Console.WriteLine($"FEHLER (falscher Exception-Typ): {ex.GetType().Name}: {ex.Message}");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Multithreading: Objekt-Global wird vom Thread direkt geae")) goto dotnetVm9;
 Console.WriteLine();
 Console.WriteLine("=== Multithreading: Objekt-Global wird vom Thread direkt geaendert (Sektion, bei Programmende vom Hauptprogramm abgearbeitet) ===");
 
@@ -2437,6 +2447,7 @@ catch (Exception ex)
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+dotnetVm9:;
 Console.WriteLine();
 Console.WriteLine("=== Multithreading: '#noshadow' schaltet den Globals-Snapshot ab ===");
 
@@ -2467,6 +2478,8 @@ catch (Exception ex)
     Console.WriteLine($"FEHLER (falscher Exception-Typ): {ex.GetType().Name}: {ex.Message}");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Operatoren: Potenz '^', bitweise '&'/'|'/'#', Shift '<<'/")) goto dotnetVm10;
 Console.WriteLine();
 Console.WriteLine("=== Operatoren: Potenz '^', bitweise '&'/'|'/'#', Shift '<<'/'>>' ===");
 
@@ -2728,6 +2741,7 @@ catch (Exception ex)
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+dotnetVm10:;
 Console.WriteLine();
 Console.WriteLine("=== Freie Praeprozessor-Direktiven: #name wert1, wert2, ... ===");
 
@@ -2789,6 +2803,8 @@ catch (System.Exception ex)
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("#include: globale Komposition statt Baumprinzip")) goto dotnetVm11;
 Console.WriteLine();
 Console.WriteLine("=== #include: globale Komposition statt Baumprinzip ===");
 
@@ -3176,6 +3192,7 @@ catch (System.Exception ex)
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+dotnetVm11:;
 Console.WriteLine();
 Console.WriteLine("=== Generics: gleicher Name - falsche Typ-Argumente / Doppeldefinition (müssen fehlschlagen) ===");
 
@@ -3272,6 +3289,8 @@ catch (CompilerException ex)
     Console.WriteLine($"Ist eine NotSupportedException (bestehender Code faengt sie weiter): {ex is NotSupportedException}");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Statische Properties: Schreiben ohne Setter (muss fehlsch")) goto dotnetVm12;
 Console.WriteLine();
 Console.WriteLine("=== Statische Properties: Schreiben ohne Setter (muss fehlschlagen) ===");
 
@@ -3297,6 +3316,7 @@ catch (Exception ex)
     Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
 }
 
+dotnetVm12:;
 Console.WriteLine();
 Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden über die Typen aufgelöst ===");
 
@@ -3430,6 +3450,8 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     Console.WriteLine(completionFailures == 0 ? "Alle Vervollstaendigungs-Pruefungen bestanden." : $"FEHLER: {completionFailures} Pruefung(en) fehlgeschlagen.");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("IO: Streams (FileStream, MemoryStream, eigene Streams) un")) goto dotnetVm13;
 Console.WriteLine();
 Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) und Host-Richtlinie ===");
 
@@ -3843,6 +3865,7 @@ catch (Exception ex)
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+dotnetVm13:;
 Console.WriteLine();
 Console.WriteLine("=== Strings: Editor-Vervollstaendigung ===");
 {
@@ -3869,6 +3892,8 @@ Console.WriteLine("=== Strings: Editor-Vervollstaendigung ===");
     Console.WriteLine(failures == 0 ? "Alle String-Vervollstaendigungs-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Basistyp-Erweiterungen (class extends string/char/int/...")) goto dotnetVm14;
 Console.WriteLine();
 Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...) ===");
 {
@@ -3921,6 +3946,7 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
     Console.WriteLine(extFailures == 0 ? "Alle Basistyp-Erweiterungs-Pruefungen bestanden." : $"FEHLER: {extFailures} Pruefung(en) fehlgeschlagen.");
 }
 
+dotnetVm14:;
 Console.WriteLine();
 Console.WriteLine("=== Basistyp-Erweiterungen: Editor ===");
 {
@@ -3946,6 +3972,8 @@ Console.WriteLine("=== Basistyp-Erweiterungen: Editor ===");
     Console.WriteLine(failures == 0 ? "Alle Basistyp-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Array als Rueckgabetyp (int[] Name(), leere Klammern")) goto dotnetVm15;
 Console.WriteLine();
 Console.WriteLine("=== Array als Rueckgabetyp (int[] Name(), leere Klammern) ===");
 {
@@ -3997,6 +4025,7 @@ Console.WriteLine("=== Array als Rueckgabetyp (int[] Name(), leere Klammern) ===
     Console.WriteLine(arrFailures == 0 ? "Alle Array-Rueckgabetyp-Pruefungen bestanden." : $"FEHLER: {arrFailures} Pruefung(en) fehlgeschlagen.");
 }
 
+dotnetVm15:;
 Console.WriteLine();
 Console.WriteLine("=== Array als Rueckgabetyp: Editor ===");
 {
@@ -4020,6 +4049,8 @@ Console.WriteLine("=== Array als Rueckgabetyp: Editor ===");
     Console.WriteLine(failures == 0 ? "Alle Array-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("VM-Optimierungen: Value, Stack, Inline-Caches (Regression")) goto dotnetVm16;
 Console.WriteLine();
 Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regressionsschutz) ===");
 {
@@ -4369,6 +4400,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
     Console.WriteLine(cloneFailures == 0 ? "Alle Kopier-Pruefungen bestanden." : $"FEHLER: {cloneFailures} Pruefung(en) fehlgeschlagen.");
 }
 
+dotnetVm16:;
 Console.WriteLine();
 Console.WriteLine("=== Kopieren: Editor ===");
 {
@@ -4392,6 +4424,8 @@ Console.WriteLine("=== Kopieren: Editor ===");
     Console.WriteLine(failures == 0 ? "Alle Kopier-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Kopien: Owner bei Parametern und Zuweisungen; leave zerst")) goto dotnetVm17;
 Console.WriteLine();
 Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerstoert alles ===");
 {
@@ -4595,6 +4629,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     Console.WriteLine(lifeFailures == 0 ? "Alle Kopie/leave-Pruefungen bestanden." : $"FEHLER: {lifeFailures} Pruefung(en) fehlgeschlagen.");
 }
 
+dotnetVm17:;
 packerTests:
 // ---------------------------------------------------------------------------
 // Packer: self-contained file (bundle + payload), bridges only when needed, loader instead of Costura
@@ -4611,6 +4646,8 @@ packerTests:
 
     var baseDir = AppContext.BaseDirectory;
 
+    // 1) - 4): the .NET packer (fire.Runtime: PackagePlan, PayloadFile, PayloadLoader, Packer) - it goes with fire.Runtime (M1); the VM in C from 5) on
+    if (!DotnetVm.Skip("der .NET-Packer (Plan, Payload, Lader, Ende zu Ende)")) {
     // 1) Pack plan: per import only the necessary DLLs, nothing unresolved.
     PackagePlan Plan(params string[] imports) => PackagePlan.Create(imports, baseDir);
     var planPrint = Plan(NativeImports.Print);
@@ -4657,12 +4694,14 @@ packerTests:
     bool unknownImportRejected = false;
     try { Plan("gibtsnicht"); } catch (InvalidOperationException) { unknownImportRejected = true; }
     PackCheck(unknownImportRejected, "Plan: unbekannter Import wird abgelehnt statt still ignoriert");
+    }
 
     // 2) Payload format: round trip, compression, integrity, no marker search.
     var tmpDir = Path.Combine(Path.GetTempPath(), "fire-packtest-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(tmpDir);
     try
     {
+        if (DotnetVm.Enabled) {
         var plFile = Path.Combine(tmpDir, "pl.bin");
         var rnd = new Random(42);
         var incompressible = new byte[5000]; rnd.NextBytes(incompressible);
@@ -4722,15 +4761,15 @@ packerTests:
         }
 
         // 4) End-to-end: pack a standalone file, start it OUTSIDE the compiler folder.
-        //    (the .NET runtime: FIRE_VM_ENGINE=dotnet, the old way until M1; the VM in C below)
-        CVm.EngineOverride = "dotnet";
+        //    (the .NET runtime: FIRE_VM_ENGINE=dotnet - gone with M1, `forge build` packs the VM in C; these checks pack it with Packer directly)
         var stubName = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
         if (File.Exists(Path.Combine(baseDir, stubName)))
         {
             string RunPacked(string source, string name, out long size, out PackagePlan? plan)
             {
                 var exe = Path.Combine(tmpDir, name + (OperatingSystem.IsWindows() ? ".exe" : ""));
-                var linked = new Linker().CompileAndLink(new[] { source }, null, exe);
+                var linked = new Linker().CompileAndLink(new[] { source }, null, null);
+                Packer.PackProgram(linked, exe);
                 plan = PackagePlan.Create(linked.NativeImports, baseDir);
                 size = new FileInfo(exe).Length;
                 var psi = new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = tmpDir };
@@ -4756,12 +4795,12 @@ packerTests:
             long PackProgramSize(string source)
             {
                 var exe = Path.Combine(tmpDir, "size_probe" + (OperatingSystem.IsWindows() ? ".exe" : ""));
-                new Linker().CompileAndLink(new[] { source }, null, exe);
+                Packer.PackProgram(new Linker().CompileAndLink(new[] { source }, null, null), exe);
                 return new FileInfo(exe).Length;
             }
         }
         else Console.WriteLine($"(uebersprungen: {stubName} liegt nicht im Testordner)");
-        CVm.EngineOverride = null;
+        }
 
         // 5) The VM in C (phase B steps 7 and 8, docs/spec/VM_C.md "Gepackte Programme"): `forge build --engine vm` packs `fire` with the program file and the
         //    libraries of its packages behind it; the libraries are written into the cache of the user (here FIRE_VM_CACHE in the test folder).
@@ -4781,7 +4820,8 @@ packerTests:
             cvBytes[(int)cvEntries![1].Offset + 5] ^= 0xFF;
             File.WriteAllBytes(cvFile, cvBytes);
             PackCheck(CVmPayload.Read(cvFile, CVmPayload.Open(cvFile)![1]) == null, "C-VM-Payload: ein beschaedigter Eintrag wird erkannt (FNV-1a)");
-            PackCheck(CVmPayload.Open(Path.Combine(tmpDir, "plain.bin")) == null && PayloadFile.Open(cvFile) == null, "C-VM-Payload: eine Datei ohne (oder mit dem anderen) Payload liefert null");
+            File.WriteAllBytes(Path.Combine(tmpDir, "plain.bin"), new byte[1000]);
+            PackCheck(CVmPayload.Open(Path.Combine(tmpDir, "plain.bin")) == null && (!DotnetVm.Enabled || PayloadFile.Open(cvFile) == null), "C-VM-Payload: eine Datei ohne (oder mit dem anderen) Payload liefert null");
             bool badName = false;
             try { using var fs = new MemoryStream(); CVmPayload.Append(fs, new[] { (CVmPayload.LibraryKind, "../x.so", new byte[1]) }); } catch (ArgumentException) { badName = true; }
             PackCheck(badName, "C-VM-Payload: ein Name, der den Ordner verlaesst, wird abgelehnt");
@@ -4820,7 +4860,7 @@ packerTests:
                 long cHelloSize = new FileInfo(cHello).Length;
                 PackCheck(rHello.Code == 0 && rHello.Out == "hallo\nwelt\n", $"C-VM Ende-zu-Ende: die gepackte Datei laeuft allein ({rHello.Code}: {rHello.Out.Trim()}{rHello.Err})");
                 PackCheck(File.ReadAllBytes(cHello).AsSpan(0, (int)new FileInfo(fireExe).Length).SequenceEqual(File.ReadAllBytes(fireExe)) && CVmPayload.Open(cHello) is { Count: 1 }
-                    && Packer.UnpackProgram(cHello) != null, "C-VM: die Datei ist fire mit dem Programm dahinter (ohne Bibliotheken), Packer.UnpackProgram liest es");
+                    && fire.Bytecode.ProgramFile.Read(CVmPayload.ReadProgram(cHello)!) != null, "C-VM: die Datei ist fire mit dem Programm dahinter (ohne Bibliotheken), das Programm laesst sich lesen");
 
                 var cArgs = Build("print(Environment.Args.Length)\nforeach (a in Environment.Args) print(\"[\" + a + \"]\")\nterminate(4)", "c_args");
                 var rArgs = RunExe(cArgs, elsewhere, "a", "b c", "--stats");
@@ -4866,19 +4906,7 @@ packerTests:
                 PackCheck(rVersion.Code == 0 && rVersion.Out.StartsWith("fire ") && rHelp.Code == 0 && rHelp.Out.Contains("fire run") && rNone.Code == 2 && rBad.Code == 2 && rBad.Err.Contains("--gibtsnicht") && rMissing.Code == 2,
                     "fire: version, help (0), ohne Programm, eine unbekannte Option, eine fehlende Datei (2)");
 
-                // the old way stays selectable until M1
-                CVm.EngineOverride = "dotnet";
-                try
-                {
-                    if (File.Exists(Path.Combine(baseDir, stubName)))
-                    {
-                        var netHello = Build("print(\"hallo\")\nprint(\"welt\")", "net_hello");
-                        long netSize = new FileInfo(netHello).Length;
-                        PackCheck(PayloadFile.Open(netHello) != null && CVmPayload.Open(netHello) == null, "FIRE_VM_ENGINE=dotnet: der alte Weg (die .NET-Runtime) bleibt waehlbar");
-                        Console.WriteLine($"Groesse hello world: VM in C {cHelloSize} B, .NET-Runtime {netSize} B (sie braucht dazu das installierte .NET)");
-                    }
-                }
-                finally { CVm.EngineOverride = null; }
+                Console.WriteLine($"Groesse hello world: VM in C {cHelloSize} B (FIRE_VM_ENGINE=dotnet, die .NET-Runtime, ist mit M1 weg)");
             }
         }
     }
@@ -4921,7 +4949,7 @@ packerTests:
         return pe;
     }
 
-    var bundleFiles = new List<BundleWriter.BundleFile>
+    List<BundleWriter.BundleFile> bundleFiles() => new List<BundleWriter.BundleFile>
     {
         new("runtime.dll", BundleWriter.FileType.Assembly, Enumerable.Range(0, 300).Select(i => (byte)(i * 7)).ToArray()),
         new("runtime.runtimeconfig.json", BundleWriter.FileType.RuntimeConfigJson, System.Text.Encoding.UTF8.GetBytes("{\"x\":1}")),
@@ -4930,8 +4958,10 @@ packerTests:
     Directory.CreateDirectory(sfDir);
     try
     {
+        var linkedSf = new Linker().CompileAndLink(new[] { "print(\"sf\")" }, null, null);
+        if (!DotnetVm.Skip("der .NET-Packer: Single-File-Runtime, Bundle")) {
         var bundled = Path.Combine(sfDir, "bundled.exe");
-        BundleWriter.Write(SyntheticPe(), bundleFiles, bundled);
+        BundleWriter.Write(SyntheticPe(), bundleFiles(), bundled);
         var before = File.ReadAllBytes(bundled);
         SfCheck(BundleWriter.IsBundle(before) && BundleWriter.PeEnd(before) == 0x400, "ein fertiges Bundle wird erkannt, das Ende des PE-Teils stimmt");
 
@@ -4940,8 +4970,8 @@ packerTests:
         var after = File.ReadAllBytes(bundled);
         var entries = BundleWriter.ReadEntries(after);
         bool intact = entries.Count == 2 && entries.All(e => e.Offset + e.Size <= after.Length)
-            && after.AsSpan((int)entries[0].Offset, (int)entries[0].Size).SequenceEqual(bundleFiles[0].Data)
-            && after.AsSpan((int)entries[1].Offset, (int)entries[1].Size).SequenceEqual(bundleFiles[1].Data);
+            && after.AsSpan((int)entries[0].Offset, (int)entries[0].Size).SequenceEqual(bundleFiles()[0].Data)
+            && after.AsSpan((int)entries[1].Offset, (int)entries[1].Size).SequenceEqual(bundleFiles()[1].Data);
         SfCheck(intact && after.Length == before.Length + 0x123, "ein Bundle ueberlebt eine Aenderung des PE-Teils: die Offsets sind verschoben, die Dateien unveraendert");
 
         var gui = SyntheticPe();
@@ -4960,7 +4990,6 @@ packerTests:
             if (File.Exists(Path.Combine(AppContext.BaseDirectory, dll!))) File.Copy(Path.Combine(AppContext.BaseDirectory, dll!), Path.Combine(baseDir2, dll!));
         string stub = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
         File.Copy(bundled, Path.Combine(baseDir2, stub));
-        var linkedSf = new Linker().CompileAndLink(new[] { "print(\"sf\")" }, null, null);
         var packedSf = Path.Combine(sfDir, "packed.exe");
         Packer.PackProgram(linkedSf, packedSf, null, baseDir2);
         var packedBytes = File.ReadAllBytes(packedSf);
@@ -4972,6 +5001,7 @@ packerTests:
         File.WriteAllBytes(Path.Combine(baseDir2, stub), SyntheticPe());
         try { Packer.PackProgram(linkedSf, Path.Combine(sfDir, "bad.exe"), null, baseDir2); SfCheck(false, "weder Bundle noch runtime.dll: Fehlermeldung"); }
         catch (InvalidOperationException ex) { SfCheck(ex.Message.Contains("Single-File"), "weder Bundle noch runtime.dll: Fehlermeldung"); }
+        }
 
         // the native build: -mwindows / /SUBSYSTEM:WINDOWS only for a GUI program on Windows
         TargetProfile.TryGet("windows", out var winTarget);
@@ -5046,9 +5076,7 @@ packerTests:
                     var nodeErr = node.StandardError.ReadToEndAsync();
                     string nodeOut = node.StandardOutput.ReadToEnd().Replace("\r\n", "\n");
                     node.WaitForExit();
-                    var vmLines = new List<string>();
-                    RuntimeSession.Build(new[] { wasmSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
-                    Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
+                    var vmLines = CVmTest.Run(new[] { wasmSource }, VmExecutionMode.Release).Printed;   // (the VM in C as the reference)
                     SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
                     // fire threads: tasks of fire's own scheduler on the fibers of Emscripten (std/sched/fire_ctx_emscripten.h)
                     const string wasmThreads = """
@@ -5189,7 +5217,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") return;
         Console.SetOut(capture);
         int code;
         try { code = CommandLineRunner.Run(new[] { "run", f1, f2 }, capture, errW); }
-        finally { Console.SetOut(prevOut); VM.ResetTerminateForTests(); }
+        finally { Console.SetOut(prevOut); }
         CliCheck(code == 5 && capture.ToString().Replace("\r", "") == "hi\n", $"run: zwei Dateien zu einem Programm, terminate(5) -> Exitcode 5 (Code {code}, Ausgabe '{capture.ToString().Trim()}')");
 
         var bad = Path.Combine(cliDir, "bad.script");
@@ -5198,13 +5226,12 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") return;
         CliCheck(CommandLineRunner.Run(new[] { "run", bad }, new StringWriter(), errBad) == CommandLineRunner.ExitScriptError && errBad.ToString().Length > 0, "run: Kompilierfehler -> Exitcode 1 mit Meldung");
         CliCheck(CommandLineRunner.Run(new[] { "run", Path.Combine(cliDir, "nix.script") }, new StringWriter(), new StringWriter()) == CommandLineRunner.ExitUsage, "run: fehlende Datei -> Exitcode 2");
 
-        var stubName = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
-        if (File.Exists(Path.Combine(AppContext.BaseDirectory, stubName)))
         {
+            // (packed with the VM in C: its program file is behind `fire`)
             var outFile = Path.Combine(cliDir, "gebaut.exe");
             int bc = CommandLineRunner.Run(new[] { "build", f1, f2, "-o", outFile, "-m", "DEBUG" }, new StringWriter(), new StringWriter());
             CliCheck(bc == 0 && File.Exists(outFile), "build -o: erzeugt die Datei");
-            var packed = File.Exists(outFile) ? Packer.UnpackProgram(outFile) : null;
+            var packed = File.Exists(outFile) && CVmPayload.ReadProgram(outFile) is { } packedBytes ? fire.Bytecode.ProgramFile.Read(packedBytes) : null;
             CliCheck(packed != null && packed.ExecutionMode == VmExecutionMode.Debug, "build -m DEBUG: der Modus steckt im gepackten Programm");
         }
     }
@@ -6156,6 +6183,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 // Graphics from fire: colour modes, loading images, drawing functions (Console/Framebuffer of the graphics prelude)
 // ---------------------------------------------------------------------------
 graphicsTests:
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Grafik aus fire: Farbmodi, Bilder, Zeichenfunktionen")) goto dotnetVm18;
 {
     Console.WriteLine();
     Console.WriteLine("=== Grafik aus fire: Farbmodi, Bilder, Zeichenfunktionen ===");
@@ -6516,8 +6545,11 @@ graphicsTests:
 
     Console.WriteLine(gfFailures == 0 ? "Alle Grafik-aus-fire-Pruefungen bestanden." : $"FEHLER: {gfFailures} Grafik-aus-fire-Pruefung(en) fehlgeschlagen.");
 }
+dotnetVm18:;
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "graphics") return;
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Netzwerk: Host-Richtlinie")) goto dotnetVm19;
 // ---------------------------------------------------------------------------
 // Network (#import "net"): the host's policy (NetPolicy) for connections, listeners, datagrams and names
 // ---------------------------------------------------------------------------
@@ -6569,6 +6601,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "graphics") return;
     Console.WriteLine(netFailures == 0 ? "Alle Netzwerk-Pruefungen bestanden." : $"FEHLER: {netFailures} Netzwerk-Pruefung(en) fehlgeschlagen.");
 }
 
+dotnetVm19:;
 // ---------------------------------------------------------------------------
 // Slicer: split a mask from a framebuffer (ToMask) into tool paths
 // ---------------------------------------------------------------------------
@@ -6781,6 +6814,15 @@ uiDrawScript = """
     }
     print(probed.Text)
     """;
+
+// the drawing of the UI checks in the VM in C: the reference of "UI nativ == VM" (the UI checks below run in the C# VM with a display of the test and its natives
+// __TestEvent, __TestClose, __TestMillis, __TestDragAnswer, __TestCanDrag - the VM in C has no such natives yet: they go with fire.Runtime, docs/ROADMAP_C_PORT.md M1)
+if (!DotnetVm.Enabled)
+{
+    try { uiDrawExpected = CVmTest.Run(new[] { "#import \"ui\"\n" + uiDrawScript }, VmExecutionMode.Release, display: true).Printed.ToArray(); }
+    catch (Exception ex) { Console.WriteLine("FEHLER: die UI-Zeichnung in der C-VM: " + CompileErrors.Describe(ex)); }
+}
+if (DotnetVm.Skip("UI-Bibliothek mit Test-Anzeige und Test-Natives")) goto dotnetVmUi;
 
 // ---------------------------------------------------------------------------
 // UI library (#import "ui"): headless - real framebuffer/console/WindowManager, only the renderer is a dummy
@@ -10624,6 +10666,7 @@ uiDrawScript = """
 
     Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
 }
+dotnetVmUi:;
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
 
 // ---------------------------------------------------------------------------
@@ -10631,6 +10674,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
 // (FIRE_TESTS_ONLY=callbacks: only this section)
 // ---------------------------------------------------------------------------
 callbackTests:
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Callbacks auf dem VM-Thread")) goto dotnetVm20;
 {
     Console.WriteLine();
     Console.WriteLine("=== Callbacks auf dem VM-Thread ===");
@@ -10987,6 +11032,8 @@ callbackTests:
 // The scripts of the device checks with their expected output, for the native backend (a loopback device)
 devNativeCases.Clear();
 
+dotnetVm20:;
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "callbacks") return;
 // ---------------------------------------------------------------------------
 // Geraete: geteilter DeviceManager, Standardgeraet, EnsureConnected, IsShared, Paketverfolgung, Paketprotokoll
 // ---------------------------------------------------------------------------
@@ -11005,13 +11052,12 @@ devNativeCases.Clear();
 
     List<string> RunDev(string script, fire.Device.Manager.DeviceManager.DeviceManager manager, VmExecutionMode mode)
     {
+        // in the VM in C (M1): `fire` takes the devices of the manager through FIRE_DEVICE_HOST, as a program of spark takes spark's (DeviceHostServer)
         var lines = new List<string>();
-        VM.ResetTerminateForTests();
-        var session = fire.Compiler.RuntimeSession.Build(new[] { script }, mode, args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); }, deviceManager: manager);
-        session.Run();
-        VM.ResetTerminateForTests();
-        if (session.VirtualMachine!.UnhandledException != null)
-            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(session.VirtualMachine.UnhandledException).Message);
+        using var host = new fire.Device.Manager.DeviceManager.DeviceHostServer(manager);
+        var run = CVmTest.Run(new[] { script }, mode, environment: new Dictionary<string, string> { [fire.Device.Manager.DeviceManager.DeviceHostServer.EnvironmentVariable] = host.EnvironmentValue });
+        lines.AddRange(run.Printed);
+        if (run.ExitCode != 0 && run.UnhandledMessage is { } unhandled) lines.Add("UNBEHANDELT: " + unhandled);
         return lines;
     }
 
@@ -11392,6 +11438,8 @@ devNativeCases.Clear();
 // ---------------------------------------------------------------------------
 TestResume.Group("DebuggerTests.Run", () => { DebuggerTests.Run(); });
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Lambda-Captures und LINQ")) goto dotnetVm21;
 // ---------------------------------------------------------------------------
 // Lambda captures, short syntax `x => ...` and the query library (#import "linq")
 // ---------------------------------------------------------------------------
@@ -11725,6 +11773,7 @@ static int CountOccurrences(string haystack, string needle)
     return count;
 }
 
+dotnetVm21:;
 // ---------------------------------------------------------------------------------------------------------------------------
 // Editor help: anchors for headings (links like "File.md#section") and the bundled "First Steps.md"
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -11956,6 +12005,8 @@ static int CountOccurrences(string haystack, string needle)
     Console.WriteLine(docFailures == 0 ? "Alle Dokumentationskommentar-Pruefungen bestanden." : $"FEHLER: {docFailures} Dokumentationskommentar-Pruefung(en) fehlgeschlagen.");
 }
 
+// (the C# VM itself: fire.Runtime - it goes with it, docs/ROADMAP_C_PORT.md M1; FIRE_TESTS_DOTNET_VM=1 runs it)
+if (DotnetVm.Skip("Embedding.md: Host-Beispiele")) goto dotnetVm22;
 // ---------------------------------------------------------------------------------------------------------------------------
 // Help page "Embedding.md": the host examples shown there must run with the real API
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -12037,6 +12088,7 @@ static int CountOccurrences(string haystack, string needle)
     Console.WriteLine(embFailures == 0 ? "Alle Embedding-Pruefungen bestanden." : $"FEHLER: {embFailures} Embedding-Pruefung(en) fehlgeschlagen.");
 }
 
+dotnetVm22:;
 TestResume.Group("ProjectTests.Run", () => { ProjectTests.Run(); });
 TestResume.Group("RegistryTests.Run", () => { RegistryTests.Run(); });
 TestResume.Group("NotesTests.Run", () => { NotesTests.Run(); });
@@ -12100,24 +12152,20 @@ else
     // (the file of a case: its stack traces name it relative to its folder, as `forge run <case>.fire` does - docs/spec/STACKTRACE.md)
     var vmCaseFiles = new Dictionary<string, string>();
     foreach (var f in TestCases.Load("native")) vmCaseFiles.TryAdd(f.Source, f.File);
+    // the VM is the VM in C (M1): the reference of the cases "native == VM" is what `fire` prints - and the stored .expected of the case files
     string vmOutput(string source)
     {
-        // `terminate` and `catch threads/terminate` are process-wide state of the VM: an earlier case must not leave its handlers behind
-        VM.ResetTerminateForTests();
-        GlobalHandlers.ResetForTests();
-        var lines = new List<string>();
-        RuntimeSession session;
-        try { session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); },
-            sourcePaths: vmCaseFiles.TryGetValue(source, out var caseFile) ? new string?[] { caseFile } : null); }
+        CVmTest.Result run;
+        string? caseFile = vmCaseFiles.TryGetValue(source, out var file) ? file : null;
+        try { run = CVmTest.Run(new[] { source }, VmExecutionMode.Release, sourcePaths: caseFile != null ? new string?[] { caseFile } : null, workingDirectory: caseFile != null ? Path.GetDirectoryName(caseFile) : null); }
         catch (Exception ex) when (fire.Compiler.CompileDiagnostics.Of(ex).Count > 0)
         {
             // a case that is not a program (any more): its check fails with the errors of the compiler - it does not end the whole run
             return NotCompiled + string.Join("\n", fire.Compiler.CompileDiagnostics.Of(ex).Select(d => d.Code + " " + d.Message)) + "\n";
         }
-        session.Run();
         // what the command line runner writes to stderr for an exception that nothing catches (an "Abbruch:" case compares it with the native program)
-        if (session.VirtualMachine?.UnhandledException is { } unhandled) lock (vmUnhandled) vmUnhandled[source] = session.VirtualMachine.UnhandledReport(unhandled);
-        return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "");
+        if (run.ExitCode != 0 && run.Unhandled != null) lock (vmUnhandled) vmUnhandled[source] = string.Join("\n", run.Errors.TrimEnd('\n').Split('\n').Where(l => !l.StartsWith("warning ")));
+        return string.Join("\n", run.Printed) + (run.Printed.Count > 0 ? "\n" : "");
     }
 
     // the cases "native == VM" are files: tests/cases/native (TestCases); here only those whose source is made at run time
@@ -14349,9 +14397,8 @@ else
             var conLines = new List<string>();
             try
             {
-                VM.ResetTerminateForTests();
-                RuntimeSession.Build(new[] { conSource }, VmExecutionMode.Release, a => { conLines.Add(a[0].ToString()!); return Value.MakeUndefined(); },
-                    ioStdio: fire.IO.Bridge.IoStdio.Custom(l => conLines.Add(l), null, new MemoryStream(System.Text.Encoding.UTF8.GetBytes(conInput)))).Run();
+                // (in `fire` with its stdin and stdout redirected: no console)
+                conLines.AddRange(CVmTest.Run(new[] { conSource }, VmExecutionMode.Release, input: conInput).Printed.SelectMany(p => p.Split('\n')));
             }
             catch (Exception ex) { conLines.Add("AUSNAHME: " + ex.Message); }
             string conVm = string.Concat(conLines.Select(l => l + "\n"));
@@ -16925,8 +16972,7 @@ else
                 if (espRun.Contains("NOQEMU")) CheckNat("ESP32 (ESP-IDF): das Programm baut ohne Warnung (QEMU fehlt: nicht ausgefuehrt)", espCode == 0 && espExit == 0 && warnings == "0", espOut + "\n" + espErr + "\n" + espRun);
                 else
                 {
-                    var vmLines = new List<string>();
-                    RuntimeSession.Build(new[] { espSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
+                    var vmLines = CVmTest.Run(new[] { espSource }, VmExecutionMode.Release).Printed;   // (the VM in C as the reference)
                     string got = string.Join("\n", espRun.Replace("\r", "").Split('\n').Where(line => line.Length > 0));
                     CheckNat(esp32Title, espCode == 0 && espExit == 0 && warnings == "0" && got == string.Join("\n", vmLines), $"build {espCode}, warnings {warnings}\n  VM:\n{string.Join("\n", vmLines)}\n  ESP32:\n{got}\n{espErr}");
                     // linkage "static" (ROADMAP 9): the library modules as translation units of their own in the component (idf.py compiles them into its library), their C

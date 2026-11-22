@@ -59,7 +59,7 @@ namespace fire.Editor
             bool native = UsesNativeEngine();
             mnuEngineVm.IsChecked = !native;
             mnuEngineNative.IsChecked = native;
-            ApplyEngineToPanels(native || !CVmLaunch.UseDotnet);   // (the VM in C has no operand stack for the panel either)
+            ApplyEngineToPanels(true);   // (the VM in C has no operand stack for the panel either)
         }
 
         /// <summary>The stack panel shows the operand stack of the VM - a native program has none: hidden while the engine is native, back for the VM

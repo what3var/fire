@@ -21,17 +21,15 @@ static class CircuitEditorTests
         Check(title, ok, ok ? "" : $"erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
     }
 
-    /// <summary>Runs a script in the VM with a window that shows nothing; the printed lines.</summary>
+    /// <summary>Runs a script in the VM in C (`fire`) with a window that shows nothing (the host's display file); the printed lines.</summary>
     private static List<string> Run(string script)
     {
         var lines = new List<string>();
         try
         {
-            var session = RuntimeSession.Build(new[] { script }, VmExecutionMode.Release, a => { lines.Add(a[0].ToString() ?? ""); return Value.MakeUndefined(); },
-                windowRenderer: () => new FakeRenderer());
-            try { session.Run(); }
-            finally { session.CloseHostResources(); }
-            if (session.VirtualMachine?.UnhandledException != null) lines.Add("UNHANDLED: " + new fire.Bytecode.UncaughtScriptException(session.VirtualMachine.UnhandledException).Message);
+            var run = CVmTest.Run(new[] { script }, VmExecutionMode.Release, display: true);
+            lines.AddRange(run.Printed);
+            if (run.Unhandled is { } unhandled) lines.Add("UNHANDLED: " + unhandled);
         }
         catch (Exception ex) { lines.Add("AUSNAHME: " + CompileErrors.Describe(ex)); }
         return lines;
@@ -666,7 +664,6 @@ static class CircuitEditorTests
             }
             uint[] pixels = Array.Empty<uint>();
             long number = live.CopyFrame(ref pixels, out int w, out int h);
-            Check("Live-Sitzung: das Programm laeuft in fire (ein Prozess fuer sich; FIRE_SPARK_VM=dotnet: in der C#-VM hier)", live.InProcess == fire.Debugging.CVmLaunch.UseDotnet, $"in process {live.InProcess}");
             Check("Live-Sitzung: Bilder kommen beim Host an, Maus und Befehle beim Programm", frame && pong == "pong 7 clicks 1" && w == 200 && h == 100 && number > 0 && pixels.Length == 20000,
                 $"frame {frame}, answer {pong}, {w}x{h}, frame {number}");
             // nothing changes any more: the same picture is not handed over again (no copy, no upload in the host)
@@ -698,15 +695,14 @@ static class CircuitEditorTests
             lock (messages) all = string.Join("|", messages.Select(m => m.Replace("\n", "\\n")));
             Check("Live-Sitzung: ein print mit Zeilenumbruch ist eine Nachricht", messages.Contains("@two\nlines"), all);
             Check("Live-Sitzung: scheitert das Programm in fire, endet die Ansicht mit dem Grund (kein Rueckfall in die C#-VM)", done
-                && (fire.Debugging.CVmLaunch.UseDotnet ? messages.Contains("@done") && endedWith == null : !messages.Contains("@done") && endedWith is { } why && why.Contains("only in fire") && !live.InProcess),
+                && !messages.Contains("@done") && endedWith is { } why && why.Contains("only in fire"),
                 $"{all} / {endedWith}");
         }
 
         // the program of spark's circuit editor (CircuitEditorControl.HostScript, the parts that draw) in fire: every sample circuit
         // gets its pictures, also after a resize and "fit" right after the start as spark sends them (the view ran into a DestroyedException in
         // UI.CircuitView.DrawBackground in fire and the session went back to the C# VM)
-        if (!fire.Debugging.CVmLaunch.UseDotnet)
-            foreach (var sample in CircuitSamples.All)
+        foreach (var sample in CircuitSamples.All)
             {
                 using var live = new LiveSession();
                 var messages = new List<string>();
@@ -731,8 +727,8 @@ static class CircuitEditorTests
                 string tail;
                 lock (messages) tail = string.Join("|", messages.Where(m => m.StartsWith("@error")).Take(3));
                 Check($"Live-Sitzung in fire: der Schaltplan '{sample.File}' zeichnet (Bilder, Groesse, fit), ohne Rueckfall in die C#-VM",
-                    !live.InProcess && running && Volatile.Read(ref frames) >= 3 && tail == "",
-                    $"in process {live.InProcess}, frames {frames}, running {running}, ended with {endedWith ?? "-"} {tail}");
+                    running && Volatile.Read(ref frames) >= 3 && tail == "",
+                    $"frames {frames}, running {running}, ended with {endedWith ?? "-"} {tail}");
             }
 
         Console.WriteLine(_failures == 0 ? "Alle Schaltungseditor-Pruefungen bestanden." : $"FEHLER: {_failures} Schaltungseditor-Pruefung(en) fehlgeschlagen.");

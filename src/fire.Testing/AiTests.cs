@@ -405,11 +405,8 @@ static class AiTests
 
     private static string Vm(string source)
     {
-        var lines = new List<string>();
-        var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
-        session.Run();
-        Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
-        return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "");
+        // (in the VM in C: docs/ROADMAP_C_PORT.md, M1)
+        return CVmTest.Output(source, ended: true);
     }
 
     /// <summary>A quick run while working on the package: FIRE_TESTS_ONLY=ai prints what the VM prints and what the native build prints (FIRE_AI_FILE=script: only

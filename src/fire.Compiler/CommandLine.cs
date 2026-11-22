@@ -542,6 +542,10 @@ namespace fire.Compiler
         /// <summary>Invalid command line or missing file.</summary>
         public const int ExitUsage = 2;
 
+        /// <summary>The writers of <see cref="Run"/> are the console of this process (forge's Program.cs): `run` gives the program the console itself (`fire` inherits it).
+        /// Otherwise (the tests, a host) the output of the program goes into the writers.</summary>
+        public static bool WritersAreConsole { get; set; }
+
         public static int Run(IReadOnlyList<string> args, TextWriter stdout, TextWriter stderr)
         {
             // `forge data ...`: the migrations and the schema of a database (DataCommand) - its own options
@@ -592,7 +596,7 @@ namespace fire.Compiler
             {
                 CommandKind.Build => Build(options, sources, stdout, stderr),
                 CommandKind.Native => Native(options, sources, stdout, stderr),
-                _ => Execute(options, sources, stderr),
+                _ => Execute(options, sources, stdout, stderr),
             };
         }
 
@@ -890,37 +894,34 @@ namespace fire.Compiler
             if (options.Command == CommandKind.Run)
             {
                 if (plan.Type == fire.Projects.OutputType.Library) { stderr.WriteLine($"'{plan.Name}' is a library: it has no entry point to run."); return ExitScriptError; }
-                return ExecutePlan(options, plan, stderr);
+                return ExecutePlan(options, plan, stdout, stderr);
             }
             return BuildPlanned(options, plan, stdout, stderr);
         }
 
-        private static int ExecutePlan(CommandLineOptions options, fire.Projects.BuildPlan plan, TextWriter stderr)
+        private static int ExecutePlan(CommandLineOptions options, fire.Projects.BuildPlan plan, TextWriter stdout, TextWriter stderr)
         {
-            RuntimeSession session;
+            LinkedProgram linked;
             try
             {
-                session = RuntimeSession.Build(plan.SourceTexts, options.Mode, args =>
-                {
-                    if (args.Length > 0) Console.WriteLine(args[0].ToString());
-                    return Value.MakeUndefined();
-                }, floatWidth: options.FloatWidth, defines: options.Defines, plan: plan,
-                    environment: new fire.Standard.ProgramEnvironment { Args = options.ProgramArguments ?? plan.Settings.Arguments ?? new List<string>(), ProgramPath = plan.SourcePaths.LastOrDefault() ?? "" });
+                linked = new Linker { Defines = options.Defines, Plan = plan, SourcePaths = plan.SourcePaths.Cast<string?>().ToList(), PackageLibraries = true }
+                    .CompileAndLink(plan.SourceTexts, null, null, options.Mode, options.FloatWidth);
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
                 stderr.WriteLine(DescribeErrors(ex));
                 return ExitScriptError;
             }
-            session.Run();
-            var vm = session.VirtualMachine!;
-            if (vm.UnhandledException != null)
-            {
-                stderr.WriteLine(vm.UnhandledReport(vm.UnhandledException));   // (the line and the stack trace: docs/spec/STACKTRACE.md)
-                return ExitScriptError;
-            }
-            var exit = VM.ExitValue;
-            return exit.Kind == ValueKind.Int ? (int)exit.AsInt() : ExitOk;
+            catch (Package.Manager.PackageException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
+            return RunInCVm(linked, options.ProgramArguments ?? plan.Settings.Arguments ?? new List<string>(), stdout, stderr);
+        }
+
+        /// <summary>A program of `run` in the VM in C: `fire run &lt;program.fbc&gt; -- &lt;arguments&gt;` with the console of forge (CVmRun; forge-c does the same) - `fire` prints what
+        /// the program prints and an exception nobody caught as the C# VM did (its line and stack trace on stderr, exit code 1), `terminate(n)` is its exit code.</summary>
+        private static int RunInCVm(LinkedProgram linked, IEnumerable<string> arguments, TextWriter stdout, TextWriter stderr)
+        {
+            try { return WritersAreConsole ? CVmRun.RunInherited(linked, arguments) : CVmRun.RunToWriters(linked, arguments, stdout, stderr); }
+            catch (VmUnavailableException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
         }
 
         /// <summary>The mode a project's program is built in (`debug`, `release`, `performance`): -m, the project's settings, the tags of its files (`#debug`), else release -
@@ -1025,37 +1026,21 @@ namespace fire.Compiler
             return result.Ok ? ExitOk : ExitScriptError;
         }
 
-        private static int Execute(CommandLineOptions options, List<string> sources, TextWriter stderr)
+        private static int Execute(CommandLineOptions options, List<string> sources, TextWriter stdout, TextWriter stderr)
         {
-            RuntimeSession session;
+            LinkedProgram linked;
             try
             {
-                // print() goes directly to the console, IO.Stdio likewise (default of RuntimeSession.Build).
-                session = RuntimeSession.Build(sources, options.Mode, args =>
-                {
-                    if (args.Length > 0) Console.WriteLine(args[0].ToString());
-                    return Value.MakeUndefined();
-                }, floatWidth: options.FloatWidth, basePath: BaseDirectory(options), defines: options.Defines, sourcePaths: SourceFiles(options),
-                    environment: new fire.Standard.ProgramEnvironment { Args = options.ProgramArguments ?? Array.Empty<string>(), ProgramPath = options.Files.Count > 0 ? Path.GetFullPath(options.Files[^1]) : "" });
+                linked = new Linker { Defines = options.Defines, BasePath = BaseDirectory(options), SourcePaths = SourceFiles(options), PackageLibraries = true }
+                    .CompileAndLink(sources, null, null, options.Mode, options.FloatWidth);
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
                 stderr.WriteLine(DescribeErrors(ex));
                 return ExitScriptError;
             }
-
-            session.Run();
-
-            var vm = session.VirtualMachine!;
-            if (vm.UnhandledException != null)
-            {
-                stderr.WriteLine(vm.UnhandledReport(vm.UnhandledException));   // (the line and the stack trace: docs/spec/STACKTRACE.md)
-                return ExitScriptError;
-            }
-
-            // `terminate(value)`: an integer value is the exit code of the process.
-            var exit = VM.ExitValue;
-            return exit.Kind == ValueKind.Int ? (int)exit.AsInt() : ExitOk;
+            catch (Package.Manager.PackageException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
+            return RunInCVm(linked, options.ProgramArguments ?? (IReadOnlyList<string>)Array.Empty<string>(), stdout, stderr);
         }
 
         /// <summary>Errors that the script itself causes (parser, resolver, compiler, preprocessor) - everything

@@ -7,7 +7,7 @@
 
 | Command | What it does |
 | --- | --- |
-| `forge run <file>... [-- args]` | compiles the files into one program and runs it in the VM; what follows `--` is `Environment.Args` |
+| `forge run <file>... [-- args]` | compiles the files into one program and runs it in the VM - `fire run <program.fbc> -- <args>`, the VM in C, with forge's console (as forge-c); what follows `--` is `Environment.Args` |
 | `forge run <project.fireproj \| solution.firesln> [-p name]` | runs a project (of a solution: the startup project, or `-p`) |
 | `forge build <file \| project \| solution> [-o out]` | a program: a self-contained VM program ([the VM in C with the program behind it](#programs-of-the-vm-build---engine-vm)), or with `--engine native` a native one; a library project: a package (`.fpk`) |
 | `forge native <file>... [-o out.c]` | only translates to C (next to the runtime header), without building |
@@ -82,9 +82,8 @@ forge build hello.fire -o hello && ./hello a b      # Environment.Args: a b - ev
   C compiler of this machine (gcc, clang, tcc, cl - the one that builds the natives of packages) into `<LocalApplicationData>/fire/vm/<rid>/`, once per
   version of its sources. A `fire` next to forge counts when its stamp (`fire.key`) names the sources this forge carries.
 * **`#noconsole`**, icon and version (Windows): set in the copy of `fire.exe` before the program goes behind it, as for the .NET runtime.
-* **The .NET runtime** (the old way, until M1): `FIRE_VM_ENGINE=dotnet` packs the program with `fire.Runtime` as before (a bundle with the
-  payload of `PayloadFile`; it needs an installed .NET).
-* A hello world: 748 KB (the VM 642 KB, the program file 107 KB; Linux x64, gcc -O2, stripped) - the .NET one is 729 KB plus the installed .NET.
+* The .NET runtime (`FIRE_VM_ENGINE=dotnet`, the packer of `fire.Runtime`) is gone with milestone M1: the VM in C is the only engine of a packed program.
+* A hello world: 748 KB (the VM 642 KB, the program file 107 KB; Linux x64, gcc -O2, stripped).
 
 ## The report for tools
 

@@ -66,7 +66,6 @@ static class CVmRunTests
     // ---- against a fake fire ------------------------------------------------------------------------------------------------------------
     private static void Fake(string root)
     {
-        Check("Schalter: FIRE_SPARK_VM=dotnet behaelt die C#-VM", Probe(null) == (Environment.GetEnvironmentVariable(CVmLaunch.SwitchVariable)?.Trim().ToLowerInvariant() is "dotnet" or ".net" or "net" or "cs"));
         Check("Befehlszeile: run <fbc> -- <argumente>, ohne Argumente kein --",
             CVmLaunch.Arguments("/p/x.fbc", new[] { "a", "b c" }).SequenceEqual(new[] { "run", "/p/x.fbc", "--", "a", "b c" }) && CVmLaunch.Arguments("/p/x.fbc", Array.Empty<string>()).SequenceEqual(new[] { "run", "/p/x.fbc" }));
         var env = CVmLaunch.Environment(new[] { "/a/lib/libfire_pkg_io_io.so", "/a/lib/libfire_pkg_time_time.so", "/b/libfire_gfx.so" }, new Dictionary<string, string> { ["X"] = "1" });
@@ -106,13 +105,6 @@ static class CVmRunTests
         catch (NativeDebugException ex) { why = ex.Message; }
         Check("Falsches fire: ein Programm, das sich nicht verbindet, ist ein Fehler mit seiner Ausgabe (ohne die Zeit abzuwarten)",
             why != null && why.Contains("exit code 2") && why.Contains("no debugger here") && watch.ElapsedMilliseconds < 15000, why);
-    }
-
-    private static bool Probe(bool? value)
-    {
-        CVmLaunch.DotnetOverride = value;
-        try { return CVmLaunch.UseDotnet; }
-        finally { CVmLaunch.DotnetOverride = null; }
     }
 
     // ---- the real forge and fire ----------------------------------------------------------------------------------------------------------

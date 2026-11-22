@@ -75,6 +75,8 @@ static class DockingTests
     public static void Run()
     {
         Console.WriteLine("=== ComboBox und ui.docking ===");
+        // (in the C# VM with the windows of fire.Terminal.Windows and a fake renderer - it goes with fire.Runtime, docs/ROADMAP_C_PORT.md M1)
+        if (DotnetVm.Skip("ComboBox und ui.docking mit Schein-Fenster")) return;
         const int Down = 1073741905, Up = 1073741906, F4 = 1073741885;
 
         Check("ComboBox: Klick oeffnet, Zeile waehlt, Tasten, Klick daneben schliesst", $$"""

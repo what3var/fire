@@ -69,7 +69,7 @@ namespace fire.Editor
             // as long as its process lives - also after its main thread ended, while it shuts down)
             bool active = _nativeRun != null || (_session.HasProgram && (_session.IsStarted || _isBusyValue) && !_session.IsFinished) || NativeDebugProcessAlive();
             // (a profiled run that ended or was stopped - also one too short to have been seen running)
-            if ((_profile != null || _profileNative != null) && !active && (!_session.HasProgram || _session.IsFinished)) FinishProfile();
+            if (_profileNative != null && !active && (!_session.HasProgram || _session.IsFinished)) FinishProfile();
             if (active == _runtimeActive) return;
             _runtimeActive = active;
             McpRunChanged(active);
@@ -106,8 +106,8 @@ namespace fire.Editor
             _runtimeHide.Start();
         }
 
-        // The profiler (Profile switch, fire.Runtime.LineProfile): a run in the VM counts its lines; when it has ended, the Profile tab shows them (ProfileReport).
-        private fire.Runtime.LineProfile? _profile;
+        // The profiler (Profile switch): a debug run of a native program counts its lines; when it has ended, the Profile tab shows them (ProfileReport). (The line counts
+        // of the C# VM, fire.Runtime.LineProfile, went with M1; the VM in C does not count yet.)
         private fire.Debugging.NativeDebugTarget? _profileNative;   // a native debug run that counts its lines (its counts come with `exited`)
         private string _profileWhat = "";
         private System.Diagnostics.Stopwatch _profileClock = new();
@@ -124,7 +124,6 @@ namespace fire.Editor
         private void BeginProfile(string what)
         {
             _profileNative = _settings.Profile && _session.Target is fire.Debugging.NativeDebugTarget native && native.StartProfile() ? native : null;
-            fire.Runtime.LineProfile.Active = _profile = _settings.Profile && _session.Target is fire.Debugging.VmDebugTarget ? new fire.Runtime.LineProfile() : null;
             _profileWhat = what;
             _profileClock = System.Diagnostics.Stopwatch.StartNew();
         }
@@ -132,30 +131,14 @@ namespace fire.Editor
         /// <summary>The profiled run has ended: its report in the Profile tab.</summary>
         private void FinishProfile()
         {
-            var profile = _profile;
             var native = _profileNative;
-            if (profile == null && native == null) return;
-            _profile = null;
+            if (native == null) return;
             _profileNative = null;
-            if (profile != null && ReferenceEquals(fire.Runtime.LineProfile.Active, profile)) fire.Runtime.LineProfile.Active = null;
-            IReadOnlyDictionary<(int SourceIndex, int Line), (long Hits, long Instructions)> counts;
-            ISet<(int SourceIndex, int Line)> executable;
-            string measure;
-            if (native != null)
-            {
-                // (a native program: what it sent with its end - hits and microseconds of every line with code)
-                if (native.Profile is not { } lines) { UpdateStatus("The program sent no profile (it did not end normally)."); return; }
-                counts = lines.GroupBy(l => (l.Source, l.Line)).ToDictionary(g => g.Key, g => (g.Sum(x => x.Hits), g.Sum(x => x.Micros)));
-                executable = counts.Keys.ToHashSet();
-                measure = "µs";
-            }
-            else
-            {
-                if ((_session.Target as fire.Debugging.VmDebugTarget)?.Session?.CompiledProgram is not { } program) return;
-                counts = profile!.Snapshot();
-                executable = fire.Runtime.LineProfile.ExecutableLines(program);
-                measure = "instructions";
-            }
+            // (a native program: what it sent with its end - hits and microseconds of every line with code)
+            if (native.Profile is not { } lines) { UpdateStatus("The program sent no profile (it did not end normally)."); return; }
+            IReadOnlyDictionary<(int SourceIndex, int Line), (long Hits, long Instructions)> counts = lines.GroupBy(l => (l.Source, l.Line)).ToDictionary(g => g.Key, g => (g.Sum(x => x.Hits), g.Sum(x => x.Micros)));
+            ISet<(int SourceIndex, int Line)> executable = counts.Keys.ToHashSet();
+            string measure = "µs";
             var files = _session.SourceFiles;
             var report = ProfileReport.Build(_profileWhat, _profileClock.Elapsed.TotalSeconds, counts, executable,
                 _session.FirstUserSourceIndex, i =>
@@ -325,21 +308,16 @@ namespace fire.Editor
         private async void Run_Click(object? sender, RoutedEventArgs e)
         {
             if (_isBusy || BuildRunning()) return; // running right now - there is nothing to continue
-            if ((!_session.HasProgram || _session.IsFinished) && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.Continue); return; }
-            if ((!_session.HasProgram || _session.IsFinished) && !await CompileAndPrepareAsync(null)) return;
-            if (!_session.HasProgram) return;
+            if (!_session.HasProgram || _session.IsFinished) { _ = StartNativeAsync(NativeFirstAction.Continue); return; }
             BeginStep();
             _session.Continue(BreakpointLocations());
         }
 
         /// <summary>Ctrl+F5: ALWAYS compiles again (also in the middle of a session - a running program is ended) and then starts like F5 up to the first breakpoint.</summary>
-        private async void Restart_Click(object? sender, RoutedEventArgs e)
+        private void Restart_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
-            if (RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.Continue); return; }
-            if (!await CompileAndPrepareAsync(null) || !_session.HasProgram) return;
-            BeginStep();
-            _session.Continue(BreakpointLocations());
+            _ = StartNativeAsync(NativeFirstAction.Continue);
         }
 
         /// <summary>What a run is made of: the project (with its plan) or the single script, the source texts, the folder of a single script.</summary>
@@ -404,74 +382,20 @@ namespace fire.Editor
         private List<string> RunArguments(RunInput input) =>
             input.Project != null ? input.Plan!.Settings.Arguments ?? new List<string>() : ScriptArguments(input.Document);
 
-        /// <summary>Compiles what the active document belongs to (discards the previous session; see ResolveRunInput) for the virtual machine - on a thread of the pool, as a
-        /// build job (its window appears when the compile takes longer than half a second; Cancel stops it). false on an error, when it was cancelled or when there is
-        /// nothing to build.</summary>
-        private async Task<bool> CompileAndPrepareAsync(string? filename)
-        {
-            if (BuildRunning()) return false;
-            StopNativeRun();
-            if (ResolveRunInput(filename) is not { } input) return false;
-            var project = input.Project;
-            var plan = input.Plan;
-            var doc = input.Document;
-            string? buildFile = project != null ? null : doc?.DisplayName;
-            string? buildPath = project != null ? null : FullPathOf(doc);
-            BeginRun(input);
-
-            var environment = new fire.Standard.ProgramEnvironment
-            {
-                Args = RunArguments(input),
-                ProgramPath = project != null ? plan!.SourcePaths.LastOrDefault() ?? "" : FullPathOf(doc) ?? "",
-            };
-            var job = BeginBuildJob(filename != null ? $"{input.What} (virtual, {RunModeName})" : $"{input.What} (VM, {RunModeName})");
-            bool compiled;
-            try { compiled = await _session.CompileAsync(input.Sources, filename, input.BaseDirectory, plan, environment, job.Monitor); }
-            catch (OperationCanceledException)
-            {
-                EndBuildJob(job, BuildOutcome.Cancelled);
-                return false;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
-                EndBuildJob(job, BuildOutcome.Failed, ex.Message);
-                UpdateStatus("The compile failed: " + ex.Message);
-                return false;
-            }
-            // the errors and warnings of the compile: into the build log and the error list (until the next build)
-            FinishBuild("Compile", compiled, _session.LastDiagnostics, buildFile, buildPath);
-            if (!compiled)
-            {
-                EndBuildJob(job, BuildOutcome.Failed, _session.CompileError ?? "");
-                UpdateStatus($"Compile error: {_session.CompileError}");
-                if (!FailureShown(job) && !_quietCompile) _ = Dialogs.Message(this, _session.CompileError ?? "", "Compile error");   // (a check of a tool: the errors are in the error list, no dialog)
-                return false;
-            }
-            EndBuildJob(job, BuildOutcome.Succeeded);
-
-            _session.UpdateBreakpoints(BreakpointLocations());   // now with the source indexes of this program
-            BeginProfile(input.What);
-            UpdateStatus(project != null ? $"Compiled {project.Name} ({plan!.Sources.Count} file{(plan.Sources.Count == 1 ? "" : "s")}) - ready to step, continue or run to the end." : "Compiled - ready to step, continue or run to the end.");
-            _debugger.Refresh(BreakpointDescriptions());
-            return true;
-        }
-
-        private async void Step_Click(object? sender, RoutedEventArgs e)
+        private void Step_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
-            if (!_session.HasProgram && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.StepLine); return; }
-            if (!_session.HasProgram) await CompileAndPrepareAsync(null);
-            if (!_session.HasProgram || _isBusy) return;
+            if (!_session.HasProgram) { _ = StartNativeAsync(NativeFirstAction.StepLine); return; }
+            if (_isBusy) return;
             BeginStep();
             _session.StepLine();
         }
 
-        private async void StepInto_Click(object? sender, RoutedEventArgs e)
+        private void StepInto_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
-            if (!_session.HasProgram && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.StepInto); return; }
-            if (!_session.HasProgram) await CompileAndPrepareAsync(null);
-            if (!_session.HasProgram || _isBusy) return;
+            if (!_session.HasProgram) { _ = StartNativeAsync(NativeFirstAction.StepInto); return; }
+            if (_isBusy) return;
             BeginStep();
             _session.StepInto();
         }
@@ -538,22 +462,19 @@ namespace fire.Editor
 
         /// <summary>Ctrl+F5: starts the program without stopping at breakpoints (compiled again when nothing is compiled or the program has ended); a paused program runs on to its end.
         /// With the native engine a Release/Performance build runs on its own, a Debug build under the debugger without breaking.</summary>
-        private async void StartWithoutDebugging_Click(object? sender, RoutedEventArgs e)
+        private void StartWithoutDebugging_Click(object? sender, RoutedEventArgs e)
         {
             if (_isBusy || BuildRunning()) return;
-            if ((!_session.HasProgram || _session.IsFinished) && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
-            if ((!_session.HasProgram || _session.IsFinished) && !await CompileAndPrepareAsync(null)) return;
-            if (!_session.HasProgram || _isBusy) return;
+            if (!_session.HasProgram || _session.IsFinished) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
             BeginStep();
             _session.RunToCompletion();
         }
 
-        private async void RunToEnd_Click(object? sender, RoutedEventArgs e)
+        private void RunToEnd_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
-            if (!_session.HasProgram && RunsAsChild()) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
-            if (!_session.HasProgram) await CompileAndPrepareAsync(null);
-            if (!_session.HasProgram || _isBusy) return;
+            if (!_session.HasProgram) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
+            if (_isBusy) return;
             BeginStep();
             _session.RunToCompletion();
         }

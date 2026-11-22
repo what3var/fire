@@ -70,18 +70,16 @@ static class TraceTests
     /// <summary>What `forge run <case>.fire -m <mode>` prints, with the report of an unhandled exception behind `UNBEHANDELT: ` (tests/run-cases.sh, group trace).</summary>
     private static string RunCase(TestCases.Case c, VmExecutionMode mode)
     {
+        // (in the VM in C, M1: its report on stderr, as tests/run-cases.sh takes it)
         var lines = new List<string>();
         string? unhandled = null;
         try
         {
-            VM.ResetTerminateForTests();
-            var session = RuntimeSession.Build(new[] { c.Source }, mode, args => { lock (lines) lines.Add(args.Length > 0 ? args[0].ToString()! : ""); return Value.MakeUndefined(); },
-                basePath: Path.GetDirectoryName(c.File), sourcePaths: new string?[] { c.File });
-            session.Run();
-            if (session.VirtualMachine?.UnhandledException is { } e) unhandled = session.VirtualMachine.UnhandledReport(e);
+            var run = CVmTest.Run(new[] { c.Source }, mode, basePath: Path.GetDirectoryName(c.File), sourcePaths: new string?[] { c.File });
+            lines.AddRange(run.Printed);
+            if (run.ExitCode != 0 && run.Errors.Length > 0) unhandled = string.Join("\n", run.Errors.TrimEnd('\n').Split('\n').Where(l => !l.StartsWith("warning ")));
         }
         catch (Exception ex) when (CompileDiagnostics.Of(ex).Count > 0) { unhandled = "WIRD NICHT UEBERSETZT: " + string.Join(" | ", CompileDiagnostics.Of(ex).Select(d => d.Code + " " + d.Message)); }
-        finally { VM.ResetTerminateForTests(); Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false; }
         return string.Concat(lines.Select(l => l + "\n")) + (unhandled == null ? "" : "UNBEHANDELT: " + unhandled + "\n");
     }
 }

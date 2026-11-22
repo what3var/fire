@@ -146,10 +146,11 @@ static class ProgramFileTests
         // 1) a script with a bit of everything: the file, and the program of the file runs like the one the compiler made
         RoundTrip("alles", () => new Linker().CompileAndLink(new[] { Everything }));
         {
-            var direct = Output(writer => RuntimeSession.Build(new[] { Everything }, VmExecutionMode.Release, writer).Run);
+            // (in the VM in C, M1: the program as compiled here, and the program read back from its file and written again)
+            var direct = CVmTest.Run(new[] { Everything }, VmExecutionMode.Release).Printed;
             var linked = new Linker().CompileAndLink(new[] { Everything }, null, null, VmExecutionMode.Release);
             var restored = ProgramFile.Read(ProgramFile.Write(linked));
-            var fromFile = Output(writer => Session.Build(restored, VmExecutionMode.Release, writer).Run);
+            var fromFile = CVmTest.Run(restored).Printed;
             Check("alles: das Programm aus der Datei laeuft wie das uebersetzte", direct.Count == 18 && !direct.Any(l => l.StartsWith("AUSNAHME")) && direct.SequenceEqual(fromFile),
                 "  uebersetzt:\n    " + string.Join("\n    ", direct) + "\n  aus der Datei:\n    " + string.Join("\n    ", fromFile));
             // the line tables: where a statement of the program begins - there with them, gone without them

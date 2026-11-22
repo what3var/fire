@@ -1,8 +1,6 @@
 using fire.Bytecode;
 using fire.Package.Manager;
 using fire.Runtime;
-using fire.Terminal.Bridge;
-using fire.Windows.Bridge;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -133,14 +131,14 @@ namespace fire.Compiler
             if (nativeImports.Contains(NativeImports.Graphics))
             {
                 if (Wants(NativeImports.Graphics)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("graphics")), FindPreludeImport("graphics"), NativeImports.Graphics)); inserted++; }
-                GraphicsBridge.RegisterStubs(natives);
+                BridgeNatives.Register(natives, "graphics");   // (the names of tables/bridges.def, M1: not the C# bridge)
             }
 
             if (nativeImports.Contains(NativeImports.Windows))
             {
                 // behind `graphics`: the prelude order (every insertion stands BEFORE the earlier ones) and that of the native functions are independent of each other
                 if (Wants(NativeImports.Windows)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("windows")), FindPreludeImport("windows"), NativeImports.Windows)); inserted++; }
-                WindowsBridge.RegisterStubs(natives);
+                BridgeNatives.Register(natives, "windows");
             }
 
             if (nativeImports.Contains(NativeImports.Ui))
@@ -158,7 +156,7 @@ namespace fire.Compiler
             if (nativeImports.Contains(NativeImports.Reflection))
             {
                 if (Wants(NativeImports.Reflection)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("reflection")), FindPreludeImport("reflection"), NativeImports.Reflection)); inserted++; }
-                ReflectionNatives.Register(natives); // when translating only the names count (the compiler then writes type metadata along)
+                BridgeNatives.Register(natives, "reflection"); // when translating only the names count (the compiler then writes type metadata along)
             }
 
             // the imports of packages (last, like their natives): the prelude, and the natives as names (the calls need them; the virtual machine fails when one runs, see PackageImports)

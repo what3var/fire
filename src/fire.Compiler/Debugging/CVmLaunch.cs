@@ -10,19 +10,10 @@ namespace fire.Debugging
     /// spark on the VM in C (docs/ROADMAP_C_PORT.md, phase B step 9, L4): a program of the VM runs as a child process `fire run x.fbc [-- args]` - its output line by line,
     /// its input through the pipe, its exit code; under the debugger with FIRE_DEBUG (TCP; the input still through the pipe), debugged by
     /// <see cref="NativeDebugTarget"/> like a native program (its hello says engine "vm"). The libraries of its packages are where forge built them: their folders go
-    /// into FIRE_PKG_PATH. <see cref="UseDotnet"/> (FIRE_SPARK_VM=dotnet) keeps the C# VM in spark's process until M1.
+    /// into FIRE_PKG_PATH. (M1: the C# VM in spark's process, FIRE_SPARK_VM=dotnet, is gone - spark runs programs of the VM only in `fire`.)
     /// </summary>
     public static class CVmLaunch
     {
-        /// <summary>The switch of spark: FIRE_SPARK_VM=dotnet runs programs of the VM in the C# VM inside spark (RuntimeSession, VmDebugTarget, LiveSession in the process) as before.</summary>
-        public const string SwitchVariable = "FIRE_SPARK_VM";
-
-        /// <summary>For the tests: overrides <see cref="SwitchVariable"/> (null: the variable decides).</summary>
-        public static bool? DotnetOverride { get; set; }
-
-        /// <summary>spark runs the VM of C# in its own process (FIRE_SPARK_VM=dotnet), not `fire` as a child process.</summary>
-        public static bool UseDotnet => DotnetOverride ?? System.Environment.GetEnvironmentVariable(SwitchVariable)?.Trim().ToLowerInvariant() is "dotnet" or ".net" or "net" or "cs";
-
         /// <summary>The command line of `fire` for a program file and the program's arguments.</summary>
         public static List<string> Arguments(string programFile, IEnumerable<string> arguments)
         {

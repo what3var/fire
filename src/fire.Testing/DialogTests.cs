@@ -120,6 +120,8 @@ static class DialogTests
     public static void Run()
     {
         Console.WriteLine("=== Dialoge ===");
+        // (in the C# VM with the windows of fire.Terminal.Windows and fake renderers - it goes with fire.Runtime, docs/ROADMAP_C_PORT.md M1)
+        if (DotnetVm.Skip("Dialoge mit Schein-Fenstern")) return;
         string root = Path.Combine(Path.GetTempPath(), "fire-dialogs-" + Guid.NewGuid().ToString("N"));
         try
         {
