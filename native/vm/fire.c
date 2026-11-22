@@ -47,6 +47,7 @@ void fbOutOfMemory(void) { outOfMemory(); }
 #include "vm_natives.c"
 #include "vm_threads.c"
 #include "vm_run.c"
+#include "vm_dangle.c"
 #include "vm_reflect.c"
 #include "vm_json.c"
 #include "vm_debug.c"
@@ -229,6 +230,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     vmThreadsEnd();
     if (vm->quiet) g_zombies.quiet--;
     g_globalOwn = NULL;
+    vmDgReset();
     vmUnregisterClasses(vm);
     vmNativesUnbind();
     vmJsonEnd();

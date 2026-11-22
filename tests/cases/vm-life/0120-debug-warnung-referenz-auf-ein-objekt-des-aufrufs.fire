@@ -1,0 +1,25 @@
+class Item { int n; construct(int n) { this.n = n } }
+class Box { Item last }
+class Shelf {
+    List items = new List()
+    Item slots[] = new Item[2]
+    Box box = new Box()
+    Keep(Item item) { this.items.Add(item) }
+    Slot(Item item) { this.slots[0] = item }
+    SlotRight(Item item) { this.slots[1] = take item }
+    Remember() { Item local = new Item(7); this.box.last = local }
+    Inner() {
+        Item tmp[] = new Item[1]
+        Item a = new Item(1)
+        tmp[0] = a
+    }
+}
+Shelf s = new Shelf()
+s.Keep(take new Item(1))
+s.Slot(take new Item(2))
+s.SlotRight(take new Item(3))
+for (var i = 0; i < 3; i++) { s.Remember() }
+s.Inner()
+print(s.items.Count + " " + s.slots[1].n)
+//# modes: Debug
+//# name: Debug: eine Warnung je Stelle, wenn ein Aufruf beim Ende ein Objekt zerstoert, auf das eine Liste, ein Array oder ein Feld noch zeigt (nicht fuer ein lokales Array, nicht mit take)

@@ -15,5 +15,4 @@ s.Remember()
 s.Fine()
 print(s.slots[1].n)
 //# modes: Debug
-//# skip: forge run - the warnings of a debug run are output only in the test program (they go to the error output of forge)
 //# name: Debug: Warnung, wenn ein Aufruf beim Ende ein Objekt zerstoert, auf das ein Feld oder Array noch zeigt

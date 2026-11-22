@@ -1,0 +1,4 @@
+warning (line 7): an Item is destroyed at the end of the call it belonged to, but the List in the field 'items' of a Shelf still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).
+warning (line 8): an Item is destroyed at the end of the call it belonged to, but the array in the field 'slots' of a Shelf still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).
+warning (line 10): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Box still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).
+1 3

@@ -3565,8 +3565,17 @@ FIRE_FN void batchEnd(void) {
  * `taking`); its fields and what it owns are freed as usual. */
 FIRE_FN void ctorEnd(Value o) { if (FIRE_UNLIKELY(g_unwind.active) && o.kind == K_Class) asObj(o)->h.flags |= 16; }
 
+#ifdef FIRE_VM
+/* The VM in C, Debug mode: an object that a field or an array was given only a reference to dies - the VM looks at who still points to it (vm_dangle.c;
+ * g_vmDangling: the objects it watches). */
+extern uint32_t g_vmDangling;
+void fire_vmDangling(Obj* o, OwnList* owner);
+#endif
 FIRE_FN void destroy(Obj* o) {
     if (o->h.flags & 1) return;
+#ifdef FIRE_VM
+    if (FIRE_UNLIKELY(g_vmDangling != 0)) fire_vmDangling(o, o->h.owner);
+#endif
     FIRE_FLAGS_OR(&o->h, 1);
 #ifdef FIRE_SLOT_SEGMENTS
     /* (from now on an older Value - the sender's of a `fire handover` - says "destroyed", not "handed over": another thread may look before the slot is
@@ -3606,6 +3615,9 @@ FIRE_FN void destroyList(OwnList* list) {
     while (o) {
         Owned* next = o->next;
         if (o->okind == O_Object) {
+#ifdef FIRE_VM
+            if (FIRE_UNLIKELY(g_vmDangling != 0) && !(o->flags & 1)) fire_vmDangling((Obj*)o, list);   /* (before it leaves its owner) */
+#endif
             o->owner = NULL;
             destroy((Obj*)o);
         } else {

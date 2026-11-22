@@ -51,6 +51,7 @@ static VmScope* scNew(Vm* vm, VmScope* parent) {
     s->temp = scopeList(0xFFFFFFFFu);
     s->temp.home = &s->own;
     s->own.parent = parent ? &parent->own : NULL;   /* (TakeUpwards: a block scope goes to the scope around it, a call scope to the global scope) */
+    s->own.depth = parent ? VM_SCOPE_LIST : 0;   /* (a scope of a call or block - not the global scope: vm_dangle.c) */
     return s;
 }
 static void scReserve(VmScope* s, uint32_t n) {

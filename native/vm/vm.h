@@ -361,7 +361,13 @@ static bool vmDbgUnhandled(Value exception);
 static void vmDbgFree(Vm* vm);
 static void vmDbgSnapshot(Vm* vm);
 
+/* the debug check for references that outlive their object (vm_dangle.c): OwnList.depth of a scope's own list (the global scope's: 0) */
+#define VM_SCOPE_LIST 0x5C09u
+static void vmDgNote(struct Vm* vm, Value x, Value holder, const char* field);
+static void vmDgReset(void);
+
 /* stack traces (vm_trace.c) */
+static void vmTraceLocation(const VmChunk* c, uint32_t off, int32_t* src, int32_t* line);
 static void vmTraceNames(VmProgram* p);
 static char* vmTraceThreadLine(Vm* vm, VmFrame* fr);
 

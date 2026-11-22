@@ -1604,6 +1604,7 @@ static void vmRun(Vm* vm, int32_t base) {
                 Owned* o = ownedOf(x);
                 if (o && vmOwnedByCallScope(fr, o) && leafAlive(v) && o != &asObj(v)->h) takeToObject(o, asObj(v));
             }
+            if (FIRE_UNLIKELY(prog->mode == 0) && x.kind == K_Class) vmDgNote(vm, x, v, name);   /* (Debug: a reference that may outlive its object) */
             if (op != OP_SetFieldOnThis) PUSH(x);
             break;
         setFailed:
@@ -1897,6 +1898,7 @@ static void vmRun(Vm* vm, int32_t base) {
             } else sp[-3] = arraySet(a, i, v);
             sp -= 2;
             CHECK();
+            if (FIRE_UNLIKELY(prog->mode == 0) && v.kind == K_Class && a.kind == K_Array) vmDgNote(vm, v, a, NULL);   /* (Debug, see SetField) */
             break;
         }
         case OP_IncDecIndex: {
