@@ -60,10 +60,11 @@
 /* Without the GIL (docs/ROADMAP_TASKS.md step 1): fire code runs on all cores, the shared parts have locks of their own (the slot table, the tables of the
  * threads, the lock of the globals, a lock per package; strings are copied where they cross to another thread). The default where the threads of the
  * platform are real ones (FIRE_PLAT_PARALLEL: posix, windows) and the compiler has atomics - also a program of modules (linkage static/shared,
- * FIRE_MODULES: the locks of the packages by name, FIRE_PKG_NAMED); a scheduler of fire itself (dos, win16, wasm), FreeRTOS (FIRE_TLS_STRUCT), the DLLs
- * of Windows (FIRE_DLL) and a debug build (the debugger stops the threads at the GIL) keep it. FIRE_GIL keeps it anywhere. */
+ * FIRE_MODULES: the locks of the packages by name, FIRE_PKG_NAMED; the DLLs of Windows, FIRE_DLL: one system thread per fire thread, see below); a
+ * scheduler of fire itself (dos, win16, wasm), FreeRTOS (FIRE_TLS_STRUCT) and a debug build (the debugger stops the threads at the GIL) keep it. FIRE_GIL
+ * keeps it anywhere. */
 #if defined(FIRE_THREADS) && defined(FIRE_PLAT_PARALLEL) && !defined(FIRE_GIL) && !defined(FIRE_NO_GIL) && !defined(FIRE_DEBUG) \
-    && !defined(FIRE_DLL) && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER) || defined(FIRE_PLAT_ASM_ATOMICS))
+    && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER) || defined(FIRE_PLAT_ASM_ATOMICS))
 #define FIRE_NO_GIL 1
 #endif
 #if defined(FIRE_GIL) && defined(FIRE_NO_GIL)
@@ -73,7 +74,10 @@
  * may go on on another worker after a switch, so its state is a structure of its own and the worker holds only the current one (fire_curTask, one pointer of
  * thread-local storage - a pointer read before a switch is still the task's after it, unlike the address of a thread-local variable). The default without
  * the GIL; FIRE_TLS_VARS keeps the thread-local variables. FIRE_TLS_STRUCT (no thread-local storage of the compiler: FreeRTOS, TinyCC, the scheduler of
- * fire itself) and FIRE_DLL have structures of their own already. */
+ * fire itself) and FIRE_DLL have structures of their own already. FIRE_DLL stays without tasks (one system thread per fire thread, as FIRE_TLS_VARS): the
+ * functions of this header are compiled into every DLL (static inline) - the scheduler and the coroutines of one DLL would resume a task that another one
+ * switched away from, the pointer of the running task and the worker would be thread-local variables of every DLL (__declspec(thread) cannot be imported);
+ * the state of a thread is the runtime DLL's block of the calling thread (fire_tl()), one per process. */
 #if defined(FIRE_NO_GIL) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_DLL) && !defined(FIRE_TLS_VARS)
 #define FIRE_TASK_STATE 1
 #endif

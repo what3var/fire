@@ -12,6 +12,9 @@ using fire.Values;
 // own for this run (the C++ libraries of their natives are built on first use).
 // every check line numbered against the count of the last run ("OK: [12/530] ..."), every line flushed at once (TestUtils.cs, docs/tools/testing.md)
 TestProgress.Install();
+// Wine of Ubuntu (9.0~repack) frees the value of getenv("TMPDIR") while it picks the folder of its wineserver: with TMPDIR set every Windows program aborts at
+// once with "free(): invalid pointer". /tmp is what TMPDIR=/tmp means anyway - the variable goes for this process and everything it starts.
+if (OperatingSystem.IsLinux() && Environment.GetEnvironmentVariable("TMPDIR") is { } wineTmp && wineTmp.TrimEnd('/') == "/tmp") Environment.SetEnvironmentVariable("TMPDIR", null);
 // FIRE_TESTS_ONLY=resume: the keys and records of FIRE_TESTS_RESUME / FIRE_TESTS_SHARD (TestResumeTests.cs; a second, nothing built)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "resume") { Environment.ExitCode = TestResumeTests.Run() == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=startproject: the start project of a solution, the order of Build Solution and Clean (seconds; before the standard libraries are installed, which it does not need)

@@ -457,7 +457,11 @@ static int fire_net_anyIPv4(int type, int port, int listenBacklog, FireNetSock* 
 /* An empty host: IPv6 with IPv4 in it (dual stack), else IPv4 alone. */
 static int fire_net_anyAddress(int type, int port, int listenBacklog, FireNetSock* out, FireNetStatus* st) {
     int fatal;
-    FireNetSock s = fire_net_dualStack(type, port, listenBacklog, &fatal, st);
+    FireNetSock s;
+    *out = FIRE_NET_INVALID;
+    /* (no lookup before it, which starts Winsock otherwise: `new Net.TcpListener("", 0)` as the first use of the network was "Winsock error 10093") */
+    if (!fire_net_init()) return fire_net_fail(st, FIRE_NET_E_OTHER, "The network could not be started.");
+    s = fire_net_dualStack(type, port, listenBacklog, &fatal, st);
     if (s != FIRE_NET_INVALID) { *out = s; return 1; }
     if (fatal) { *out = FIRE_NET_INVALID; return 0; }
     return fire_net_anyIPv4(type, port, listenBacklog, out, st);

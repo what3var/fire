@@ -1880,14 +1880,30 @@ static const char* InitOpen(FgGen* g, const char* obj) {
     g->initNext = false;
     return fcFmt(g->c, "{ RecInit wi_; wi_.o = %s.kind == K_Class && leafAlive(%s) ? asObj(%s) : NULL; wi_.next = g_recInit; g_recInit = &wi_; ", obj, obj, obj);
 }
+/* The class of channels `name` (Channel, ChannelEnd) as this generator writes its id: one it registered, or - a library - the class of core (another
+ * module's), whether or not the library's own code makes one (a channel may come from the program). */
+static FgClassInfo* ChannelClass(FgGen* g, const char* name) {
+    FgClassInfo* ci = (FgClassInfo*)fcDictGet(g->classes, name);
+    FcRtClass* rc;
+    if (ci) return ci;
+    if (LibraryRole && (rc = (FcRtClass*)fcDictGet(g->program->program->classes, name)) != NULL) return ForeignClass(g, name, rc);
+    return NULL;
+}
 /* The C test "`v` is a channel or an end of a two-way one"; NULL when the program has none. */
 static const char* ChannelLikeTest(FgGen* g, const char* v) {
     FcList* ids = fcListNew(g->c);
     static const char* const names[] = { "Channel", "ChannelEnd" };
     int i;
     if (!fgHasNameArgc(g, g->dispatchers, "__End", 0)) return NULL;
-    for (i = 0; i < 2; i++) { FgClassInfo* ci = (FgClassInfo*)fcDictGet(g->classes, names[i]); if (ci) fcListAdd(g->c, ids, (void*)fcFmt(g->c, "asObj(%s)->cls == %s", v, ClassIdExpr(g, ci))); }
+    for (i = 0; i < 2; i++) { FgClassInfo* ci = ChannelClass(g, names[i]); if (ci) fcListAdd(g->c, ids, (void*)fcFmt(g->c, "asObj(%s)->cls == %s", v, ClassIdExpr(g, ci))); }
     return ids->count == 0 ? NULL : fcFmt(g->c, "%s.kind == K_Class && leafAlive(%s) && (%s)", v, v, fgJoin(g->c, ids, " || "));
+}
+static void AddDispatcher(FgGen* g, const char* name, int argc);
+/* `fire with` / a job with `with` references in a library: the thread gets an end of its own of a channel (`__End`) as in the program - the dispatcher
+ * comes from here, not from RegisterTargets (a library registers its served targets only). */
+static void NoteFireWith(FgGen* g) {
+    if (LibraryRole && (fcDictHas(g->program->program->classes, "Channel") || fcDictHas(g->program->program->classes, "ChannelEnd")) && AnyClassHasMethod(g, "__End", 0))
+        AddDispatcher(g, "__End", 0);
 }
 static const char* RecInitEnter(const FgClassInfo* cls) { return cls->rc->isRecord ? "RecInit ri_; ri_.o = asObj(o); ri_.next = g_recInit; g_recInit = &ri_; " : ""; }
 static const char* RecInitLeave(const FgClassInfo* cls) { return cls->rc->isRecord ? "g_recInit = ri_.next; " : ""; }

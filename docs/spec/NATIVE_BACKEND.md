@@ -722,8 +722,12 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   sie aus den Bedürfnissen der Module); TinyCC hat mit den Modulen dieselben Slots auf einem Schlüssel von pthreads wie mit einer Datei (`FIRE_TLS_EMULATED`; der Schlüssel
   einmal im Programm, `FIRE_ONCE` mit `FIRE_SPLIT`). Was die Laufzeit beim ersten Gebrauch nummeriert, ist ohne die GIL unter `g_registryM` (die Deskriptoren der
   Feldzeiger, `fieldPtrId`; die alte Tabelle bleibt, ein anderer Thread kann sie lesen), ein Plugin registriert sich unter `g_pluginM` (sein `init` danach, ohne die Sperre).
-  **Mit der GIL** - auf den Zielen mit eigenem Scheduler (dos, win16, wasm), FreeRTOS, in Debug-Builds, mit den DLLs von Windows (`FIRE_DLL`: linkage `shared` mit MinGW)
-  und mit `FIRE_GIL` - läuft aller fire-Code unter **einer globalen Sperre**, einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und
+  Die **DLLs von Windows** (`FIRE_DLL`: linkage `shared` mit MinGW) laufen ohne die GIL, aber ohne Tasks: ein System-Thread je fire-Thread (wie `FIRE_TLS_VARS`),
+  der Zustand eines Threads ist der Block des rufenden Threads in der DLL der Runtime (`fire_tl()`, einmal im Prozess) - die Funktionen von fire_rt.h stehen
+  (`static inline`) in jeder DLL, der Scheduler und die Koroutinen einer DLL würden einen Task fortsetzen, den eine andere weggeschaltet hat, und der Zeiger auf den
+  laufenden Task wäre eine thread-lokale Variable jeder DLL (`__declspec(thread)` lässt sich nicht importieren). Die Sperren, Tabellen und Zähler ohne die GIL
+  (`g_registryM`, `g_pkgLocks`/`fire_pkgLockIndex`, `g_pluginM`, `g_targsM`, ...) sind Daten und Funktionen der Runtime-DLL (`FIRE_RT_DATA`/`FIRE_RT_FN`).
+  **Mit der GIL** - auf den Zielen mit eigenem Scheduler (dos, win16, wasm), FreeRTOS, in Debug-Builds und mit `FIRE_GIL` - läuft aller fire-Code unter **einer globalen Sperre**, einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und
   an sicheren Punkten ab (Schleifen-Rücksprung, Funktionsanfang, alle 4096 Stationen ein `gilYield`). Die Abgabepunkte der GIL sind ohne sie die Stellen, an denen das
   Hauptprogramm und die Pakete ihre Sperren abgeben. Zustand eines Ausführungsstrangs (`g_unwind`, `g_handlers`, `g_pending`, Temporärpool, `g_globalOwn`, `g_reflCaller`)
   ist `thread_local`. Der Test "ThreadSanitizer: die Thread-Faelle ..." baut alle Thread-Fälle mit `-fsanitize=thread` (`FIRE_TEST_GIL=1`: mit der GIL).
@@ -1433,7 +1437,7 @@ Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code ste
   `QueryList("Person", ...)`), sagt ihre Schnittstelle (`JsonReads`): das Programm behält dann die Klassen, die das Lesen machen kann, wie mit einer Datei.
   `FIRE_NDIMS` ist mit `static` fest 16. Die Module stehen in Dateien für sich: `FIRE_SPLIT` (der Zustand der Plattform, `FIRE_ONCE` - unter TinyCC der Schlüssel
   des Zustands eines Threads - lebt einmal in der Datei des Programms, nicht je Modul). Fire-Threads laufen in einem Programm aus Modulen ohne die GIL wie mit
-  einer Datei (siehe "Threads": die Sperren der Pakete nach Namen, `FIRE_PKG_NAMED`; nur die DLLs von Windows behalten sie).
+  einer Datei (siehe "Threads": die Sperren der Pakete nach Namen, `FIRE_PKG_NAMED`; die DLLs von Windows ohne Tasks, ein System-Thread je fire-Thread).
 * **Natives in C** (Packages in C, die Bridges von graphics und windows) stehen in der Datei des Moduls ihres Imports, wenn sie für sich stehen: ihr C ruft keine
   Funktion der Natives eines anderen Imports des Programms und keiner ruft ihre (hash, compression, io, time; nicht graphics und windows zusammen - die Bridge von
   windows benutzt die Framebuffer von graphics -, nicht scene3d). Ihr Zustand gibt es so einmal; jedes andere Modul und das Programm rufen sie über die
@@ -1504,7 +1508,9 @@ Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Except
   * Ein Modul ruft Member, die ein Modul hinzufügt, das es nicht kennt (`Join` von linq auf `List` von core), über die Runtime (`miss_`, die Tabellen der Klasse) -
     nicht direkt: die Datei eines Moduls hängt nicht davon ab, welche Module das Programm sonst hat (sonst gäbe es einen Kreis core <-> linq).
   * Getestet mit MinGW (x86_64-w64-mingw32-gcc) unter Wine (`FIRE_TESTS_ONLY=linkage`: ein Projekt mit Libraries, Threads, Reflection, JSON, zwei Programme teilen sich
-    die DLLs, eine DLL mit anderer Schnittstelle). **msvc** baut `static`: der C-Code hält sich an das, was msvc braucht (`dllimport` für Daten, Exporte der
+    die DLLs, eine DLL mit anderer Schnittstelle; `FIRE_TESTS_FILTER=boundaries`: Threads ohne die GIL, `fire with` in einer Bibliothek, Net.Channel). Wine von Ubuntu
+    (9.0~repack) bricht mit gesetztem `TMPDIR` bei jedem Programm mit `free(): invalid pointer` ab (es gibt den Wert von `getenv("TMPDIR")` frei, wenn es den Ordner
+    seines wineservers wählt): die Tests nehmen `TMPDIR` aus der Umgebung von Wine. **msvc** baut `static`: der C-Code hält sich an das, was msvc braucht (`dllimport` für Daten, Exporte der
     Runtime), aber die Tabellen des Programms zeigen in statischen Initialisierern auf Daten der Modul-DLLs (MinGW löst das mit seinen Pseudo-Relocations, msvc nicht),
     und die Exporte der Modul-DLLs bräuchten eine `.def`-Datei - nicht umgesetzt, ohne msvc hier nicht zu testen.
 * **Laden zur Laufzeit** (Phase D a): `Library.Load(path)` / `lib.Get(name, signatur)` ([Native code](../language/18-native-code.md)) - die Klasse `Library` steht im Prelude
