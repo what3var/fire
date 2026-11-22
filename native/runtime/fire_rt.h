@@ -9742,7 +9742,15 @@ FIRE_FN bool bufRetire(Owned* o) {
 #endif
 
 /* ---- the GIL ---- */
-typedef struct Gil { fire_mutex m; fire_cond cv; uint64_t next, serving; } Gil;
+/* (a ticket lock: a waiter waits on the condition of its ticket's slot, a release wakes the slot of the next ticket only - one condition for all of
+ * them woke every waiting thread at each hand-over, with dozens of fire threads the GIL went round in the kernel: 30 parallel requests of
+ * Http.AppServer took 0.9 s in futex calls instead of 0.1 s) */
+#ifdef FIRE_PLAT_PARALLEL
+#define FIRE_GIL_SLOTS 64
+#else
+#define FIRE_GIL_SLOTS 1
+#endif
+typedef struct Gil { fire_mutex m; fire_cond cv[FIRE_GIL_SLOTS]; uint64_t next, serving; } Gil;
 extern FIRE_RT_DATA Gil g_gil;
 extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
 
@@ -10044,7 +10052,7 @@ FIRE_FN void gilAcquire(void) {
     ticket = g_gil.next++;
     if (g_gil.serving != ticket) {
         fire_atomic_add(&g_gilWaiting, 1);
-        while (g_gil.serving != ticket) fire_cond_wait(&g_gil.cv, &g_gil.m);
+        while (g_gil.serving != ticket) fire_cond_wait(&g_gil.cv[ticket % FIRE_GIL_SLOTS], &g_gil.m);
         fire_atomic_add(&g_gilWaiting, (uint32_t)-1);
     }
     fire_mutex_unlock(&g_gil.m);
@@ -10052,7 +10060,7 @@ FIRE_FN void gilAcquire(void) {
 FIRE_FN void gilRelease(void) {
     fire_mutex_lock(&g_gil.m);
     g_gil.serving++;
-    fire_cond_notifyAll(&g_gil.cv);
+    fire_cond_notifyAll(&g_gil.cv[g_gil.serving % FIRE_GIL_SLOTS]);
     fire_mutex_unlock(&g_gil.m);
 }
 #define FIRE_PKG_ENTER(m)
@@ -14032,7 +14040,7 @@ FIRE_FN void fire_threadsInit(void) {
     g_homeState = fire_curTask;
 #endif
     fire_mutex_init(&g_gil.m);
-    fire_cond_init(&g_gil.cv);
+    { int i; for (i = 0; i < FIRE_GIL_SLOTS; i++) fire_cond_init(&g_gil.cv[i]); }
     fire_mutex_init(&g_evM);
     fire_cond_init(&g_evCv);
 #ifdef FIRE_SLOT_SEGMENTS
