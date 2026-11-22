@@ -61,6 +61,8 @@ Directory.CreateDirectory(fontTestDir);
 File.WriteAllBytes(Path.Combine(fontTestDir, "FireSans.ttf"), fireTestFont);
 Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 
+// FIRE_TESTS_ONLY=previews: spark's previews in `fire` - the design view of markup and the preview of block models as child processes (PreviewTests.cs; seconds; after the standard packages are installed; also part of circuiteditor)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "previews") { Environment.ExitCode = TestResume.Group("PreviewTests", PreviewTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=trace: stack traces of exceptions - the cases tests/cases/trace in the VM, the format, the clickable lines of spark, forge test (TraceTests.cs; seconds)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "trace") { Environment.ExitCode = TestResume.Group("TraceTests", TraceTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=projects runs only the tests of projects, templates and packing (a quick run while working on them).
@@ -97,7 +99,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "git") { TestResume
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { TestResume.Group("WindowManagerTests.Run", () => { WindowManagerTests.Run(); }); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { TestResume.Group("DialogTests.Run", () => { DialogTests.Run(); }); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { TestResume.Group("DockingTests.Run", () => { DockingTests.Run(); }); return; }
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { TestResume.Group("CircuitEditorTests.Run", () => { CircuitEditorTests.Run(); }); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { TestResume.Group("CircuitEditorTests.Run", () => { CircuitEditorTests.Run(); }); int previewFailures = TestResume.Group("PreviewTests", PreviewTests.Run, 0); if (previewFailures > 0) Environment.ExitCode = 1; return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TestResume.Group("TypeTests.Snippets", () => { TypeTests.Snippets(); }); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "debugger") { TestResume.Group("DebuggerTests.Run", () => { DebuggerTests.Run(); }); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "drivers") { int driverFailures = DriverAgentTests.Run(); Console.WriteLine(driverFailures == 0 ? "Alle Treiber-Pruefungen bestanden." : $"FEHLER: {driverFailures} Treiber-Pruefung(en) fehlgeschlagen."); return; }
@@ -12038,6 +12040,7 @@ TestResume.Group("WindowManagerTests.Run", () => { WindowManagerTests.Run(); });
 TestResume.Group("DialogTests.Run", () => { DialogTests.Run(); });
 TestResume.Group("DockingTests.Run", () => { DockingTests.Run(); });
 TestResume.Group("CircuitEditorTests.Run", () => { CircuitEditorTests.Run(); });
+TestResume.Group("PreviewTests", PreviewTests.Run, 0);
 TestResume.Group("ImageTests.Run", () => { ImageTests.Run(); });
 TestResume.Group("GitTests.Run", () => { GitTests.Run(); });
 TestResume.Group("GitSyncTests.Run", () => { GitSyncTests.Run(); });

@@ -32,6 +32,19 @@ namespace fire.Editor
             Manager.DefaultChanged += SaveSettings;
         }
 
+        private DeviceHostServer? _programHost;
+        private readonly object _programHostLock = new();
+
+        /// <summary>The devices of this manager for programs that spark runs in `fire` (the VM in C, a process of its own): FIRE_DEVICE_HOST of the program
+        /// (docs/spec/VM_C.md, "Das geteilte Gerät"); started with the first such program.</summary>
+        public DeviceHostServer ProgramHost
+        {
+            get
+            {
+                lock (_programHostLock) return _programHost ??= new DeviceHostServer(Manager);
+            }
+        }
+
         /// <summary>Show the simulated echo device `loopback:echo` (for trying things out without hardware).</summary>
         public bool LoopbackEnabled
         {

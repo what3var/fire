@@ -209,7 +209,70 @@ static class CVmRunTests
         Check("Fensterprogramm ohne Bildschirm: libfire_gfx aus dem Bericht, 5 Bilder, Ende", wbuilt.Ok && wlibs.Any(l => Path.GetFileName(l).Contains("fire_gfx")) && wcode == 0 && wlines.Contains("frames 5"),
             $"{wbuilt.Error} libs {string.Join(", ", wlibs)} code {wcode}: {Text(wlines)}\n{(wbuilt.Ok ? "" : wbuilt.Log)}");
 
+        Devices(dir, forge.Value);
         Debug(dir, forge.Value, source, env);
+    }
+
+    // ---- the shared device: a program in fire uses the devices of spark's manager (FIRE_DEVICE_HOST, DeviceHostServer, native/vm/vm_devhost.c) ----
+    private static void Devices(string dir, (string Program, IReadOnlyList<string> Prefix) forge)
+    {
+        string source = Path.Combine(dir, "devices.fire");
+        File.WriteAllText(source, """
+            #import "devices"
+            print("shared " + DeviceManager.IsShared())
+            print("default " + DeviceManager.Host.DefaultIdentifier())
+            var d = DeviceManager.Get("loopback:echo")
+            print("connect " + d.Connect() + " " + d.Connected())
+            print("write " + d.WriteString("ping from fire"))
+            print("echo " + d.WaitForString("ping from fire", 5000))
+            print("command " + d.DoCommand("line"))
+            print("echo2 " + d.WaitForString("line", 5000))
+            """);
+        string fbc = Path.Combine(dir, "bin", "devices.fbc");
+        var built = ForgeProcess.Run(new[] { "bytecode", source, "-m", "RELEASE", "-o", fbc }, new ForgeSink(), CancellationToken.None, dir, forge);
+        if (!built.Ok || built.Output("vm") is not { } vm) { Check("Geraete: Programmdatei", false, built.Error + "\n" + built.Log); return; }
+        var libraries = built.Outputs.Where(o => o.Kind == "library").Select(o => o.Path).ToList();
+        (List<string> Lines, int? Code) RunIt(Dictionary<string, string>? extra)
+        {
+            var lines = new List<string>();
+            int? code = null;
+            var ended = new ManualResetEventSlim();
+            var p = CVmLaunch.Start(vm, fbc, Array.Empty<string>(), dir, l => { lock (lines) lines.Add(l); }, c => { code = c; ended.Set(); }, CVmLaunch.Environment(libraries, extra));
+            if (!ended.Wait(30000)) try { p.Kill(true); } catch (InvalidOperationException) { }
+            return (lines, code);
+        }
+
+        // spark's manager: shared, with the loopback driver and a default device; what the program sends shows in its packet trace
+        using var manager = fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault(isShared: true);
+        manager.RegisterDriver(new fire.Device.Manager.Drivers.Loopback.LoopbackDriver());
+        manager.RefreshDevices(true);
+        manager.DefaultIdentifier = "loopback:echo";
+        var traced = new List<string>();
+        manager.PacketCaptured += r => { lock (traced) traced.Add(r.Direction + " " + System.Text.Encoding.UTF8.GetString(r.Data).Trim()); };
+        using var server = new fire.Device.Manager.DeviceManager.DeviceHostServer(manager);
+        var watch = Stopwatch.StartNew();
+        var (lines, code) = RunIt(new Dictionary<string, string> { [fire.Device.Manager.DeviceManager.DeviceHostServer.EnvironmentVariable] = server.EnvironmentValue });
+        Console.WriteLine($"    Geraete ueber FIRE_DEVICE_HOST: {watch.ElapsedMilliseconds} ms fuer das Programm");
+        string all = Text(lines);
+        Check("Geraete: das Programm in fire nimmt die Geraete von spark (geteilt, das Standardgeraet, verbunden, Echo ueber die Verbindung)",
+            code == 0 && lines.Contains("shared True") && lines.Contains("default loopback:echo") && lines.Contains("connect True True") && lines.Contains("write True")
+            && lines.Contains("echo True") && lines.Contains("command True") && lines.Contains("echo2 True"), $"code {code}: {all}");
+        string trace;
+        lock (traced) trace = string.Join(" | ", traced);
+        Check("Geraete: was das Programm sendet und empfaengt, steht im Paketmitschnitt von spark", traced.Any(t => t.Contains("ping from fire")) && traced.Count >= 2, trace);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (server.Connected > 0 && DateTime.UtcNow < deadline) Thread.Sleep(20);
+        Check("Geraete: das Ende des Programms schliesst seine Verbindung; das Geraet bleibt beim Manager von spark",
+            server.Connected == 0 && server.ConnectionsSoFar == 1 && manager.GetHandleByIdentifier("loopback:echo") != null, $"{server.Connected} / {server.ConnectionsSoFar}");
+
+        // a wrong token: the host does not answer, the program takes the devices of the machine (the serial ports - the library of the VM has no loopback device:
+        // spark's `loopback:echo` is not there)
+        var (wrongLines, _) = RunIt(new Dictionary<string, string> { [fire.Device.Manager.DeviceManager.DeviceHostServer.EnvironmentVariable] = $"tcp:127.0.0.1:{server.Port};token=nope" });
+        Check("Geraete: ein falsches Token bekommt die Geraete von spark nicht (das Programm nimmt die der Maschine)",
+            wrongLines.Contains("shared False") && wrongLines.Contains("default ") && wrongLines.Any(l => l.Contains("No device with identifier 'loopback:echo'")) && server.ConnectionsSoFar == 2,
+            Text(wrongLines));
+        var (aloneLines, _) = RunIt(null);
+        Check("Geraete: ohne FIRE_DEVICE_HOST wie bisher die Geraete der Maschine", aloneLines.Contains("shared False") && aloneLines.Any(l => l.Contains("No device with identifier 'loopback:echo'")) && server.ConnectionsSoFar == 2, Text(aloneLines));
     }
 
     private static void Debug(string dir, (string Program, IReadOnlyList<string> Prefix) forge, string source, Dictionary<string, string> env)

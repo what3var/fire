@@ -78,7 +78,9 @@ namespace fire.Editor
                 EndBuildJob(job, BuildOutcome.Succeeded);
 
                 string vm = result.Output("vm") ?? await Task.Run(() => CVm.Locate(64, 64));
-                var environment = CVmLaunch.Environment(result.Outputs.Where(o => o.Kind == "library").Select(o => o.Path));
+                // (the devices of spark - the shared manager, its drivers and packet trace - for the program in `fire`: FIRE_DEVICE_HOST, docs/spec/VM_C.md "Das geteilte Gerät")
+                var environment = CVmLaunch.Environment(result.Outputs.Where(o => o.Kind == "library").Select(o => o.Path),
+                    new Dictionary<string, string> { [fire.Device.Manager.DeviceManager.DeviceHostServer.EnvironmentVariable] = _devices.ProgramHost.EnvironmentValue });
                 var arguments = RunArguments(input);
                 string workingDirectory = input.Project?.Directory ?? input.BaseDirectory ?? Path.GetDirectoryName(defaultPath ?? built)!;
                 if (!debug)

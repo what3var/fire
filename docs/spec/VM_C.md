@@ -165,28 +165,66 @@ bleibt in spark (die Ansicht reicht die Tasten weiter, das Programm hat kein Fen
 * **Nachrichten**: stdout, `FIRE_PRINT_RECORDS=1` - ein `print` ist eine Zeile, ein Zeilenumbruch in seinem Text kommt als `\x1F` (ein Haken an `print` der VM).
 * **Befehle**: stdin, eine Zeile je Befehl; `__HostCommand()` ohne `#extern` liest sie ohne zu warten (ein Haken in `vmCallExtern`, POSIX: `poll`).
 * **Übersetzt** wird das Programm der Ansicht in spark (`Linker` mit `PackageLibraries`, `ProgramFile.Write`) - wie die übrigen Sprachdienste bis M2 (`forge serve`).
-* **Rückfall**: scheitert das Programm in `fire`, bevor es ein Bild gezeigt hat, startet `LiveSession` es in der C#-VM von spark neu (`ChildFailure` sagt,
-  warum). Der Schaltplan-Editor braucht ihn nicht mehr (22.11.2026): seine `DestroyedException` in `UI.CircuitView.DrawBackground` (nur über `UI.Root.Update`)
+* **Kein Rückfall mehr** (22.11.2026): bis dahin startete `LiveSession` ein Programm, das in `fire` vor seinem ersten Bild scheiterte, in der C#-VM von spark
+  neu. Der Schaltplan-Editor brauchte ihn zuletzt nicht mehr: seine `DestroyedException` in `UI.CircuitView.DrawBackground` (nur über `UI.Root.Update`)
   war das `SetField` der C-VM auf ein Objekt mit Sonden - die Elemente der UI bekommen beim ersten Anordnen welche (`Root.Watch`) -, das die Besitzregeln
-  des Speicherns überging: `this.gridLayer = new Framebuffer(w, h)` starb mit der Anweisung. Behoben mit `40e81bcb` auf dem Zweig der Korrekturen der C-VM,
-  den der Zweig der Live-Ansicht (`3d6a7ca7`) noch nicht hatte (gefunden, indem die VM jedes Commits dazwischen gebaut wurde); der Fall `vm-life/0110` und
-  die Prüfung der Live-Sitzung mit jedem Beispiel-Schaltplan ohne Rückfall (`NoFallback`, Größe und `fit` gleich nach dem Start wie von spark) halten es fest.
-* **Treiber-Agent und Geräte**: der Treiber-Agent von spark (`PackageDriverAgent`, eine `LiveSession`) bleibt in der C#-VM (`InProcessOnly`): seine Treiber kommen
-  als fire-Plugins, die die C-VM nicht lädt, und die Geräte, die er macht, teilt sich der `DeviceManager` von spark mit den Programmen der C#-VM
-  (`fire_host.dev_*`). Ein Programm in `fire` nimmt die C-Treiber seines Pakets (devices), nicht die Geräte von spark - das geteilte Gerät zwischen IDE und
-  Programm braucht einen neuen Weg (ein Protokoll) oder entfällt bis Phase F.
-* **Noch im Prozess**: `UiPreview` (Entwurfsansicht von FXML) und das Vorschaufenster der Blöcke (`BlockPreviewWindow`, `RuntimeSession`). Plan: das Skript der
-  Vorschau läuft in `fire` mit `FIRE_DISPLAY_SHM`; da es kein Fenster zeigt, sondern den Framebuffer nach `@fb ID` liest, braucht `fire_gfx_host.h` dafür eine
-  Aufnahme - am Ende des Programms (`fire_pkg_reset` bei gesetztem `FIRE_DISPLAY_SHM`) oder auf `@fb` hin den Framebuffer mit dieser Nummer in den Bildbereich
-  der Datei schreiben (`fire_gfx_host_pixels` gibt es); die Rechtecke kommen wie heute als `print`. Die Entwurfsansicht rendert bei jeder Änderung neu: ein
-  Prozess je Bild kostet rund 15 ms (ein ganzer Prozess der C-VM, siehe die Benchmarks), das Übersetzen bleibt in spark.
+  des Speicherns überging: `this.gridLayer = new Framebuffer(w, h)` starb mit der Anweisung. Behoben mit `40e81bcb`; `vm-life/0110` und die Live-Sitzung mit
+  jedem Beispiel-Schaltplan halten es fest. Jetzt endet die Ansicht eines Programms, das in `fire` scheitert, mit dem Grund (`Ended`, stderr von `fire`);
+  `ChildFailure` und `NoFallback` sind weg. Ohne `fire` (kein C-Compiler) sagt `Start` das, statt still in die C#-VM zu gehen. In der C#-VM bleiben nur
+  `FIRE_SPARK_VM=dotnet` und der Treiber-Agent (`InProcessOnly`, fire-Plugins: M1 (2)).
+* **Das geteilte Gerät** (M1 (3), 22.11.2026; `native/vm/vm_devhost.c`, `DeviceHostServer` in fire.Device.Manager): ein Programm, das spark in `fire` startet
+  (F5/Ctrl+F5/Debug), nimmt die Geräte des `DeviceManager` von spark - dessen Treiber (auch die, die der Treiber-Agent einhängt), das Teilen eines Geräts
+  zwischen IDE und Programm, den Paketmitschnitt, das Standardgerät -, wie die C#-VM im Prozess über `fire_host.dev_*`. **Entschieden: ein Protokoll, nicht
+  Phase F**: die Schnittstelle gibt es schon - die 16 `dev_*` von `fire_host` (`fire_pkg_abi.h`), die die Bibliothek von devices für "ein Gerät des Hosts"
+  fragt (`fire_bridge_devices.h`); sie gehen nur über eine Verbindung statt über C#-Delegaten. Ohne das säße ein Programm in `fire` auf den seriellen
+  Ports der Maschine, die spark (Terminal, Mitschnitt, Teilen) gerade offen hält, und sähe die Geräte der Treiber der Pakete nicht.
+  * **Weg**: `FIRE_DEVICE_HOST=tcp:127.0.0.1:PORT;token=T` (setzt spark, `EditorDeviceService.ProgramHost`, ein Server je spark, gestartet mit dem ersten
+    Programm). `fire` verbindet sich, wenn die Bibliotheken den Host zum ersten Mal bekommen (`vmPkgHost`), sagt hello mit dem Token und füllt dann die
+    `dev_*`; ohne die Variable, ohne Antwort oder mit falschem Token bleiben sie NULL - die Bibliothek nimmt die Geräte der Maschine wie bisher.
+  * **Protokoll** (binär, little-endian, eine Anfrage und ihre Antwort, eine Sperre im Programm): Anfrage `u32 n, u8 op, i32 a, Nutzlast`, Antwort
+    `u32 n, i32 Ergebnis, Nutzlast`; op 0 hello (Token), 1 refresh .. 16 poll in der Reihenfolge der `dev_*` (Texte und Pakete in der Nutzlast; poll
+    nennt seinen Platz, ein zu großes Paket bleibt liegen). Empfangenes wird nicht geschoben: die Bibliothek fragt mit poll (sie pollt ohnehin), der
+    Server hält eine Warteschlange je Gerät und Verbindung (wie `PackageHost.Devices.cs` je Programm); endet die Verbindung, gehen ihre Haken vom Gerät,
+    das Gerät bleibt beim Manager von spark (geteilt). TCP und nicht die Datei des Host-Displays: Geräte sind Anfrage/Antwort mit Texten und Paketen
+    beliebiger Länge, und TCP geht auf Windows wie POSIX (die Sockets des Debug-Agenten, `fire_debug.h`).
+  * **Kosten**: ein Aufruf ist ein Rundweg über localhost; das Testprogramm (Start von `fire`, Liste, Verbinden, zwei Echos) braucht 32-40 ms insgesamt.
+  * **Offen**: die Live-Sitzung und die Vorschauen bekommen `FIRE_DEVICE_HOST` nicht (sie brauchen keine Geräte); `forge run` außerhalb von spark hat
+    keinen Host (die Geräte der Maschine). Die fire-Plugins des Treiber-Agenten selbst laufen weiter in der C#-VM (M1 (2)).
+* **Die Vorschauen in `fire`** (M1 (4), 22.11.2026): `UiPreview` (die Entwurfsansicht von FXML) und die Vorschau der Blockmodelle (`BlockPreviewWindow`,
+  jetzt über `BlockPreview` in fire.Compiler) laufen als Kindprozess `fire` (`CVmScript`: übersetzt in spark mit `Linker { PackageLibraries }` wie die
+  Live-Sitzung, die `.fbc` in einen Ordner unter `/dev/shm`, `fire run` mit `FIRE_PRINT_RECORDS`, stdin zu, eine Zeitgrenze, Abbruch beendet den Prozess).
+  Mit `FIRE_SPARK_VM=dotnet` (oder ohne `fire`) in der C#-VM wie bisher.
+  * **Entwurfsansicht**: das Fenster des Skripts ist der Host-Display einer `HostDisplayFile` (`FIRE_DISPLAY_SHM`); das Bild ist, was das Fenster dort
+    zuletzt zeigte, die Orte der Elemente kommen als `print` (`@N X Y W H`). **Abweichung vom Plan** (eine Aufnahme in `fire_gfx_host.h` am Ende des
+    Programms oder auf `@fb ID` hin): nicht nötig - `UiPreview` hängt an das erzeugte Skript `fxP.window.Idle()` an (ein halber Zyklus des Fensters:
+    seine Ereignisse - es gibt keine -, sein Bild; kein onCycle, kein Handler), und der Weg der Bibliothek, ein Bild zu zeigen, legt es in die Datei. Kein
+    neuer Code in der Bibliothek, kein Haken am `print` der VM, kein Raten der Nummer des Framebuffers am Ende. Das Bild gleicht dem der C#-VM Pixel für
+    Pixel, die Orte sind dieselben (die Auswahl per Klick trifft dasselbe Element); `FireUiGenerator.GeneratePreview` ist unverändert.
+  * **Blockvorschau**: das Skript schreibt die PNGs selbst (`frame.ToPng()`, `IO.File.WriteAllBytes`), es braucht keinen Bildschirm; die Bytes gleichen
+    denen der C#-VM. Eine neuere Wahl (Animation, Renderer, Seite) beendet den Prozess der älteren (vorher lief die ältere in der C#-VM zu Ende).
+  * **Latenz** (dieser Rechner, Debug-Build von spark, Median von 5 nach einem Aufwärmen; `FIRE_TESTS_ONLY=previews`): Entwurfsansicht nach einer
+    Änderung **fire 604 ms** (übersetzen 588, davon die Programmdatei 16; der Prozess `fire` - Start, Laden, Zeichnen, Ende - **16 ms**) gegen **520 ms** in
+    der C#-VM im Prozess (übersetzen 511, laufen 8). Fast alles ist das Übersetzen des Skripts mit der Bibliothek `ui` in spark (beide Wege; das ändert
+    erst `forge serve`/M2 oder ein Zwischenstand der Bibliotheken); `fire` kostet rund 80 ms mehr, davon die Hälfte im Linker (`PackageLibraries`).
+    Blockvorschau: ein Bild **241 ms** (übersetzen 214, Prozess 26) gegen 178 ms, 6 Bilder einer Animation 317 gegen 255 ms; der allererste Start auf
+    einer Maschine baut einmal die Bibliothek von scene3d in den Cache (rund 12 s, danach nie wieder). Die geplanten "15 ms je Prozess" stimmen.
+  * **Unter Xvfb mit spark** geprüft: eine FXML-Datei und ein Blockmodell offen; Entwurfsansicht nach Eingaben neu gezeichnet (`fire run
+    /dev/shm/fire-script-...` als Kind von spark gesehen), Klick auf einen Button im Bild wählt ihn (Eigenschaften, Zeile im Text); Vorschau der Blöcke
+    mit Ruhepose, anderer Seite und der Animation "hop" (16 Bilder). Gefunden (alt, nicht durch `fire`): öffnet spark eine FXML-Datei beim allerersten
+    Start, bevor die Standardpakete installiert sind, zeigt die Entwurfsansicht "fire-graphics is not installed" bis zur nächsten Änderung.
 
 **Tests**: `FIRE_TESTS_ONLY=cvmrun` (`CVmRunTests.cs`: ein falsches `fire` - Befehlszeile, Umgebung, Eingabe, beide Ausgaben, Exitcode, Stop, ein Programm, das
 sich nicht verbindet -, das echte forge und `fire`: der Bericht von `bytecode`, Overlay, Fehler, ein Konsolenprogramm, ein Fensterprogramm ohne Bildschirm,
-Debuggen mit engine vm, Scopes am Einstieg, Haltepunkt, Variablen, Schritt, Ende mit dem Code von `terminate`); `FIRE_TESTS_ONLY=circuiteditor` (die
-Live-Sitzung läuft in `fire`, Bilder, Maus, Befehle, ein mehrzeiliges `print`, der Rückfall, die zehn Beispiel-Schaltpläne im Programm des Editors ohne Rückfall); `drivers`, `debugger`, `forgereport`, `packer` und
-`native` mit `FIRE_TESTS_FILTER=VM-Debugger` unverändert grün. Unter Xvfb mit spark selbst: ein Konsolenprogramm (Ausgabe, Eingabe), ein Fensterprogramm
-(sein Fenster aus `fire`, Stop), Debuggen mit einem Haltepunkt (Halt, Scope-Panel, F10), der Schaltplan-Editor (damals über den Rückfall; seit 22.11. ohne ihn - geprüft mit der Live-Sitzung in `circuiteditor`, spark selbst nicht noch einmal).
+das geteilte Gerät - Liste, Standardgerät, Verbinden, Echo und Befehl über `FIRE_DEVICE_HOST`, der Mitschnitt von spark, das Ende der Verbindung, ein falsches
+Token und ohne Variable die Geräte der Maschine -, Debuggen mit engine vm, Scopes am Einstieg, Haltepunkt, Variablen, Schritt, Ende mit dem Code von
+`terminate`); `FIRE_TESTS_ONLY=circuiteditor` (die Live-Sitzung läuft in `fire`, Bilder, Maus, Befehle, ein mehrzeiliges `print`, ein Programm, das in `fire`
+scheitert, endet mit dem Grund - kein Rückfall -, die zehn Beispiel-Schaltpläne im Programm des Editors; dazu die Vorschauen);
+`FIRE_TESTS_ONLY=previews` (`PreviewTests.cs`: Entwurfsansicht in `fire` gegen die C#-VM - Größe, Pixel, Orte, Style, Fehler, Latenz -, Blockvorschau -
+ein Bild, eine Animation, gleiche PNG-Bytes, Abbruch, danach wieder -); die Prüfungen der Entwurfsansicht unter `FIRE_TESTS_ONLY=ui`
+(`FIRE_TESTS_FILTER=Entwurfsansicht`) laufen jetzt in `fire`; `drivers` und `packer` nach diesen Änderungen grün, `debugger`, `forgereport` und `native` mit
+`FIRE_TESTS_FILTER=VM-Debugger` grün vor ihnen (nicht berührt). Unter Xvfb mit spark selbst: ein Konsolenprogramm (Ausgabe, Eingabe), ein Fensterprogramm (sein Fenster
+aus `fire`, Stop), Debuggen mit einem Haltepunkt (Halt, Scope-Panel, F10), der Schaltplan-Editor (damals über den Rückfall; seit 22.11. ohne ihn - geprüft mit
+der Live-Sitzung in `circuiteditor`), die Entwurfsansicht und die Blockvorschau (22.11., siehe oben).
 
 ## Lader
 

@@ -69,49 +69,10 @@ namespace fire.Editor
             _yaw.PropertyChanged += (_, e) => { if (e.Property == RangeBase.ValueProperty) _ = Render(); };
             _timer.Tick += (_, _) => { if (_frames.Count > 0) { _shown = (_shown + 1) % _frames.Count; _image.Source = _frames[_shown]; } };
             Opened += (_, _) => _ = Render();
-            Closed += (_, _) => { _timer.Stop(); foreach (var f in _frames) f.Dispose(); };
+            Closed += (_, _) => { _timer.Stop(); _running?.Cancel(); foreach (var f in _frames) f.Dispose(); };
         }
 
-        /// <summary>The program that draws the frames: the model file, a floor, the sun, a camera on the side chosen; a PNG per frame into `dir`.</summary>
-        public static string Script(BlockModel model, string f3dPath, string dir, string animation, double length, bool fast, double yawDegrees, int frames) =>
-            Script(model.SizeX * model.BlockSize, model.SizeY * model.BlockSize, model.SizeZ * model.BlockSize, f3dPath, dir, animation, fast, yawDegrees, frames);
-
-        public static string Script(double w, double h, double d, string f3dPath, string dir, string animation, bool fast, double yawDegrees, int frames)
-        {
-            var inv = CultureInfo.InvariantCulture;
-            string N(double v) => v.ToString("0.####", inv);
-            double size = Math.Max(w, Math.Max(h, d));
-            double yaw = yawDegrees * Math.PI / 180, dist = size * 1.25;
-            string Q(string p) => "\"" + p.Replace("\\", "/").Replace("\"", "\\\"") + "\"";
-            return $$"""
-                #import "graphics"
-                #import "scene3d"
-                #import "filesystem"
-                var model = Model.FromBytes(IO.File.ReadAllBytes({{Q(f3dPath)}}))
-                var frame = new Framebuffer(480, 360)
-                var scene = new Scene()
-                {{(fast ? "scene.Renderer = RenderMode.Fast" : "")}}
-                scene.ShadowResolution = 512
-                var floor = new Object(Template.Plane, 0m, 0m, 0m, {{N(size * 2)}}m, 0m, {{N(size * 2)}}m)
-                floor.Texture = Texture.Checker(32, 8, S3D.Rgb(70, 70, 78), S3D.Rgb(58, 58, 66))
-                scene.Add(floor)
-                var obj = new Object(model)
-                obj.AnchorY = 0.0
-                scene.Add(obj)
-                scene.Add(Light.Directional(-0.5, -1.0, -0.35))
-                var cam = new Camera(frame)
-                cam.Background = S3D.Rgb(30, 27, 34)
-                cam.SetPosition({{N(Math.Sin(yaw) * dist)}}m, {{N(h * 0.5 + size * 0.6)}}m, {{N(Math.Cos(yaw) * dist)}}m)
-                cam.LookAt(0m, {{N(h * 0.4)}}m, 0m)
-                scene.Add(cam)
-                {{(animation.Length > 0 ? $"obj.Play({Q(animation)})" : "")}}
-                for (var i = 0; i < {{frames}}; i++) {
-                    if (i > 0) { obj.Advance({{N(1.0 / ModelConverter.FramesPerSecond)}}s) }
-                    cam.Render()
-                    IO.File.WriteAllBytes({{Q(dir)}} + "/f" + i + ".png", frame.ToPng())
-                }
-                """;
-        }
+        private System.Threading.CancellationTokenSource? _running;
 
         private async Task Render()
         {
@@ -123,35 +84,21 @@ namespace fire.Editor
             int frames = animation == null ? 1 : Math.Clamp((int)Math.Round(animation.Length * ModelConverter.FramesPerSecond) + (animation.Loop ? 0 : 1), 1, 240);
             bool fast = _renderer.SelectedIndex == 1;
             double yaw = _yaw.Value;
-            string dir = Path.Combine(Path.GetTempPath(), "fire-block-preview-" + Guid.NewGuid().ToString("N"));
-            (List<Bitmap>? Frames, string Error) result;
-            try
+            // a newer choice ends the drawing of the older one (its process in `fire`)
+            _running?.Cancel();
+            var cancel = new System.Threading.CancellationTokenSource();
+            _running = cancel;
+            var rendered = await Task.Run(() =>
             {
-                result = await Task.Run(() =>
-                {
-                    Directory.CreateDirectory(dir);
-                    string f3d = Path.Combine(dir, "model.f3d");
-                    File.WriteAllBytes(f3d, _f3d());
-                    var printed = new List<string>();
-                    var session = RuntimeSession.Build(new[] { Script(_w, _h, _d, f3d, dir, animation?.Name ?? "", fast, yaw, frames) }, fire.Runtime.VmExecutionMode.Release,
-                        a => { printed.Add(a.Length > 0 ? a[0].ToString() ?? "" : ""); return fire.Values.Value.MakeUndefined(); });
-                    session.Run();
-                    if (session.VirtualMachine?.UnhandledException is { } ex) return ((List<Bitmap>?)null, ex.ToString());
-                    var list = new List<Bitmap>();
-                    for (int i = 0; i < frames; i++)
-                    {
-                        string png = Path.Combine(dir, "f" + i + ".png");
-                        if (!File.Exists(png)) break;
-                        using var stream = File.OpenRead(png);
-                        list.Add(new Bitmap(stream));
-                    }
-                    return (list, string.Join("\n", printed));
-                });
-            }
-            catch (Exception ex) { result = (null, CompileErrors.Describe(ex)); }
-            finally { try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
-            if (request != _request) { foreach (var f in result.Frames ?? new()) f.Dispose(); return; }
-            if (result.Frames is not { Count: > 0 } list) { _status.Text = "scene3d could not draw it: " + result.Error; return; }
+                byte[] f3dBytes;
+                try { f3dBytes = _f3d(); }
+                catch (Exception ex) { return (Frames: (List<byte[]>?)null, Error: CompileErrors.Describe(ex), Engine: "", CompileMs: 0.0, RunMs: 0.0); }
+                return BlockPreview.RenderFrames(f3dBytes, _w, _h, _d, animation?.Name ?? "", fast, yaw, frames, cancel.Token);
+            });
+            if (request != _request) return;
+            if (rendered.Frames is not { Count: > 0 } pngs) { _status.Text = "scene3d could not draw it: " + rendered.Error; return; }
+            var list = new List<Bitmap>();
+            foreach (var png in pngs) { using var stream = new MemoryStream(png); list.Add(new Bitmap(stream)); }
             foreach (var f in _frames) f.Dispose();
             _frames = list;
             _shown = 0;
