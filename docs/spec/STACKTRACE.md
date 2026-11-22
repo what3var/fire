@@ -1,6 +1,6 @@
 # Stack-Traces für Ausnahmen
 
-Status: **im Bau** (20.11.2026): Format, Sprache, die C#-VM, die C-VM und die Einstellung (`#stacktrace`, Projekt, `--stacktrace`, `fire.native.json`) in beiden forge sind gebaut ([Stand](#13-stand)); der native Build (Schritte 4-6) noch nicht. Vorher: Heute hat eine Ausnahme keinen Stack-Trace: `print(e)` gibt `<object NotFound>`, eine
+Status: **gebaut** (22.11.2026): Format, Sprache, die C#-VM, die C-VM, die Einstellung (`#stacktrace`, Projekt, `--stacktrace`, `fire.native.json`) und der native Build mit Modulen (Schritte 4-6) in beiden forge ([Stand](#13-stand)); offen sind der Frame eines Natives bei Rückrufen und Teile von spark. Vorher: Heute hat eine Ausnahme keinen Stack-Trace: `print(e)` gibt `<object NotFound>`, eine
 unbehandelte Ausnahme schreibt eine Zeile (`Unhandled exception of type 'NotFound': not found: b`, [Exceptions](../language/14-exceptions.md)). Dieses
 Dokument legt fest, was ein Trace ist, wo er entsteht, was die Sprache davon zeigt, was er in jedem Ausführungsweg kostet (gemessen, [unten](#5-kosten-im-nativen-build-gemessen))
 und in welchen Schritten er kommt.
@@ -411,14 +411,15 @@ Gebaut (21.11.2026), Schritte 1-3, die Einstellung beider forge und der Teil von
 
 * **Format** (C#: `ExceptionTrace` in `src/fire/Runtime`, C: `FireTrace`/`fire_traceFormat` in `fire_rt.h`): wie in [2](#2-was-der-benutzer-sieht);
   `e.StackTrace` ohne den letzten Zeilenumbruch. Die Datei eines Frames ist der Name aus `LinkedProgram.TraceFiles` (`ExceptionTrace.DisplayFiles`, in
-  forge-c `fcLinkTrace`): relativ zum Ordner der ersten Quelle, eine Bibliothek mit ihrem Dateinamen (**noch ohne** den Paketnamen aus Schritt 5), eine
-  Quelle ohne Datei `fire:source/N`, Prelude und Test-Treiber keine. **Abweichung**: `StackFrame.file` ist dieser Name, nicht der volle Pfad - die VM in C
+  forge-c `fcLinkTrace`): relativ zum Ordner der ersten Quelle, eine Bibliothek des Projekts mit dem Namen ihres Moduls (ihres Imports) vor dem Dateinamen
+  (`Lib:util.fire`, Schritt 5; `ProcessedSource.Module`), eine Quelle ohne Datei `fire:source/N`, Prelude, die Preludes der Imports (auch die Pakete in
+  fire: sie sind Preludes ohne Datei, in allen drei Wegen `(prelude)`) und Test-Treiber keine. **Abweichung**: `StackFrame.file` ist dieser Name, nicht der volle Pfad - die VM in C
   und ein gepacktes Programm kennen keinen vollen Pfad, und der Name ist auf jeder Maschine derselbe.
 * **Sprache**: `StackTrace`, `Frames` (Getter an `Exception` im Prelude), `record StackFrame`; dahinter **`__EnvCall` 9 und 10** statt eigener Natives
   (`EnvironmentMethod.ExceptionTrace`/`ExceptionFrames`): der native Generator reicht `__EnvCall` schon an `envCall` der Runtime weiter, ein Programm mit
-  `e.Frames` baut damit auch nativ (dort heute `""` und keine Frames). `print(e)`/`e.ToString()`: `Klasse: message` über die Runtime (C#:
-  `Value.ToString`, C: `pieceOf` mit dem Bit 2 in `FireClassDesc.flags`, das die C-VM für Ausnahmeklassen setzt - **der native Generator setzt es
-  noch nicht**, nativ bleibt es `<object X>`).
+  `e.Frames` baut damit auch nativ. `print(e)`/`e.ToString()`: `Klasse: message` über die Runtime (C#: `Value.ToString`, C: `pieceOf` mit dem Bit 2 in
+  `FireClassDesc.flags`, das die C-VM und beide native Generatoren für Ausnahmeklassen setzen - `DescFlags`; die Spalte `message` des Deskriptors hat eine
+  Ausnahmeklasse jetzt auch in einem Programm ohne Ausnahmen).
 * **Am Objekt**: C# `ObjectInstance.Trace`, C `ObjExt.trace` (gezählt, freigegeben mit dem Objekt); die Kopierer (`ObjectCopier`, `ObjectCloner`,
   `SyncEngine`, `flatCopy`, der tiefe Kopierer) teilen ihn.
 * **C#-VM**: `VM.Trace.cs` (`TraceContext` je Programm: Einstellung, Dateien, Namen nach `TraceNames`, Zähler der Threads), `StampTrace` in
@@ -428,13 +429,95 @@ Gebaut (21.11.2026), Schritte 1-3, die Einstellung beider forge und der Teil von
   außer bei `off` (**auch bei `calls`**: ohne Zeilentabelle kennt ein Frame seine Datei nicht).
 * **`.fbc`**: Flag 4 hinter den Quellen: ein Byte `StackTraceMode`, dann die Namen der Quellen (nicht bei `off`). Beide forge schreiben es gleich.
 * **Einstellung**: `#stacktrace` (`StackTraceDirective`, E3167), `settings.stackTrace`, `--stacktrace`, `"stackTrace"` eines Ziels in fire.native.json
-  (nur C#: `TargetProfile.StackTrace`; forge-c liest es noch nicht - es wirkt erst mit dem nativen Teil).
+  (C# `TargetProfile.StackTrace`, forge-c `FgTarget.stackTrace` aus `nbApplyTargetDef`; der native Link von forge-c - `gen/native.c` - ruft jetzt auch
+  `fcLinkTrace`, mit der Einstellung des Ziels).
 * **Korpus**: die 16 `.unhandled` haben ihren Trace (`tests/run-cases.sh` und `run-cases-vm.sh` vergleichen sie ganz); die Gruppe `trace` (16 Fälle) in
   C#-VM und C-VM gleich. Die Gruppen `vm-*` vergleichen `UNBEHANDELT:` **ohne** den Trace (sie laufen in fire.Testing in allen drei Modi, Performance
-  hat keinen); fire.Testing vergleicht beim nativen Lauf nur die erste Zeile, bis der Generator Frames hat.
+  hat keinen); fire.Testing vergleicht beim nativen Lauf ("Native == VM", "Abbruch:") die ganze Ausgabe auf stderr mit dem Bericht der VM (das Programm
+  wird dafür mit der Datei des Falls gelinkt, wie die VM es lief).
 * **spark/forge test**: `OutputLocations` (fire.Compiler): die Zeilen `at ... (datei:zeile)` im Output-Panel sind per Doppelklick ein Sprung; `forge test`
   hängt den Trace an die Meldung (`__Tests.Trace`) und lässt die Frames von `Assert`/`Testing` und des Treibers weg (C# und forge-c gleich).
 
-Offen: Schritte 4-6 (nativ, Module mit Paketnamen, forge-c-Generator), der Frame eines Natives bei Rückrufen (`at Window.Tick (native)`), der Abschnitt
-`--- awaited at ---` bei `await [...]` (dort wirft der Prelude `throw fails[i]`, ein Rethrow), die Funktionsnamen im Dialog von spark und der
-Test-Explorer (klickbar), `fire.native.json` in forge-c.
+### Der native Build (Schritte 4-6, 22.11.2026)
+
+**Mechanismus: (a1), Schatten-Frames mit Zeile** - nicht Zeilentabellen über Rücksprungadressen. Eine Tabelle "Adresse → Zeile" bräuchte zum Aufnehmen das
+Abwickeln des C-Stacks (die Rücksprungadressen der Aufrufer), und das gibt es nur mit `.eh_frame`/DWARF (gcc, clang): nicht unter tcc (der Abwickler kommt
+über den ersten Frame nicht hinaus, [5](#5-kosten-im-nativen-build-gemessen)), nicht unter Open Watcom, nicht in wasm, auf dem ESP32 nur Adressen; die
+Zeile zu einer Adresse kennt nur der C-Compiler (`#line` → `.debug_line`, nach dem Einbetten nicht mehr die der VM), und ein Wurf kostete das 15-fache. Die
+Frames sind reines C, gehen auf jedem Ziel, geben genau die Zeilen der VM (dieselben Stellen der Zeilentabelle) und kosten gemessen im Mittel 2-3 % (unten).
+
+* **Der Frame** (`fire_rt.h`): `FireTFrame { prev; const FireFnInfo* fn; int32_t line; }` auf dem C-Stack der Funktion, der oberste in `g_traceTop` (ein
+  Wert des Strangs in `FIRE_THREAD_VARS`, dazu `g_traceTrailer`, `g_traceStartAt`). `FIRE_TF_ENTER(TF, &kFI_fN[0])` am Anfang (hinter `pre`/den
+  Deklarationen: was davor zurückkehrt, `pollSignals`, hat noch keinen), jedes `return x;` des Rumpfs wird `{ FIRE_TF_LEAVE(TF); return x; }`
+  (`TraceReturns`: ein Durchgang über den C-Text, Literale, Kommentare und `#`-Zeilen ausgenommen; ein Wert, der kein Name, keine Zahl und nicht `Undef()`
+  ist, wird vorher in `r_tf` berechnet, damit ein Aufruf darin den Frame noch unter sich hat); die oberste Ebene nimmt ihn auch am Ende ab.
+* **Zeilen**: `TF.line = 12;` vor der Instruktion, wo ein Bereich der Zeilentabelle beginnt und an jedem Sprungziel (`TraceBeforeInstruction`, die Stellen
+  von `FIRE_DBG_L`/`FIRE_DBG_J`) - nicht, wo die Datei der Stelle keine ist (Prelude: dort zeigt der Frame keine Zeile, eine Funktion des Preludes zahlt nur
+  das Auflegen), nicht bei `calls`. Hat eine Funktion Code aus mehreren Dateien (die oberste Ebene eines Programms mit Bibliotheken oder mehreren Quellen),
+  hat sie einen Deskriptor je Datei (`kFI_fN[k]`, in der Reihenfolge der Instruktionen) und setzt an diesen Stellen auch `TF.fn`. Die Zeile wird beim
+  Auflegen nicht vorbelegt: gelesen wird sie nur bei `lines` und einer Datei, und dort steht vor der ersten Instruktion immer eine.
+* **Deskriptoren** `static const FireFnInfo kFI_fN[] = {{"Store.Find", "main.fire"}}` vor der Funktion: der Name nach `TraceNames` (der Generator nimmt
+  `TraceNames.Build`, forge-c `fgTraceNamesBuild`; eine `fire`-Basis, die kein Member ist, `<fire>`), die Datei nach `LinkedProgram.TraceFiles`.
+* **Catch-Blöcke**: `FIRE_TF_CATCH(TF)` am Anfang der Catch-Funktion (der Frame liegt im Frame-Struct der Funktion, `FR->TF`) macht ihn zum obersten,
+  jedes `return` darin stellt Wurfstelle, Deskriptor und Zeile wieder her (`FIRE_TF_CATCH_END`) - wie `catchName` im Debug-Build.
+* **Kein Frame** für eine Funktion, die nicht werfen kann (Optimierung 1 aus [7](#7-empfehlung-je-modus-und-die-direktive)): ihr Text (Prolog, Rumpf, Ausgänge)
+  ruft nichts außer `Int`, `Float`, `Bool`, `Undef`, `FIRE_LIKELY`/`FIRE_UNLIKELY`, sich selbst und Funktionen ohne Frame (`TraceCannotThrow`; das Ergebnis
+  je Funktion ist Teil der Runden des Generators - ändert es sich, gibt es eine Runde mehr, `TraceNoteFrameless`). `M.Fib` (ein C-Rumpf) und die
+  Initialisierer der Konstanten (`Math.PI`) haben keinen; ihre Zeilen fallen weg.
+* **Aufnehmen**: `throwValueR` → `fire_traceThrowHere` (nur, wenn ein Frame da ist und das Objekt noch keinen Trace hat); ein Programm ohne Ausnahmen endet
+  in `fatalException`, das die Frames druckt (`fire_tracePrintHere`). Bis 64 Frames ohne `fire_traceSlot`.
+* **Threads**: der Generator setzt vor `fireThread` `g_traceStartAt = "main.fire:5";` (`TraceStartAt`: die Stelle des `fire`, ohne Zeile bei `calls`,
+  `prelude`), `fireThreadStart` macht daraus die Zeile `in thread 'Fire #N', started at ...` (`fire_traceThreadLine`, gezählt in `g_traceThreads` nach der
+  Reihenfolge der Starts) in `ThreadStart.trailer`, `threadEntry` hält sie in `g_traceTrailer`. Ein Task hat seine Frames im Zustand des Tasks.
+* **Warten**: `fire_traceAwaitedHere` an den drei Stellen, an denen die C-VM `fire_vmTraceAwaited` hatte (`actorAwait`, `awaitReplyOf`,
+  `fire_completion_wait`) - unter `FIRE_VM` ist es dieser Haken, nativ die Frames des Wartenden als Abschnitt.
+* **Einstellung**: `off` erzeugt nichts davon (mit Modulen setzt `fire_main` `g_stackTrace = FIRE_TRACE_OFF`, falls eine Bibliothek doch Frames hat), `calls`
+  keine Zeilen und `g_stackTrace = FIRE_TRACE_CALLS`. Debug hat immer `lines`.
+* **Debug-Build**: **Abweichung** von Schritt 4 - er legt denselben `FireTFrame` neben den `DbgFrame` (der Wrapper `fN` den `DbgFrame`, der Rumpf `fN_b` den
+  Trace-Frame). Den `DbgFrame` zu lesen hieße, ihm Deskriptoren je Quelle zu geben (seine Namen sind die des Debuggers: `Klasse.<getter>`, nicht
+  `Klasse.get_X`); ein Debug-Build ist ohnehin 10- bis 50-mal so langsam.
+* **Module** (Schritt 5): die Deskriptoren sind statische Daten des Moduls (der Bibliothek, des Plugins); die Sicht einer Bibliothek (`LibraryView`) trägt
+  die Einstellung und die Dateinamen weiter. Eine Bibliothek des Projekts heißt im Trace `Lib:util.fire` (VMs und nativ gleich), die Pakete in fire sind
+  Preludes der Imports (`(prelude)`). Der Schlüssel des Caches der statischen Bibliotheken hat eine Zeile `stacktrace <mode>`.
+* **forge-c** (Schritt 6): `native/forge/gen/trace.c` (ein Gegenstück zu `CppGenerator.Trace.cs`), die Stellen in `cppgenerator3.c`, `cppgenerator8.c`
+  (`fire`), `cppgenerator2.c` (`DescFlags`); `"stackTrace"` eines Ziels in `fire.native.json` (`FgTarget.stackTrace`), der native Link ruft `fcLinkTrace`.
+* **Geprüft**: das C beider forge byte-gleich (`tests/compare-frontend.sh native` über den ganzen Korpus mit `default`, `performance`, `debug`; eine Auswahl
+  von 43 Fällen mit `modules`, `static`, `shared`; `buildplan`, `fbc`), die Gruppe `trace` nativ in Release, Debug und Performance mit gcc und tcc gleich der VM,
+  die 16 `.unhandled` nativ mit gcc und tcc, die Gruppe `native` mit tcc (3 Abweichungen, die auch mit `--stacktrace off` da sind: 1370, 3210, 4110),
+  `fire.Testing` (trace; linkage - 73 gut, die 11 Fälle unter Wine scheitern an Wine; die Fälle der Gruppe native in vier Teilen - gescheitert nur
+  zwei FreeRTOS-Fälle am Simulator, `sim/FreeRTOS.h` doppelt eingebunden, und Scene3D an einem Leck von `libvulkan_lvp` unter LeakSanitizer).
+
+**Gemessen** (die neun Programme aus `tests/bench` mit rund 50-mal größeren Zählern wie in [5](#5-kosten-im-nativen-build-gemessen), dazu vier eigene:
+virtuelle Methoden über einer Liste, ein `Dictionary`, Quicksort mit Rekursion und Array-Zugriffen; Release, `--stacktrace lines` gegen `--stacktrace off`,
+gcc 13 `-O2`; Zeit: das Minimum von 7 Läufen, verschränkt, Benutzer- + Systemzeit; Instruktionen: callgrind):
+
+| Programm | Zeit ohne (gcc) | mit | Δ Zeit | Δ Instr. | Zeit ohne (tcc) | mit | Δ Zeit |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| alloc | 53,8 ms | 54,6 | +1,5 % | +1,6 % | 664 ms | 657 | -1,2 % |
+| array | 317,2 ms | 325,9 | +2,8 % | +2,7 % | 4350 ms | 4386 | +0,8 % |
+| fib | 2,9 ms | 2,9 | +2,3 % | ±0 % (kein Frame) | 16,3 ms | 16,3 | ±0 % |
+| float | 156,1 ms | 155,2 | -0,5 % | ±0 % | 1231 ms | 1212 | -1,5 % |
+| lambda | 185,9 ms | 183,1 | -1,5 % | +5,8 % | 1373 ms | 1401 | +2,0 % |
+| list | 200,6 ms | 202,8 | +1,1 % | +4,3 % | 1701 ms | 1681 | -1,2 % |
+| loop | 62,4 ms | 62,9 | +0,7 % | ±0 % | 1412 ms | 1447 | +2,5 % |
+| method | 5,1 ms | 5,4 | +6,6 % | +14,2 % | 679 ms | 672 | -1,0 % |
+| string | 70,3 ms | 76,1 | +8,3 % | +2,4 % | 899 ms | 872 | -3,0 % |
+| **Mittel der 9** | | | **+2,4 %** | **+3,4 %** | | | **-0,3 %** |
+| oop (virtuelle Methoden, `foreach`) | 134,4 ms | 137,6 | +2,4 % | +5,6 % | 1449 ms | 1446 | -0,2 % |
+| dict (`Dictionary<string, int>`) | 61,1 ms | 65,1 | +6,7 % | +2,9 % | 560 ms | 573 | +2,3 % |
+| sort (Quicksort, Rekursion) | 508,7 ms | 518,6 | +1,9 % | +3,5 % | 4871 ms | 5005 | +2,7 % |
+
+Die Schwelle (im Mittel ≤ 5 %, keines über 10 %) hält: gcc im Mittel +2,4 % Zeit (+3,4 % Instruktionen), höchstens +8,3 % (`string`, ein Programm, dessen
+Instruktionen nur um 2,4 % steigen - die Maschine war belastet, load 2-3, die Zeiten schwanken um einige Prozent); tcc ist in der Schwankung. `method`: ein
+Aufruf von 7 Instruktionen bekommt eine Speicherung dazu (die eingebettete Methode lässt ihren Frame bis auf eine Speicherung fallen) - +14 % Instruktionen
+eines Programms aus Prozessstart und einer leeren Schleife, +6,6 % Zeit bei 5 ms. **Performance** ohne Einstellung ist unverändert: das C der 13 Programme
+ist byte-gleich dem vor dem Schritt (forge-c von `clippy` gegen das neue, `cgen performance`), bis auf das Bit 2 der Ausnahmeklassen in den Deskriptoren.
+
+Ein Wurf (20 Ebenen Rekursion, `catch` außen) kostet mit Trace rund doppelt so viele Instruktionen wie ohne (Aufnehmen von 21 Frames, `malloc` des Traces und
+der Erweiterung des Objekts) - Würfe sind nicht der heiße Weg; wer in einer Schleife wirft, schaltet `#stacktrace off`.
+
+Offen: der Frame eines Natives bei Rückrufen (`at Window.Tick (native)`) - in keinem der drei Wege gebaut: er bräuchte eine dritte Art Frame im Format (`(native)`
+statt Datei/`prelude`) und an der Grenze des Rückrufs den Namen des Natives (C#-VM `_callbackBoundaries`, C-VM, nativ `fire_cbCall`/`callLam`, die nicht
+wissen, welches Native zurückruft); bis dahin folgen die Frames des Lambdas direkt auf die des fire-Codes, der das Native rief, in allen Wegen gleich. Der
+Abschnitt `--- awaited at ---` bei `await [...]` (dort wirft der Prelude `throw fails[i]`, ein Rethrow), die Funktionsnamen im Dialog von spark und der
+Test-Explorer (klickbar). Die kleinen Ziele (Open Watcom) sind nicht gemessen ([12](#12-offen)).
