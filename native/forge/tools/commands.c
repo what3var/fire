@@ -626,6 +626,7 @@ static PjBuildArgs tcArgs(const TcOptions* o) {
     a.projectName = o->projectName; a.mode = o->mode; a.floatWidth = o->floatWidth; a.stripping = o->stripping; a.optimize = o->optimize; a.quick = o->quick; a.split = o->split;
     a.keepAll = o->keepAll; a.keep = o->keep; a.stats = o->stats; a.all = o->all; a.check = o->checkOnly; a.defines = o->defines;
     a.intWidth = o->intWidth; a.debugInfo = o->debugInfo; a.planHook = tcPlanHook; a.hookState = o;
+    a.host = o->host;
     return a;
 }
 /* `build <files>` (CommandLine.Build, NativeBuild) with what the build of one file (build/command.c) does not take: several files, -D, -i, --overlay,
@@ -658,13 +659,13 @@ static int tcBuildFiles(FcCtx* c, const TcOptions* o, const char* prelude, const
             if (config->stats) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: --stats");
             memset(&b, 0, sizeof b);
             b.prelude = prelude; b.storeRoot = storeRoot; b.mode = o->mode; b.floatWidth = o->floatWidth; b.intWidth = o->intWidth; b.keepSources = o->keep;
-            b.link = pjNbLink; b.project = plan;
+            b.link = pjNbLink; b.vmLink = pjNbVmLink; b.project = plan;   /* (a plugin: named after its output - no project) */
             r = nbBuild(c, &b, config, target, toolchain, o->output ? o->output : nbDefaultOutput(c, target));
             c->collecting = false;
             for (i = 0; i < c->diags->count; i++) fcDiagLogLine(&err, (const FcDiagnostic*)c->diags->items[i]);
             if (*r.log) { fcOut8(&out, r.log); if (!fcEndsWith(r.log, "\n")) fcBufChar(&out, '\n'); }
             if (!r.ok) {
-                if (r.error) fcBufFmt(&err, "error %s: %s\n", strstr(r.error, "was not found") ? "E7003" : "E7002", r.error);
+                if (r.error) fcBufFmt(&err, "error %s: %s\n", r.config || strstr(r.error, "was not found") ? "E7003" : "E7002", r.error);
                 fcBufFmt(&out, "The native build for %s failed.\n", target->name);
                 result = 1;
             } else fcBufFmt(&out, "%s (native, target %s, toolchain %s)\n", r.output, target->name, nbKind(toolchain));
@@ -702,7 +703,6 @@ static int tcBuildFiles(FcCtx* c, const TcOptions* o, const char* prelude, const
 }
 /* `build` with what the builds of build/command.c and project/command.c do not parse: the plan of the files here, a project there with its hook */
 static int tcBuild(FcCtx* c, const TcOptions* o, const char* prelude, const char* storeRoot) {
-    if (o->host) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: --host (linkage plugin)");
     if (o->files->count == 1 && tcIsProjectFile((const char*)o->files->items[0])) {
         PjBuildArgs a = tcArgs(o);
         return pjBuildMain(&a, prelude, storeRoot);

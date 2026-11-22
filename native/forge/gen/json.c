@@ -34,7 +34,7 @@ static FcFieldInfo* fgJsonFieldInfoOf(const FcRtClass* rc, const char* name) {
 }
 static const FcU* fgSafeUnit(FcCtx* c, const char* demand) {
     const FcU* r = NULL;
-    FC_TRY(c) { r = fcUParse(c, demand); }
+    FC_TRY(c) { r = fgDemandUnitParse(c, demand); }   /* (Unit.Parse: an encoded unit of the program - `§C§K:1§1§273.15§§` - is DecodeDemand) */
     FC_CATCH(c) { r = NULL; }
     FC_END_TRY;
     return r;

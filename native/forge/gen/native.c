@@ -395,6 +395,46 @@ static void fgDumpModules(FcCtx* c, const char* linkage, FcLinked* linked, FcLis
     fgRemoveTree(c, cache);
 }
 
+/* FrontendDump.DumpPlugin: `cgen plugin|pluginhost` - GeneratePlugin into an empty cache of its own, the plugin named after the file: its C, its natives in C++,
+ * the interfaces of the modules it needs and the log; `pluginhost` first the program with linkage "shared" into that cache, then the plugin for it */
+static void fgDumpPlugin(FcCtx* c, bool withHost, const char* path, FcLinked* linked, FcList* natives, const FgOptions* o, FcStore* store, FcBuf* out) {
+    const char* identity = fgGeneratorIdentity;
+    const char* tmp = getenv("TMPDIR");
+    const char* cache;
+    const char* name = fcBaseName(path);
+    const char* dot = strrchr(name, '.');
+    FgPluginPlan* volatile plan = NULL;
+    volatile bool failed = false;
+    int i;
+    if (dot && dot != name) name = fcStrN(c, name, (size_t)(dot - name));
+    {
+        char rnd[33];
+        unsigned long long a = ((unsigned long long)rand() << 32) ^ (unsigned long long)rand() ^ (unsigned long long)(uintptr_t)out;
+        snprintf(rnd, sizeof rnd, "%016llx%08x", a, (unsigned)getpid());
+        cache = fcFmt(c, "%s/fire-cgen-cache-%s", tmp && *tmp ? tmp : "/tmp", rnd);
+    }
+    fgGeneratorIdentity = "cgen";
+    FC_TRY(c) {
+        FgPluginHostInfo* host = NULL;
+        if (withHost) {
+            host = GenerateStatic(c, linked, natives, o->target, "cgen", o->stripping, cache, true, false, store)->host;
+            fcBufStr(out, "//==== host\n");
+            if (host) fcOut8(out, fgHostInfoJson(c, host));
+            fcBufChar(out, '\n');
+        }
+        plan = GeneratePlugin(c, linked, natives, o->target, name, host, o->stripping, "cgen", cache, store);
+    } FC_CATCH(c) { failed = true; } FC_END_TRY;
+    fgGeneratorIdentity = identity;
+    fgRemoveTree(c, cache);
+    if (failed) fcRethrow(c);
+    fcOut8(out, plan->c);
+    if (plan->natives) { fcBufStr(out, "//==== fire_plugin_natives.cpp\n"); fcOut8(out, plan->natives); }
+    fcBufStr(out, "//==== deps\n");
+    for (i = 0; i < plan->deps->count; i++) { const FgModuleDep* d = (const FgModuleDep*)plan->deps->items[i]; fcBufFmt(out, "%s %s\n", d->module, d->abi); }
+    fcBufStr(out, "//==== log\n");
+    fcOut8(out, plan->log);
+}
+
 /* `cgen:<options>` of one file: what FrontendDump.DumpNative writes */
 static void fgDumpNative(FcCtx* c, const char* options, const char* path, const char* prelude, const char* storeRoot, FcBuf* out) {
     FgOptions o;
@@ -404,6 +444,7 @@ static void fgDumpNative(FcCtx* c, const char* options, const char* path, const 
     FgSources s;
     FcStore store;
     const char* linkage = NULL;
+    bool plugin;
     int i;
     memset(&o, 0, sizeof o);
     o.target = fgHostTarget();
@@ -420,14 +461,19 @@ static void fgDumpNative(FcCtx* c, const char* options, const char* path, const 
         else if (streq0(w, "i16")) o.intWidth = 16;
         else if (streq0(w, "i32")) o.intWidth = 32;
         else if (streq0(w, "f32")) o.floatWidth = 32;
-        else if (streq0(w, "modules") || streq0(w, "static") || streq0(w, "shared")) linkage = w;
+        else if (streq0(w, "modules") || streq0(w, "static") || streq0(w, "shared") || streq0(w, "plugin") || streq0(w, "pluginhost")) linkage = w;
         else if (fcStartsWith(w, "strip")) o.stripping = atoi(w + 5);
         else if (fcStartsWith(w, "t:")) { o.target = fgTargetNamed(w + 2); if (!o.target) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unknown target %s", w + 2)); }
         else fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unknown option %s", w));
     }
-    linked = fgLinkNative(c, path, prelude, storeRoot, fcStrictTag(path), &o, &registry);
+    plugin = linkage && (streq0(linkage, "plugin") || streq0(linkage, "pluginhost"));
+    fcLinkClassMeta = plugin;
+    FC_TRY(c) { linked = fgLinkNative(c, path, prelude, storeRoot, fcStrictTag(path), &o, &registry); }
+    FC_CATCH(c) { fcLinkClassMeta = false; fcRethrow(c); } FC_END_TRY;
+    fcLinkClassMeta = false;
     memset(&store, 0, sizeof store);
     store.root = storeRoot;
+    if (plugin) { fgDumpPlugin(c, streq0(linkage, "pluginhost"), path, linked, registry->names, &o, &store, out); return; }
     if (linkage) { fgDumpModules(c, linkage, linked, registry->names, &o, &store, out); return; }
     s = fgGenerateSources(c, linked, registry->names, o.target, o.stripping, false, o.split ? FG_SPLIT_ON : FG_SPLIT_AUTO, "files", &store);
     fcOut8(out, s.program);

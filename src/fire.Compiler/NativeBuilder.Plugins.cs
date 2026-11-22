@@ -60,9 +60,38 @@ namespace fire.Compiler
         /// it is built for that program (its switches, the files of its libraries - on Windows needed: the DLL imports from them).</summary>
         private static NativeBuildResult BuildPlugin(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode, int? floatWidth, bool keepSources, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths)
+            => BuildPlugin(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, null);
+
+        /// <summary>`forge buildplan plugin` (Phase D 2 of the C port, docs/spec/FORGE_C.md): what <see cref="BuildPlugin"/> would run, without running a compiler - the
+        /// toolchain, the log (a failure: `failed <text>` before it), the commands (the folder of the build `&lt;build&gt;`, the library `&lt;plugin&gt;`, the cache
+        /// `&lt;cache&gt;`) and every file of the folder of the build with its SHA-256; the bytecode for the VM (`.fireplugin`) and the libraries of its natives are
+        /// written into that folder. The generator is named by a fixed text, its cache is one of its own.</summary>
+        internal static void PlanPlugin(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output, VmExecutionMode? mode,
+            int? floatWidth, string? basePath, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths, StringBuilder o)
+        {
+            string identity = CppGenerator.GeneratorIdentity;
+            CppGenerator.GeneratorIdentity = "cgen";
+            try { BuildPlugin(sources, config, target, toolchain, output, mode, floatWidth, false, basePath, null, plan, sourcePaths, o); }
+            finally { CppGenerator.GeneratorIdentity = identity; }
+        }
+
+        private static NativeBuildResult BuildPlugin(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
+            VmExecutionMode? mode, int? floatWidth, bool keepSources, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths,
+            StringBuilder? dry)
         {
             var log = new StringBuilder();
-            NativeBuildResult Fail(string text) => new(false, output, log + text, new[] { new Diagnostic(0, text, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
+            NativeBuildResult Fail(string text)
+            {
+                if (dry != null) dry.Append("toolchain ").Append(toolchain.EffectiveKind).Append("\nfailed ").Append(text).Append('\n').Append(log.Length > 0 ? "log\n" + log : "");
+                return new(false, output, log + text, new[] { new Diagnostic(0, text, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
+            }
+            var commands = new List<(string Executable, string Arguments)>();
+            string? dryCache = dry != null ? Path.Combine(Path.GetTempPath(), "fire-plan-cache-" + Guid.NewGuid().ToString("N")) : null;
+            (bool, string) Exec(string exe, string arguments, string dir)
+            {
+                if (dry != null) { commands.Add((exe, arguments)); return (true, ""); }
+                return Run(exe, arguments, dir);
+            }
             bool dll = target.Native.Platform == "windows";
             bool can = toolchain.EffectiveKind is "gcc" or "clang" && (dll || target.Native.Platform == "posix" && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) && target.Name == TargetProfile.Host.Name);
             if (!can) return Fail($"A fire plugin is a shared library: Linux and macOS with gcc or clang, Windows with MinGW (not the target '{target.Name}' with '{toolchain.EffectiveKind}').");
@@ -86,11 +115,15 @@ namespace fire.Compiler
             string name = plan?.Project.Name ?? Path.GetFileName(full);
             var watch = Stopwatch.StartNew();
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the plugin");
-            var pluginPlan = CppGenerator.GeneratePlugin(linked, target, name, host, StrippingOf(config, plan), ToolchainStamp(toolchain));
+            PluginBuildPlan pluginPlan;
+            try { pluginPlan = CppGenerator.GeneratePlugin(linked, target, name, host, StrippingOf(config, plan), ToolchainStamp(toolchain), dryCache); }
+            catch when (dryCache != null) { try { Directory.Delete(dryCache, true); } catch (IOException) { } throw; }
             log.Append(pluginPlan.Log);
-            log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
+            if (dry == null) log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
             string workDir = keepSources ? full + ".src" : Path.Combine(Path.GetTempPath(), "fire-plugin-" + Guid.NewGuid().ToString("N"));
+            // (a dry run: the bytecode and the libraries of its natives in the folder of the build)
+            if (dry != null) bytecode = Path.Combine(workDir, Path.GetFileName(bytecode));
             try
             {
                 string cFile = WriteFiles(workDir, pluginPlan.C, target, "fire_plugin.c", configDirectory);
@@ -107,7 +140,7 @@ namespace fire.Compiler
                     var natCompile = CompilerCommand(toolchain, target, natFile, workDir, natObj, sharedLibrary: !dll, language: "c++", compileOnly: true);
                     string natArgs = natCompile.Arguments + (dll ? "" : " -fvisibility=hidden");
                     log.AppendLine($"{natCompile.Executable} {natArgs}");
-                    (ok, text) = Run(natCompile.Executable, natArgs, workDir);
+                    (ok, text) = Exec(natCompile.Executable, natArgs, workDir);
                     log.Append(text);
                     if (!ok) return Fail("The C++ compiler reported errors in the natives of the plugin (see the build log).");
                 }
@@ -117,14 +150,14 @@ namespace fire.Compiler
                     var compile = CompilerCommand(toolchain, target, cFile, workDir, Path.Combine(workDir, "fire_plugin.o"), language: "c", compileOnly: true);
                     log.AppendLine($"{compile.Executable} {compile.Arguments}");
                     BuildMonitor.Step(BuildPhase.CompileC, "Compiling the plugin (C)", 0, 2);
-                    (ok, text) = Run(compile.Executable, compile.Arguments, workDir);
+                    (ok, text) = Exec(compile.Executable, compile.Arguments, workDir);
                     log.Append(text);
                     if (!ok) return Fail("The C compiler reported errors in the plugin (see the build log).");
                     var imports = new List<string>();
                     if (host!.Runtime != null) imports.Add(Path.Combine(hostDir!, host.Runtime));
                     foreach (var (module, _) in pluginPlan.Deps)
                         if (host.Modules.FirstOrDefault(m => m.Name == module) is { Library.Length: > 0 } m) imports.Add(Path.Combine(hostDir!, m.Library));
-                    var missing = imports.FirstOrDefault(f => !File.Exists(f));
+                    var missing = dry != null ? null : imports.FirstOrDefault(f => !File.Exists(f));
                     if (missing != null) return Fail($"The library '{Path.GetFileName(missing)}' of the program is not next to it ({hostDir}).");
                     // (with natives in C++: linked by the C++ compiler, its runtime in the DLL - -static, since the posix MinGW would otherwise leave libwinpthread-1.dll
                     // to be found next to the program; the DLLs of the program given by path stay imports)
@@ -134,7 +167,7 @@ namespace fire.Compiler
                     string arguments = $"-shared -static-libgcc{(natObj != null ? " -static-libstdc++ -static" : "")} -o \"{library}\" {objects}{string.Concat(imports.Select(i => $" \"{i}\""))} -Wl,--export-all-symbols -s {string.Join(" ", libs)}";
                     log.AppendLine($"{cc} {arguments}");
                     BuildMonitor.Step(BuildPhase.Link, "Linking the plugin's DLL", 1, 2);
-                    (ok, text) = Run(cc, arguments, workDir);
+                    (ok, text) = Exec(cc, arguments, workDir);
                     log.Append(text);
                 }
                 else
@@ -144,10 +177,10 @@ namespace fire.Compiler
                     string extra = (OperatingSystem.IsMacOS() ? " -undefined dynamic_lookup" : "") + (natObj != null ? " -lstdc++" : "");
                     log.AppendLine($"{link.Executable} {link.Arguments}{extra} -lm");
                     BuildMonitor.Step(BuildPhase.Link, "Compiling and linking the plugin (C)");
-                    (ok, text) = Run(link.Executable, link.Arguments + extra + " -lm", workDir);
+                    (ok, text) = Exec(link.Executable, link.Arguments + extra + " -lm", workDir);
                     log.Append(text);
                 }
-                bool built = ok && File.Exists(library);
+                bool built = ok && (dry != null || File.Exists(library));
                 if (built)
                 {
                     // the bytecode for the VM: compiled for the VM (`#if vm`), with the interfaces of the modules as the VM sees them
@@ -157,11 +190,22 @@ namespace fire.Compiler
                     PluginBytecode.Write(bytecode, name, vmLinked, vmDeps, PluginVmNatives(vmLinked, Path.GetDirectoryName(bytecode)!, log));
                     log.AppendLine($"plugin {name}: {library}, {Path.GetFileName(bytecode)} (the VM)");
                 }
+                if (dry != null)
+                {
+                    string Neutral(string text) => text.Replace(library, "<plugin>", StringComparison.Ordinal).Replace(workDir, "<build>", StringComparison.Ordinal).Replace(dryCache!, "<cache>", StringComparison.Ordinal);
+                    dry.Append("toolchain ").Append(toolchain.EffectiveKind).Append('\n');
+                    if (log.Length > 0) dry.Append("log\n").Append(Neutral(log.ToString()));
+                    foreach (var (executable, arguments) in commands) dry.Append("command ").Append(executable).Append(' ').Append(Neutral(arguments)).Append('\n');
+                    dry.Append("key none\n");
+                    foreach (var file in Directory.EnumerateFiles(workDir, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(workDir, f).Replace('\\', '/')).OrderBy(f => f, StringComparer.Ordinal))
+                        dry.Append("file ").Append(file).Append(' ').Append(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(workDir, file)))).ToLowerInvariant()).Append('\n');
+                }
                 return new NativeBuildResult(built, library, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C compiler reported errors in the plugin (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
             }
             finally
             {
                 if (!keepSources) try { Directory.Delete(workDir, true); } catch (IOException) { }
+                if (dryCache != null) try { Directory.Delete(dryCache, true); } catch (IOException) { }
             }
         }
     }

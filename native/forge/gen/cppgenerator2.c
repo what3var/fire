@@ -392,6 +392,7 @@ static const char* Run(FgGen* g) {
                 FcList* parts = fgSplit(g->c, (const char*)((FcDictEntry*)byIndex->items[k])->key, '\x01');
                 fcBufFmt(&sb, "    refShare(%s);\n", StaticFieldVar(g, (const char*)parts->items[0], (const char*)parts->items[1]));
             }
+            if (g->openWorld) fcBufStr(&sb, "    firePluginShareGlobals();   // (the static fields of the plugins it loaded)\n");
             fcBufStr(&sb, "}\n");
             fcBufStr(&sb, "#endif\n");
         }

@@ -29,6 +29,10 @@ static int pjParseArgs(int argc, char** argv, PjBuildArgs* a, bool publish) {
             a->engine = fcAsciiIEq(e, "vm") ? "vm" : "native";
         }
         else if (streq0(s, "--linkage")) a->linkage = PJ_VALUE();
+        else if (fcAsciiIEq(s, "--host")) {
+            a->host = PJ_VALUE();
+            if (!a->host || !*a->host) { fprintf(stderr, "--host must be followed by the program the plugin is built for.\n"); return 2; }
+        }
         else if (streq0(s, "--split")) { const char* v = PJ_VALUE(); if (!v || !*v || (a->split = fgSplitModeParse(v)) < 0) { fprintf(stderr, "--split must be followed by auto, on or off.\n"); return 2; } }
         else if (streq0(s, "--quick") || fcStartsWith(s, "--quick=")) {
             a->quick = nbQuickParseLevel(s[7] == '=' ? s + 8 : "");
@@ -369,7 +373,9 @@ static int pjProjectBuildPlanHook(FcCtx* c, const char* path, NbBuild* b, NbConf
     pjApplyBuildSettings(c, config, plan);
     b->link = pjNbLink;
     b->overlay = pjNbOverlay;
+    b->vmLink = pjNbVmLink;
     b->project = plan;
+    b->projectName = plan->project->project->name;
     return 1;
 }
 

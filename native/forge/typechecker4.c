@@ -867,7 +867,10 @@ typedef struct FcRetNote { bool ok; const char* needs; } FcRetNote;
 struct FcReturns { FcList* notes; bool ends; };
 static FcReturns* fcReturnsNew(FcTC* t, FcList* notes, bool ends) { FcReturns* r = (FcReturns*)fcAlloc(TC_, sizeof *r); r->notes = notes; r->ends = ends; return r; }
 
-static bool fcDeriveDefined(void) { const char* v = getenv("FIRE_NO_DERIVE"); return !(v && strcmp(v, "1") == 0); }
+/* Linker.ClassMeta (a plugin, `--linkage plugin`): the links of this process write the reflection metadata of every class, and the type checker derives no
+ * `defined` (TypeChecker.DeriveDefinedOverride = false: a program that loads the plugin may call its methods with anything) */
+static bool fcLinkClassMeta = false;
+static bool fcDeriveDefined(void) { const char* v = getenv("FIRE_NO_DERIVE"); return !fcLinkClassMeta && !(v && strcmp(v, "1") == 0); }
 static bool fcInferUninitializedDefined(void) { const char* v = getenv("FIRE_INFER_UNINITIALIZED_DEFINED"); return !(v && strcmp(v, "0") == 0); }
 static const char* MethodKey(FcTC* t, const char* name, int count) { return TF(t, "%s/%d", name, count); }
 static const char* CtorKey(FcTC* t, const char* cls, int count) { return TF(t, "new:%s/%d", cls, count); }

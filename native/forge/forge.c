@@ -109,6 +109,7 @@ static bool fcStrictTag(const char* path);
 #include "build/bootimage.c"
 #include "build/tools.c"
 #include "build/cvm.c"   /* the engine vm (Phase D 3) */
+#include "build/plugin.c"   /* linkage plugin (after pkglib.c and cvm.c) */
 #endif
 
 /* the markup generators (Phase C 5) */

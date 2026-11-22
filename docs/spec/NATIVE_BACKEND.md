@@ -1628,6 +1628,12 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   Getestet: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugindebug` (nativ: Haltepunkt im Programm, `sources`, Step Into in die Methode des Plugins, Scopes,
   `this` mit dem Feld des Plugins, Haltepunkt nach Datei im Plugin, Step Out) und derselbe Plan in der VM (`FIRE_TESTS_ONLY=debugger`, "Plugins in der VM").
   Nicht geprüft: das Fenster von spark (die Haltepunkte im Editor in einer Datei des Plugins), Windows.
+* **Statische Felder** (22.11.2026, `FIRE_PLUGIN_FORMAT` 7): die statischen Initialisierer eines Plugins laufen in der Reihenfolge ihrer Abhängigkeiten, wie der
+  Top-Level eines Programms sie hat (`CompiledProgram.StaticInitSequence` des ganzen Programms - vorher die Sicht des Moduls, die keinen Top-Level hat: es lief die
+  Reihenfolge der Deklarationen). Was sie und das Plugin vor dem ersten `fire` in seine statischen Felder legen, teilt das erste `fire` mit den fire-Threads wie die
+  eigenen des Programms: das Plugin schreibt `fire_pl_share` (`refShare` auf jedes seiner statischen Felder, `FirePlugin.shareGlobals`), `fire_shareGlobals` des
+  Programms mit `"shared"` ruft `firePluginShareGlobals` (alle registrierten Plugins), ein Plugin, das nach dem ersten `fire` registriert wird, teilt gleich nach
+  seinem `init`. Vorher blieben Texte und Lambdas in statischen Feldern eines Plugins ungeteilt (ohne die GIL: nicht-atomare Zähler in mehreren Threads).
 * **Nur für die VM** (`NativeBuilder.WriteVmPlugin`, ohne native Bibliothek): spark lädt so die Treiber installierter Packages ([Devices](../devices/README.md), `PackageDriverAgent`).
   Das Prelude eines Imports ist die eigene Quelle des Plugins: `Linker.OwnImports` nennt den Import, seine Natives sind die des Plugins, sein Prelude wird nicht noch
   einmal eingefügt (was das Package verlangt, kommt wie sonst dazu). Die `.fireplugin`-Datei nennt seine Natives mit dem vollen Pfad der Bibliothek des Packages für die

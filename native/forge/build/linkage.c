@@ -5,7 +5,7 @@
  * one after the other (C#: side by side, Parallel.For - the log is the same, each library's lines together in the order of the plan). */
 
 static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output);
-static NbResult nbBuildPluginC(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output);
+static NbResult nbBuildPluginC(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output);   /* (build/plugin.c) */
 
 /* QuickNotApplied: a quick build (`--quick`) with linkage static, shared or plugin builds as without it - the log says so */
 static NbResult nbQuickNotApplied(FcCtx* c, const NbConfig* config, NbResult r) {
@@ -421,10 +421,4 @@ static NbResult nbWriteStaticFiles(FcCtx* c, const NbBuild* b, NbConfig* config,
     r.output = directory;
     r.log = fcBufDone(c, &log);
     return r;
-}
-
-/* `--linkage plugin` (NativeBuilder.Plugins.cs): not ported yet */
-static NbResult nbBuildPluginC(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output) {
-    (void)b; (void)config; (void)target; (void)toolchain; (void)output;
-    fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: linkage \"plugin\" (NativeBuilder.Plugins.cs, the plugin of the generator)");
 }

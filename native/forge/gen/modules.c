@@ -371,7 +371,7 @@ static FgModuleOutput* GenerateLibrary(FcCtx* c, FcLinked* program, FcList* nati
     generator->role = FG_ROLE_LIBRARY; generator->hasForced = hasFlags; generator->forced = flags; generator->self = spec; generator->separate = separate; generator->dll = dll;
     generator->store = store; CollectPackages(generator, store);
     /* (a plugin: the tables a program defines for a library are its own; every member of its classes and of their bases is in their tables) */
-    if (plugin) { generator->plugin = true; generator->pluginDeps = plugin; generator->tablesAll = true; }
+    if (plugin) { generator->plugin = true; generator->pluginDeps = plugin; generator->tablesAll = true; generator->pluginProgram = program->program; }
     FC_TRY(c) {
         SetModules(generator, all, spec);
         body = Run(generator);
