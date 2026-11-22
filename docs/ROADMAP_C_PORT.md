@@ -317,12 +317,16 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    `fire run x.fbc` als Kindprozess - Ausgabe ins Output-Panel (zeilenweise: `FIRE_STDOUT_LINES`), Eingabe über die Pipe, Exitcode, Stop; Debug über
    `NativeDebugTarget` (TCP, `"engine": "vm"`), dieselben Panels wie nativ. `FIRE_SPARK_VM=dotnet` behält die C#-VM in spark bis M1. `LiveSession`
    (Schaltplan-Editor) läuft in `fire`: Bilder, Zeiger und Ereignisse über eine Datei, die beide abbilden (`FIRE_DISPLAY_SHM`, der Host-Display der
-   Bibliothek von graphics/windows), Nachrichten über stdout (`FIRE_PRINT_RECORDS`), Befehle über stdin (`__HostCommand`); scheitert ein Programm in `fire`
-   vor seinem ersten Bild, läuft es in der C#-VM weiter. Behoben in der VM: der Hauptthread wartete am Einstieg mit der GIL (Scopes am Einstieg hingen).
+   Bibliothek von graphics/windows), Nachrichten über stdout (`FIRE_PRINT_RECORDS`), Befehle über stdin (`__HostCommand`); ein Programm, das in `fire`
+   scheitert, endet mit dem Grund (der Rückfall in die C#-VM ist seit 22.11. weg). Behoben in der VM: der Hauptthread wartete am Einstieg mit der GIL (Scopes am Einstieg hingen).
+   `UiPreview` (Entwurfsansicht) und die Vorschau der Blöcke laufen als Kindprozess `fire` (`CVmScript`; die Entwurfsansicht über `FIRE_DISPLAY_SHM`,
+   Pixel und Orte wie in der C#-VM; Latenz nach einer Änderung 604 gegen 520 ms, davon der Prozess `fire` 16 ms - der Rest ist das Übersetzen in spark).
+   Das geteilte Gerät: ein Programm in `fire` nimmt die Geräte des `DeviceManager` von spark über `FIRE_DEVICE_HOST` (die `dev_*` von `fire_host` über
+   eine lokale Verbindung, `native/vm/vm_devhost.c`, `DeviceHostServer`).
    Tests: `FIRE_TESTS_ONLY=cvmrun`, die Live-Sitzung in `circuiteditor`; unter Xvfb mit spark: Konsolen- und Fensterprogramm, Haltepunkt, Schaltplan.
    Der Schaltplan-Editor braucht den Rückfall nicht mehr (22.11.: die `DestroyedException` in `UI.CircuitView.DrawBackground` war das `SetField` auf ein
    Objekt mit Sonden, behoben mit `40e81bcb`; `vm-life/0110`, die Live-Sitzung mit jedem Beispiel-Schaltplan ohne Rückfall).
-   **Offen**: `UiPreview` und die Vorschau der Blöcke laufen noch im Prozess (Plan in VM_C.md); der Treiber-Agent bleibt in der C#-VM (fire-Plugins, das geteilte Gerät);
+   **Offen**: der Treiber-Agent bleibt in der C#-VM (fire-Plugins);
    `FIRE_DISPLAY_SHM` und `__HostCommand` unter Windows; "Build virtual" und `check` (MCP) übersetzen noch in spark (M2).
 
 **M1:** forge (noch C#) und spark benutzen nur noch die C-VM. `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget`
@@ -334,8 +338,16 @@ bei jeder Übergabe alle Wartenden - `native/3510` 0,87 s statt 0,15 s -, die L�
 Umgebung der Bibliothek); alle Fälle zusätzlich in Release, Debug und Performance gegen die C#-VM: gleich bis auf die Fälle, deren Ausgabe von Lauf zu
 Lauf wechselt, und Performance, wo die C#-VM ungeprüft liest (undefiniert; sie stürzt dabei teils mit einer .NET-Ausnahme ab); Debug hat jetzt die
 Warnung für Verweise auf zerstörte Objekte (`vm_dangle.c`); der Schaltplan-Editor läuft in `fire` ohne den Rückfall (die Ursache war schon mit
-`40e81bcb` behoben). Der Rückfall der Live-Sitzung und `FIRE_SPARK_VM=dotnet` können damit gehen ([VM_C.md](spec/VM_C.md#stand-gegen-den-korpus)); (2) fire-Plugins in der C-VM (Treiber-Agent, `Library.Load` von `.fireplugin`); (3) das geteilte Gerät zwischen
-spark und einem Programm (`fire_host.dev_*`, `DeviceManager`) - ein Protokoll oder bis Phase F ohne; (4) `UiPreview`/Blockvorschau in `fire`;
+`40e81bcb` behoben). Der Rückfall der Live-Sitzung ist **weg** (22.11.2026: ein Programm, das in `fire` scheitert, beendet seine Ansicht mit dem Grund);
+`FIRE_SPARK_VM=dotnet` bleibt bis zum Entfernen von `fire.Runtime` (es hält den Weg über `DebugSession.CompileAsync`/`VmDebugTarget` und die C#-VM für die
+Live-Sitzung und die Vorschauen offen; nicht nur ein Schalter, sondern mit dem Code von M1 zu entfernen) ([VM_C.md](spec/VM_C.md#stand-gegen-den-korpus));
+(2) fire-Plugins in der C-VM (Treiber-Agent, `Library.Load` von `.fireplugin`); (3) ~~das geteilte Gerät zwischen spark und einem Programm
+(`fire_host.dev_*`, `DeviceManager`)~~ - **erledigt** (22.11.2026): ein Protokoll statt Phase F - die 16 `dev_*` von `fire_host` gehen über eine lokale
+Verbindung zum `DeviceManager` von spark (`FIRE_DEVICE_HOST=tcp:127.0.0.1:PORT;token=T`, `native/vm/vm_devhost.c`, `DeviceHostServer`; Treiber, Teilen,
+Mitschnitt, Standardgerät wie in der C#-VM; ohne die Variable die Geräte der Maschine; [VM_C.md](spec/VM_C.md#spark-auf-der-c-vm-schritt-9), "Das geteilte
+Gerät"); (4) ~~`UiPreview`/Blockvorschau in `fire`~~ - **erledigt** (22.11.2026): beide als Kindprozess `fire` (`CVmScript`), die Entwurfsansicht über
+`FIRE_DISPLAY_SHM` (`Window.Idle` nach dem Dump legt das Bild in die Datei - keine Aufnahme in `fire_gfx_host.h` nötig), Pixel, Orte und PNG-Bytes wie in
+der C#-VM; Latenz nach einer Änderung 604 ms gegen 520 ms im Prozess (der Prozess `fire` 16 ms, der Rest Übersetzen in spark); Test `FIRE_TESTS_ONLY=previews`;
 (5) `forge run`, `forge test` und die Tests (`fire.Testing`: RuntimeSession, VmDebugTarget, die C#-VM als Vergleich) hängen an `fire.Runtime`;
 (6) `forge build --engine vm` mit `FIRE_VM_ENGINE=dotnet`, der .NET-Packer; (7) Windows: `fire` ungeprüft gelaufen, `FIRE_DISPLAY_SHM`, `__HostCommand`,
 `Environment.Args`.
