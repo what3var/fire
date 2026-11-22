@@ -43,7 +43,7 @@ static class LinkageTests
     private static string Exec(string exe, string? launcher = null)
     {
         var psi = new ProcessStartInfo(launcher ?? exe, launcher != null ? $"\"{exe}\"" : "") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        if (launcher != null) { psi.Environment["WINEDEBUG"] = "-all"; psi.Environment["LANG"] = "C.UTF-8"; if (_winePrefix != null) psi.Environment["WINEPREFIX"] = _winePrefix; }
+        if (launcher != null) { psi.Environment["WINEDEBUG"] = "-all"; psi.Environment.Remove("TMPDIR"); psi.Environment["LANG"] = "C.UTF-8"; if (_winePrefix != null) psi.Environment["WINEPREFIX"] = _winePrefix; }
         using var p = Process.Start(psi)!;
         var err = p.StandardError.ReadToEndAsync();
         string output = p.StandardOutput.ReadToEnd();
@@ -231,6 +231,7 @@ static class LinkageTests
             var info = new ProcessStartInfo(xvfb, $"-a -s \"-screen 0 800x600x24\" \"{wine}\" {arguments}") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = work };
             info.Environment["WINEPREFIX"] = prefix;
             info.Environment["WINEDEBUG"] = "-all";
+            info.Environment.Remove("TMPDIR");   // (Wine of Ubuntu aborts with TMPDIR set: Program.cs)
             info.Environment["LANG"] = "C.UTF-8";
             using var w = Process.Start(info)!;
             var werr = w.StandardError.ReadToEndAsync();
@@ -604,7 +605,58 @@ static class LinkageTests
             Check("TinyCC: das CLI-Programm mit linkage static laeuft wie die VM (FIRE_ONCE einmal im Programm, nicht je Modul)", tcc.Ok && tccOut == cliVm, $"{tcc.Log}\nnativ:\n{tccOut}\nVM:\n{cliVm}");
         }
         else Console.WriteLine("(TinyCC: uebersprungen - tcc fehlt)");
+        ModuleChannelEnds(root);
         ModuleThreads(root);
+    }
+
+    /// <summary>`fire with ch` in the code of a library: the thread gets an end of its own of the channel (`__End`), as in the program - a library did not
+    /// make the dispatcher (RegisterTargets of a library registers its served targets only) and knew no class of channels it did not make itself, so the
+    /// thread had the reference of the channel, which died with its owner: native/3840 (`Net.Channel`: the reader thread's `inbox` and `writerDone`, fields of
+    /// the Net.Channel, were destroyed with it - DestroyedException). Here a library that makes no channel starts a thread with channels of the program whose
+    /// scope ends before the thread uses them, and the net.channel case itself; gcc static and shared.</summary>
+    private static void ModuleChannelEnds(string root)
+    {
+        string s = Path.Combine(root, "sln-relay");
+        Write(s, "Relay/Relay.fireproj", """{ "name": "Relay", "type": "library" }""");
+        Write(s, "Relay/relay.script", "namespace Relay {\n    class R {\n        static undefined Start(any input, any output, any go) {\n            fire with input, output, go {\n                go.Receive()\n"
+            + "                foreach (x in input) { output.Send(x * 2) }\n                output.Close()\n            }\n        }\n    }\n}\n");
+        Write(s, "App/App.fireproj", """{ "name": "App", "references": [ { "project": "../Relay/Relay.fireproj" } ] }""");
+        Write(s, "App/main.script", "#import \"Relay\"\nvar results = new Channel<int>()\nvar go = new Channel<int>()\nif (true) {\n    var src = new Channel<int>()\n    Relay.R.Start(src, results, go)\n"
+            + "    src.Send(1)\n    src.Send(2)\n    src.Send(3)\n    src.Close()\n}\ngo.Send(1)\nint sum = 0\nforeach (x in results) { sum = sum + x }\nprint(\"relayed \" + sum)\n");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Relay/Relay.fireproj", "App/App.fireproj"], "startup": "App" }""");
+        var ws = Workspace.Open(sln);
+        var plan = BuildPlan.Create(ws, ws.FindByName("App")!);
+        string relayVm = Vm(plan.SourceTexts, plan);
+        const string net = """
+            #import "net.channel"
+            var listener = new Net.ChannelListener<int>("127.0.0.1", 0)
+            int port = listener.Port
+            fire taking port {
+                var ch = new Net.Channel<int>("127.0.0.1", port)
+                for (int i = 1; i <= 5; i++) { ch.Send(i) }
+                ch.Close()
+            }
+            if (true) {
+                var net = listener.Accept()
+                int s = 0
+                foreach (x in net) { s = s + x }
+                print("net " + s)
+                net.Close()
+            }
+            listener.Close()
+            print("closed")
+            """;
+        foreach (var linkage in new[] { "static", "shared" })
+        {
+            var relay = Build(plan.SourceTexts, linkage, Path.Combine(root, "relay-" + linkage), plan: plan);
+            string relayOut = relay.Ok ? Exec(relay.Exe) : "";
+            Check($"Module ({linkage}): fire with im Code einer Bibliothek gibt dem Thread ein eigenes Ende der Kanaele des Programms (ihr Bereich endet vorher) - wie die VM",
+                relay.Ok && relayOut == relayVm && relayVm == "relayed 12\n", $"{relay.Log}\nnativ:\n{relayOut}\nVM:\n{relayVm}");
+            var built = Build(new[] { net }, linkage, Path.Combine(root, "netchannel-" + linkage));
+            string got = built.Ok ? Exec(built.Exe) : "";
+            Check($"Module ({linkage}): Net.Channel - die Threads von net.channel haben eigene Enden ihrer Kanaele, nach Close kein DestroyedException (native/3840)",
+                built.Ok && got == "net 15\nclosed\n", $"{built.Log}\nnativ:\n{got}");
+        }
     }
 
     /// <summary>Fire threads in a program of modules run without the GIL like with linkage source (fire_rt.h FIRE_NO_GIL; the locks of the packages by name,

@@ -648,6 +648,7 @@ static FgStep xFire(FgSC* x) {
     copyCount = takingCount - handoverCount;
     argc = takingCount + withCount;
     Need(argc);
+    if (withCount > 0) NoteFireWith(g);
     body = GetFunc(g, (FcProto*)x->chunk->functions->items[ins->a[0]], FK_FireBody, 0);
     body->globalSlotCount = ins->a[1];
     first = d - argc;
@@ -699,6 +700,7 @@ static FgStep xPostGlobal(FgSC* x) {
     jobWith = ins->n > 1 ? ins->a[1] : 0;
     if (jobWith > 0) {
         FcBuf ends = {0};
+        NoteFireWith(g);
         fcBufStr(&ends, "");
         if (ChannelLikeTest(g, "av[0]"))
             for (k = argc - jobWith; k < argc; k++) {

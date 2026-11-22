@@ -3519,8 +3519,22 @@ namespace fire.Native
         private string? ChannelLikeTest(string v)
         {
             if (!_dispatchers.Contains(("__End", 0))) return null;
-            var ids = new[] { "Channel", "ChannelEnd" }.Where(_classes.ContainsKey).Select(n => $"asObj({v})->cls == {ClassIdExpr(_classes[n])}").ToList();
+            var ids = new[] { "Channel", "ChannelEnd" }.Select(ChannelClass).Where(c => c != null).Select(c => $"asObj({v})->cls == {ClassIdExpr(c!)}").ToList();
             return ids.Count == 0 ? null : $"{v}.kind == K_Class && leafAlive({v}) && ({string.Join(" || ", ids)})";
+        }
+
+        /// <summary>The class of channels `name` (Channel, ChannelEnd) as this generator writes its id: one it registered, or - a library - the class of core
+        /// (another module's: its base plus its place), whether or not the library's own code makes one (a channel may come from the program).</summary>
+        private ClassInfo? ChannelClass(string name) =>
+            _classes.TryGetValue(name, out var info) ? info : LibraryRole && _program.Program.Classes.TryGetValue(name, out var rc) ? ForeignClass(name, rc) : null;
+
+        /// <summary>`fire with` / a job with `with` references in a library: the thread gets an end of its own of a channel (`__End`) as in the program -
+        /// the dispatcher comes from here, not from RegisterTargets (a library registers its served targets only). Without it the thread had the reference
+        /// of the channel itself, which died with its owner (net.channel: the reader thread's `inbox`/`writerDone` with the Net.Channel).</summary>
+        private void NoteFireWith()
+        {
+            if (LibraryRole && (_program.Program.Classes.ContainsKey("Channel") || _program.Program.Classes.ContainsKey("ChannelEnd")) && AnyClassHasMethod("__End", 0))
+                AddDispatcher("__End", 0);
         }
 
         /// <summary>`new R(...)` of a record: it is being constructed while its constructor runs (its writes are allowed - fire_rt.h recInit).</summary>
@@ -8007,6 +8021,7 @@ namespace fire.Native
                     int copyCount = takingCount - handoverCount;
                     int argc = takingCount + withCount;
                     Need(argc);
+                    if (withCount > 0) NoteFireWith();
                     var body = GetFunc(chunk.Functions[ins.A[0]], FuncKind.FireBody);
                     body.GlobalSlotCount = ins.A[1];
                     int first = d - argc;
@@ -8114,6 +8129,7 @@ namespace fire.Native
                     int jobWith = ins.A.Length > 1 ? ins.A[1] : 0;   // (the last arguments: `with` references - as they are)
                     if (jobWith > 0)
                     {
+                        NoteFireWith();
                         // (a channel: the job gets an end of its own on the same queue, which goes to the job - step 9)
                         var ends = new StringBuilder();
                         if (ChannelLikeTest("av[0]") != null)
