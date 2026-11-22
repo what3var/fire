@@ -257,6 +257,7 @@ static void vmHostRequestService(void) { fire_atomic_store(&g_vmPkgService, 1); 
 static void vmHostHold(int32_t delta) { fire_atomic_add(&g_vmPkgHolds, (uint32_t)delta); }
 
 static fire_host g_vmHost;
+static void vmDevHostInstall(fire_host* host);   /* (vm_devhost.c: FIRE_DEVICE_HOST, the devices of spark) */
 static const fire_host* vmPkgHost(void) {
     if (!g_vmHost.size) {
         g_vmHost.size = (int32_t)sizeof(fire_host);
@@ -270,6 +271,7 @@ static const fire_host* vmPkgHost(void) {
         g_vmHost.call_lambda = vmHostCallLambda;
         g_vmHost.request_service = vmHostRequestService;
         g_vmHost.hold = vmHostHold;
+        vmDevHostInstall(&g_vmHost);
     }
     return &g_vmHost;
 }

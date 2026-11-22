@@ -51,6 +51,7 @@ void fbOutOfMemory(void) { outOfMemory(); }
 #include "vm_reflect.c"
 #include "vm_json.c"
 #include "vm_debug.c"
+#include "vm_devhost.c"
 #include "vm_trace.c"
 
 void fire_vmExit(int code) {
