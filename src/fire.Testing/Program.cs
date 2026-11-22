@@ -42,6 +42,9 @@ if (Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") is not { Length: > 0 }
     Environment.SetEnvironmentVariable("XDG_RUNTIME_DIR", xdg);
 }
 var standardRoot = Path.Combine(Path.GetTempPath(), "fire-test-standard-" + Guid.NewGuid().ToString("N"));
+// (the folders of this run - the installed standard packages, hundreds of MB with their builds, and the test font - go when it ends: a normal end, a `return` of a
+// FIRE_TESTS_ONLY group, an exception nothing catches, Ctrl+C or SIGTERM. Only this run's own: the folders of other runs stay)
+TestTempFolders.Add(standardRoot);
 fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(standardRoot, "Packages"));
 var standardInstalled = StandardSources.EnsureInstalled(m => Console.WriteLine(m), prebuiltFolder: null);
 static void CopyTree(string from, string to)
@@ -57,6 +60,7 @@ if (standardInstalled.Count != fire.Package.Manager.StandardPackages.Bridges.Cou
 // The system lookup of fonts finds it by file name ("firesans"), full name and family name - in the VM and in the native programs (they inherit the variable).
 byte[] fireTestFont = Convert.FromBase64String("AAEAAAALAIAAAwAwT1MvMkUCRH0AAAE4AAAAYGNtYXACMAFTAAABvAAAAGxnbHlmPzzozgAAAjwAAAEGaGVhZC+Ah2AAAAC8AAAANmhoZWEGEAH+AAAA9AAAACRobXR4EyQCWAAAAZgAAAAka2Vybv/h//wAAANEAAAAJGxvY2EBEQFeAAACKAAAABRtYXhwABAAGgAAARgAAAAgbmFtZaJXW7UAAANoAAAAZnBvc3QEn3EYAAAD0AAAADgAAQAAAAEAAEv3EAlfDzz1AAMD6AAAAADm8CF+AAAAAObwIX4AAAAAAooDhAAAAAMAAgAAAAAAAAABAAADIP84AGQCvAAAAAACigABAAAAAAAAAAAAAAAAAAAACQABAAAACQAQAAIABwACAAIAAAAAAAAAAAAAAAAAAgABAAMCIAGQAAUABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAD8/Pz8AAAAgAMEDIP84AAADIADIAAAAAAAAAAAAAAAAAAAAIAAAAlgAZAEsAAACvAAyAlgAAAK8AGQCvABkASwAZAK8ADIBLABkAAAAAgAAAAMAAAAUAAMAAQAAABQABABYAAAAEgAQAAMAAgAgAC4AQQBIAE8AVgBpAMH//wAAACAALgBBAEgATwBWAGkAwf///+H/2P/B/73/tf+t/5//RgABAAAAAAAAAAAAAAAAAAAAAAAAAAAADQANABoALQBJAGAAawB3AIMAAQBkAAAB9AK8AAMAADMRIRFkAZACvP1EAAABADIAAAKKArwAAgAAMwEBMgEsASwCvP1EAAEAAAAAAlgCvAAFAAARAQEjAwMBLAEseLS0Arz9RAK8/j4BwgAAAgBkAAACWAK8AAcADwAAExAzMhEQIyITFDMyNTQjImT6+vr6eIKCgoIBXgFe/qL+ogFelpaWAAABAGQAAAJYArwACwAAMxEzESERMxEjESERZGQBLGRk/tQCvP7UASz9RAEs/tQAAQBkAAAAyAB4AAMAADM1MxVkZHh4//8AMgAAAooDhAAmAAIAAAAHAAYA+gMMAAEAZAAAAMgCvAADAAAzETMRZGQCvP1EAAAAAAABAAAAIAABAAMADAABAAYAAgAD/7AAAwAC/8QABQAEAB4AAAAEADYAAQAAAAAAAQAJAAAAAQAAAAAAAgAHAAkAAwABBAkAAQASABAAAwABBAkAAgAOACJGaXJlIFRlc3RSZWd1bGFyAEYAaQByAGUAIABUAGUAcwB0AFIAZQBnAHUAbABhAHIAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkAAAADACQAOQAyACsBAgDJAEwDZG90");
 string fontTestDir = Path.Combine(Path.GetTempPath(), "fire-font-test-" + Guid.NewGuid().ToString("N"));
+TestTempFolders.Add(fontTestDir);
 Directory.CreateDirectory(fontTestDir);
 File.WriteAllBytes(Path.Combine(fontTestDir, "FireSans.ttf"), fireTestFont);
 Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
@@ -10769,6 +10773,17 @@ callbackTests:
         print("nie")
         """, new[] { "UNBEHANDELT: Unhandled exception of type 'Exception': boom" });
 
+    // docs/spec/STACKTRACE.md section 4: below the frames of the lambda the frame of the native that called it back, then the fire code that called the native
+    CheckCb("Trace: der Callback eines Natives hat dessen Frame unter dem des Lambdas", """
+        var fb = new Framebuffer(64, 64)
+        var win = new Window(fb, "t")
+        class H { static undefined Step(Window w) { w.Tick() } }
+        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { H.Step(win) } catch (e) { print(e.StackTrace); foreach (f in e.Frames) { print(f.function + "|" + f.file + "|" + f.line) } }
+        """, new[] { "   at <lambda> (prelude)\n   at __GRPHWinTick (native)\n   at Window.Tick (prelude)\n   at H.Step (prelude)\n   at <main> (prelude)",
+            "<lambda>||0", "__GRPHWinTick|(native)|0", "Window.Tick||0", "H.Step||0", "<main>||0" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+
     CheckCb("Ein try/catch im Callback selbst faengt", cbHead + """
         var caught = 0
         win.RegisterMouseDown(func (int b, float x, float y) => {
@@ -10811,15 +10826,16 @@ callbackTests:
         print("zweites Run zu Ende, hits " + hits)
         """, new[] { "gefangen boom laeuft False", "zweites Run zu Ende, hits 2" });
 
-    // Performance mode checks nothing: an access outside the array is a raw C# exception. The state of the VM must be right afterwards.
-    CheckCb("Rohe C#-Ausnahme im Callback (Performance): Zustand wiederhergestellt, Programm laeuft weiter", cbHead + """
+    // Performance: an access outside the array is undefined behaviour - the VM throws the exception of Release (as the VM in C), never a raw .NET exception
+    // that ends the host's process (VmExecutionMode.Performance). The state of the VM is right afterwards.
+    CheckCb("Index ausserhalb im Callback (Performance): die Ausnahme von Release, Tick wirft sie, das Programm laeuft weiter", cbHead + """
         win.RegisterMouseDown(func (int b, float x, float y) => { var z = new int[2]; z[5] = 1 })
         __TestEvent(8, 1, 1.0, 1.0)
-        try { win.Tick(); print("nach Tick") } finally { print("finally") }
+        try { win.Tick(); print("nach Tick") } catch (e) { print("gefangen " + e.message) } finally { print("finally") }
         var sum = 0
         for (var i = 0; i < 100; i = i + 1) { sum = sum + i }
         print("sum " + sum)
-        """, new[] { "CB: Index was outside the bounds of the array.", "nach Tick", "finally", "sum 4950" }, new[] { VmExecutionMode.Performance });
+        """, new[] { "gefangen Array index 5 out of range (length 2).", "finally", "sum 4950" }, new[] { VmExecutionMode.Performance });
 
     CheckCb("leave im Callback beendet das Programm geordnet (Destruktoren laufen)", cbHead + """
         class G { destruct() { print("~G") } }
@@ -15498,6 +15514,17 @@ else
                 }
                 print("end")
                 """, new[] { "caught keydown same True downs=1 ups=0 clicks=0", "tick 1 downs=1 ups=0 clicks=0", "end" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    // docs/spec/STACKTRACE.md section 4: the trace of the handler's exception has the frame of the native (Tick) below the handler's, then the
+                    // frames of the fire code that called the native - here the handler runs as a member of the main program's group (fire_groupCall)
+                    ("Fenster: der Trace eines Handlers hat den Frame des Natives (at __GRPHWinTick (native)) und die Frames darunter", """
+                #import "windows"
+                class H { static undefined Step(Window w) { w.Tick() } }
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "trace")
+                win.VSync = false
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { throw new Exception("key " + k) })
+                try { H.Step(win) } catch (e) { print(e); print(e.StackTrace) }
+                """, new[] { "Exception: key 97", "   at <lambda> (fire:source/0:6)", "   at __GRPHWinTick (native)", "   at Window.Tick (prelude)", "   at H.Step (fire:source/0:2)", "   at <main> (fire:source/0:7)" }, "-DFIRE_DISPLAY_SELFTEST "),
                     ("Fenster: ein Handler wirft unter WindowManager.Run - Run gibt die Exception weiter, der Manager ist danach wieder bereit", """
                 #import "windows"
                 var fb = new Framebuffer(64, 48)

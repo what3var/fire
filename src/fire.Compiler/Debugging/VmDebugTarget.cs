@@ -318,6 +318,7 @@ namespace fire.Debugging
 
         public string? UnhandledError => Vm.UnhandledException is { } e ? new UncaughtScriptException(e).Message : null;
         public IReadOnlyList<(int SourceIndex, int Line)>? UnhandledTrace => Vm.UnhandledTrace;
+        public IReadOnlyList<string?>? UnhandledFunctions => Vm.UnhandledTraceFunctions;
         public bool IsPausedOnUnhandled => Vm.IsPausedOnUnhandled;
         public bool TryResumeUnhandled() => Vm.TryResumeUnhandled();
 

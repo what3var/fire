@@ -106,22 +106,57 @@ static int32_t vmTraceBelow(const Vm* vm, int32_t i) {
     if (f->kind == FR_CATCH && f->rec && f->rec->frame < i) return f->rec->frame - 1;
     return i - 1;
 }
+/* The callbacks of natives (vm_pkg.c vmPkgRunLambda: a lambda that a native of a package calls back while the program waits for it): the frame of the lambda
+ * on this VM and the native, whose frame stands below the lambda's in a trace - `at __GRPHWinTick (native)` (as the C# VM's CallbackBoundary and the native
+ * build's fire_cbLam). */
+#define VM_TRACE_NATS 16
+typedef struct VmTraceNat { const Vm* vm; int32_t frame; const FireFnInfo* fn; } VmTraceNat;
+static FIRE_TLS VmTraceNat g_vmTraceNats[VM_TRACE_NATS];
+static FIRE_TLS int g_vmTraceNnats = 0;
+static void vmTraceNatPush(const FireFnInfo* fn) {
+    Vm* vm = g_vmCur;
+    if (g_vmTraceNnats < VM_TRACE_NATS) {
+        g_vmTraceNats[g_vmTraceNnats].vm = vm;
+        g_vmTraceNats[g_vmTraceNnats].frame = vm && vm->prog->stackTrace != FIRE_TRACE_OFF ? (int32_t)vm->nframes : -1;
+        g_vmTraceNats[g_vmTraceNnats].fn = fn;
+    }
+    g_vmTraceNnats++;
+}
+static void vmTraceNatPop(void) { if (g_vmTraceNnats > 0) g_vmTraceNnats--; }
+/* The calls of `await [ ... ]` that run here, one after the other (fire_rt.h awaitRun): a trace in one ends at its lambda, as in a task (an entry without a
+ * native). */
+void fire_vmTraceCut(int on) { if (on) vmTraceNatPush(NULL); else vmTraceNatPop(); }
+/* The entry of a native or a cut at frame `i` (NULL: none). */
+static const VmTraceNat* vmTraceNatAt(const Vm* vm, int32_t i) {
+    int k = g_vmTraceNnats < VM_TRACE_NATS ? g_vmTraceNnats : VM_TRACE_NATS;
+    while (--k >= 0) if (g_vmTraceNats[k].vm == vm && g_vmTraceNats[k].frame == i && vm->frames[i].kind == FR_NESTED) return &g_vmTraceNats[k];
+    return NULL;
+}
 static FireTrace* vmTraceCapture(Vm* vm) {
     uint32_t total = 0, k = 0;
     int32_t i;
     FireTrace* t;
-    for (i = vm->nframes - 1; i >= 0; i = vmTraceBelow(vm, i)) total++;
+    const VmTraceNat* at;
+    bool cut = false;
+    for (i = vm->nframes - 1; i >= 0; i = vmTraceBelow(vm, i)) {
+        total++;
+        if ((at = vmTraceNatAt(vm, i)) != NULL) { if (!at->fn) { cut = true; break; } total++; }
+    }
     t = fire_traceNew(total, vm->threadTrailer);
     for (i = vm->nframes - 1; i >= 0; i = vmTraceBelow(vm, i), k++) {
         FireTraceFrame* slot = fire_traceSlot(t, k);
         const VmFrame* f = &vm->frames[i];
         int32_t src, line;
         const FireFnInfo* fn;
-        if (!slot) continue;
-        vmTraceLocation(f->chunk, f->ip > f->chunk->code ? (uint32_t)(f->ip - f->chunk->code) - 1 : 0, &src, &line);
-        fn = vmTraceFn(f->chunk, src, k == total - 1 && vm->isStrand);   /* (the base of a thread: the body of `fire { }` - TraceNames.Fire) */
-        slot->fn = fn;
-        slot->line = fn && fn->file ? line : 0;
+        at = vmTraceNatAt(vm, i);
+        if (slot) {
+            vmTraceLocation(f->chunk, f->ip > f->chunk->code ? (uint32_t)(f->ip - f->chunk->code) - 1 : 0, &src, &line);
+            fn = vmTraceFn(f->chunk, src, k == total - 1 && !cut && vm->isStrand);   /* (the base of a thread: the body of `fire { }` - TraceNames.Fire) */
+            slot->fn = fn;
+            slot->line = fn && fn->file ? line : 0;
+        }
+        if (at && !at->fn) break;
+        if (at && (slot = fire_traceSlot(t, ++k)) != NULL) { slot->fn = at->fn; slot->line = 0; }
     }
     return t;
 }

@@ -1113,7 +1113,10 @@ static partial class NativeDebugTests
 
         Check("Threads: pause haelt alle an, einer laeuft weiter, der andere bleibt stehen; eine unbehandelte Ausnahme im Thread haelt ihn an", () =>
         {
-            const string script = "var a = 0\nvar b = 0\nfire {\n    while (true) {\n        b = b + 1\n        if (b == 300000) {\n            throw new ArgumentException(\"im thread\")\n        }\n    }\n}\nwhile (true) {\n    a = a + 1\n}\n";
+            // (without the GIL - a debug build like a release build - each write of the global b by the thread waits for the domain of the main program,
+            // which loops: some 50 us a round, 300000 rounds were 15 s after `continue`, longer than the client waits for `stopped`; 30000 are more than
+            // the thread does in the 100 ms before the pause)
+            const string script = "var a = 0\nvar b = 0\nfire {\n    while (true) {\n        b = b + 1\n        if (b == 30000) {\n            throw new ArgumentException(\"im thread\")\n        }\n    }\n}\nwhile (true) {\n    a = a + 1\n}\n";
             string? exe = Bld(script, cxx, workDir, "dbgpauseall", flags, out string error);
             if (exe == null) return (false, error);
             using var c = Lch(exe);
@@ -1135,7 +1138,7 @@ static partial class NativeDebugTests
             Thread.Sleep(200);
             long a1 = Global("a"), b1 = Global("b");
             log.Append($"a {a0} -> {a1}, b {b0} -> {b1}\n");
-            ok &= a1 > a0 && b1 == b0 && b0 < 300000;
+            ok &= a1 > a0 && b1 == b0 && b0 < 30000;
             // the fire thread runs on until its exception: it stops there (unhandled), the main thread keeps running
             c.Request("continue", new() { ["thread"] = t });
             var unhandled = c.NextEvent("stopped");

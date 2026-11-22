@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -20,7 +21,11 @@ namespace fire.Editor
         public static Task Message(Window? owner, string text, string title = "spark") => Ask(owner, text, title, ("OK", Answer.Ok));
 
         /// <summary>Asks a question with the given buttons (the first one is the default); the answer of the pressed one, Cancel if the window is closed.</summary>
-        public static Task<Answer> Ask(Window? owner, string text, string title, params (string Label, Answer Answer)[] buttons)
+        public static Task<Answer> Ask(Window? owner, string text, string title, params (string Label, Answer Answer)[] buttons) => Ask(owner, text, null, title, buttons);
+
+        /// <summary><see cref="Ask(Window?, string, string, (string, Answer)[])"/> with lines under the text that a double click opens (the frames of a stack trace:
+        /// each jumps to its place; a line without an action is only shown).</summary>
+        public static Task<Answer> Ask(Window? owner, string text, IReadOnlyList<(string Text, Action? Open)>? lines, string title, params (string Label, Answer Answer)[] buttons)
         {
             var result = Answer.Cancel;
             var buttonRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8, Margin = new Thickness(0, 14, 0, 0) };
@@ -36,9 +41,22 @@ namespace fire.Editor
                 Content = new StackPanel
                 {
                     Margin = new Thickness(18),
-                    Children = { new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, buttonRow },
+                    Children = { new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap } },
                 },
             };
+            var content = (StackPanel)dialog.Content;
+            if (lines is { Count: > 0 })
+            {
+                var list = new ListBox { Margin = new Thickness(0, 8, 0, 0), MaxHeight = 320, FontFamily = new FontFamily("monospace") };
+                foreach (var (line, _) in lines) list.Items.Add(new ListBoxItem { Content = line });
+                list.DoubleTapped += (_, _) =>
+                {
+                    if (list.SelectedIndex >= 0 && list.SelectedIndex < lines.Count && lines[list.SelectedIndex].Open is { } open) open();
+                };
+                ToolTip.SetTip(list, "Double-click a line to go to its place.");
+                content.Children.Add(list);
+            }
+            content.Children.Add(buttonRow);
             bool first = true;
             foreach (var (label, answer) in buttons)
             {

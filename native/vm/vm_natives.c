@@ -31,6 +31,7 @@ typedef struct VmNative {
     VmPkgLib* lib;
     const char* file;       /* the library's file name (VN_LIB, and an unbound one that has one) */
     int index;              /* in the library */
+    FireFnInfo trace;       /* its frame below a lambda it calls back (`at __GRPHWinTick (native)`, vm_trace.c) */
 } VmNative;
 
 static VmNative* g_vmNat = NULL;    /* the natives of the imports of the program that runs, by index - VM_NNATIVES */
@@ -179,6 +180,8 @@ static void vmNatAdd(uint32_t* n, const char* name, const char* file) {
     e->name = name;
     e->file = file;
     e->index = -1;
+    e->trace.name = name;
+    e->trace.file = FIRE_TRACE_NATIVE_FILE;
     if (file && strcmp(file, "@host") != 0) return;   /* (bound on its first call: the library is loaded then) */
     for (h = g_vmHostNatives; h->name; h++)
         if (strcmp(h->name, name) == 0) { e->kind = VN_HOST; e->argc = h->argc; e->fn = h->fn; return; }
@@ -246,7 +249,7 @@ static Value vmCallImported(Vm* vm, VmFrame* fr, VmNative* e, uint32_t argc, Val
         fatal(text);
     }
     if (e->kind == VN_HOST) return e->fn(vm, fr, a, list);
-    return vmPkgCall(e->lib, e->index, e->name, (int)argc, a, list);
+    return vmPkgCall(e->lib, e->index, e->name, &e->trace, (int)argc, a, list);
 }
 
 static Value vmJsonCall(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list);

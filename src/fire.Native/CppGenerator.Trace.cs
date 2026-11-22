@@ -196,6 +196,12 @@ namespace fire.Native
             return sb.ToString();
         }
 
+        /// <summary>Around the call of a native of a package or of the windows bridge (they can call back into fire: fire_cbCall): the native whose callbacks
+        /// get its frame - `at __GRPHWinTick (native)` (fire_rt.h FIRE_TF_NAT). Not for a typed native whose C number is a scalar of the code (its call is an
+        /// expression) and not for the graphics bridge (it calls no lambda).</summary>
+        private string TraceNat(string native) => TraceOn ? $"FIRE_TF_NAT({CString(native)}); " : "";
+        private string TraceNatEnd => TraceOn ? " FIRE_TF_NAT_END();" : "";
+
         /// <summary>`fire`: where it stands, as the line of the thread names it (`main.fire:40`; `prelude`; without the line with `calls`).</summary>
         private string TraceStartAt(Chunk chunk, Instr ins)
         {

@@ -1,0 +1,14 @@
+Exception: bad 2
+   at Work.Bad (0170-await-liste-abschnitt-des-wartenden.fire:3)
+   at <lambda> (0170-await-liste-abschnitt-des-wartenden.fire:6)
+   --- awaited at ---
+   at __Await.All (prelude)
+   at Runner.Last (0170-await-liste-abschnitt-des-wartenden.fire:6)
+   at <main> (0170-await-liste-abschnitt-des-wartenden.fire:9)
+Exception: bad 3
+   at Work.Bad (0170-await-liste-abschnitt-des-wartenden.fire:3)
+   at <lambda> (0170-await-liste-abschnitt-des-wartenden.fire:7)
+   --- awaited at ---
+   at __Await.All (prelude)
+   at Runner.First (0170-await-liste-abschnitt-des-wartenden.fire:7)
+   at <main> (0170-await-liste-abschnitt-des-wartenden.fire:10)

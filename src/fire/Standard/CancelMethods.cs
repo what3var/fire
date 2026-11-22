@@ -81,7 +81,7 @@ namespace fire.Standard
     /// VM.Trace.cs; the VM in C and a native build: fire_rt.h envCall 9 and 10 (fire_exc_trace / fire_exc_frames).</summary>
     public static class ExceptionTraceMethods
     {
-        public const string TraceName = "trace", FramesName = "frames";
+        public const string TraceName = "trace", FramesName = "frames", AwaitedName = "awaited";
 
         /// <summary>Set by the VM: (name, arguments) on the VM of the calling thread.</summary>
         public static Func<string, Value[], Value>? Implementation;

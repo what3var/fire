@@ -465,8 +465,16 @@ Im Modus `debug` (`#debug`, `-m DEBUG`) wird das Programm für den Debugger von 
   mit spark und wartet vor der ersten Instruktion; ohne die Variable läuft es ohne Debugger. Weitere Transporte (Protokoll, "Transport"): `FIRE_DEBUG=stdio`
   (gerahmt über stdout/stdin), auf dem ESP32 fest die Konsolen-UART (`FIRE_DEBUG_TRANSPORT_UART`), auf FreeRTOS fest stdio (`FIRE_DEBUG_TRANSPORT_STDIO`) -
   gerahmt wartet das Programm höchstens 3 s auf den Debugger. Er liest Werte nur, solange ihr
-  Thread steht (mit Threads unter der GIL), ruft nie fire-Code zum Anzeigen auf und fasst keinen Zähler an; `set` führt der angehaltene Thread selbst aus.
-  Ein angehaltener Thread wartet ohne GIL, die anderen laufen weiter; neue fire-Threads melden sich und laufen mit den Haltepunkten los.
+  Thread steht, ruft nie fire-Code zum Anzeigen auf und fasst keinen Zähler an; `set` führt der angehaltene Thread selbst aus.
+  Ein angehaltener Thread wartet und gibt seine Sperren ab, die anderen laufen weiter; neue fire-Threads melden sich und laufen mit den Haltepunkten los.
+  **Ohne die GIL** (seit 22.11.2026 auch der Debug-Build, mit Tasks wie Release): die Befehle, die Werte lesen (`scopes`, `this`, `globals`, `expand`),
+  beantwortet nicht der Agent, sondern ein angehaltener Thread selbst (eine `DbgTask` wie `set`): er nimmt seine Sperren wieder (das Hauptprogramm seinen
+  Bereich, ein fire-Thread die Leseseite des geteilten Bereichs - `strandAcquire`), schreibt die Antwort und gibt sie ab. Was er zeigt, sind seine eigenen
+  Werte (kein anderer Strang erreicht sie: Besitz) und die Globals des Hauptprogramms unter der Sperre der Globals - die anderen laufen derweil weiter, und
+  nichts wird gelesen, während ein anderer Strang es schreibt. `globals` und `expand` eines Globals beantwortet das Hauptprogramm, wenn es steht, sonst ein
+  anderer angehaltener Thread; laufen alle, ist die Antwort `the program is running` (mit der GIL las der Agent sie zwischen zwei Zeilen der anderen). Die
+  Tabelle des Profilers hat dann eine Sperre für sich. Ein Thread muss dafür nicht an einem "sicheren Punkt" stehen: gelesen wird nur von einem Strang,
+  der an seiner Zeile steht (`dbgPark`), und dort hält er keine Sperre, die ein anderer bräuchte.
 * Getestet in `fire.Testing` (`NativeDebugTests.cs`, Fälle "Native-Debugger"): 22 Skripte (Schleifen, Rekursion, Objekte, Properties, Destruktoren, Lambdas,
   try/catch/finally/resume, Strings, Einheiten, Arrays, statische Felder, Vererbung, Operatoren/ToString, Standardwerte, break/continue, Listen,
   unbehandelte Ausnahmen), je Haltepunkte/Schritte mit Aufrufstapel, Scopes, `this` und Globals sowie jeder Step Into und Step Over vom Start bis zum
@@ -722,12 +730,16 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   sie aus den Bedürfnissen der Module); TinyCC hat mit den Modulen dieselben Slots auf einem Schlüssel von pthreads wie mit einer Datei (`FIRE_TLS_EMULATED`; der Schlüssel
   einmal im Programm, `FIRE_ONCE` mit `FIRE_SPLIT`). Was die Laufzeit beim ersten Gebrauch nummeriert, ist ohne die GIL unter `g_registryM` (die Deskriptoren der
   Feldzeiger, `fieldPtrId`; die alte Tabelle bleibt, ein anderer Thread kann sie lesen), ein Plugin registriert sich unter `g_pluginM` (sein `init` danach, ohne die Sperre).
-  Die **DLLs von Windows** (`FIRE_DLL`: linkage `shared` mit MinGW) laufen ohne die GIL, aber ohne Tasks: ein System-Thread je fire-Thread (wie `FIRE_TLS_VARS`),
-  der Zustand eines Threads ist der Block des rufenden Threads in der DLL der Runtime (`fire_tl()`, einmal im Prozess) - die Funktionen von fire_rt.h stehen
-  (`static inline`) in jeder DLL, der Scheduler und die Koroutinen einer DLL würden einen Task fortsetzen, den eine andere weggeschaltet hat, und der Zeiger auf den
-  laufenden Task wäre eine thread-lokale Variable jeder DLL (`__declspec(thread)` lässt sich nicht importieren). Die Sperren, Tabellen und Zähler ohne die GIL
+  Die **DLLs von Windows** (`FIRE_DLL`: linkage `shared` mit MinGW) laufen ohne die GIL und **mit Tasks** (seit 22.11.2026; vorher ein System-Thread je
+  fire-Thread): die Funktionen von fire_rt.h stehen (`static inline`) in jeder DLL, aber die Daten des Schedulers sind die der Runtime-DLL (`FIRE_RT_DATA`:
+  `g_sched`, `g_homeState`, ...), und was je System-Thread sein muss - der laufende Task (`fire_curTask`), der Worker (`g_worker`), die eigene Koroutine des
+  Workers (`fire_coro_selfCtx`) - sind Slots eines Blocks je Thread in der Runtime-DLL (`FIRE_TLS_DLL`, fire_platform_win32.h: `fire_dllSlots()`, exportiert;
+  `__declspec(thread)` lässt sich nicht importieren, und eine Variable jeder DLL wäre eine andere - ein Task, den der Code einer DLL weggeschaltet hat, ginge mit
+  den Zeigern einer anderen weiter). Das ist `FIRE_TLS_EMULATED` wie unter TinyCC, mit den Slots aus der DLL; der Zustand eines Strangs ist der des Tasks
+  (`FIRE_TASK_STATE`, `fire_tl()` je Funktion einmal). Die Fibers von Windows (`SwitchToFiber`) sind Sache des Systems, nicht einer DLL. Mit der GIL oder TinyCC
+  bleibt es beim System-Thread je fire-Thread und dem Block `fire_tl()` der Runtime-DLL. Die Sperren, Tabellen und Zähler ohne die GIL
   (`g_registryM`, `g_pkgLocks`/`fire_pkgLockIndex`, `g_pluginM`, `g_targsM`, ...) sind Daten und Funktionen der Runtime-DLL (`FIRE_RT_DATA`/`FIRE_RT_FN`).
-  **Mit der GIL** - auf den Zielen mit eigenem Scheduler (dos, win16, wasm), FreeRTOS, in Debug-Builds und mit `FIRE_GIL` - läuft aller fire-Code unter **einer globalen Sperre**, einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und
+  **Mit der GIL** - auf den Zielen mit eigenem Scheduler (dos, win16, wasm), FreeRTOS und mit `FIRE_GIL` (seit 22.11.2026 nicht mehr in Debug-Builds, siehe "Debug-Builds") - läuft aller fire-Code unter **einer globalen Sperre**, einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und
   an sicheren Punkten ab (Schleifen-Rücksprung, Funktionsanfang, alle 4096 Stationen ein `gilYield`). Die Abgabepunkte der GIL sind ohne sie die Stellen, an denen das
   Hauptprogramm und die Pakete ihre Sperren abgeben. Zustand eines Ausführungsstrangs (`g_unwind`, `g_handlers`, `g_pending`, Temporärpool, `g_globalOwn`, `g_reflCaller`)
   ist `thread_local`. Der Test "ThreadSanitizer: die Thread-Faelle ..." baut alle Thread-Fälle mit `-fsanitize=thread` (`FIRE_TEST_GIL=1`: mit der GIL).
@@ -1437,7 +1449,7 @@ Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code ste
   `QueryList("Person", ...)`), sagt ihre Schnittstelle (`JsonReads`): das Programm behält dann die Klassen, die das Lesen machen kann, wie mit einer Datei.
   `FIRE_NDIMS` ist mit `static` fest 16. Die Module stehen in Dateien für sich: `FIRE_SPLIT` (der Zustand der Plattform, `FIRE_ONCE` - unter TinyCC der Schlüssel
   des Zustands eines Threads - lebt einmal in der Datei des Programms, nicht je Modul). Fire-Threads laufen in einem Programm aus Modulen ohne die GIL wie mit
-  einer Datei (siehe "Threads": die Sperren der Pakete nach Namen, `FIRE_PKG_NAMED`; die DLLs von Windows ohne Tasks, ein System-Thread je fire-Thread).
+  einer Datei (siehe "Threads": die Sperren der Pakete nach Namen, `FIRE_PKG_NAMED`; die DLLs von Windows mit Tasks, die Zeiger je System-Thread in der Runtime-DLL).
 * **Natives in C** (Packages in C, die Bridges von graphics und windows) stehen in der Datei des Moduls ihres Imports, wenn sie für sich stehen: ihr C ruft keine
   Funktion der Natives eines anderen Imports des Programms und keiner ruft ihre (hash, compression, io, time; nicht graphics und windows zusammen - die Bridge von
   windows benutzt die Framebuffer von graphics -, nicht scene3d). Ihr Zustand gibt es so einmal; jedes andere Modul und das Programm rufen sie über die

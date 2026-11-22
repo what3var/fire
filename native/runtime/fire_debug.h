@@ -6,6 +6,14 @@
  * decides whether the thread stops there (breakpoint, step, pause), exactly like the stepping loops of the VM. A stopped thread waits (without the GIL) until
  * the debugger lets it go on.
  *
+ * Without the GIL (FIRE_NO_GIL - a debug build runs its threads side by side like a release build): the commands that read values (`scopes`, `this`,
+ * `globals`, `expand`) are not answered by the agent but by a stopped thread itself (as `set` always was, a DbgTask): it takes its own locks again - the
+ * main program its domain, a fire thread the read side of the shared domain (strandAcquire) - writes the answer and lets go of them. What it shows are its
+ * own values (no other strand reaches them: ownership) and the main program's globals under the lock of the globals, so the others run on meanwhile and
+ * nothing is read while another strand writes it. `globals` and a global's `expand` are answered by the main program when it stands, else by another thread
+ * that stands; while every thread runs they are refused ("the program is running") - with the GIL the agent read them between two lines of the others.
+ * The profiler's table has a lock of its own then.
+ *
  * The agent (FIRE_DEBUG_AGENT: the desktop - posix, windows -, FreeRTOS and ESP32) is a thread (a task) of its own that talks to spark: over TCP on the
  * desktop, framed over the console UART on an ESP32, framed over stdio for tests and FreeRTOS boards (see "the transport" below), one JSON message per line. It never runs
  * fire code to show a value (no ToString()), never touches a reference count and never allocates on the fire heap; what changes the program (`set`) is done by
@@ -439,6 +447,7 @@ struct DbgTask {
     const char* literal;
     DbgBuf* out;                /* the answer (a value, or an error text) */
     int ok, done;
+    const char* command;        /* without the GIL: a command that reads values, answered by the stopped thread (dbgCommand) - NULL: `set` */
 };
 
 static dbg_mutex g_dbgM;
@@ -451,6 +460,9 @@ typedef struct DbgProfLine { int32_t src, line; uint64_t hits; int64_t ns; } Dbg
 static volatile int g_dbgProfile;
 static DbgProfLine* g_dbgProf;
 static uint32_t g_dbgProfCap, g_dbgProfCount;
+#ifdef FIRE_NO_GIL
+static dbg_mutex g_dbgProfM;   /* (the threads count side by side) */
+#endif
 
 static int64_t dbgProfClock(void) {
 #if defined(_WIN32)
@@ -494,8 +506,14 @@ static DbgProfLine* dbgProfSlot(int32_t src, int32_t line) {
 static void dbgProfHit(DbgThread* t, int32_t src, int32_t line, int entered) {
     int64_t now = dbgProfClock();
     DbgProfLine* e;
+#ifdef FIRE_NO_GIL
+    dbgLock(&g_dbgProfM);
+#endif
     if (t->profLine > 0 && (e = dbgProfSlot(t->profSrc, t->profLine)) != NULL) e->ns += now - t->profT;
     if (line > 0 && entered && (e = dbgProfSlot(src, line)) != NULL) e->hits++;
+#ifdef FIRE_NO_GIL
+    dbgUnlock(&g_dbgProfM);
+#endif
     t->profSrc = src; t->profLine = line; t->profT = now;
 }
 static DbgThread* g_dbgThreads;
@@ -735,6 +753,10 @@ static void dbgSendStopped(DbgThread* t) {
 }
 
 static void dbgRunTask(DbgThread* t);
+static void dbgCommand(const char* json);
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+static int g_dbgOnThread = 0;   /* a stopped thread answers a command that reads values (one at a time: the agent waits for it) */
+#endif
 
 /* The thread stops and waits until the debugger lets it go on. `gil`: it holds the GIL (released while it waits, so that the other threads run). */
 static void dbgPark(DbgThread* t, const char* reason, int gil) {
@@ -766,6 +788,10 @@ static void dbgPark(DbgThread* t, const char* reason, int gil) {
             dbgUnlock(&g_dbgM);
 #ifdef FIRE_THREADS
             gilAcquire();
+#endif
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+            if (task->command) { g_dbgOnThread = 1; dbgCommand(task->command); g_dbgOnThread = 0; }
+            else
 #endif
             dbgRunTask(t);
 #ifdef FIRE_THREADS
@@ -1225,7 +1251,33 @@ static void dbgCommand(const char* json) {
     /* the commands that read values hold the GIL (no other thread changes them meanwhile; the agent itself never runs fire code) */
     reads = strcmp(cmd, "scopes") == 0 || strcmp(cmd, "globals") == 0 || strcmp(cmd, "this") == 0 || strcmp(cmd, "expand") == 0;
     (void)reads;
-#ifdef FIRE_THREADS
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+    /* (without the GIL a stopped thread answers it, under its own locks - see the head of this file) */
+    if (reads && !g_dbgOnThread) {
+        DbgTask task;
+        DbgThread* t = NULL;
+        DbgThread* p;
+        char ref[200];
+        int owner = threadId;
+        if (strcmp(cmd, "expand") == 0 && dbgStr(json, "ref", ref, sizeof ref) && (ref[0] == 'T' || ref[0] == 'l' || ref[0] == 't') && ref[1] == ':') owner = (int)strtol(ref + 2, NULL, 10);
+        else if (strcmp(cmd, "expand") == 0) owner = 0;   /* (a global: whoever stands) */
+        dbgLock(&g_dbgM);
+        if (owner) t = dbgThreadById(owner);
+        else {
+            if (g_dbgMain.state == DBG_PAUSED) t = &g_dbgMain;
+            for (p = g_dbgThreads; !t && p; p = p->next) if (p->state == DBG_PAUSED) t = p;
+        }
+        if (!t || t->state != DBG_PAUSED || t->task) { dbgReplyError(id, owner ? "the thread is not paused" : "the program is running"); dbgUnlock(&g_dbgM); return; }
+        memset(&task, 0, sizeof task);
+        task.command = json;
+        t->task = &task;
+        dbgBroadcast(&g_dbgCv);
+        while (!task.done && g_dbgArmed) dbgWait(&g_dbgCv, &g_dbgM);
+        if (!task.done) dbgReplyError(id, "the debugger went away");
+        dbgUnlock(&g_dbgM);
+        return;
+    }
+#elif defined(FIRE_THREADS)
     if (reads) gilAcquire();
 #endif
     dbgLock(&g_dbgM);
@@ -1375,7 +1427,7 @@ static void dbgCommand(const char* json) {
         if (threadId) t = dbgThreadById(threadId);
         else for (t = g_dbgThreads; t && t->state != DBG_PAUSED; t = t->next) {}
         if (!t || t->state != DBG_PAUSED) { dbgReplyError(id, "the thread is not paused"); goto done; }
-        task.ref = ref; task.literal = literal; task.out = &out; task.ok = 0; task.done = 0;
+        task.ref = ref; task.literal = literal; task.out = &out; task.ok = 0; task.done = 0; task.command = NULL;
         t->task = &task;
         dbgBroadcast(&g_dbgCv);
         while (!task.done && g_dbgArmed) dbgWait(&g_dbgCv, &g_dbgM);
@@ -1425,7 +1477,7 @@ static void dbgCommand(const char* json) {
     else dbgReplyError(id, "unknown command");
 done:
     dbgUnlock(&g_dbgM);
-#ifdef FIRE_THREADS
+#if defined(FIRE_THREADS) && !defined(FIRE_NO_GIL)
     if (reads) gilRelease();
 #endif
     free(b.p);
@@ -1651,6 +1703,9 @@ void fire_dbgStart(const DbgProgram* program) {
     }
 #endif
     dbgMutexInit(&g_dbgM);
+#ifdef FIRE_NO_GIL
+    dbgMutexInit(&g_dbgProfM);
+#endif
     dbgCondInit(&g_dbgCv);
     dbgLock(&g_dbgM);
     g_dbgConnected = 1;

@@ -109,6 +109,9 @@ namespace fire.Editor
         public event Action? RefreshRequested;
         /// <summary>A test was double clicked: its file and line.</summary>
         public event Action<string, int>? LocationRequested;
+        /// <summary>A line of a stack trace in the details was double clicked: its file (relative to the folder of the program's first source), its line, and the
+        /// file of the test (null: not known).</summary>
+        public event Action<string, int, string?>? TraceLocationRequested;
 
         public TestExplorerControl()
         {
@@ -142,6 +145,8 @@ namespace fire.Editor
                 Setters = { new Setter(TreeViewItem.IsExpandedProperty, new Binding("IsExpanded") { Mode = BindingMode.TwoWay }) },
             });
             _tree.SelectionChanged += (_, _) => ShowDetails();
+            // a line of a stack trace in the details (`   at Store.Find (main.fire:16)`, forge test puts the trace under the message): a double click goes there
+            _details.DoubleTapped += (_, e) => { if (GoToTraceLine()) e.Handled = true; };
             _tree.DoubleTapped += (_, e) => { if (GoToSelected()) e.Handled = true; };
             _tree.KeyDown += (_, e) => { if (e.Key == Key.Enter && GoToSelected()) e.Handled = true; };
 
@@ -464,6 +469,17 @@ namespace fire.Editor
         }
 
         private static string FirstLine(string text) => text.Split('\n')[0].TrimEnd('\r');
+
+        private bool GoToTraceLine()
+        {
+            string text = _details.Text ?? "";
+            int caret = Math.Clamp(_details.CaretIndex, 0, text.Length);
+            int start = caret > 0 ? text.LastIndexOf('\n', caret - 1) + 1 : 0, end = text.IndexOf('\n', caret);
+            string line = text.Substring(start, (end < 0 ? text.Length : end) - start).TrimEnd('\r');
+            if (fire.Compiler.OutputLocations.TraceFrame(line) is not { } at) return false;
+            TraceLocationRequested?.Invoke(at.File, at.Line, (_tree.SelectedItem as TestNode)?.File);
+            return true;
+        }
 
         private bool GoToSelected()
         {

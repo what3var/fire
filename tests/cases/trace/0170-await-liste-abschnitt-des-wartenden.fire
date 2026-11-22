@@ -1,0 +1,11 @@
+class Work {
+    static int Ok(int x) { return x * 2 }
+    static int Bad(int x) { if (x > 1) { throw new Exception("bad " + x) } return x }
+}
+class Runner {
+    static any Last() { return await [ Work.Ok(1), Work.Bad(2) ] }
+    static any First() { return await [ Work.Bad(3), Work.Ok(1) ] }
+}
+try { Runner.Last() } catch (e) { print(e); print(e.StackTrace) }
+try { Runner.First() } catch (e) { print(e); print(e.StackTrace) }
+//# name: Trace: await [ ... ] - der Trace des Aufrufs endet an seinem Lambda, dann der Abschnitt des Wartenden

@@ -142,6 +142,13 @@ namespace fire.Editor
 
         private List<int> _problemLines = new();
 
+        /// <summary>The standard packages are installed now (spark's first start installs them in the background - a document opened before has the error that
+        /// fire-graphics is missing): the design view draws again (<paramref name="always"/>: also when it shows a picture - the packages changed).</summary>
+        public void PackagesInstalled(bool always)
+        {
+            if (always || PreviewError.IsVisible) Refresh();
+        }
+
         private int _previewVersion;
         private static readonly object PreviewLock = new();
 

@@ -6148,7 +6148,7 @@ namespace fire.Native
                             UseThreads();
                         }
                         string args = string.Join(", ", Enumerable.Range(first, argc).Select(SR).Concat(WindowsNeedsList.Contains(name) ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
-                        E($"{T(first)} = {SharedNative($"fire_win_{name}", argc, args.EndsWith("&" + OwnerList(), StringComparison.Ordinal), NativeImports.Windows)}({args});");   // (fire_bridge_windows.h, part of this file)
+                        E($"{TraceNat(native)}{T(first)} = {SharedNative($"fire_win_{name}", argc, args.EndsWith("&" + OwnerList(), StringComparison.Ordinal), NativeImports.Windows)}({args});{TraceNatEnd}");   // (fire_bridge_windows.h, part of this file)
                         CheckNative();
                         d = first + 1; SetR(first, winNative.Reference); return Next();
                     }
@@ -6198,7 +6198,7 @@ namespace fire.Native
                         // (an int[64] result in a program with 32-bit ints, or no scalars here: the Value of the C number)
                         if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32) || pkgLock >= 0 || awayWrapped))
                         {
-                            E($"{pkgEnter}{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};{pkgLeave}");
+                            E($"{TraceNat(native)}{pkgEnter}{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};{pkgLeave}{TraceNatEnd}");
                             typedRet = "";
                             CheckNative();
                             if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
@@ -6217,7 +6217,7 @@ namespace fire.Native
                             d = first + 1; SetR(first, false); _kindsKept = true;
                             return Next();
                         }
-                        E($"{pkgEnter}{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});{pkgLeave}");   // (pkgEnter/pkgLeave: also the main program's going away)
+                        E($"{TraceNat(native)}{pkgEnter}{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});{pkgLeave}{TraceNatEnd}");   // (pkgEnter/pkgLeave: also the main program's going away)
                         CheckNative();
                         // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
                         if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");

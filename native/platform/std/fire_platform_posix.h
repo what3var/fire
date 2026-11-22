@@ -41,7 +41,7 @@ static inline FireTlsSlots* fire_tlsSlots(void) {
     return s;
 }
 #define FIRE_TLS_SLOT(i) (fire_tlsSlots()->v[i])
-#if !defined(FIRE_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_DLL) && (defined(__x86_64__) || defined(__i386__))
+#if !defined(FIRE_GIL) && !defined(FIRE_DLL) && (defined(__x86_64__) || defined(__i386__))
 #define FIRE_TLS_EMULATED 1
 #else
 #define FIRE_TLS_STRUCT 1
