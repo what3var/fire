@@ -303,7 +303,7 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    `--debug`, `--stats`, `--time`; Exitcodes 0, 1 (unbehandelt), der von `terminate`, 2 (nicht ladbar, Befehlszeile). Eine VM je Paar von Breiten
    (`fire-i32`, `fire-i32-f32`, ...: dieselben Quellen mit `FIRE_INT32`/`FIRE_FLOAT32`); `fire` startet für ein Programm anderer Breiten die Variante neben
    sich. Gebaut mit forge: `forge build-vm` nach jedem Build von forge/spark/Tests (`src/FireVm.targets`) neben forge, ein Publish nimmt es mit
-   (`setup.iss`); entschieden: auf der Maschine gebaut (forge trägt die Quellen), nicht vorgebaut je RID. Maß: **1073 von 1128** (mit den Varianten der Breiten; vorher 1065), mit den Korrekturen von Schritt 2 zusammen **1126 von 1128**; Benchmarks (`tests/bench`, Performance): die C-VM 1,7- bis 9-mal so schnell wie die C#-VM (zusammen 255 ms gegen 697 ms), 13,7 MB RSS gegen 77-129 MB des C#-Prozesses.
+   (`setup.iss`); entschieden: auf der Maschine gebaut (forge trägt die Quellen), nicht vorgebaut je RID. Maß: **1073 von 1128** (mit den Varianten der Breiten; vorher 1065), mit den Korrekturen von Schritt 2 zusammen **1126 von 1128**, am 22.11. **1149 von 1149**; Benchmarks (`tests/bench`, Performance): die C-VM 1,7- bis 9-mal so schnell wie die C#-VM (zusammen 255 ms gegen 697 ms), 13,7 MB RSS gegen 77-129 MB des C#-Prozesses.
 8. `forge build --engine vm` bleibt: die C-VM mit angehängtem `.fbc` (und den Bibliotheken der Packages) statt der .NET-Einzeldatei.
    **Umgesetzt** ([VM_C.md](spec/VM_C.md#gepackte-programme-schritt-8)): eine Datei - `fire` der Breiten des Programms, dahinter die `.fbc` und die
    Bibliotheken der Pakete (Payload `FIREVMP1`); die Bibliotheken werden beim ersten Start in den Cache des Benutzers ausgepackt (ein Ordner je
@@ -320,15 +320,21 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    Bibliothek von graphics/windows), Nachrichten über stdout (`FIRE_PRINT_RECORDS`), Befehle über stdin (`__HostCommand`); scheitert ein Programm in `fire`
    vor seinem ersten Bild, läuft es in der C#-VM weiter. Behoben in der VM: der Hauptthread wartete am Einstieg mit der GIL (Scopes am Einstieg hingen).
    Tests: `FIRE_TESTS_ONLY=cvmrun`, die Live-Sitzung in `circuiteditor`; unter Xvfb mit spark: Konsolen- und Fensterprogramm, Haltepunkt, Schaltplan.
-   **Offen**: der Schaltplan-Editor selbst läuft wegen eines Fehlers der C-VM noch über den Rückfall (`DestroyedException` in `UI.CircuitView.DrawBackground`);
-   `UiPreview` und die Vorschau der Blöcke laufen noch im Prozess (Plan in VM_C.md); der Treiber-Agent bleibt in der C#-VM (fire-Plugins, das geteilte Gerät);
+   Der Schaltplan-Editor braucht den Rückfall nicht mehr (22.11.: die `DestroyedException` in `UI.CircuitView.DrawBackground` war das `SetField` auf ein
+   Objekt mit Sonden, behoben mit `40e81bcb`; `vm-life/0110`, die Live-Sitzung mit jedem Beispiel-Schaltplan ohne Rückfall).
+   **Offen**: `UiPreview` und die Vorschau der Blöcke laufen noch im Prozess (Plan in VM_C.md); der Treiber-Agent bleibt in der C#-VM (fire-Plugins, das geteilte Gerät);
    `FIRE_DISPLAY_SHM` und `__HostCommand` unter Windows; "Build virtual" und `check` (MCP) übersetzen noch in spark (M2).
 
 **M1:** forge (noch C#) und spark benutzen nur noch die C-VM. `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget`
 werden entfernt.
-**Stand** (19.11.2026): Ausführen und Debuggen in spark und `forge build --engine vm` gehen über die C-VM. Was das Entfernen noch aufhält:
-(1) die Fälle des Korpus, die die C-VM noch nicht richtig macht (rund 55 von 1128, dazu der Fehler im Schaltplan-Editor) - solange gibt es den Rückfall der
-Live-Sitzung und `FIRE_SPARK_VM=dotnet`; (2) fire-Plugins in der C-VM (Treiber-Agent, `Library.Load` von `.fireplugin`); (3) das geteilte Gerät zwischen
+**Stand** (22.11.2026): Ausführen und Debuggen in spark und `forge build --engine vm` gehen über die C-VM. Was das Entfernen noch aufhält:
+(1) ~~die Fälle des Korpus, die die C-VM noch nicht richtig macht, und der Fehler im Schaltplan-Editor~~ - **erledigt** (22.11.2026): der Korpus
+**1149 von 1149** in der C-VM (vorher 1127 richtig, 17 falsch, 1 nicht gelaufen von 1145: veraltete `.diagnostics` seit den Stack-Traces, die GIL weckte
+bei jeder Übergabe alle Wartenden - `native/3510` 0,87 s statt 0,15 s -, die Läufer ließen die Schrift des Desktops zu - 3210/4110, nicht die
+Umgebung der Bibliothek); alle Fälle zusätzlich in Release, Debug und Performance gegen die C#-VM: gleich bis auf die Fälle, deren Ausgabe von Lauf zu
+Lauf wechselt, und Performance, wo die C#-VM ungeprüft liest (undefiniert; sie stürzt dabei teils mit einer .NET-Ausnahme ab); Debug hat jetzt die
+Warnung für Verweise auf zerstörte Objekte (`vm_dangle.c`); der Schaltplan-Editor läuft in `fire` ohne den Rückfall (die Ursache war schon mit
+`40e81bcb` behoben). Der Rückfall der Live-Sitzung und `FIRE_SPARK_VM=dotnet` können damit gehen ([VM_C.md](spec/VM_C.md#stand-gegen-den-korpus)); (2) fire-Plugins in der C-VM (Treiber-Agent, `Library.Load` von `.fireplugin`); (3) das geteilte Gerät zwischen
 spark und einem Programm (`fire_host.dev_*`, `DeviceManager`) - ein Protokoll oder bis Phase F ohne; (4) `UiPreview`/Blockvorschau in `fire`;
 (5) `forge run`, `forge test` und die Tests (`fire.Testing`: RuntimeSession, VmDebugTarget, die C#-VM als Vergleich) hängen an `fire.Runtime`;
 (6) `forge build --engine vm` mit `FIRE_VM_ENGINE=dotnet`, der .NET-Packer; (7) Windows: `fire` ungeprüft gelaufen, `FIRE_DISPLAY_SHM`, `__HostCommand`,

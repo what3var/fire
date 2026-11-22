@@ -36,6 +36,7 @@ der Paket-Natives sucht die VM im Ordner von forge (der Runner setzt `FIRE_PKG_P
 | `vm_json.c` | JSON: die Engine des nativen Builds (`fire_json.h`) auf Tabellen, die die VM aus dem Programm baut | `JsonMethods`, `VM.Json.cs` (`CppGenerator.Json.cs` für die Tabellen) |
 | `vm_threads.c` | Threads, Tasks, Aktoren, Sektionen, Jobs, `catch threads`/`catch terminate`, die Natives der Threads (Kanäle, `Completion`, Abbruch, `await [...]`, `handover`, `Sleep`), Anfang und Ende des Programms mit Threads | `FireRuntime`, `GlobalsBroker`, `VM.Tasks`, `Channels`, `Completions`, `Cancellation` |
 | `vm_run.c` | die Schleife (ein `switch` über `opcodes.def`), `DeclaredType`, Arrays einer Klasse, `finally`, Abwicklung | `VM.Execute`, `DeclaredType`, `VM.ThrowException` |
+| `vm_dangle.c` | Debug: die Warnung für Verweise, die ihr Objekt überleben (ein Objekt eines Aufrufs in einem Feld oder Array, das beim Ende des Aufrufs stirbt) | `DanglingWatch`, `VM.NoteStore`/`ReportDangling` |
 | `vm_debug.c` | der Debugger: das Protokoll nativer Programme über den Agenten der Runtime (`fire_debug.h`), die Halte vor jeder Instruktion, die Frames für den Agenten | `VM.StepLine`/`StepInto`/`StepOut`/`RunUntilBreakpoint`, `DebugScopeChain`, `DebugGlobals`, `PauseOnUnhandled` |
 | `fire.c` | das Programm `fire`: Befehlszeile, Programme nacheinander in einem Prozess, Abbau nach jedem (L6), die Varianten der Breiten, das Payload eines gepackten Programms | `fire.Runtime/Program.cs`, `Runtime.cs`, `PayloadLoader` |
 | `src/fire.Compiler/CVm.cs`, `src/fire.Runtime/CVmPayload.cs` | `forge build --engine vm`: `fire` finden oder bauen, das Programm dahinter packen; das Format des Payloads in C# | `Packer`, `PayloadFile` |
@@ -165,9 +166,11 @@ bleibt in spark (die Ansicht reicht die Tasten weiter, das Programm hat kein Fen
 * **Befehle**: stdin, eine Zeile je Befehl; `__HostCommand()` ohne `#extern` liest sie ohne zu warten (ein Haken in `vmCallExtern`, POSIX: `poll`).
 * **Übersetzt** wird das Programm der Ansicht in spark (`Linker` mit `PackageLibraries`, `ProgramFile.Write`) - wie die übrigen Sprachdienste bis M2 (`forge serve`).
 * **Rückfall**: scheitert das Programm in `fire`, bevor es ein Bild gezeigt hat, startet `LiveSession` es in der C#-VM von spark neu (`ChildFailure` sagt,
-  warum). Heute so beim Schaltplan-Editor: die C-VM wirft in `UI.CircuitView.DrawBackground` eine `DestroyedException` (`new Renderer(this.gridLayer)` gleich
-  nach `this.gridLayer = new Framebuffer(w, h)`, nur auf dem Weg über `UI.Root.Update` - `Paint`, `FillBack`, `DrawChild`; `view.DrawAll(ui, 0, 0)` direkt
-  nach `Measure`/`Arrange` geht). Ein Fall für den Korpus der VM.
+  warum). Der Schaltplan-Editor braucht ihn nicht mehr (22.11.2026): seine `DestroyedException` in `UI.CircuitView.DrawBackground` (nur über `UI.Root.Update`)
+  war das `SetField` der C-VM auf ein Objekt mit Sonden - die Elemente der UI bekommen beim ersten Anordnen welche (`Root.Watch`) -, das die Besitzregeln
+  des Speicherns überging: `this.gridLayer = new Framebuffer(w, h)` starb mit der Anweisung. Behoben mit `40e81bcb` auf dem Zweig der Korrekturen der C-VM,
+  den der Zweig der Live-Ansicht (`3d6a7ca7`) noch nicht hatte (gefunden, indem die VM jedes Commits dazwischen gebaut wurde); der Fall `vm-life/0110` und
+  die Prüfung der Live-Sitzung mit jedem Beispiel-Schaltplan ohne Rückfall (`NoFallback`, Größe und `fit` gleich nach dem Start wie von spark) halten es fest.
 * **Treiber-Agent und Geräte**: der Treiber-Agent von spark (`PackageDriverAgent`, eine `LiveSession`) bleibt in der C#-VM (`InProcessOnly`): seine Treiber kommen
   als fire-Plugins, die die C-VM nicht lädt, und die Geräte, die er macht, teilt sich der `DeviceManager` von spark mit den Programmen der C#-VM
   (`fire_host.dev_*`). Ein Programm in `fire` nimmt die C-Treiber seines Pakets (devices), nicht die Geräte von spark - das geteilte Gerät zwischen IDE und
@@ -181,9 +184,9 @@ bleibt in spark (die Ansicht reicht die Tasten weiter, das Programm hat kein Fen
 **Tests**: `FIRE_TESTS_ONLY=cvmrun` (`CVmRunTests.cs`: ein falsches `fire` - Befehlszeile, Umgebung, Eingabe, beide Ausgaben, Exitcode, Stop, ein Programm, das
 sich nicht verbindet -, das echte forge und `fire`: der Bericht von `bytecode`, Overlay, Fehler, ein Konsolenprogramm, ein Fensterprogramm ohne Bildschirm,
 Debuggen mit engine vm, Scopes am Einstieg, Haltepunkt, Variablen, Schritt, Ende mit dem Code von `terminate`); `FIRE_TESTS_ONLY=circuiteditor` (die
-Live-Sitzung läuft in `fire`, Bilder, Maus, Befehle, ein mehrzeiliges `print`, der Rückfall); `drivers`, `debugger`, `forgereport`, `packer` und
+Live-Sitzung läuft in `fire`, Bilder, Maus, Befehle, ein mehrzeiliges `print`, der Rückfall, die zehn Beispiel-Schaltpläne im Programm des Editors ohne Rückfall); `drivers`, `debugger`, `forgereport`, `packer` und
 `native` mit `FIRE_TESTS_FILTER=VM-Debugger` unverändert grün. Unter Xvfb mit spark selbst: ein Konsolenprogramm (Ausgabe, Eingabe), ein Fensterprogramm
-(sein Fenster aus `fire`, Stop), Debuggen mit einem Haltepunkt (Halt, Scope-Panel, F10), der Schaltplan-Editor (über den Rückfall).
+(sein Fenster aus `fire`, Stop), Debuggen mit einem Haltepunkt (Halt, Scope-Panel, F10), der Schaltplan-Editor (damals über den Rückfall; seit 22.11. ohne ihn - geprüft mit der Live-Sitzung in `circuiteditor`, spark selbst nicht noch einmal).
 
 ## Lader
 
@@ -310,7 +313,10 @@ eine Bibliothek es hält (offene Fenster), und bedient dabei, was ankommt. Ein N
 Bibliothek keine Dienste/keinen Leerlauf hat, läuft ohne die GIL (wie die Threads der C#-VM ihre Natives gleichzeitig rufen); das Hauptprogramm ist
 dann "weg": ein Thread, der eine Sektion will, nimmt sie sich selbst, einer nach dem anderen (`fire_vmGrantAway`, der einzige zweite Eingriff in die
 Runtime hinter `FIRE_VM`, nur mit der GIL), und das Hauptprogramm wartet nach dem Native, bis diese Sektionen fertig sind. Ein Native, der die GIL behält
-und lange lief (2 ms), gibt danach den wartenden Strängen ihre Runde (`fire_natEnd` eines nativen Builds). Fenster laufen so wie in der C#-VM: `Window.Show()` startet den Manager
+und lange lief (2 ms), gibt danach den wartenden Strängen ihre Runde (`fire_natEnd` eines nativen Builds). Die GIL ist eine Ticket-Sperre, deren Wartende
+je auf der Bedingung des Platzes ihres Tickets warten (64 Plätze); eine Freigabe weckt nur den Platz des nächsten Tickets - mit einer Bedingung für alle
+weckte jede Übergabe jeden wartenden Thread, bei Dutzenden fire-Threads ging die GIL in Futex-Aufrufen reihum (`native/3510`, 30 parallele Anfragen an
+`Http.AppServer`: 0,87 s statt 0,15 s; die C#-VM 0,11 s). Das gilt auch für den Debug-Build eines nativen Programms (dieselbe GIL, `fire_rt.h`). Fenster laufen so wie in der C#-VM: `Window.Show()` startet den Manager
 mit seinem eigenen Thread in der Bibliothek, dessen Zyklen kommen als Dienste (mit `FIRE_DISPLAY=headless` ohne Bildschirm).
 
 **ABI v2**: die Kopfdatei ist Version 1, die Lambdas, `request_service` und `hold` sind Felder von `fire_host` (an `size` erkannt) - die VM bietet alle.
@@ -384,26 +390,52 @@ derselben Stelle des Stapels mit derselben Funktion und demselben (wiederverwend
 ## Stand gegen den Korpus
 
 `tests/run-cases-vm.sh` mit dem C#-forge, alle Ordner, mit den Varianten der Breiten (der Spike: 306; nach den Schritten 1 und 2: 751; Schritte 4/5
-allein 869, Schritt 3 allein 910; nach dem Zusammenführen 1065; Schritt 7 allein 1073):
+allein 869, Schritt 3 allein 910; nach dem Zusammenführen 1065; Schritt 7 allein 1073; 19.11.: 1126 von 1128). Stand 22.11.2026, vorher 1127 richtig,
+17 falsch, 1 nicht gelaufen von 1145 - jetzt **alle 1149 richtig, keiner ausgelassen**:
 
 | Ordner | richtig | falsch | | Ordner | richtig | falsch |
 |---|---|---|---|---|---|---|
-| native | 501 | 2 | | vm-gl | 27 | 0 |
+| native | 503 | 0 | | vm-gl | 27 | 0 |
 | types | 275 | 0 | | vm-lq | 32 | 0 |
-| syntax | 62 | 0 | | vm-perf | 19 | 0 (1 nicht) |
+| syntax | 62 | 0 | | vm-perf | 20 | 0 |
 | smoke | 58 | 0 | | vm-rf | 18 | 0 |
 | diag | 38 | 0 | | vm-sc | 30 | 0 |
-| vm-arr, vm-arr-error | 9 | 0 | | vm-sc-checked | 6 | 0 |
-| vm-clone, vm-clone-error | 15 | 0 | | vm-shutdown | 6 | 0 |
-| vm-ext, vm-ext-error | 20 | 0 | | vm-life | 10 | 0 |
-| **zusammen** | **1126** | **2** | | | | |
+| trace | 16 | 0 | | vm-sc-checked | 6 | 0 |
+| vm-arr, vm-arr-error | 9 | 0 | | vm-shutdown | 6 | 0 |
+| vm-clone, vm-clone-error | 15 | 0 | | vm-life | 14 | 0 |
+| vm-ext, vm-ext-error | 20 | 0 | | **zusammen** | **1149** | **0** |
 
-Mit ASan (`-fsanitize=address`, alle Varianten) über den ganzen Korpus: dieselben 1126, ohne Befund. Die Runtime ohne `FIRE_VM` ist für den Präprozessor
-dieselbe (geprüft mit `gcc -E` gegen den Stand vorher, mit GIL, ohne GIL mit Tasks, `FIRE_INT32`).
+Was die 17 waren: `types` 14 - die `.diagnostics` stammten von vor den Stack-Traces (Release druckt seitdem `   at <main> (datei:zeile)`, beide VMs
+gleich; die Erwartungen nachgezogen); `native/3510` - die GIL (oben): 30 langsame Anfragen parallel brauchten 0,87 s statt unter 0,7 s;
+`native/3210`, `4110` - **nicht** die Schrift von `libfire_gfx`, wie hier stand: die Läufer ließen das Aussehen des Desktops zu (`SystemTheme`: unter
+GNOME die Schrift der Oberfläche, Cantarell über gsettings), das Testprogramm schaltet es ab (`FIRE_SYSTEM_THEME=off`, Program.cs); beide Läufer tun
+das jetzt auch, dann geben C-VM, C#-VM und der native Build die `.expected` aus. Der eine nicht gelaufene (`vm-perf/0120`, die Warnungen eines
+Debug-Laufs) läuft jetzt: `forge run` druckt sie auf stdout, und die C-VM hat sie (unten).
 
-Offen sind nur `native/3210` und `native/4110` (UI: Textbreiten und Zeilenhöhen). Die C#-VM gibt bei beiden dasselbe aus wie die C-VM - beide messen
-Text mit der Bibliothek `libfire_gfx` (`Prebuilt/` von forge), die `.expected` stammen vom nativen Build, der die Natives von graphics selbst übersetzt;
-die Metriken der Schrift unterscheiden sich dort, kein Fehler der VM.
+**Alle drei Modi**: zusätzlich jeder Fall (ohne `.error`) in Release, Debug und Performance gegen die C#-VM verglichen (`forge run -m` gegen `fire` auf
+dem `.fbc` desselben Modus: Ausgabe, Exitcode, Fehlerausgabe ohne Warnungen; mit den Varianten der Breiten; Skript im Arbeitsordner, nicht
+eingecheckt). Release: gleich, bis auf Fälle, deren Ausgabe sich von Lauf zu Lauf ändert (`native/4237`: zufällige Kennungen in der Fehlerausgabe).
+Debug: vorher 6 Abweichungen (die Warnung für Verweise auf zerstörte Objekte fehlte - `native/0140`, `3800`, `4130`, `4238`, `vm-perf/0130`,
+`diag/0300`), jetzt gleich. Performance: rund 40 Abweichungen, alle in Fällen, die ihre Modi ohne Performance angeben, und alle dort, wo
+Performance die Prüfungen weglässt (Index, zerstörte Objekte, übergebene Objekte): die C-VM prüft weiter und wirft die Ausnahme, die C#-VM liest
+ungeprüft - darunter ein Absturz des ganzen Prozesses mit `System.IndexOutOfRangeException` (`ScriptArray.GetUnchecked`, `ByteBuffer.SetUnchecked`),
+statt einer Ausnahme von fire (z. B. `smoke/0140`, `trace/0020`, `native/0630`). Undefiniertes Verhalten nach SPEC, kein Fehler der C-VM; der
+Absturz der C#-VM ist ihrer.
+
+**Debug: Verweise, die ihr Objekt überleben** (`vm_dangle.c`, wie `DanglingWatch` der C#-VM): ein Objekt, das einem Aufruf gehört (ein Lokal, ein
+mit `take` übergebenes Argument), stirbt mit ihm - auch wenn ein Feld oder ein Array nur einen Verweis darauf bekam. Im Modus Debug wird jedes
+Speichern eines solchen Objekts in ein Feld (`SetField`) oder ein Element eines Arrays (`ArraySet`) vermerkt; stirbt es, werden die Halter, die noch
+darauf zeigen und weiterleben, einmal je Stelle und Strang gemeldet (`warning (line N): an Item is destroyed at the end of the call it belonged to, but
+the array in the field 'slots' of a Shelf still points to it (...)`, als Zeile der Ausgabe). Wem ein Objekt gehört: die Kette der Besitzer
+(`OwnList.holder`) bis zu einer Liste ohne Halter - die eigene Liste eines Scopes (von `scNew` in `OwnList.depth` markiert, das die Runtime nicht
+benutzt) oder dessen Temporäre (`home`); der globale Scope zählt nicht. Ein Halter "stirbt mit", wenn er schon zerstört ist oder einem Scope gehört, der
+dieser oder einer darin ist (`OwnList.parent`). Die Zeile ist die der nächsten Instruktion (`VM.CurrentLocation`); was mit dem Wurfort nach einem
+catch-Block stirbt, nennt die Stelle, an der der catch-Block verlassen wurde (die C-VM führt ihn auf den Frames des Wurforts aus, die C#-VM ohne sie).
+Die Runtime ruft `fire_vmDangling` aus `destroy`/`destroyList`, solange etwas vermerkt ist (`g_vmDangling`, hinter `FIRE_VM`). Fälle `vm-life/0120`,
+`0130` (je Thread), `0140` (nach catch), `vm-perf/0120`.
+
+Mit ASan (`-fsanitize=address,undefined`): am 19.11. der ganze Korpus ohne Befund; am 22.11. die neuen Fälle und die Debug-Fälle mit Warnungen
+(`native/0140`, `3800`, `4130`, `4238`, `vm-perf/0120`) ohne Befund.
 
 Was die Fälle davor fehlen ließ (zum Nachlesen in den Commits): der Scope eines catch-Blocks stirbt nach den Scopes des Wurforts (wie
 `DeferCatchRelease` des Generators); Zeiger auf Lokale halten die Slots am Leben (ein Scope mit `&x` gibt sie erst am Ende des Programms frei);
