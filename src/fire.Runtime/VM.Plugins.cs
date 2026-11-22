@@ -76,8 +76,16 @@ namespace fire.Runtime
             if (!PluginFiles.TryGetValue(handle, out var entry)) return Value.MakeUndefined();
             if (entry.Plugin is not { } plugin) return Value.MakeString(entry.Error ?? "The library is no fire plugin.");
             string? why;
-            lock (LinkedPlugins)
-                why = LinkPlugin(plugin);
+            // (another thread links a plugin right now - its initialisers may wait for a section of the globals: the main program that waits here is away meanwhile,
+            // like in a native, so the threads take their sections themselves)
+            if (!System.Threading.Monitor.TryEnter(LinkedPlugins))
+            {
+                bool away = NativeAwayBegin(Array.Empty<Value>());
+                System.Threading.Monitor.Enter(LinkedPlugins);
+                if (away) NativeAwayEnd();
+            }
+            try { why = LinkPlugin(plugin); }
+            finally { System.Threading.Monitor.Exit(LinkedPlugins); }
             return why != null ? Value.MakeString($"The plugin '{plugin.Name}' cannot be loaded: {why}") : Names(plugin.Classes.Where(c => !c.StartsWith("__", StringComparison.Ordinal)).ToList());
         }
 
@@ -180,6 +188,22 @@ namespace fire.Runtime
             foreach (var (rc, field, init) in own.SelectMany(rc => rc.StaticFields.Select(sf => (rc, sf.Name, sf.Init))).OrderBy(x => Rank(x.rc, x.Name)).ToList())
                 {
                     if (CallInline(new LambdaValue(init, null), Array.Empty<Value>(), out var value) is { } error) return $"the initialiser of '{rc.Name}.{field}' threw {error.ClassName}.";
+                    if (_threadBroker is { } broker)
+                    {
+                        // (loaded in a fire thread: the static fields are the main program's - what the initialiser made goes to its global scope and into the globals'
+                        // domain like `x.TakeGlobal()` of the thread, in a section; the thread's end does not take it along - vm_plugin.c the same)
+                        EnterGlobalsSection();
+                        try
+                        {
+                            bool alive = value.Kind == ValueKind.Class ? value.AsObjectRef() is ObjectInstance { IsDestroyed: false } : value.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && !IsDestroyedLeaf(value);
+                            if (alive && !InMainGlobals(value)) TakeGlobalMain(value);
+                            broker.Lock.Enter();
+                            try { rc.StaticFieldValues[field] = value; }
+                            finally { broker.Lock.Exit(); }
+                        }
+                        finally { ExitGlobalsSection(); }
+                        continue;
+                    }
                     if (value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance obj) obj.TakeGlobal(_globalScope);
                     else if (LeafOf(value) is { } leaf) LeafOwnership.Reparent(leaf, _globalScope);
                     rc.StaticFieldValues[field] = value;

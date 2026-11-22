@@ -1052,6 +1052,21 @@ static const UnitConvFn g_vmUnitFrom[16] = { vmUnitFrom0, vmUnitFrom1, vmUnitFro
 
 /* ---- the units of the program: its table becomes the runtime's (unitsInit), its symbols the ones a text may name (g_textUnits) ---- */
 static TextUnit* g_vmTextUnits;
+/* The rows of the table whose display text is lent (the program's, a plugin's, a constant: the rows the VM makes) - the others the runtime made with a text of
+ * their own (unitMul, unitDiv, unitInternText, the root: malloc'ed), which goes with the table. */
+static uint8_t* g_vmUnitLent;
+static uint32_t g_vmUnitLentCap;
+static void vmUnitsLent(uint32_t from) {
+    uint32_t i;
+    if (g_udCount > g_vmUnitLentCap) {
+        uint32_t cap = g_udCount + 64;
+        uint8_t* grown = (uint8_t*)realloc(g_vmUnitLent, cap);
+        if (!grown) outOfMemory();
+        memset(grown + g_vmUnitLentCap, 0, cap - g_vmUnitLentCap);
+        g_vmUnitLent = grown; g_vmUnitLentCap = cap;
+    }
+    for (i = from; i < g_udCount; i++) g_vmUnitLent[i] = 1;
+}
 static void vmInstallUnits(Vm* vm) {
     VmProgram* p = vm->prog;
     static const char* const builtins[] = { "m", "g", "s", "b", "B", "l", "min", "h", "d" };
@@ -1092,6 +1107,23 @@ static void vmInstallUnits(Vm* vm) {
     }
     g_textUnits = g_vmTextUnits;
     g_textUnitCount = nt;
+    vmUnitsLent(0);
+}
+/* The end of the program: the runtime's table of units goes (unitsInit made it - the names are malloc'ed, the symbols are the program's), with the
+ * dimensions a plugin added; the next program installs its own. */
+static void vmUninstallUnits(void) {
+    uint32_t i;
+    for (i = 0; i < g_udCount; i++) {
+        free((void*)g_ud[i].name);
+        if (g_ud[i].display && (i >= g_vmUnitLentCap || !g_vmUnitLent[i])) free((void*)g_ud[i].display);
+    }
+    free(g_ud);
+    free(g_vmUnitLent); g_vmUnitLent = NULL; g_vmUnitLentCap = 0;
+    g_ud = NULL; g_udCount = g_udCap = 0;
+    for (i = 0; i < FIRE_NDIMS; i++) g_dimNames[i] = "";
+    g_dimsAdded = false;
+    g_textUnits = NULL; g_textUnitCount = 0;
+    free(g_vmTextUnits); g_vmTextUnits = NULL;
 }
 
 /* The unit a declaration demands (`int x : mm`, CheckUnit, a field's requiredUnit): Unit.Parse of the text - "§"-coded units of the program, the units a
@@ -1144,10 +1176,13 @@ static uint32_t vmUnitOfName(Vm* vm, const char* text) {
                     if (c == vm->prog->nconv && c < 16) vm->prog->convClasses[vm->prog->nconv++] = cn;
                     if (c < 16) conv[q] = (int32_t)c;
                 }
-                if (offset == 0.0 && conv[0] < 0 && conv[1] < 0) return unitIntern(dims, scale, sym);
+                uint32_t before = g_udCount;
+                if (offset == 0.0 && conv[0] < 0 && conv[1] < 0) { u = unitIntern(dims, scale, sym); vmUnitsLent(before); return u; }
                 for (r = 1; r < g_udCount; r++)
                     if (g_ud[r].display && !strcmp(g_ud[r].display, sym) && g_ud[r].offset == offset && g_ud[r].scale == scale) return r;
-                return unitAppend(dims, scale, sym, offset, conv[0], conv[1]);
+                u = unitAppend(dims, scale, sym, offset, conv[0], conv[1]);
+                vmUnitsLent(before);
+                return u;
             }
         }
         return 0;
@@ -1162,7 +1197,12 @@ static uint32_t vmUnitOfName(Vm* vm, const char* text) {
         if (d >= FIRE_NDIMS) return 0;
         if (!g_dimNames[d][0]) g_dimNames[d] = sym;
         dims[d] = 1;
-        return unitIntern(dims, 1.0, sym);
+        {
+            uint32_t before = g_udCount;
+            u = unitIntern(dims, 1.0, sym);
+            vmUnitsLent(before);
+            return u;
+        }
     }
 }
 static VmDemand* vmDemand(Vm* vm, const char* text) {

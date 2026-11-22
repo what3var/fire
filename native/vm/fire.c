@@ -251,10 +251,9 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     g_vmDemands = NULL;
     g_vmSpecs = NULL;
     g_vmArrCount = 0; g_arrClasses = NULL;
-    g_textUnits = NULL; g_textUnitCount = 0;
-    free(g_vmTextUnits); g_vmTextUnits = NULL;
     vmUnload(p);
     vmPluginsEnd();                      /* (the programs of its fire plugins, the tables they made grow) */
+    vmUninstallUnits();                  /* (the runtime's table of units, the dimensions plugins added) */
     free(bytes);
     fflush(stdout);
     if (g_vmTime)   /* (--time: what the benchmarks compare - loading, running, taking down) */

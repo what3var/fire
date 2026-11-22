@@ -1,0 +1,51 @@
+// (twelve arrays of a class: each has its own entry in the table of the runtime that says what fits - those after the eighth check their elements as the first)
+class Ant { int v = 1 }
+class Bee { int v = 2 }
+class Cat { int v = 3 }
+class Dog { int v = 4 }
+class Eel { int v = 5 }
+class Fox { int v = 6 }
+class Gnu { int v = 7 }
+class Hen { int v = 8 }
+class Ibis { int v = 9 }
+class Jay { int v = 10 }
+class Koi { int v = 11 }
+class Lynx { int v = 12 }
+Ant allAnt[] = new Ant[2]
+allAnt[0] = new Ant()
+Bee allBee[] = new Bee[2]
+allBee[0] = new Bee()
+Cat allCat[] = new Cat[2]
+allCat[0] = new Cat()
+Dog allDog[] = new Dog[2]
+allDog[0] = new Dog()
+Eel allEel[] = new Eel[2]
+allEel[0] = new Eel()
+Fox allFox[] = new Fox[2]
+allFox[0] = new Fox()
+Gnu allGnu[] = new Gnu[2]
+allGnu[0] = new Gnu()
+Hen allHen[] = new Hen[2]
+allHen[0] = new Hen()
+Ibis allIbis[] = new Ibis[2]
+allIbis[0] = new Ibis()
+Jay allJay[] = new Jay[2]
+allJay[0] = new Jay()
+Koi allKoi[] = new Koi[2]
+allKoi[0] = new Koi()
+Lynx allLynx[] = new Lynx[2]
+allLynx[0] = new Lynx()
+try { any x = new Bee(); allAnt[1] = x; print("Ant[] took a Bee") } catch (Exception ex) { print(ex.message) }
+try { any x = new Cat(); allBee[1] = x; print("Bee[] took a Cat") } catch (Exception ex) { print(ex.message) }
+try { any x = new Dog(); allCat[1] = x; print("Cat[] took a Dog") } catch (Exception ex) { print(ex.message) }
+try { any x = new Eel(); allDog[1] = x; print("Dog[] took a Eel") } catch (Exception ex) { print(ex.message) }
+try { any x = new Fox(); allEel[1] = x; print("Eel[] took a Fox") } catch (Exception ex) { print(ex.message) }
+try { any x = new Gnu(); allFox[1] = x; print("Fox[] took a Gnu") } catch (Exception ex) { print(ex.message) }
+try { any x = new Hen(); allGnu[1] = x; print("Gnu[] took a Hen") } catch (Exception ex) { print(ex.message) }
+try { any x = new Ibis(); allHen[1] = x; print("Hen[] took a Ibis") } catch (Exception ex) { print(ex.message) }
+try { any x = new Jay(); allIbis[1] = x; print("Ibis[] took a Jay") } catch (Exception ex) { print(ex.message) }
+try { any x = new Koi(); allJay[1] = x; print("Jay[] took a Koi") } catch (Exception ex) { print(ex.message) }
+try { any x = new Lynx(); allKoi[1] = x; print("Koi[] took a Lynx") } catch (Exception ex) { print(ex.message) }
+try { any x = new Ant(); allLynx[1] = x; print("Lynx[] took a Ant") } catch (Exception ex) { print(ex.message) }
+print(allAnt[0].v + allKoi[0].v + allLynx[0].v)
+//# name: Arrays einer Klasse: mehr als acht Eintraege der Tabelle der Runtime - jedes prueft seine Elemente gegen seine Klasse

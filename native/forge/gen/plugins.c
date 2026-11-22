@@ -415,11 +415,21 @@ static const char* PluginTrailer(FgGen* g) {
     }
     jsonFixups = fcListNew(g->c);
     json = PluginJson(g, &sb, jsonFixups);
+    /* (what a static initialiser made belongs to the main program's global scope; loaded in a fire thread it goes there like `x.TakeGlobal()` of the thread, in a
+     * section - not to the thread's global scope, which its end takes along; VM.Plugins.cs and vm_plugin.c the same) */
+    if (g->pluginStaticInits && g->pluginStaticInits->count > 0) {
+        fcBufStr(&sb, "static void fire_pl_static(Value* slot, Value r) {\n");
+        fcBufStr(&sb, "#ifdef FIRE_THREADS\n");
+        fcBufStr(&sb, "    if (g_isThread) { bool ss = sectionScopeEnter(true); if (mainGlobalsKind(r, true) == 1) takeGlobalMain(ownedOf(r)); adopt(r, g_domainRoot); *slot = r; retain(r); sectionScopeExit(ss); return; }\n");
+        fcBufStr(&sb, "#endif\n");
+        fcBufStr(&sb, "    adopt(r, g_globalOwn); *slot = r; retain(r);\n");
+        fcBufStr(&sb, "}\n");
+    }
     fcBufStr(&sb, "static void fire_pl_init(void) {\n");
     for (i = 0; i < jsonFixups->count; i++) fcBufFmt(&sb, "    %s\n", (const char*)jsonFixups->items[i]);   /* (the units of the fields JSON reads: the program's, known now) */
     for (i = 0; g->pluginStaticInits && i < g->pluginStaticInits->count; i++) {
         const FgPluginInit* pi = (const FgPluginInit*)g->pluginStaticInits->items[i];
-        fcBufFmt(&sb, "    { Value r = %s(Undef()); %sadopt(r, g_globalOwn); %s = r; retain(r); }   // %s.%s\n", pi->init->name, g->usesExceptions ? "if (g_unwind.active) return; " : "",
+        fcBufFmt(&sb, "    { Value r = %s(Undef()); %sfire_pl_static(&%s, r); }   // %s.%s\n", pi->init->name, g->usesExceptions ? "if (g_unwind.active) return; " : "",
             StaticFieldVar(g, pi->cls, pi->field), pi->cls, pi->field);
     }
     fcBufStr(&sb, "}\n");

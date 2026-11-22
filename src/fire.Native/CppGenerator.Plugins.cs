@@ -204,10 +204,21 @@ namespace fire.Native
             }
             var jsonFixups = new List<string>();
             string json = PluginJson(sb, jsonFixups);
+            // (what a static initialiser made belongs to the main program's global scope; loaded in a fire thread it goes there like `x.TakeGlobal()` of the thread,
+            // in a section - not to the thread's global scope, which its end takes along; VM.Plugins.cs and vm_plugin.c the same)
+            if (_pluginStaticInits.Count > 0)
+            {
+                sb.AppendLine("static void fire_pl_static(Value* slot, Value r) {");
+                sb.AppendLine("#ifdef FIRE_THREADS");
+                sb.AppendLine("    if (g_isThread) { bool ss = sectionScopeEnter(true); if (mainGlobalsKind(r, true) == 1) takeGlobalMain(ownedOf(r)); adopt(r, g_domainRoot); *slot = r; retain(r); sectionScopeExit(ss); return; }");
+                sb.AppendLine("#endif");
+                sb.AppendLine("    adopt(r, g_globalOwn); *slot = r; retain(r);");
+                sb.AppendLine("}");
+            }
             sb.AppendLine("static void fire_pl_init(void) {");
             foreach (var fixup in jsonFixups) sb.AppendLine("    " + fixup);   // (the units of the fields JSON reads: the program's, known now)
             foreach (var (cls, field, init) in _pluginStaticInits)
-                sb.AppendLine($"    {{ Value r = {init.Name}(Undef()); {(_usesExceptions ? "if (g_unwind.active) return; " : "")}adopt(r, g_globalOwn); {StaticFieldVar(cls, field)} = r; retain(r); }}   // {cls}.{field}");
+                sb.AppendLine($"    {{ Value r = {init.Name}(Undef()); {(_usesExceptions ? "if (g_unwind.active) return; " : "")}fire_pl_static(&{StaticFieldVar(cls, field)}, r); }}   // {cls}.{field}");
             sb.AppendLine("}");
             // (the first `fire` - or its registration after it: what its static fields hold is shared with the fire threads from then on, as the program's own -
             // fire_rt.h firePluginShareGlobals, called by the program's fire_shareGlobals)

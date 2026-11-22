@@ -418,7 +418,7 @@ static Value g_vmArrZero[VM_ARRCLASSES];
 static uint32_t g_vmArrCount;
 static bool vmArrFits(uint32_t k, Value v) { return vmFitsDeclared(g_vmCur, v, g_vmArrTexts[k], Undef(), NULL); }
 static Value vmArrZero(uint32_t k) { return g_vmArrZero[k]; }
-#define VM_AC(k) static bool vmAcf##k(Value v) { return vmArrFits(k, v); } static Value vmAcz##k(void) { return vmArrZero(k); }
+#define VM_AC(k) static bool vmAcf##k(Value v) { return vmArrFits(0##k, v); } static Value vmAcz##k(void) { return vmArrZero(0##k); }   /* (0##k: the names are octal - vmAcf10 is entry 8) */
 #define VM_AC8(k) VM_AC(k##0) VM_AC(k##1) VM_AC(k##2) VM_AC(k##3) VM_AC(k##4) VM_AC(k##5) VM_AC(k##6) VM_AC(k##7)
 VM_AC(0) VM_AC(1) VM_AC(2) VM_AC(3) VM_AC(4) VM_AC(5) VM_AC(6) VM_AC(7) VM_AC8(1) VM_AC8(2) VM_AC8(3) VM_AC8(4) VM_AC8(5) VM_AC8(6) VM_AC8(7)
 #define VM_ACR(k) { vmAcf##k, vmAcz##k }

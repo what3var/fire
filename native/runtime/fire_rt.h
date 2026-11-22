@@ -14835,21 +14835,41 @@ static Value fireRegisterPluginHeld(const FirePlugin* p, OwnList* list, bool* fr
     *fresh = true;
     return firePluginClassNames(p, list);
 }
+#ifdef FIRE_THREADS
+/* (its init runs - on the thread whose g_isThread lives at g_pluginIniter: another Library.Load of it waits until its static fields are set, as in the VMs) */
+static fire_atomic32 g_pluginIniting[64];
+static const void* g_pluginIniter[64];
+static bool firePluginInited(void* ctx) { return fire_atomic_loadAcquire((fire_atomic32*)ctx) == 0; }
+#endif
 /* (without the GIL one thread registers at a time - g_pluginM; what the plugin runs first, its init, runs after, outside the lock: it is fire code) */
 Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
     bool fresh = false;
     Value r;
+#ifdef FIRE_THREADS
+    uint32_t at = 0;
+#endif
 #ifdef FIRE_NO_GIL
     fire_mutex_lock(&g_pluginM);
 #endif
     r = fireRegisterPluginHeld(p, list, &fresh);
+#ifdef FIRE_THREADS
+    while (at < g_pluginCount && g_plugins[at] != p) at++;
+    if (fresh) { g_pluginIniter[at] = (const void*)&g_isThread; fire_atomic_storeRelease(&g_pluginIniting[at], 1); }
+#endif
 #ifdef FIRE_NO_GIL
     fire_mutex_unlock(&g_pluginM);
+#endif
+#ifdef FIRE_THREADS
+    /* (another thread registers it right now: this one waits for its init, serving the sections and jobs of the threads meanwhile - not its own init that
+     * loads it again) */
+    if (!fresh && at < g_pluginCount && !firePluginInited(&g_pluginIniting[at]) && g_pluginIniter[at] != (const void*)&g_isThread)
+        (void)(g_isThread ? blockUntil(firePluginInited, &g_pluginIniting[at], true, 0) : blockUntilServing(firePluginInited, &g_pluginIniting[at], true, 0));
 #endif
     if (fresh && p->init) p->init();
 #ifdef FIRE_THREADS
     /* (registered after the first `fire`: what its static initialisers made is shared at once - before, the program's fire_shareGlobals shares it) */
     if (fresh && g_domainOn && p->shareGlobals) p->shareGlobals();
+    if (fresh) fire_atomic_storeRelease(&g_pluginIniting[at], 0);
 #endif
     return r;
 }
