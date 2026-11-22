@@ -41,6 +41,9 @@ fi
 # the libraries of the packages' natives: those forge built (its package store, Packages/) or brought (Prebuilt/), next to it
 FIRE_PKG_PATH="${FIRE_PKG_PATH:+$FIRE_PKG_PATH:}$(dirname "$forge")"
 export forge root fire cache FIRE_PKG_PATH
+# the look of the desktop stays out (like the test program, Program.cs): the font of GNOME/KDE would be the UI's font - native/3210, 4110 measured
+# their text with Cantarell where the cases expect the console font
+export FIRE_SYSTEM_THEME=off
 
 one() {   # <group> <case file>
     local group=$1 f=$2 n dir tmp modes mode out code err actual want bad="" types extra fbc cerr ccode

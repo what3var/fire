@@ -4,3 +4,4 @@ warning TC008: 'IStream' has no property or method 'Extra' (an interface type re
 warning TC019: 'f' has no type: the type of its initializer is not known here. It becomes 'any' - nothing about it is checked, every use is looked up at run time and it takes the wide values of the native backend. Give it a type ('int f = ...'), or write 'any f = ...' if that is really meant (line 14)
 warning TC002: 'Read' of 'IStream' takes 0 argument(s), not 1 (line 15)
 Unhandled exception of type 'MissingMemberException': Field 'Extra' does not exist on an instance of 'Mem' (and there is no 'get_Extra' property either).
+   at <main> (1980-interface-ireader-int-read.fire:14)

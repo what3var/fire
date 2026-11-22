@@ -1,2 +1,3 @@
 warning TC006: A value in 'kg' does not fit an element of 'wrong' in 'km/h' (line 26)
 Unhandled exception of type 'UnitMismatchException': Expected unit 'km/h', got: kg.
+   at <main> (1090-float-km-h-arr-36m-1s-10km-1h.fire:26)

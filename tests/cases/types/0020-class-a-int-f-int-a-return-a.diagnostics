@@ -1,3 +1,4 @@
 warning TC001: Cannot assign a value of type 'float' to 'y' of type 'int' (line 2)
 warning TC002: Cannot assign a value of type 'string' to parameter 'a' of 'f' of type 'int' (line 4)
 Unhandled exception of type 'ArgumentException': Variable 'y' is an int, not Float.
+   at <main> (0020-class-a-int-f-int-a-return-a.fire:2)

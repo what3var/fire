@@ -1,2 +1,3 @@
 warning TC001: Cannot assign a value of type 'string' to 'v' of type 'int' (line 2)
 Unhandled exception of type 'ArgumentException': Variable 'v' is an int, not String.
+   at <main> (0230-var-v-1.fire:2)

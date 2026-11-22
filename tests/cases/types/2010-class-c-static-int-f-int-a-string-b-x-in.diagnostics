@@ -1,2 +1,4 @@
 warning TC002: Cannot assign a value of type 'string' to parameter 'c' of 'F' of type 'int' (line 3)
 Unhandled exception of type 'ArgumentException': Parameter 'c' is an int, not String.
+   at C.F (prelude)
+   at <main> (2010-class-c-static-int-f-int-a-string-b-x-in.fire:3)

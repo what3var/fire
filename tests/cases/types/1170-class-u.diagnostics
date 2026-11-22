@@ -1,2 +1,3 @@
 warning TC001: Cannot assign a value of type 'string' to 'c' of type 'int' (line 5)
 Unhandled exception of type 'ArgumentException': Variable 'c' is an int, not String.
+   at <main> (1170-class-u.fire:5)

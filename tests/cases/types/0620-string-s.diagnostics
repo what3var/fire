@@ -1,2 +1,3 @@
 warning TC022: 's' may be undefined, but 't' is 'defined string': it is checked at run time - give it a value that is defined, or write 'trust s' if it certainly is (line 2)
 Unhandled exception of type 'ArgumentException': Variable 't' is a string and never undefined.
+   at <main> (0620-string-s.fire:2)

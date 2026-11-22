@@ -1,2 +1,3 @@
 warning TC001: Cannot assign a value of type 'Animal' to 'r' of type 'Rock' (line 6)
 Unhandled exception of type 'ArgumentException': Variable 'r' is a Rock, not Dog.
+   at <main> (0220-class-animal.fire:6)

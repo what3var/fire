@@ -1,2 +1,3 @@
 warning TC022: undefined goes into 'd', which is 'defined Dog': that is an ArgumentException at run time (line 3)
 Unhandled exception of type 'ArgumentException': Variable 'd' is a Dog and never undefined.
+   at <main> (0630-class-dog.fire:3)

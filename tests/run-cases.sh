@@ -20,6 +20,9 @@ jobs=$(nproc); groups=()
 while [ $# -gt 0 ]; do if [ "$1" = -j ]; then jobs=$2; shift 2; else groups+=("$1"); shift; fi; done
 [ ${#groups[@]} -gt 0 ] || for g in "$root"/*/; do groups+=("$(basename "$g")"); done
 export forge root
+# the look of the desktop stays out (like the test program, Program.cs): the font of GNOME/KDE would be the UI's font - native/3210, 4110 measured
+# their text with Cantarell where the cases expect the console font
+export FIRE_SYSTEM_THEME=off
 
 one() {   # <group> <case file>
     local group=$1 f=$2 n dir tmp modes mode out code err actual want bad="" types extra

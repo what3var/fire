@@ -1,3 +1,5 @@
 warning TC001: Cannot assign a value of type 'string' to 'Limit' of type 'int' (line 8)
 warning TC006: A value in 'ms' does not fit 'w' in 'kg' (line 9)
 Unhandled exception of type 'ArgumentException': Parameter 'value' is an int, not String.
+   at Lim.set_Limit (prelude)
+   at <main> (1790-interface-ilimit-int-limit-get-set.fire:8)
