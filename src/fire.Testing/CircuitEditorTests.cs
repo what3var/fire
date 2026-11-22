@@ -700,6 +700,79 @@ static class CircuitEditorTests
                 && (fire.Debugging.CVmLaunch.UseDotnet ? live.ChildFailure == null : live.ChildFailure is { } why && why.Contains("only in fire") && live.InProcess), $"{all} / {live.ChildFailure}");
         }
 
+        // the program of spark's circuit editor (CircuitEditorControl.HostScript, the parts that draw) in fire, without the fallback: every sample circuit
+        // gets its pictures, also after a resize and "fit" right after the start as spark sends them (the view ran into a DestroyedException in
+        // UI.CircuitView.DrawBackground in fire and the session went back to the C# VM)
+        if (!fire.Debugging.CVmLaunch.UseDotnet)
+            foreach (var sample in CircuitSamples.All)
+            {
+                using var live = new LiveSession { NoFallback = true };
+                var messages = new List<string>();
+                var frames = 0;
+                string? endedWith = null;
+                var ended = new ManualResetEventSlim();
+                live.Message += m => { lock (messages) messages.Add(m); };
+                live.FrameReady += () => Interlocked.Increment(ref frames);
+                live.Ended += e => { endedWith = e; ended.Set(); };
+                live.Start(CircuitHostScript(sample.Text, 800, 500));
+                live.Resize(960, 600);
+                live.Send("fit");
+                live.Send("run\t1");
+                var deadline = DateTime.Now.AddSeconds(20);
+                while (DateTime.Now < deadline && !ended.IsSet && Volatile.Read(ref frames) < 3) Thread.Sleep(20);
+                live.Send("select\t0");
+                live.Resize(700, 450);
+                live.Send("fit");
+                Thread.Sleep(500);
+                bool running = live.IsRunning;
+                live.Stop();
+                string tail;
+                lock (messages) tail = string.Join("|", messages.Where(m => m.StartsWith("@error")).Take(3));
+                Check($"Live-Sitzung in fire: der Schaltplan '{sample.File}' zeichnet (Bilder, Groesse, fit), ohne Rueckfall in die C#-VM",
+                    !live.InProcess && live.ChildFailure == null && running && Volatile.Read(ref frames) >= 3 && tail == "",
+                    $"in process {live.InProcess}, frames {frames}, running {running}, ended with {endedWith ?? "-"}, failure {live.ChildFailure ?? "-"} {tail}");
+            }
+
         Console.WriteLine(_failures == 0 ? "Alle Schaltungseditor-Pruefungen bestanden." : $"FEHLER: {_failures} Schaltungseditor-Pruefung(en) fehlgeschlagen.");
     }
+
+    /// <summary>What CircuitEditorControl.HostScript runs in spark (fire.Editor, not referenced here): the view of the circuit filling the window, the
+    /// commands from the host; reduced to what draws and what the tests send.</summary>
+    private static string CircuitHostScript(string biscuit, int width, int height) => $$"""
+        #import "circuits.ui"
+        extern string __HostCommand()
+        var fb = new Framebuffer({{width}}, {{height}})
+        var win = new Window(fb, "circuit")
+        var ui = new UI.Root(fb, win)
+        ui.Accent = 0x3C8CE7
+        ui.Scaling = 1.0
+        var circuit = new Circuits.Circuit("schematic")
+        var view = new UI.CircuitView(circuit, 0, 0, ui.ToLogical(fb.Width()), ui.ToLogical(fb.Height()))
+        ui.Add(view)
+        ui.onResize = func (int w, int h) => {
+            view.Width = w
+            view.Height = h
+        }
+        try { circuit.LoadSchematic({{BiscuitGenerator.Quote(biscuit)}}) } catch (Exception ex) { print("@error\t" + ex.message) }
+        view.OnChange = func (v) => { print("@text\t" + circuit.Schematic.ToText()) }
+        view.OnSelect = func (v) => { print("@select") }
+        print("@text\t" + circuit.Schematic.ToText())
+        ui.Update()
+        view.FitToView()
+        while (ui.Tick()) {
+            var command = __HostCommand()
+            while (command != "") {
+                var p = command.Split("\t")
+                if (p[0] == "fit") { view.FitToView() }
+                else if (p[0] == "run") { view.running = p[1] == "1" }
+                else if (p[0] == "select") {
+                    var list = view.Schematic.Elements()
+                    var i = p[1].ToInt()
+                    if (i >= 0 && i < list.Count) { view.Select(list[i], false) }
+                }
+                command = __HostCommand()
+                ui.UpdateCursor(ui.mouseX, ui.mouseY)
+            }
+        }
+        """;
 }

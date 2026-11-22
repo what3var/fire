@@ -1,0 +1,25 @@
+class Layer { int w; construct(int w) { this.w = w } }
+class View {
+    Layer layer = undefined
+    List items
+    int changes = 0
+    undefined Draw(int w) {
+        if (this.layer == undefined || this.layer.w != w) {
+            this.layer = new Layer(w)
+        }
+        print("layer " + this.layer.w)
+    }
+    undefined Fill() {
+        this.items = new List()
+        this.items.Add("a")
+    }
+}
+var v = new View()
+probe v.layer changed { v.changes = v.changes + 1 }
+probe v.items changed { print("items changed") }
+v.Draw(10)
+v.Draw(10)
+v.Draw(20)
+v.Fill()
+print(v.items.Count + " " + v.changes)
+//# name: Zuweisung an ein Objekt mit Sonden: das Feld besitzt das neue Objekt (der Schaltplan-Editor: UI.CircuitView.DrawBackground in fire)
