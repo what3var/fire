@@ -1130,6 +1130,8 @@ namespace fire.Editor
         public void OnStandardPackagesReady(bool changed = false)
         {
             Setup.SetupSteps.StartupInstalled.Set();   // (the package step of the setup wizard waits for it)
+            // (a design view that could not draw while the packages were missing draws now - after a change every one)
+            Dispatcher.UIThread.Post(() => { foreach (var doc in _documents) doc.Design?.PackagesInstalled(changed); });
             if (changed)
                 Dispatcher.UIThread.Post(() =>
                 {
