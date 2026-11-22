@@ -542,7 +542,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         if (framed) fgMemberAdd(g, members, "Handler", fcFmt(g->c, "H%d", region->template_), NULL); else fcBufFmt(&decl, "    Handler H%d;\n", region->template_);
         if (region->catchCount > 0) for (k = fgRegionDepthBase(region); k < region->out->maxDepth; k++) fgMemberAdd(g, members, "Value", fcFmt(g->c, "c%d_%d", region->template_, k), NULL);
     }
-    if (f->kind == FK_Main && g->usesThreads) fcBufStr(&post, Modular ? "    gilAcquire();\n    g_domainRoot = &OG;\n" : "    gilAcquire();\n    g_domainRoot = &OG;\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif\n#ifdef FIRE_NO_GIL\n    fire_pkgLocksInit();\n#endif\n");
+    if (f->kind == FK_Main && g->usesThreads) fcBufStr(&post, Modular ? "    gilAcquire();\n    g_domainRoot = &OG;\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif\n" : "    gilAcquire();\n    g_domainRoot = &OG;\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif\n#ifdef FIRE_NO_GIL\n    fire_pkgLocksInit();\n#endif\n");
     if (fgIsTop(f) && (g->usesGlobalOwn || f->kind == FK_FireBody)) fcBufStr(&post, "    g_globalOwn = &OG;\n");
     if (f->kind == FK_FireBody) {
         fcBufStr(&post, "    adoptTravel(&OG);\n");

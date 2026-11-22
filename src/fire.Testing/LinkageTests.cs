@@ -604,6 +604,76 @@ static class LinkageTests
             Check("TinyCC: das CLI-Programm mit linkage static laeuft wie die VM (FIRE_ONCE einmal im Programm, nicht je Modul)", tcc.Ok && tccOut == cliVm, $"{tcc.Log}\nnativ:\n{tccOut}\nVM:\n{cliVm}");
         }
         else Console.WriteLine("(TinyCC: uebersprungen - tcc fehlt)");
+        ModuleThreads(root);
+    }
+
+    /// <summary>Fire threads in a program of modules run without the GIL like with linkage source (fire_rt.h FIRE_NO_GIL; the locks of the packages by name,
+    /// FIRE_PKG_NAMED): a thread runs while the main program is in a native of a package of a library module (compression), reads a static field and methods
+    /// of the program's classes and writes them in sections; many fire threads that sleep in `time` (a library) and write in sections end in a moment - with the
+    /// GIL the 600 threads of native/1810 took five minutes. gcc static and shared, TinyCC static (no thread-local storage: the slots on one key of pthreads).</summary>
+    private static void ModuleThreads(string root)
+    {
+        const string natives = """
+            #import "compression"
+            class Table {
+                int v[] = new int[16]
+                int Bump(int i) { this.v[i] = this.v[i] + 1; return this.v[i] }
+            }
+            class Shared {
+                static Table tab = new Table()
+                static string name = "shared"
+            }
+            var done = new Channel<int>()
+            var go = new Channel<int>()
+            fire with done, go {
+                go.Receive()
+                var s = 0
+                for (var i = 0; i < 2000; i++) { s = s + Shared.tab.Bump(i % 16) + Shared.name.length }
+                done.Send(s)
+            }
+            var data = new byte[100000]
+            for (var i = 0; i < data.length; i++) { data[i] = (i * 7 + i / 13) % 251 }
+            go.Send(1)
+            var rounds = 0
+            while (done.Count == 0 && rounds < 4000) {
+                var packed = Compression.Deflate.Compress(data)
+                rounds++
+            }
+            var sum = 0
+            for (var i = 0; i < 16; i++) { sum += Shared.tab.v[i] }
+            print("thread ran while the main program was in natives: " + (rounds < 4000))
+            print("sum " + done.Receive() + ", bumps " + sum)
+            """;
+        const string sleepers = """
+            #import "time"
+            int done = 0
+            for (var i = 0; i < 400; i++) {
+                fire taking i {
+                    Sleep(40ms)
+                    sync global { done = done + 1 }
+                }
+            }
+            while (done < 400) { sync globals; Sleep(5ms) }
+            print("done " + done)
+            """;
+        string nativesWant = "thread ran while the main program was in natives: True\nsum 138000, bumps 2000\n";
+        var builds = new List<(string Name, string Linkage, ToolchainDef? Toolchain)> { ("gcc static", "static", null), ("gcc shared", "shared", null) };
+        if (ToolchainDetector.Find(ToolchainDef.BuiltIn["tcc"]) != null) builds.Add(("TinyCC static", "static", ToolchainDef.BuiltIn["tcc"]));
+        else Console.WriteLine("(TinyCC: uebersprungen - tcc fehlt)");
+        foreach (var (name, linkage, toolchain) in builds)
+        {
+            string tag = name.Replace(' ', '-');
+            var built = Build(new[] { natives }, linkage, Path.Combine(root, "threads-natives-" + tag), toolchain);
+            string got = built.Ok ? Exec(built.Exe) : "";
+            Check($"Module ohne GIL ({name}): ein fire-Thread laeuft, waehrend das Hauptprogramm im Native eines Pakets einer Bibliothek steckt (compression), liest und schreibt statische Felder und Objekte des Programms",
+                built.Ok && got == nativesWant, $"{built.Log}\nnativ:\n{got}");
+            var slept = Build(new[] { sleepers }, linkage, Path.Combine(root, "threads-sleep-" + tag), toolchain);
+            var watch = Stopwatch.StartNew();
+            string sleptOut = slept.Ok ? Exec(slept.Exe) : "";
+            double seconds = watch.Elapsed.TotalSeconds;
+            Check($"Module ohne GIL ({name}): 400 fire-Threads schlafen in time (einer Bibliothek) und schreiben in Sektionen - fertig in unter 10 s (mit der GIL Minuten), {seconds:0.00} s",
+                slept.Ok && sleptOut == "done 400\n" && seconds < 10, $"{slept.Log}\nnativ:\n{sleptOut}");
+        }
     }
 
     private static void RunIn(string root)

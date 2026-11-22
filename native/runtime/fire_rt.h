@@ -59,10 +59,10 @@
 
 /* Without the GIL (docs/ROADMAP_TASKS.md step 1): fire code runs on all cores, the shared parts have locks of their own (the slot table, the tables of the
  * threads, the lock of the globals, a lock per package; strings are copied where they cross to another thread). The default where the threads of the
- * platform are real ones (FIRE_PLAT_PARALLEL: posix, windows) and the compiler has atomics; a scheduler of fire itself (dos, win16, wasm), FreeRTOS
- * (FIRE_TLS_STRUCT), the modules (FIRE_MODULES, FIRE_DLL) and a debug build (the debugger stops the threads at the GIL) keep it. FIRE_GIL keeps it
- * anywhere. */
-#if defined(FIRE_THREADS) && defined(FIRE_PLAT_PARALLEL) && !defined(FIRE_GIL) && !defined(FIRE_NO_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_MODULES) \
+ * platform are real ones (FIRE_PLAT_PARALLEL: posix, windows) and the compiler has atomics - also a program of modules (linkage static/shared,
+ * FIRE_MODULES: the locks of the packages by name, FIRE_PKG_NAMED); a scheduler of fire itself (dos, win16, wasm), FreeRTOS (FIRE_TLS_STRUCT), the DLLs
+ * of Windows (FIRE_DLL) and a debug build (the debugger stops the threads at the GIL) keep it. FIRE_GIL keeps it anywhere. */
+#if defined(FIRE_THREADS) && defined(FIRE_PLAT_PARALLEL) && !defined(FIRE_GIL) && !defined(FIRE_NO_GIL) && !defined(FIRE_DEBUG) \
     && !defined(FIRE_DLL) && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER) || defined(FIRE_PLAT_ASM_ATOMICS))
 #define FIRE_NO_GIL 1
 #endif
@@ -3018,12 +3018,36 @@ FIRE_FN void rawSetAt(char* r, uint8_t raw, Value v) {
 FIRE_FN void rawSet(Obj* o, uint8_t raw, uint16_t off, Value v) { rawSetAt(objRaw(o) + off, raw, v); }
 /* `&obj.n` of a field declared `defined` (SPEC 8.10b): a K_PtrField - its payload is the address of the number (a packed C number, or the Value slot), `unit` the
  * number of the descriptor of the field (its name, how it is stored, its declaration; each module has its own, the runtime numbers them when they are first
- * used - under the GIL), `reserved` the offset of pointer arithmetic (only 0 can be used). What goes through it is checked like an assignment to the field. */
+ * used - under the GIL, without it under g_registryM), `reserved` the offset of pointer arithmetic (only 0 can be used). What goes through it is checked like an assignment to the field. */
 typedef struct FireFieldPtr { const char* name; uint8_t raw; uint8_t declared; uint8_t unitless; uint8_t hasUnit; uint32_t unit; Value text; uint32_t id; } FireFieldPtr;   /* (unit: the one it demands - hasUnit; text: that unit for the messages) */
 extern FIRE_RT_DATA FireFieldPtr** g_fieldPtrs;
 extern FIRE_RT_DATA uint32_t g_fieldPtrCount, g_fieldPtrCap;
+#ifdef FIRE_NO_GIL
+/* (without the GIL: what the runtime numbers when it is first used - the descriptors of field pointers, the locks of the packages of a program of
+ * modules - is numbered under this lock) */
+extern FIRE_RT_DATA fire_mutex g_registryM;
+#endif
+#if defined(FIRE_NO_GIL) && defined(FIRE_MODULES)
+extern FIRE_RT_DATA fire_mutex g_pluginM;   /* (one plugin registers at a time: fireRegisterPlugin) */
+#endif
 FIRE_FN uint32_t fieldPtrId(FireFieldPtr* d) {
     if (FIRE_UNLIKELY(d->id == 0)) {
+#ifdef FIRE_NO_GIL
+        /* (two threads may number the same descriptor: the second finds it numbered; the old table stays - another thread may read it) */
+        fire_mutex_lock(&g_registryM);
+        if (d->id != 0) { fire_mutex_unlock(&g_registryM); return d->id; }
+        if (g_fieldPtrCount == g_fieldPtrCap) {
+            uint32_t cap = g_fieldPtrCap ? g_fieldPtrCap * 2 : 16;
+            FireFieldPtr** items = (FireFieldPtr**)malloc(cap * sizeof(FireFieldPtr*));
+            if (!items) outOfMemory();
+            if (g_fieldPtrCount) memcpy(items, g_fieldPtrs, g_fieldPtrCount * sizeof(FireFieldPtr*));
+            g_fieldPtrs = items;
+            g_fieldPtrCap = cap;
+        }
+        g_fieldPtrs[g_fieldPtrCount] = d;
+        d->id = ++g_fieldPtrCount;
+        fire_mutex_unlock(&g_registryM);
+#else
         if (g_fieldPtrCount == g_fieldPtrCap) {
             uint32_t cap = g_fieldPtrCap ? g_fieldPtrCap * 2 : 16;
             FireFieldPtr** items = (FireFieldPtr**)realloc(g_fieldPtrs, cap * sizeof(FireFieldPtr*));
@@ -3033,6 +3057,7 @@ FIRE_FN uint32_t fieldPtrId(FireFieldPtr* d) {
         }
         g_fieldPtrs[g_fieldPtrCount++] = d;
         d->id = g_fieldPtrCount;
+#endif
     }
     return d->id;
 }
@@ -9860,6 +9885,21 @@ FIRE_FN void pkgLeave(fire_mutex* m, fire_mutex* prev) {
 }
 #define FIRE_PKG_ENTER(m) fire_mutex* pkPrev_ = pkgEnter(&(m));
 #define FIRE_PKG_LEAVE(m) pkgLeave(&(m), pkPrev_);
+#ifdef FIRE_MODULES
+/* A program of modules (linkage static/shared, a plugin): the natives of a package may be called from several modules, each built for itself (and cached
+ * across programs) - none can number the packages for the others. So the lock of a package is the runtime's, by the import key: the first call of a module
+ * looks it up (fire_pkgLockIndex: one entry per key, under g_registryM, never moved) and keeps its number (1-based) in a word of its own
+ * (`static fire_atomic32 <module>fire_pkgL[n]` of the generated file); every later call reads the word. `FIRE_PKG_ENTER(FIRE_PKG_NAMED(word, "key"))`. */
+#define FIRE_PKG_LOCKS 256
+extern FIRE_RT_DATA fire_mutex g_pkgLocks[FIRE_PKG_LOCKS];
+FIRE_RT_FN uint32_t fire_pkgLockIndex(const char* key);
+FIRE_FN fire_mutex* pkgLockNamed(fire_atomic32* word, const char* key) {
+    uint32_t i = fire_atomic_loadAcquire(word);
+    if (FIRE_UNLIKELY(i == 0)) { i = fire_pkgLockIndex(key); fire_atomic_storeRelease(word, i); }
+    return &g_pkgLocks[i - 1];
+}
+#define FIRE_PKG_NAMED(word, key) (*pkgLockNamed(&(word), (key)))
+#endif
 #ifdef FIRE_TASKS
 FIRE_FN void taskYield(void);
 FIRE_FN bool taskRunning(void);
@@ -13927,6 +13967,10 @@ FIRE_FN void fire_threadsInit(void) {
     fire_mutex_init(&g_mainChansM);
 #ifdef FIRE_NO_GIL
     fire_mutex_init(&g_targsM);
+    fire_mutex_init(&g_registryM);
+#endif
+#if defined(FIRE_NO_GIL) && defined(FIRE_MODULES)
+    fire_mutex_init(&g_pluginM);
 #endif
 #ifdef FIRE_NO_GIL
     fire_mutex_init(&g_dom.m);
@@ -14046,6 +14090,26 @@ fire_atomic32 g_fdWaiters;
 int64_t g_endWaitMs = 60000;
 #ifdef FIRE_NO_GIL
 fire_mutex g_targsM;
+fire_mutex g_registryM;
+#endif
+#if defined(FIRE_NO_GIL) && defined(FIRE_MODULES)
+fire_mutex g_pkgLocks[FIRE_PKG_LOCKS];
+static const char* g_pkgLockKeys[FIRE_PKG_LOCKS];
+static uint32_t g_pkgLockCount = 0;
+fire_mutex g_pluginM;
+uint32_t fire_pkgLockIndex(const char* key) {
+    uint32_t i;
+    fire_mutex_lock(&g_registryM);
+    for (i = 0; i < g_pkgLockCount && strcmp(g_pkgLockKeys[i], key) != 0; i++) { }
+    if (i == g_pkgLockCount) {
+        if (i == FIRE_PKG_LOCKS) fatal("more than 256 packages with natives call for a lock");
+        fire_mutex_init(&g_pkgLocks[i]);
+        g_pkgLockKeys[i] = key;   /* (a literal of the module's file: modules and plugins stay loaded) */
+        g_pkgLockCount++;
+    }
+    fire_mutex_unlock(&g_registryM);
+    return i + 1;
+}
 #endif
 fire_atomic32 g_lentCount;
 #ifdef FIRE_TASKS
@@ -14540,7 +14604,7 @@ static void firePluginUnits(const FirePlugin* p) {
     }
 }
 
-Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
+static Value fireRegisterPluginHeld(const FirePlugin* p, OwnList* list, bool* fresh) {
     uint32_t i, j, base;
     int32_t places[FIRE_NDIMS];
     FireClassDesc* rows;
@@ -14658,8 +14722,22 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
 #ifdef FIRE_DEBUG
     fire_dbgPlugin(p);   /* (its sources get their indexes and the debugger hears of them before its first line runs) */
 #endif
-    if (p->init) p->init();
+    *fresh = true;
     return firePluginClassNames(p, list);
+}
+/* (without the GIL one thread registers at a time - g_pluginM; what the plugin runs first, its init, runs after, outside the lock: it is fire code) */
+Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
+    bool fresh = false;
+    Value r;
+#ifdef FIRE_NO_GIL
+    fire_mutex_lock(&g_pluginM);
+#endif
+    r = fireRegisterPluginHeld(p, list, &fresh);
+#ifdef FIRE_NO_GIL
+    fire_mutex_unlock(&g_pluginM);
+#endif
+    if (fresh && p->init) p->init();
+    return r;
 }
 #endif
 #endif

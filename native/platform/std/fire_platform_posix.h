@@ -22,7 +22,8 @@
 #if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_GREEN_THREADS)
 /* TinyCC has no thread-local storage. A build without the GIL (fire_rt.h: FIRE_NO_GIL, then tasks) keeps the few pointers that must be per thread - the
  * running task, the worker, the coroutine of the worker, the windows' tokens - in slots on a key of pthreads (FIRE_TLS_EMULATED, FIRE_TLS_SLOT); a build
- * with the GIL (a debug build, modules) hangs the whole state of a thread on the key (FIRE_TLS_STRUCT, fire_tl()). */
+ * with the GIL (a debug build, FIRE_GIL) hangs the whole state of a thread on the key (FIRE_TLS_STRUCT, fire_tl()). The key is once per program
+ * (FIRE_ONCE: a program of modules in files of their own has FIRE_SPLIT). */
 FIRE_ONCE pthread_key_t fire_tlsKey;
 FIRE_ONCE pthread_once_t fire_tlsOnce FIRE_ONCE_INIT(PTHREAD_ONCE_INIT);
 static void fire_tlsMakeKey(void) { pthread_key_create(&fire_tlsKey, NULL); }
@@ -40,7 +41,7 @@ static inline FireTlsSlots* fire_tlsSlots(void) {
     return s;
 }
 #define FIRE_TLS_SLOT(i) (fire_tlsSlots()->v[i])
-#if !defined(FIRE_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_MODULES) && !defined(FIRE_DLL) && (defined(__x86_64__) || defined(__i386__))
+#if !defined(FIRE_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_DLL) && (defined(__x86_64__) || defined(__i386__))
 #define FIRE_TLS_EMULATED 1
 #else
 #define FIRE_TLS_STRUCT 1

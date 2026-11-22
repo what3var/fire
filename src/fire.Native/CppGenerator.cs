@@ -1796,11 +1796,15 @@ namespace fire.Native
         /// <summary>The lock of the package of a native in a program with fire threads: its index in `fire_pkgM`, -1 for none (no threads, or `"threadSafe": true`).</summary>
         private int PkgLock(string native)
         {
-            if (!_usesThreads || Modular || !_nativeImportOf.TryGetValue(native, out var key)) return -1;
+            if (!_usesThreads || !_nativeImportOf.TryGetValue(native, out var key)) return -1;
             if (_packageImports.FirstOrDefault(p => p.Key == key).Import?.Import.Native is { ThreadSafe: true }) return -1;
             if (!_pkgLocks.TryGetValue(key, out int index)) { index = _pkgLocks.Count; _pkgLocks[key] = index; _version++; }
             return index;
         }
+
+        /// <summary>The lock <paramref name="index"/> (<see cref="PkgLock"/>) of the package of a native, as FIRE_PKG_ENTER takes it: `fire_pkgM[i]`; with modules the
+        /// runtime's lock of the package by its import key (each module keeps its number in `fire_pkgL` - fire_rt.h FIRE_PKG_NAMED).</summary>
+        private string PkgLockRef(int index, string native) => Modular ? $"FIRE_PKG_NAMED({Px}fire_pkgL[{index}], {CString(_nativeImportOf[native])})" : $"fire_pkgM[{index}]";
 
         /// <summary>The natives in C++ (graphics, windows, the packages) that the program calls: they are in a file of their own (C++), the program (C) calls them
         /// through a function with C linkage each - `fire_nat_N`. The C++ function -> (N, number of arguments, the list of the scope as the last argument).</summary>
@@ -2223,6 +2227,17 @@ namespace fire.Native
                 sb.AppendLine("static void fire_shareGlobals(void) {");
                 foreach (var gl in _globals.OrderBy(x => x)) sb.AppendLine($"    refShare(G{gl});");
                 foreach (var (_, index) in _staticFields.OrderBy(kv => kv.Value)) sb.AppendLine($"    refShare(SF{index});");
+                sb.AppendLine("}");
+                sb.AppendLine("#endif");
+            }
+            if (_usesThreads && Modular)
+            {
+                sb.Append(ModulePkgLocks());
+                // (the first `fire`: the globals and the static fields of every module - the program knows them all, their modules' needs name them)
+                sb.AppendLine("#ifdef FIRE_STR_CROSS");
+                sb.AppendLine("static void fire_shareGlobals(void) {");
+                foreach (var gl in _globals.OrderBy(x => x)) sb.AppendLine($"    refShare(G{gl});");
+                foreach (var (key, _) in _staticFields.OrderBy(kv => kv.Value)) sb.AppendLine($"    refShare({StaticFieldVar(key.Class, key.Field)});");
                 sb.AppendLine("}");
                 sb.AppendLine("#endif");
             }
@@ -4021,7 +4036,7 @@ namespace fire.Native
                 if (region.Catches.Count > 0)
                     for (int k = region.DepthBase; k < region.Out.MaxDepth; k++) Var("Value", $"c{region.Template}_{k}", null);
             }
-            if (f.Kind == FuncKind.Main && _usesThreads) post.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;" + (Modular ? "" : "\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif\n#ifdef FIRE_NO_GIL\n    fire_pkgLocksInit();\n#endif"));
+            if (f.Kind == FuncKind.Main && _usesThreads) post.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif" + (Modular ? "" : "\n#ifdef FIRE_NO_GIL\n    fire_pkgLocksInit();\n#endif"));
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) post.AppendLine("    g_globalOwn = &OG;");
             if (f.Kind == FuncKind.FireBody)
             {
@@ -6104,7 +6119,7 @@ namespace fire.Native
                         // (the lock of the package around the call, in a program with fire threads - nothing with the GIL)
                         int pkgLock = PkgLock(native);
                         bool awayWrapped = false;
-                        string pkgEnter = pkgLock >= 0 ? $"{{ FIRE_PKG_ENTER(fire_pkgM[{pkgLock}]) " : "", pkgLeave = pkgLock >= 0 ? $" FIRE_PKG_LEAVE(fire_pkgM[{pkgLock}]) }}" : "";
+                        string pkgEnter = pkgLock >= 0 ? $"{{ FIRE_PKG_ENTER({PkgLockRef(pkgLock, native)}) " : "", pkgLeave = pkgLock >= 0 ? $" FIRE_PKG_LEAVE({PkgLockRef(pkgLock, native)}) }}" : "";
                         // (the lock of the globals and the native - fire_rt.h fire_natBegin: the main program goes away for the native when no argument is of the
                         // shared domain, so the threads need not wait for it meanwhile; a thread lets go of the read side for a native whose arguments cannot lead
                         // into the shared domain, so a long native holds nobody up, and holds it for any other one. A C number of a typed parameter is no object.

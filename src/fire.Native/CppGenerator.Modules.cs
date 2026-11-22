@@ -117,6 +117,11 @@ namespace fire.Native
         private ModuleFlags? _forced;
         /// <summary>The program: the library modules as generated (their needs are roots of the program).</summary>
         private List<ModuleOutput>? _libraries;
+        /// <summary>A module (the program, a library, a plugin) whose natives of packages take their package's lock (fire threads, without the GIL): the words that keep the
+        /// numbers of the runtime's locks it uses (fire_rt.h FIRE_PKG_NAMED, <see cref="PkgLockRef"/>); nothing without such a native.</summary>
+        private string ModulePkgLocks() => _pkgLocks.Count == 0 ? ""
+            : $"#ifdef FIRE_NO_GIL\nstatic fire_atomic32 {Px}fire_pkgL[{_pkgLocks.Count}];   // {string.Join(", ", _pkgLocks.OrderBy(kv => kv.Value).Select(kv => kv.Key))}\n#endif\n";
+
         /// <summary>The program, one file (FIRE_MODULES=1, phase A): the code of the library modules, put in after the runtime.</summary>
         private string? _moduleBodies;
 
@@ -702,6 +707,7 @@ namespace fire.Native
             }
             foreach (var key in _staticFields.Keys)
                 sb.AppendLine(IsOwnClass(FindClass(key.Class)) ? $"Value {StaticFieldVar(key.Class, key.Field)} = FIRE_UNDEF_INIT; // {key.Class}.{key.Field}" : $"extern Value {StaticFieldVar(key.Class, key.Field)}; // {key.Class}.{key.Field}");
+            sb.Append(ModulePkgLocks());
             foreach (var (from, to) in _unitFactorCaches) sb.AppendLine($"static double {Px}kUF_{from}_{to} = 0;");
             FunctionPrototypes(sb);
             foreach (var (path, name) in _selectorPaths) sb.AppendLine($"static const char* const {name}[] = {{{string.Join(", ", path.Select(CString))}}};");

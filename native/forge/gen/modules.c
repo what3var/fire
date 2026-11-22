@@ -832,6 +832,7 @@ static const char* LibraryBody(FgGen* g) {
         if (IsOwnClass(g, FindClass(g, cls))) fcBufFmt(&sb, "Value %s = FIRE_UNDEF_INIT; // %s.%s\n", StaticFieldVar(g, cls, field), cls, field);
         else fcBufFmt(&sb, "extern Value %s; // %s.%s\n", StaticFieldVar(g, cls, field), cls, field);
     }
+    fcBufStr(&sb, ModulePkgLocks(g));
     {
         FcList* pairs = fgSortedUnitFactorCaches(g);
         for (i = 0; i < pairs->count; i += 2) fcBufFmt(&sb, "static double %skUF_%d_%d = 0;\n", Px, FC_VALI(pairs->items[i]), FC_VALI(pairs->items[i + 1]));

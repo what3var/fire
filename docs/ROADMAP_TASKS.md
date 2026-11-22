@@ -137,9 +137,11 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    object of the domain have no generation check; `#performance` (no slots) checks nothing anyway.
 7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests. *Done:* the default where
    the platform's threads are real (`FIRE_PLAT_PARALLEL` from the posix and windows layers) and the compiler has atomics; the targets with a scheduler of
-   fire itself (dos, win16, wasm), FreeRTOS and TinyCC (`FIRE_TLS_STRUCT`), the modules (`FIRE_MODULES`, `FIRE_DLL` - no package locks and no
-   `fire_shareGlobals` there yet) and debug builds (the native debugger stops the threads through the GIL) keep the GIL; `FIRE_GIL` keeps it anywhere.
-   The ThreadSanitizer test builds the default (`FIRE_TEST_GIL=1`: with the GIL). Left for later: the debugger without the GIL, the modules.
+   fire itself (dos, win16, wasm), FreeRTOS, the DLLs of Windows (`FIRE_DLL`) and debug builds (the native debugger stops the threads through the GIL)
+   keep the GIL; `FIRE_GIL` keeps it anywhere. The modules (linkage static/shared, `FIRE_MODULES`, plugins) run without it since: the lock of a package
+   is the runtime's by its import key (`FIRE_PKG_NAMED`, a module keeps the number in a word of its own), the program's `fire_shareGlobals` names the
+   static fields of every module, TinyCC uses the slots of `FIRE_TLS_EMULATED` (the key once, `FIRE_ONCE`). The ThreadSanitizer test builds the default
+   (`FIRE_TEST_GIL=1`: with the GIL). Left for later: the debugger without the GIL, the DLLs of Windows.
 
 ### Step 2 in detail - state per task
 

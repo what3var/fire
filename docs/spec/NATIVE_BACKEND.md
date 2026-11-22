@@ -264,7 +264,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   den Slot, -1 für ein gepacktes Feld (es geht über seine get/set-Funktionen des Moduls). Ob gepackt wird, hängt nur an den Deklarationen, nicht daran, was der
   Code mit dem Feld tut. **Die Adresse eines `defined`-Felds** (`&obj.n`, ein `ref`-Argument) ist ein Zeiger eigener Art, `K_PtrField`: seine Nutzlast ist
   die Adresse der Zahl (die gepackte C-Zahl oder der Value-Slot), `unit` die Nummer eines Deskriptors des Felds (`FireFieldPtr`: Name, wie es liegt, seine
-  Deklaration, die Einheit; jedes Modul legt seine statisch an, die Runtime nummeriert sie beim ersten Gebrauch - unter dem GIL - in `g_fieldPtrs`),
+  Deklaration, die Einheit; jedes Modul legt seine statisch an, die Runtime nummeriert sie beim ersten Gebrauch - unter der GIL, ohne sie unter `g_registryM` - in `g_fieldPtrs`),
   `reserved` der Versatz der Zeigerarithmetik. `ptrWrite` rechnet in die Einheit des Felds um und prüft wie eine Zuweisung (`guardKindNN`); eine
   `extern`-Funktion bekommt die Zahl in ihrem Puffer und schreibt sie über den Zeiger zurück. Deshalb behält ein `defined`-Feld, dessen Adresse
   genommen wird, auch seinen statischen Typ (`FieldType`). Die VM prüft dasselbe (`TryWritePointer` bei einem `FieldPointerTarget` eines `defined`-Felds).
@@ -686,7 +686,15 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   bei der ersten Berührung des geteilten Bereichs und gibt sie am nächsten sicheren Punkt zurück; eine Sektion schreibt allein), und die Natives eines Pakets laufen unter einem
   Lock je Paket (`"threadSafe": true` im Manifest: ohne). Für ein Native hält ein Thread die Leseseite nur, wenn ein Argument in den geteilten Bereich führen kann
   (`fire_natBegin`/`fire_natArg`; sonst gibt er sie vor dem Aufruf ab, wenn er nur Zahlen der Globals gelesen hat) - ein langes Native hält das Hauptprogramm nicht auf;
-  die Reihenfolge ist Sperre der Globals vor Sperre eines Pakets (THREADING_DESIGN 7, ROADMAP_TASKS 1f). **Mit der GIL** - auf den Zielen mit eigenem Scheduler (dos, win16, wasm), FreeRTOS, in Debug-Builds, mit Modulen
+  die Reihenfolge ist Sperre der Globals vor Sperre eines Pakets (THREADING_DESIGN 7, ROADMAP_TASKS 1f). Ebenso ein Programm aus Modulen (linkage `static`/`shared`,
+  `FIRE_MODULES=1`, Plugins): jedes Modul ist für sich gebaut (und über Programme hinweg im Cache), keines kann die Pakete für die anderen nummerieren - die Sperre eines
+  Pakets ist deshalb die der Laufzeit nach seinem Import-Schlüssel (`FIRE_PKG_ENTER(FIRE_PKG_NAMED(<modul>fire_pkgL[i], "pkg:io"))`: der erste Aufruf eines Moduls sucht sie
+  in der Tabelle `g_pkgLocks` - `fire_pkgLockIndex` unter `g_registryM`, ein Eintrag je Schlüssel, der sich nie bewegt - und merkt sich ihre Nummer in einem Wort des Moduls,
+  `static fire_atomic32 fire_pkgL[n]`); `fire_shareGlobals` des Programms teilt beim ersten `fire` die Globals und die statischen Felder aller Module (das Programm kennt
+  sie aus den Bedürfnissen der Module); TinyCC hat mit den Modulen dieselben Slots auf einem Schlüssel von pthreads wie mit einer Datei (`FIRE_TLS_EMULATED`; der Schlüssel
+  einmal im Programm, `FIRE_ONCE` mit `FIRE_SPLIT`). Was die Laufzeit beim ersten Gebrauch nummeriert, ist ohne die GIL unter `g_registryM` (die Deskriptoren der
+  Feldzeiger, `fieldPtrId`; die alte Tabelle bleibt, ein anderer Thread kann sie lesen), ein Plugin registriert sich unter `g_pluginM` (sein `init` danach, ohne die Sperre).
+  **Mit der GIL** - auf den Zielen mit eigenem Scheduler (dos, win16, wasm), FreeRTOS, in Debug-Builds, mit den DLLs von Windows (`FIRE_DLL`: linkage `shared` mit MinGW)
   und mit `FIRE_GIL` - läuft aller fire-Code unter **einer globalen Sperre**, einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und
   an sicheren Punkten ab (Schleifen-Rücksprung, Funktionsanfang, alle 4096 Stationen ein `gilYield`). Die Abgabepunkte der GIL sind ohne sie die Stellen, an denen das
   Hauptprogramm und die Pakete ihre Sperren abgeben. Zustand eines Ausführungsstrangs (`g_unwind`, `g_handlers`, `g_pending`, Temporärpool, `g_globalOwn`, `g_reflCaller`)
@@ -1396,7 +1404,8 @@ Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code ste
   und `JsonFieldInfo`, bleibt ihre Nummer und `arrMap` nennt `fire_arrc_<m>`). Was eine Library als JSON liest (`Json.Deserialize(text, name)` - data's
   `QueryList("Person", ...)`), sagt ihre Schnittstelle (`JsonReads`): das Programm behält dann die Klassen, die das Lesen machen kann, wie mit einer Datei.
   `FIRE_NDIMS` ist mit `static` fest 16. Die Module stehen in Dateien für sich: `FIRE_SPLIT` (der Zustand der Plattform, `FIRE_ONCE` - unter TinyCC der Schlüssel
-  des Zustands eines Threads - lebt einmal in der Datei des Programms, nicht je Modul).
+  des Zustands eines Threads - lebt einmal in der Datei des Programms, nicht je Modul). Fire-Threads laufen in einem Programm aus Modulen ohne die GIL wie mit
+  einer Datei (siehe "Threads": die Sperren der Pakete nach Namen, `FIRE_PKG_NAMED`; nur die DLLs von Windows behalten sie).
 * **Natives in C** (Packages in C, die Bridges von graphics und windows) stehen in der Datei des Moduls ihres Imports, wenn sie für sich stehen: ihr C ruft keine
   Funktion der Natives eines anderen Imports des Programms und keiner ruft ihre (hash, compression, io, time; nicht graphics und windows zusammen - die Bridge von
   windows benutzt die Framebuffer von graphics -, nicht scene3d). Ihr Zustand gibt es so einmal; jedes andere Modul und das Programm rufen sie über die

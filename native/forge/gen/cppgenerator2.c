@@ -380,6 +380,21 @@ static const char* Run(FgGen* g) {
             fcBufStr(&sb, "}\n");
             fcBufStr(&sb, "#endif\n");
         }
+        if (g->usesThreads && Modular) {
+            int n, *items;
+            fcBufStr(&sb, ModulePkgLocks(g));
+            /* (the first `fire`: the globals and the static fields of every module - the program knows them all, their modules' needs name them) */
+            fcBufStr(&sb, "#ifdef FIRE_STR_CROSS\n");
+            fcBufStr(&sb, "static void fire_shareGlobals(void) {\n");
+            items = fgISetItems(g->c, g->globals, true, &n);
+            for (k = 0; k < n; k++) fcBufFmt(&sb, "    refShare(G%d);\n", items[k]);
+            for (k = 0; k < byIndex->count; k++) {
+                FcList* parts = fgSplit(g->c, (const char*)((FcDictEntry*)byIndex->items[k])->key, '\x01');
+                fcBufFmt(&sb, "    refShare(%s);\n", StaticFieldVar(g, (const char*)parts->items[0], (const char*)parts->items[1]));
+            }
+            fcBufStr(&sb, "}\n");
+            fcBufStr(&sb, "#endif\n");
+        }
     }
     fcBufStr(&sb, ModuleTables(g));
     {

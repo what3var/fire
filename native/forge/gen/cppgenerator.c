@@ -1920,7 +1920,7 @@ static int PkgLock(FgGen* g, const char* native) {
     const char* key;
     void* v;
     int i;
-    if (!g->usesThreads || Modular || !(key = (const char*)fcDictGet(g->nativeImportOf, native))) return -1;
+    if (!g->usesThreads || !(key = (const char*)fcDictGet(g->nativeImportOf, native))) return -1;
     for (i = 0; i < g->packageImports->count; i++) {
         FgPkgImportKey* p = (FgPkgImportKey*)g->packageImports->items[i];
         if (streq0(p->key, key)) { if (p->import->native && p->import->native->threadSafe) return -1; break; }
@@ -1929,6 +1929,26 @@ static int PkgLock(FgGen* g, const char* native) {
     fcDictPut(g->pkgLocks, key, FC_IVAL(fcDictCount(g->pkgLocks) + 1));
     g->version++;
     return fcDictCount(g->pkgLocks) - 1;
+}
+/* The lock `index` (PkgLock) of the package of a native, as FIRE_PKG_ENTER takes it: `fire_pkgM[i]`; with modules the runtime's lock of the package by its
+ * import key (each module keeps its number in `fire_pkgL` - fire_rt.h FIRE_PKG_NAMED). */
+static const char* PkgLockRef(FgGen* g, int index, const char* native) {
+    if (Modular) return fcFmt(g->c, "FIRE_PKG_NAMED(%sfire_pkgL[%d], %s)", Px, index, CString(g, (const char*)fcDictGet(g->nativeImportOf, native)));
+    return fcFmt(g->c, "fire_pkgM[%d]", index);
+}
+/* A module (the program, a library) whose natives of packages take their package's lock (fire threads, without the GIL): the words that keep the numbers of
+ * the runtime's locks it uses (fire_rt.h FIRE_PKG_NAMED, PkgLockRef); nothing without such a native. */
+static const char* ModulePkgLocks(FgGen* g) {
+    int n = fcDictCount(g->pkgLocks), i;
+    const char** keys;
+    FcBuf sb = {0};
+    if (n == 0) return "";
+    keys = (const char**)fcAlloc(g->c, sizeof(const char*) * (size_t)n);
+    FC_DICT_EACH(g->pkgLocks, e) keys[FC_VALI(e->value) - 1] = (const char*)e->key;
+    fcBufFmt(&sb, "#ifdef FIRE_NO_GIL\nstatic fire_atomic32 %sfire_pkgL[%d];   // ", Px, n);
+    for (i = 0; i < n; i++) fcBufFmt(&sb, "%s%s", i > 0 ? ", " : "", keys[i]);
+    fcBufStr(&sb, "\n#endif\n");
+    return fcBufDone(g->c, &sb);
 }
 /* Looks at the imports of packages the program uses: their native functions, and whether the target is one the C++ source is written for. */
 static void CollectPackages(FgGen* g, FcStore* store) {

@@ -731,8 +731,8 @@ static FgStep StepCoreNative(FgSC* x) {
         if (pn->host) NeedTimeObj(g);
         typedRet = typed && fgNativeReturnCType(pn->fn) ? fgNativeReturnCType(pn->fn) : "";
         pkgLock = PkgLock(g, native);
-        pkgEnter = pkgLock >= 0 ? fcFmt(g->c, "{ FIRE_PKG_ENTER(fire_pkgM[%d]) ", pkgLock) : "";
-        pkgLeave = pkgLock >= 0 ? fcFmt(g->c, " FIRE_PKG_LEAVE(fire_pkgM[%d]) }", pkgLock) : "";
+        pkgEnter = pkgLock >= 0 ? fcFmt(g->c, "{ FIRE_PKG_ENTER(%s) ", PkgLockRef(g, pkgLock, native)) : "";
+        pkgLeave = pkgLock >= 0 ? fcFmt(g->c, " FIRE_PKG_LEAVE(%s) }", PkgLockRef(g, pkgLock, native)) : "";
         if (g->usesThreads && (!pn->host || pkgLock >= 0)) {
             FcList* awayL = fcListNew(g->c);
             FcList* natL = fcListNew(g->c);
