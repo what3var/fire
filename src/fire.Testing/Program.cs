@@ -13487,8 +13487,8 @@ else
             {
                 // an exception that nothing catches: the program ends with exit code 1 after the output so far and writes the text of the VM's command line runner to
                 // stderr ("Unhandled exception of type 'Class': message")
-                // (the native build writes the line without the stack trace until it records frames: docs/spec/STACKTRACE.md step 4)
-                expected += "stderr: " + vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)").Split('\n')[0];
+                // (with its stack trace: the native build records the same frames as the VM, docs/spec/STACKTRACE.md)
+                expected += "stderr: " + vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
                 actual = exit == 1 ? stdout + "stderr: " + stderr.TrimEnd('\n', '\r') : $"Exitcode {exit}: {stdout}{stderr}";
             }
             // (the end of the program ended a thread: the line on stderr is checked on its own - the VM writes it to the console, not to the output)
@@ -13506,7 +13506,8 @@ else
         var natPipeline = TestJobs.StartPipeline(natOrder, index =>
         {
             if (NatSkipped(index)) return (Sources: (fire.Native.NativeSources?)null, Error: (string?)"");
-            try { return (Sources: (fire.Native.NativeSources?)fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release)), Error: (string?)null); }
+            // (with the file of the case, as the VM ran it: the stack traces name it)
+            try { return (Sources: (fire.Native.NativeSources?)fire.Native.CppGenerator.GenerateSources(new Linker { SourcePaths = vmCaseFiles.TryGetValue(natCases[index].Source, out var natFile) ? new string?[] { natFile } : null }.CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release)), Error: (string?)null); }
             catch (fire.Native.NativeNotSupportedException ex) { return (Sources: null, Error: $"nicht uebersetzbar: {ex.Message}"); }
             catch (Exception ex) { return (Sources: null, Error: $"Generator: {ex}"); }
         }, item => (item.Sources?.Program.Length ?? 0) + (item.Sources?.Natives?.Length ?? 0), (index, item) =>

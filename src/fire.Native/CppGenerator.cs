@@ -3451,7 +3451,7 @@ namespace fire.Native
             }
             string toString = cls.Rc.FindMethodWithAccess("ToString", 0).Proto is { ParamCount: 0 } m ? _funcByProto[m].Name : "NULL";
             // (the slots of the fields - a packed field before them takes none)
-            int message = _usesExceptions && cls.Rc.FieldIndex.TryGetValue("message", out int mi) ? FieldPlace(cls.Rc, mi).Slot : -1;
+            int message = (_usesExceptions || IsExceptionClass(cls.Rc)) && cls.Rc.FieldIndex.TryGetValue("message", out int mi) ? FieldPlace(cls.Rc, mi).Slot : -1;
             int ticks = _needsTimeObj && cls.Rc.FieldIndex.TryGetValue("ticks", out int ti) ? FieldPlace(cls.Rc, ti).Slot : -1;
             string types = "NULL";
             if (_usesExceptions && excTypes)
@@ -3513,7 +3513,14 @@ namespace fire.Native
         private static string RecInitLeave(ClassInfo cls) => cls.Rc.IsRecord ? "g_recInit = ri_.next; " : "";
 
         /// <summary>The flags of a class descriptor (FireClassDesc.flags): 1 = `[NoCopy]` on it or a base class (flat/copy refuse it).</summary>
-        private static string DescFlags(RuntimeClass rc) => rc.IsNoCopy() ? "1u" : "0u";
+        private static string DescFlags(RuntimeClass rc) => ((rc.IsNoCopy() ? 1 : 0) | (IsExceptionClass(rc) ? 2 : 0)).ToString(CultureInfo.InvariantCulture) + "u";
+
+        /// <summary>`Exception` or a class derived from it (its text is `Class: message`, docs/spec/STACKTRACE.md).</summary>
+        private static bool IsExceptionClass(RuntimeClass rc)
+        {
+            for (var b = rc; b != null; b = b.Base) if (b.Name == "Exception") return true;
+            return false;
+        }
 
         // -------------------------------------------------------------------------------------------------------------
         // Flow state: stack depth, the static scope chain (identity of the scope + number of declared slots) and which stack
@@ -3867,6 +3874,8 @@ namespace fire.Native
                 if (sources.Any(f.NeedsList.Contains)) f.NeedsList.Add(target);
 
             var dbg = DebugBuild ? DebugBegin(f, code, entry) : null;
+            // (stack traces: the descriptors of the function - one per file its code is in; null: no frame, CppGenerator.Trace.cs)
+            var traceFiles = TraceOn ? TraceFilesOf(chunk, code) : null;
             for (int i = 0; i < code.Count; i++)
             {
                 if (entry[i] == null) continue; // unreachable
@@ -3874,6 +3883,7 @@ namespace fire.Native
                 var o = OutOf(f, entry[i]!.Region);
                 if (targets.Contains(ins.Addr)) o.Code.AppendLine($"L{ins.Addr}:;");
                 if (dbg != null) DebugBeforeInstruction(f, dbg, chunk, ins, i, entry[i]!, o, targets.Contains(ins.Addr), locals);
+                if (traceFiles != null) TraceBeforeInstruction(f, chunk, ins, i, o, targets.Contains(ins.Addr), traceFiles);
                 string comment = $"// {ins.Addr}: {ins.Op}{(ins.A.Length > 0 ? " " + string.Join(",", ins.A) : "")}";
                 // `#line`: the C of the instruction is the fire line it was compiled from (an instruction without a line keeps the one before it)
                 _lineDir = null;
@@ -3907,6 +3917,8 @@ namespace fire.Native
             }
             // a debug build: the frame of the function on the shadow stack (its wrapper pushed it; the catch blocks reach it through the frame struct)
             if (dbg != null && framed) Var("DbgFrame*", "DF", "g_dbgTop");
+            // the frame of the stack traces (the catch blocks make it the top while they run)
+            if (traceFiles != null && framed) Var("FireTFrame", "TF", null);
 
             var pre = new StringBuilder();     // what comes before the declarations
             var decl = new StringBuilder();    // the declarations (not framed) - or nothing, the frame holds them
@@ -4037,9 +4049,32 @@ namespace fire.Native
             for (int i = 0; i < f.ParamLike; i++)
                 if (VarRef(VarKey(f, $"P{i}"))) post.AppendLine($"    retain(P{i});");
             if (dbg != null) post.Append(DebugPrologue(f, dbg));
+            // (the setting `calls` of the program: its traces without lines; `off` with modules: the frames of a library built with them are not shown)
+            if (f.Kind == FuncKind.Main && (TraceMode == StackTraceMode.Calls || (TraceMode == StackTraceMode.Off && Modular)))
+                post.AppendLine($"    g_stackTrace = {(TraceMode == StackTraceMode.Calls ? "FIRE_TRACE_CALLS" : "FIRE_TRACE_OFF")};");
 
             var sb = new StringBuilder();
             if (dbg != null) sb.Append(DebugTables(f, dbg));
+            // stack traces: a function that cannot throw has no frame (its positions go); the others push theirs at the start
+            bool traced = traceFiles != null;
+            if (traced && !framed)
+            {
+                bool frameless = TraceCannotThrow(f, pre.ToString() + decl + post + f.Root.Code + f.Root.Tail);
+                TraceNoteFrameless(f, frameless);
+                if (frameless)
+                {
+                    traced = false;
+                    string stripped = TraceStripLines(f.Root.Code.ToString());
+                    f.Root.Code.Clear().Append(stripped);
+                }
+            }
+            else if (traced) TraceNoteFrameless(f, false);
+            if (traced)
+            {
+                sb.Append(TraceTable(f, traceFiles!));
+                if (!framed) decl.AppendLine("    FireTFrame TF;");
+                post.Insert(0, $"    FIRE_TF_ENTER(TF, &kFI_{f.Name}[0]);\n");
+            }
             foreach (var region in f.Regions.Values.OrderBy(r => r.Template))
             {
                 var types = region.Catches.Select(c => ExcTypeId(c.Type).ToString(CultureInfo.InvariantCulture)).ToList();
@@ -4054,6 +4089,7 @@ namespace fire.Native
                 catchCode.AppendLine($"static void {CatchName(f, region)}{(dbg != null ? "_b" : "")}(void* ctx_, uint32_t ci, Value e)");
                 catchCode.AppendLine("{");
                 catchCode.AppendLine($"    {frame}* FR = ({frame}*)ctx_;");
+                if (traced) catchCode.AppendLine("    FIRE_TF_CATCH(TF);");
                 catchCode.AppendLine("    switch (ci) {");
                 string catchVar = $"B{region.CatchScopeId}_0";
                 for (int i = 0; i < region.Catches.Count; i++)
@@ -4063,8 +4099,8 @@ namespace fire.Native
                 }
                 catchCode.AppendLine("    default: break;");
                 catchCode.AppendLine("    }");
-                catchCode.Append(region.Out.Code);
-                catchCode.Append(region.Out.Tail);
+                if (traced) catchCode.Append(TraceReturns(region.Out.Code.ToString() + region.Out.Tail, "FIRE_TF_CATCH_END(TF)", null));
+                else { catchCode.Append(region.Out.Code); catchCode.Append(region.Out.Tail); }
                 catchCode.AppendLine("    fatal(\"control flow fell off the end of a catch block\");");
                 catchCode.AppendLine("}");
             }
@@ -4099,12 +4135,22 @@ namespace fire.Native
             }
             sb.Append(pre);
             sb.Append(decl);
-            sb.Append(post);
-            sb.Append(f.Root.Code);
-            sb.Append(f.Root.Tail);
             // (only when the code can fall off its end: the last statement of the function and of its exits is a `return` or a `goto` mostly)
             string lastLine = (f.Root.Tail.Length > 0 ? f.Root.Tail.ToString() : f.Root.Code.ToString()).TrimEnd().Split('\n')[^1].Trim();
             bool endsClosed = lastLine.StartsWith("return", StringComparison.Ordinal) || lastLine.StartsWith("goto ", StringComparison.Ordinal);
+            if (traced)
+            {
+                // (every return takes the frame off; the top level also at its end)
+                string? retType = f.IsTop ? null : f.CAbi is { RetType: not 0 } retAbi ? CTypeOf(retAbi.RetType) : "Value";
+                sb.Append(TraceReturns(post.ToString() + f.Root.Code + f.Root.Tail, "FIRE_TF_LEAVE(TF)", retType));
+                if (f.IsTop && !endsClosed) sb.AppendLine("    FIRE_TF_LEAVE(TF);");
+            }
+            else
+            {
+                sb.Append(post);
+                sb.Append(f.Root.Code);
+                sb.Append(f.Root.Tail);
+            }
             if (!f.IsTop && !endsClosed) sb.AppendLine("    fatal(\"control flow fell off the end of a function\");");
             sb.AppendLine("}");
             if (_target.Native.LineDirectives) sb.AppendLine(LineResetMarker);
@@ -8018,7 +8064,7 @@ namespace fire.Native
                         if (ChannelLikeTest($"av[{k}]") is { } isChannel)
                             sbf.Append($"if ({isChannel}) {{ Value e_ = {CallFn("__End", 0)}(av[{k}]{DispatchTail("__End", 0, "travel", "0xFFFFFFFFu")}); Owned* eo_ = ownedOf(e_); if (eo_) {{ if (eo_->owner) ownUnlink(eo_); ownLink(travel, eo_); }} av[{k}] = e_; }} ");
                     }
-                    sbf.Append($"ensureDomain(); {(dedicatedThread ? "fireThreadDedicated" : "fireThread")}({body.Name}, av, {argc}, travel); }}");
+                    sbf.Append($"ensureDomain(); {TraceStartAt(chunk, ins)}{(dedicatedThread ? "fireThreadDedicated" : "fireThread")}({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");
                     E(sbf.ToString());
                     if (takingCount > 0) Check();
