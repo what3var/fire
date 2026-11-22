@@ -74,11 +74,12 @@
  * may go on on another worker after a switch, so its state is a structure of its own and the worker holds only the current one (fire_curTask, one pointer of
  * thread-local storage - a pointer read before a switch is still the task's after it, unlike the address of a thread-local variable). The default without
  * the GIL; FIRE_TLS_VARS keeps the thread-local variables. FIRE_TLS_STRUCT (no thread-local storage of the compiler: FreeRTOS, TinyCC, the scheduler of
- * fire itself) and FIRE_DLL have structures of their own already. FIRE_DLL stays without tasks (one system thread per fire thread, as FIRE_TLS_VARS): the
- * functions of this header are compiled into every DLL (static inline) - the scheduler and the coroutines of one DLL would resume a task that another one
- * switched away from, the pointer of the running task and the worker would be thread-local variables of every DLL (__declspec(thread) cannot be imported);
- * the state of a thread is the runtime DLL's block of the calling thread (fire_tl()), one per process. */
-#if defined(FIRE_NO_GIL) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_DLL) && !defined(FIRE_TLS_VARS)
+ * fire itself) have structures of their own already. FIRE_DLL (linkage "shared" on Windows) has tasks too: the functions of this header are compiled into
+ * every DLL (static inline), but the data of the scheduler is the runtime DLL's (FIRE_RT_DATA) and the pointers that are per system thread - the running
+ * task, the worker, the worker's coroutine - are slots of one block per thread in the runtime DLL (FIRE_TLS_DLL, fire_platform_win32.h: __declspec(thread)
+ * cannot be imported, and a variable of every DLL would be another one); with the GIL or TinyCC it keeps one system thread per fire thread and the state of a
+ * thread is the runtime DLL's block of the calling thread (fire_tl()). */
+#if defined(FIRE_NO_GIL) && !defined(FIRE_TLS_STRUCT) && (!defined(FIRE_DLL) || defined(FIRE_TLS_DLL)) && !defined(FIRE_TLS_VARS)
 #define FIRE_TASK_STATE 1
 #endif
 /* Tasks (docs/ROADMAP_TASKS.md step 3): a fire thread is a task - a coroutine with a stack of its own - on a pool of workers (as many as the machine has
@@ -458,8 +459,8 @@ typedef struct ThreadLocals {
     FIRE_THREAD_VARS(FIRE_X)
 #undef FIRE_X
 } ThreadLocals;
-#ifdef FIRE_DLL
-/* Linkage "shared" on Windows: a DLL cannot hand out its thread-local variables (__declspec(thread) cannot be imported) - the runtime DLL keeps them in one block per
+#if defined(FIRE_DLL) && !defined(FIRE_TASK_STATE)
+/* Linkage "shared" on Windows with the GIL (or with TinyCC): a DLL cannot hand out its thread-local variables (__declspec(thread) cannot be imported) - the runtime DLL keeps them in one block per
  * thread, the program and the modules ask it for the block of the calling thread (the same block for the whole life of a thread: FIRE_CONST_FN lets the compiler
  * ask once per function). */
 #ifdef FIRE_DLL_RUNTIME
@@ -14175,8 +14176,12 @@ uint32_t g_hostServiceCount = 0;
 fire_atomic32 g_hostPending;
 #endif
 #endif
-#if defined(FIRE_THREADS) && defined(FIRE_DLL)
+#if defined(FIRE_THREADS) && defined(FIRE_DLL) && !defined(FIRE_TASK_STATE)
 ThreadLocals* fire_tl(void) { return &fire_tlsBlock; }   /* (linkage "shared" on Windows: the block of the calling thread) */
+#elif defined(FIRE_THREADS) && defined(FIRE_TLS_DLL)
+/* (linkage "shared" on Windows with tasks: the slots of the calling system thread - the running task, the worker, its coroutine - for every DLL) */
+static __thread FireTlsSlots fire_dllSlotsBlock;
+__declspec(dllexport) FireTlsSlots* fire_dllSlots(void) { return &fire_dllSlotsBlock; }
 #elif defined(FIRE_THREADS) && defined(FIRE_TASK_STATE)
 #ifndef FIRE_TLS_EMULATED
 FIRE_TLS ThreadLocals* fire_curTask = NULL;

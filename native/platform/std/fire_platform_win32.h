@@ -40,11 +40,29 @@ static inline FireTlsSlots* fire_tlsSlots(void) {
     return s;
 }
 #define FIRE_TLS_SLOT(i) (fire_tlsSlots()->v[i])
-#if !defined(FIRE_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_DLL) && (defined(__x86_64__) || defined(__i386__))
+#if !defined(FIRE_GIL) && !defined(FIRE_DLL) && (defined(__x86_64__) || defined(__i386__))
 #define FIRE_TLS_EMULATED 1
 #else
 #define FIRE_TLS_STRUCT 1
 #endif
+#elif defined(FIRE_THREADS) && defined(FIRE_DLL) && !defined(FIRE_GIL) && !defined(FIRE_TLS_VARS) && !defined(FIRE_NO_TASKS)
+/* Linkage "shared" (FIRE_DLL) without the GIL: tasks, whose state is per task (FIRE_TASK_STATE). The few pointers that must be per system thread - the running
+ * task, the worker, the worker's own coroutine (fire_rt.h, fire_coro.h) - are slots of ONE block per thread that the runtime DLL keeps (a DLL cannot import
+ * thread-local variables, and a variable of every DLL would be another one: a task that one DLL's code switched away from would be resumed with the pointers of
+ * another): FIRE_TLS_EMULATED as with TinyCC, the slots from the runtime DLL (fire_dllSlots, exported). */
+typedef struct FireTlsSlots { void* v[8]; } FireTlsSlots;
+#ifdef __cplusplus
+extern "C"   /* (the natives in C++ of a module call the runtime DLL's function too) */
+#endif
+#ifdef FIRE_DLL_RUNTIME
+__declspec(dllexport)
+#else
+__declspec(dllimport)
+#endif
+FireTlsSlots* fire_dllSlots(void);
+#define FIRE_TLS_SLOT(i) (fire_dllSlots()->v[i])
+#define FIRE_TLS_EMULATED 1
+#define FIRE_TLS_DLL 1
 #endif
 
 static inline int64_t fire_plat_nowMs(void) {
