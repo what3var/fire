@@ -52,9 +52,6 @@ namespace fire.Compiler
         /// <summary>The running agent is a process `fire` (the VM in C), not the C# VM of this process.</summary>
         public bool RunsInFire => _session is { InProcess: false };
 
-        /// <summary>Why the agent did not run in `fire` and runs in the C# VM here instead (null: it did not fail there).</summary>
-        public string? ChildFailure => _session?.ChildFailure;
-
         /// <summary>The drivers the installed packages offer (the `drivers` of their imports).</summary>
         public static List<PackageDriver> FindDrivers(PackageStore? store = null)
         {
@@ -393,7 +390,7 @@ namespace fire.Compiler
             var ready = new ManualResetEventSlim();
             // (in `fire`, the VM in C, as a process of its own - it loads the drivers' plugins like the C# VM, docs/spec/VM_C.md "Plugins"; the devices it makes reach
             // spark's DeviceManager through the lines of this protocol, AgentDriver. FIRE_DRIVER_AGENT=dotnet - or FIRE_SPARK_VM=dotnet - keeps it in the C# VM of this
-            // process; without a `fire` it runs there too, as when the program fails in `fire` before it is ready - LiveSession's fallback, ChildFailure)
+            // process. There is no fallback: if the agent fails in `fire`, it ends with the reason (EndedWith), like LiveSession)
             var session = new LiveSession { InProcessOnly = InProcessOnly };
             session.Message += line =>
             {

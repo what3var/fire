@@ -195,7 +195,7 @@ bleibt in spark (die Ansicht reicht die Tasten weiter, das Programm hat kein Fen
   fire-Plugins, die die C-VM jetzt lädt ([Plugins](#plugins)); die Befehle über stdin (`__HostCommand`), die Antworten und der Verkehr der Geräte über stdout
   (`FIRE_PRINT_RECORDS`) - dieselben Zeilen wie vorher im Prozess. Die Geräte, die er macht, sieht der `DeviceManager` von spark über diese Zeilen (`AgentDriver`,
   `AgentDevice`), also auch die Programme, die spark noch in der C#-VM ausführt. `FIRE_DRIVER_AGENT=dotnet` (oder `FIRE_SPARK_VM=dotnet`) behält ihn in der
-  C#-VM von spark; ohne `fire` oder wenn er in `fire` scheitert, bevor er bereit ist, läuft er dort (der Rückfall der `LiveSession`, `ChildFailure`). Ein Programm
+  C#-VM von spark; scheitert er in `fire`, endet er mit dem Grund (`EndedWith`; einen Rückfall in die C#-VM gibt es nicht mehr). Ein Programm
   in `fire`, das spark startet, nimmt die Geräte von spark über das geteilte Gerät (oben).
 * **Die Vorschauen in `fire`** (M1 (4), 22.11.2026): `UiPreview` (die Entwurfsansicht von FXML) und die Vorschau der Blockmodelle (`BlockPreviewWindow`,
   jetzt über `BlockPreview` in fire.Compiler) laufen als Kindprozess `fire` (`CVmScript`: übersetzt in spark mit `Linker { PackageLibraries }` wie die

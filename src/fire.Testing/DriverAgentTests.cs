@@ -88,7 +88,7 @@ static class DriverAgentTests
         // (the agent is a process of the VM in C - its plugins loaded there - unless no `fire` can be had)
         bool cvm = false;
         try { cvm = fire.Compiler.CVm.Locate(64, 64) != null && !fire.Debugging.CVmLaunch.UseDotnet; } catch (Exception) { }
-        if (cvm) Check($"der Treiber-Agent ({how}) laeuft in der C-VM (fire), ohne Rueckfall in die C#-VM", ok && agent.RunsInFire && agent.ChildFailure == null, $"{ok} {agent.RunsInFire} {agent.ChildFailure} {agent.EndedWith}");
+        if (cvm) Check($"der Treiber-Agent ({how}) laeuft in der C-VM (fire), ohne Rueckfall in die C#-VM", ok && agent.RunsInFire && agent.EndedWith == null, $"{ok} {agent.RunsInFire} {agent.EndedWith}");
         var ids = new List<string>();
         if (ok)
         {
