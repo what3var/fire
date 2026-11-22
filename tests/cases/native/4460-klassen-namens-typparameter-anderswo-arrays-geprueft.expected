@@ -1,0 +1,7 @@
+E1 An element of an array of K must be a K (or undefined), not Other.
+E2 An element of an array of V must be a V (or undefined), not K.
+E3 An element of an array of A must be an A (or undefined), not Other.
+E4 An element of an array of T must be a T (or undefined), not K.
+E5 An array of V cannot be stored where an array of K is declared.
+2 k v
+kv 2

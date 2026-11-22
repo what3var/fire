@@ -1,0 +1,31 @@
+class Pair<K, V> { K key; V value; construct(K k, V v) { this.key = k; this.value = v } }
+class Util { static T Pick<T>(T a, T b) { return b } }
+class K { string tag = "k" }
+class V { string tag = "v" }
+class T { string tag = "t" }
+class A { string tag = "a" }
+class Other { string tag = "o" }
+class Holder {
+    T ts[]
+    construct() { this.ts = new T[1] }
+    static int Count(K ks[]) { return ks.length }
+}
+any other = new Other()
+any k = new K()
+K ks[] = new K[2]
+ks[0] = new K()
+try { ks[1] = other } catch (ArgumentException e) { print("E1 " + e.message) }
+V vs[] = [new V()]
+try { vs[0] = k } catch (ArgumentException e) { print("E2 " + e.message) }
+A as2[] = new A[1]
+try { as2[0] = other } catch (ArgumentException e) { print("E3 " + e.message) }
+var h = new Holder()
+try { h.ts[0] = k } catch (ArgumentException e) { print("E4 " + e.message) }
+any vsAny = vs
+try { K moved[] = vsAny } catch (ArgumentException e) { print("E5 " + e.message) }
+print(Holder.Count(ks) + " " + ks[0].tag + " " + vs[0].tag)
+var pk = new K()
+var pv = new V()
+var p = new Pair<K, V>(pk, pv)
+print(p.key.tag + p.value.tag + " " + Util.Pick(1, 2))
+//# name: Klassen, die wie ein Typparameter anderer generischer Klassen oder Methoden heissen (K, V, T, A): ihre Arrays (lokal, als Feld, als Parameter, ein Array einer anderen Klasse) pruefen die Elemente wie die jeder anderen Klasse

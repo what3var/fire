@@ -160,6 +160,12 @@ Geschwindigkeit von `fbc` (Release) über `tests/cases` und `packages` (1222 Dat
 gegen 87,1 s des C#-forge. gcc und clang mit `-Wall -Wextra` ohne Warnung; ASan/UBSan über den Korpus und die beschädigten Kopien ohne Befund (die eine Meldung, ein
 Linksschieben einer negativen Zahl im Zickzack von `ProgramFile`, ist behoben).
 
+In beiden korrigiert (22.11.2026, `Compiler.cs` / `compiler.c`): ein Name, den irgendeine Klasse oder Methode des Programms (auch der Prelude: `A`, `B`, `K`,
+`T`, ...) als Typparameter benutzt, war überall "kein Typ" - eine Klasse gleichen Namens bekam weder `TypeArray` (`A arr[] = new A[2]` nahm jedes Objekt) noch die
+Prüfung eines Parameters, einer Variable, eines Felds (`DeclaredTypeOfCore`, `TypeArgText`). Die Typparameter, die gelten (der Methode, der Klasse), findet der
+Compiler vorher; der Name allein heißt jetzt nur noch für einen Namen ohne Klasse, Interface oder Enum "Typparameter" (`RefParamTable.IsTypeParam`). Fälle
+`native/4460`, `native/4470`, `types/2760`; kein anderer Fall des Korpus ändert seine Ausgabe, `fbc`/`ast`/`diag`/`native` beider forges gleich.
+
 ## forge serve
 
 Phase C Schritt 6 (L4): die Sprachdienste von spark als Prozess, eine JSON-Nachricht je Zeile über stdio - das Protokoll steht in

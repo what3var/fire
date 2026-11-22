@@ -2042,7 +2042,8 @@ with the first value of the enum; `defined Dog d[]` has no zero, so it only take
 same (ArrayElem.Class, natively E_CLASS/TU_CLASS with a table of checks, g_arrClasses). JSON types what it reads for such a field like any other
 assignment. Generic code does the same by the type argument: `T items[]` and `new T[n]` in `class Bag<T>` are an array of Dog for a `Bag<Dog>`, of
 strings for a `Bag<string>`, of the enum for a `Bag<Color>` (so `List<Dog>`, `Dictionary<string, Dog>`, `List<Color>` hold typed arrays; with an
-enum as the type argument a `T item` takes only a value of that enum or `undefined`).
+enum as the type argument a `T item` takes only a value of that enum or `undefined`). A class whose name is a type parameter of some other generic class or method
+(`class A` next to `class Pair<A, B>`) is typed like any class outside of that class or method: only where the type parameter is in scope does the name mean it.
 
 **Arrays of lambdas.** `lambda<int, int> fs[]` (and `int lambda<int> fs[]`) types the array, too: an element is a lambda with that many parameters or
 `undefined` - what a single `lambda<...>` declaration checks (the types of a signature are hints for the type checker). Anything else is an

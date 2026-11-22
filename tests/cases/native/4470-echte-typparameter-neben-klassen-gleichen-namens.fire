@@ -1,0 +1,43 @@
+class A { string tag = "a" }
+class B { string tag = "b" }
+class T { string tag = "t" }
+class Box<A> {
+    A items[]
+    construct() { this.items = new A[2] }
+    undefined Put(int i, A x) { this.items[i] = x }
+    A Get(int i) { return this.items[i] }
+    int Fill<B>(B x) {
+        B local[] = new B[1]
+        local[0] = x
+        var f = (B y) => { B inner[] = [y]; return inner.length }
+        return local.length + f(x)
+    }
+}
+class Nest<T> {
+    Box<T> inner
+    construct() { this.inner = new Box<T>() }
+    T First() { T one[] = [this.inner.Get(0)]; return one[0] }
+}
+class Lists { static int Twice<T>(T x) { T both[] = [x, x]; return both.length } }
+var bs = new Box<string>()
+bs.Put(0, "eins")
+print(bs.Get(0) + " " + bs.items.length)
+var bi = new Box<int>()
+bi.Put(1, 7)
+print(bi.Get(1) + 1)
+print(bs.Fill(3) + " " + bs.Fill("x"))
+print(Lists.Twice(1.5) + " " + Lists.Twice("s"))
+var n = new Nest<int>()
+n.inner.Put(0, 42)
+print(n.First())
+var bb = new Box<Box<string>>()
+var leaf = new Box<string>()
+leaf.Put(0, "tief")
+bb.Put(0, leaf)
+print(bb.Get(0).Get(0))
+any b = new B()
+A as2[] = new A[1]
+try { as2[0] = b } catch (ArgumentException e) { print("E1 " + e.message) }
+T ts[] = [new T()]
+print(ts[0].tag)
+//# name: Echte Typparameter A, B, T (der Klasse, einer Methode, einer Lambda darin, verschachtelt Box<T> in Nest<T>) nehmen weiter jeden Typ, auch wo Klassen A, B, T gleichen Namens deklariert sind; ausserhalb sind A und T die Klassen
