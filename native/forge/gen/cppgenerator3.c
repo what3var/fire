@@ -151,6 +151,16 @@ static const char* DebugPrologue(FgGen* g, FgFunc* f, FgFuncDebug* d);
 static const char* DebugTables(FgGen* g, FgFunc* f, FgFuncDebug* d);
 static const char* DebugWrapper(FgGen* g, FgFunc* f, const char* call);
 static const char* DebugCatchWrapper(FgGen* g, FgFunc* f, const char* catchName);
+/* (gen/trace.c) */
+static FcList* TraceFilesOf(FgGen* g, FcChunk* chunk, FgCode code);
+static void TraceBeforeInstruction(FgGen* g, FgFunc* f, FcChunk* chunk, FgInstr* ins, int i, FgOut* o, bool isTarget, FcList* files);
+static const char* TraceTable(FgGen* g, FgFunc* f, FcList* files);
+static void TraceStripLines(FcBuf* code);
+static bool TraceCannotThrow(FgGen* g, FgFunc* f, const char* code);
+static void TraceNoteFrameless(FgGen* g, FgFunc* f, bool frameless);
+static const char* TraceReturns(FgGen* g, const char* code, const char* leave, const char* retType);
+static const char* TraceStartAt(FgGen* g, FcChunk* chunk, FgInstr* ins);
+static const char* CTypeOf(int type);
 /* (gen/stats.c) */
 static FgFuncStat* StatOf(FgGen* g, FgFunc* f, int valueLocals, int cLocals);
 static void GenerateChunk(FgGen* g, FgFunc* f) {
@@ -283,8 +293,9 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     const char* defName;
     const char* frame;
     const char* defSignature;
-    bool framed;
+    bool framed, traced;
     FgFuncDebug* dbg;
+    FcList* traceFiles;
     int i, k;
     g->cur = f;
     f->cabi = CAbiOf(g, f);
@@ -387,6 +398,8 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     }
 
     dbg = DebugBuild ? DebugBegin(g, f, code, entry) : NULL;
+    /* (stack traces: the descriptors of the function - one per file its code is in; NULL: no frame, gen/trace.c) */
+    traceFiles = TraceOn ? TraceFilesOf(g, chunk, code) : NULL;
     for (i = 0; i < code.n; i++) {
         FgInstr* ins = &code.p[i];
         FgOut* o;
@@ -397,6 +410,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         o = OutOf(f, entry[i]->region);
         if (fgISetHas(g->c, targets, ins->addr)) fcBufFmt(&o->code, "L%d:;\n", ins->addr);
         if (dbg) DebugBeforeInstruction(g, f, dbg, chunk, ins, i, entry[i], o, fgISetHas(g->c, targets, ins->addr), locals);
+        if (traceFiles) TraceBeforeInstruction(g, f, chunk, ins, i, o, fgISetHas(g->c, targets, ins->addr), traceFiles);
         fcBufFmt(&cb, "// %d: %s", ins->addr, fgOpName(ins->op));
         for (k = 0; k < ins->n; k++) fcBufFmt(&cb, "%s%d", k ? "," : " ", ins->a[k]);
         comment = fcBufDone(g->c, &cb);
@@ -426,6 +440,8 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     if (framed) { FcList* pn = fgParamNames(g, f); for (i = 0; i < pn->count; i++) fgMemberAdd(g, members, "Value", (const char*)pn->items[i], fcFmt(g->c, "%s_in", (const char*)pn->items[i])); }
     /* a debug build: the frame of the function on the shadow stack (its wrapper pushed it; the catch blocks reach it through the frame struct) */
     if (dbg && framed) fgMemberAdd(g, members, "DbgFrame*", "DF", "g_dbgTop");
+    /* the frame of the stack traces (the catch blocks make it the top while they run) */
+    if (traceFiles && framed) fgMemberAdd(g, members, "FireTFrame", "TF", NULL);
 
     fcBufStr(&pre, ""); fcBufStr(&decl, ""); fcBufStr(&post, "");
     fcBufStr(&pre, Trampoline(g, f));
@@ -561,9 +577,38 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     for (i = 0; i < fgParamLike(f); i++)
         if (VarRef(g, VarKey(g, f, fcFmt(g->c, "P%d", i)))) fcBufFmt(&post, "    retain(P%d);\n", i);
     if (dbg) fcBufStr(&post, DebugPrologue(g, f, dbg));
+    /* (the setting `calls` of the program: its traces without lines; `off` with modules: the frames of a library built with them are not shown) */
+    if (f->kind == FK_Main && (g->program->stackTrace == STM_Calls || (g->program->stackTrace == STM_Off && Modular)))
+        fcBufFmt(&post, "    g_stackTrace = %s;\n", g->program->stackTrace == STM_Calls ? "FIRE_TRACE_CALLS" : "FIRE_TRACE_OFF");
 
     fcBufStr(&sb, "");
     if (dbg) fcBufStr(&sb, DebugTables(g, f, dbg));
+    /* stack traces: a function that cannot throw has no frame (its positions go); the others push theirs at the start */
+    traced = traceFiles != NULL;
+    if (traced && !framed) {
+        FcBuf all = {0};
+        bool frameless;
+        fcBufStr(&all, "");
+        fcBufPut(&all, pre.p, pre.len); fcBufPut(&all, decl.p, decl.len); fcBufPut(&all, post.p, post.len);
+        fcBufPut(&all, f->root->code.p, f->root->code.len); fcBufPut(&all, f->root->tail.p, f->root->tail.len);
+        frameless = TraceCannotThrow(g, f, all.p);
+        fcBufFree(&all);
+        TraceNoteFrameless(g, f, frameless);
+        if (frameless) {
+            traced = false;
+            TraceStripLines(&f->root->code);
+        }
+    }
+    else if (traced) TraceNoteFrameless(g, f, false);
+    if (traced) {
+        FcBuf head = {0};
+        fcBufStr(&sb, TraceTable(g, f, traceFiles));
+        if (!framed) fcBufStr(&decl, "    FireTFrame TF;\n");
+        fcBufFmt(&head, "    FIRE_TF_ENTER(TF, &kFI_%s[0]);\n", f->name);
+        fcBufPut(&head, post.p, post.len);
+        fcBufFree(&post);
+        post = head;
+    }
     for (i = 0; i < regionsSorted->count; i++) {
         FgRegion* region = (FgRegion*)regionsSorted->items[i];
         FcList* types = fcListNew(g->c);
@@ -579,6 +624,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         fcBufFmt(&catchCode, "static void %s%s(void* ctx_, uint32_t ci, Value e)\n", CatchName(g, f, region), dbg ? "_b" : "");
         fcBufStr(&catchCode, "{\n");
         fcBufFmt(&catchCode, "    %s* FR = (%s*)ctx_;\n", frame, frame);
+        if (traced) fcBufStr(&catchCode, "    FIRE_TF_CATCH(TF);\n");
         fcBufStr(&catchCode, "    switch (ci) {\n");
         for (k = 0; k < region->catchCount; k++) {
             const char* init = fcFmt(g->c, "%s%s", fcDictHas(locals, catchVar) ? fcFmt(g->c, "%s = e; ", catchVar) : "(void)e; ",
@@ -588,8 +634,18 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
         }
         fcBufStr(&catchCode, "    default: break;\n");
         fcBufStr(&catchCode, "    }\n");
-        fcBufPut(&catchCode, region->out->code.p, region->out->code.len);
-        fcBufPut(&catchCode, region->out->tail.p, region->out->tail.len);
+        if (traced) {
+            FcBuf body = {0};
+            fcBufStr(&body, "");
+            fcBufPut(&body, region->out->code.p, region->out->code.len);
+            fcBufPut(&body, region->out->tail.p, region->out->tail.len);
+            fcBufStr(&catchCode, TraceReturns(g, body.p, "FIRE_TF_CATCH_END(TF)", NULL));
+            fcBufFree(&body);
+        }
+        else {
+            fcBufPut(&catchCode, region->out->code.p, region->out->code.len);
+            fcBufPut(&catchCode, region->out->tail.p, region->out->tail.len);
+        }
         fcBufStr(&catchCode, "    fatal(\"control flow fell off the end of a catch block\");\n");
         fcBufStr(&catchCode, "}\n");
     }
@@ -631,12 +687,26 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
     }
     fcBufPut(&sb, pre.p, pre.len);
     fcBufPut(&sb, decl.p, decl.len);
-    fcBufPut(&sb, post.p, post.len);
-    fcBufPut(&sb, f->root->code.p, f->root->code.len);
-    fcBufPut(&sb, f->root->tail.p, f->root->tail.len);
     {
         const char* lastLine = fgLastLine(g, f->root->tail.len > 0 ? fcStrN(g->c, f->root->tail.p, f->root->tail.len) : fcStrN(g->c, f->root->code.p ? f->root->code.p : "", f->root->code.len));
         bool endsClosed = fcStartsWith(lastLine, "return") || fcStartsWith(lastLine, "goto ");
+        if (traced) {
+            /* (every return takes the frame off; the top level also at its end) */
+            const char* retType = fgIsTop(f) ? NULL : f->cabi && f->cabi->retType != 0 ? CTypeOf(f->cabi->retType) : "Value";
+            FcBuf body = {0};
+            fcBufStr(&body, "");
+            fcBufPut(&body, post.p, post.len);
+            fcBufPut(&body, f->root->code.p, f->root->code.len);
+            fcBufPut(&body, f->root->tail.p, f->root->tail.len);
+            fcBufStr(&sb, TraceReturns(g, body.p, "FIRE_TF_LEAVE(TF)", retType));
+            fcBufFree(&body);
+            if (fgIsTop(f) && !endsClosed) fcBufStr(&sb, "    FIRE_TF_LEAVE(TF);\n");
+        }
+        else {
+            fcBufPut(&sb, post.p, post.len);
+            fcBufPut(&sb, f->root->code.p, f->root->code.len);
+            fcBufPut(&sb, f->root->tail.p, f->root->tail.len);
+        }
         if (!fgIsTop(f) && !endsClosed) fcBufStr(&sb, "    fatal(\"control flow fell off the end of a function\");\n");
     }
     fcBufStr(&sb, "}\n");

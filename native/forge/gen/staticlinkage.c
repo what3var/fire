@@ -378,6 +378,7 @@ static const char* LibraryKey(FgGen* g, const FcLinked* program, const FgModuleS
     /* (whether its natives in C live in its file depends on the other imports of the program: a variant of its own) */
     fcBufFmt(&sb, "natives-here %s\n", NativesStandAlone(g, spec->name) ? "True" : "False");
     fcBufFmt(&sb, "flags %s\n", hasFlags ? fgFlagsText(g->c, flags) : "own");
+    fcBufFmt(&sb, "stacktrace %s\n", program->stackTrace == STM_Off ? "off" : program->stackTrace == STM_Calls ? "calls" : "lines");   /* (the frames of its functions, docs/spec/STACKTRACE.md) */
     /* (a library keeps everything with stripping 0, else its API: two variants - see LibraryStripping) */
     if (stripping == 0) fcBufStr(&sb, "stripping 0\n");
     return fcStrN(g->c, fcSha256OfText(g->c, fcBufDone(g->c, &sb)), 40);

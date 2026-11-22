@@ -374,6 +374,8 @@ typedef struct RecInit { struct Obj* o; struct RecInit* next; } RecInit;
 /* The debugger (fire_debug.h): the top of the shadow stack of this thread, the depth of the code the VM would run nested, the thread for the debugger. */
 typedef struct DbgFrame DbgFrame;
 typedef struct DbgThread DbgThread;
+/* Stack traces of the native build (docs/spec/STACKTRACE.md section 13): the frame a fire function keeps on the chain of its strand (see FireTFrame). */
+typedef struct FireTFrame FireTFrame;
 #ifdef FIRE_DEBUG
 extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
 #define FIRE_DEBUG_THREAD_VARS(X) \
@@ -439,7 +441,10 @@ typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCac
     X(BridgeError, g_deviceError, FIRE_ZERO_INIT)  /* the device bridge */ \
     X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */ \
     X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */ \
-    X(RecInit*, g_recInit, NULL)                   /* the records that are being constructed (step 9) */
+    X(RecInit*, g_recInit, NULL)                   /* the records that are being constructed (step 9) */ \
+    X(FireTFrame*, g_traceTop, NULL)               /* stack traces: the innermost frame of a fire function on this strand (NULL: none, or `#stacktrace off`) */ \
+    X(char*, g_traceTrailer, NULL)                 /* ... a fire thread: the line that ends its traces (`in thread 'Fire #1', started at main.fire:40`) */ \
+    X(const char*, g_traceStartAt, NULL)           /* ... where the `fire` that starts a thread right now stands (set right before fireThread) */
 
 #if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL) || defined(FIRE_TASK_STATE))
 typedef struct ThreadLocals {
@@ -555,6 +560,9 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_gfxError FIRE_TLV(g_gfxError)
 #define g_acc FIRE_TLV(g_acc)
 #define g_recInit FIRE_TLV(g_recInit)
+#define g_traceTop FIRE_TLV(g_traceTop)
+#define g_traceTrailer FIRE_TLV(g_traceTrailer)
+#define g_traceStartAt FIRE_TLV(g_traceStartAt)
 #if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
 #define g_slotCache FIRE_TLV(g_slotCache)
 #define g_domReader FIRE_TLV(g_domReader)
@@ -679,11 +687,13 @@ FIRE_NORETURN FIRE_COLD FIRE_FN void fatal(const char* message) {
     exitNow(1);
 }
 
+FIRE_FN void fire_tracePrintHere(void);
 /* An exception of the language that nothing catches (a program without exceptions ends at the first one): the text and the exit code of the VM's command line
  * runner (UncaughtScriptException: "Unhandled exception of type 'Class': message", exit code 1). */
 FIRE_NORETURN FIRE_COLD FIRE_FN void fatalException(const char* cls, const char* message) {
     fflush(stdout);
     fprintf(stderr, "Unhandled exception of type '%s': %s\n", cls, message);
+    fire_tracePrintHere();   /* (the stack trace of the place where it ends, docs/spec/STACKTRACE.md) */
     exitNow(1);
 }
 
@@ -5707,6 +5717,17 @@ FIRE_RT_FN int32_t excMessageIndex(uint32_t cls);
  * `(prelude)`; at most 64 frames (48 innermost, `   ... N more frames ...`, 16 outermost); a section of a thread ends with its line (`in thread 'Fire #1',
  * started at main.fire:40`), the section of a wait follows `   --- awaited at ---`. */
 typedef struct FireFnInfo { const char* name; const char* file; } FireFnInfo;
+/* The native build (docs/spec/STACKTRACE.md section 13): every fire function that can throw keeps a frame on the C stack - its descriptor and the line it
+ * is at (stored where a line begins and at every jump target, the places of the line table) - linked to the frame of its caller (g_traceTop, a value of
+ * the strand). The function pushes it at its start (FIRE_TF_ENTER) and takes it off at every return (FIRE_TF_LEAVE); a catch block makes the frame of the
+ * function that owns its `try` the top while it runs (FIRE_TF_CATCH ... FIRE_TF_CATCH_END), so a throw in it does not show the frames of the first throw
+ * site. throwValueR walks the chain at the first throw of an exception. */
+struct FireTFrame { struct FireTFrame* prev; const FireFnInfo* fn; int32_t line; };
+#define FIRE_TF_ENTER(f, d) ((f).prev = g_traceTop, (f).fn = (d), g_traceTop = &(f))   /* (the line: the code stores it before its first instruction where it is read - in a file, with lines) */
+#define FIRE_TF_LEAVE(f) (g_traceTop = (f).prev)
+#define FIRE_TF_CATCH(f) FireTFrame* const tfTop_ = g_traceTop; const FireFnInfo* const tfFn_ = (f).fn; int32_t const tfLine_ = (f).line; g_traceTop = &(f); \
+    (void)tfTop_; (void)tfFn_; (void)tfLine_
+#define FIRE_TF_CATCH_END(f) ((f).fn = tfFn_, (f).line = tfLine_, g_traceTop = tfTop_)
 typedef struct FireTraceFrame { const FireFnInfo* fn; int32_t line; } FireTraceFrame;
 typedef struct FireTrace {
     fire_atomic32 refs;
@@ -5847,6 +5868,44 @@ FIRE_FN const FireTraceFrame* fire_traceFrameAt(const FireTrace* t, uint32_t i) 
 void fire_vmTraceThrow(Obj* o);
 /* The exception of a task thrown again where it is awaited (a Completion, the reply of an actor or a job): the stack of the waiting one as a section. */
 void fire_vmTraceAwaited(Obj* o);
+#define fire_traceAwaitedHere(o) fire_vmTraceAwaited(o)
+FIRE_FN void fire_tracePrintHere(void) { }
+#else
+/* The native build: the frames of this strand as a trace (innermost first; the thread's line at its end). */
+FIRE_COLD FIRE_FN FireTrace* fire_traceCapture(void) {
+    const FireTFrame* const top = g_traceTop;
+    const FireTFrame* f;
+    uint32_t total = 0, k = 0;
+    bool lines = g_stackTrace == FIRE_TRACE_LINES;
+    FireTrace* t;
+    for (f = top; f; f = f->prev) total++;
+    t = fire_traceNew(total, g_traceTrailer);
+    for (f = top; f; f = f->prev, k++) {
+        FireTraceFrame* slot = total <= FIRE_TRACE_MAX ? &t->frames[k] : fire_traceSlot(t, k);
+        if (!slot) continue;
+        slot->fn = f->fn;
+        slot->line = lines && f->fn && f->fn->file ? f->line : 0;   /* (read only where the code stores it: in a file, with lines) */
+    }
+    return t;
+}
+/* A program without exceptions ends at a run-time error (fatalException): its frames to stderr. */
+FIRE_COLD FIRE_FN void fire_tracePrintHere(void) {
+    FireTrace* t;
+    char* text;
+    if (!g_traceTop) return;
+    t = fire_traceCapture();
+    text = fire_traceFormat(t, g_stackTrace);
+    if (text) { fputs(text, stderr); free(text); }
+    fire_traceRelease(t);
+}
+/* The first throw of `o`: the frames as its trace (without frames - `#stacktrace off`, code built without them - none). */
+FIRE_FN void fire_traceThrowHere(Obj* o) {
+    if (FIRE_UNLIKELY(g_traceTop != NULL) && !fire_traceOf(o)) fire_traceSet(o, fire_traceCapture());
+}
+/* The exception of a task thrown again where it is awaited: the frames of the waiting one as a section of its trace. */
+FIRE_FN void fire_traceAwaitedHere(Obj* o) {
+    if (g_traceTop) fire_traceAwaited(o, fire_traceCapture());
+}
 #endif
 /* An exception that nothing catches: the text of the VM (UncaughtScriptException) - the class and the text of the field `message`. */
 FIRE_COLD FIRE_FN void reportUnhandledIn(Value exception, const char* before, const char* after) {
@@ -5968,6 +6027,8 @@ FIRE_FN Value throwValueR(Value exception, bool resumable) {
     takeGlobal(asObj(exception));
 #ifdef FIRE_VM
     fire_vmTraceThrow(asObj(exception));   /* (the stack of its first throw, docs/spec/STACKTRACE.md) */
+#else
+    fire_traceThrowHere(asObj(exception));
 #endif
 #ifdef FIRE_DEBUG
     /* a debugger: an exception that nothing catches stops at the throw, before anything is unwound; `resume` ignores it (the throw gives undefined) */
@@ -10981,6 +11042,7 @@ FIRE_FN bool fire_isMainProgram(void) {
 #define FIRE_THREAD_STACK_BYTES 0   /* 0: the platform's own default */
 #endif
 extern FIRE_RT_DATA fire_atomic32 g_threadsLive;   /* fire threads that have not ended */
+extern FIRE_RT_DATA fire_atomic32 g_traceThreads;  /* stack traces of the native build: the fire threads started so far with a trace (`Fire #1`, ...) */
 extern FIRE_RT_DATA PtrVec g_threadList;     /* fire_thread* */
 /* unhandled exceptions of fire threads that wait for the main program */
 typedef struct ValueQueue { Value* items; uint32_t count, cap; } ValueQueue;
@@ -11019,7 +11081,23 @@ typedef struct ThreadStart {
     uint32_t n;
     OwnList* travel;   /* the copies that `taking` made for the thread (it adopts them into its global scope) */
     struct CancelNode* token;   /* `fire ... until x` */
+    char* trailer;              /* stack traces: the line that ends the traces of the thread (malloc'ed; NULL: none) */
 } ThreadStart;
+/* The line that ends the traces of the thread that the `fire` at `at` (g_traceStartAt: `main.fire:40`, set by the generated code right before it starts the
+ * thread; NULL: no trace) starts now: `in thread 'Fire #1', started at main.fire:40` - numbered in the order of the starts (docs/spec/STACKTRACE.md). */
+FIRE_FN char* fire_traceThreadLine(void) {
+    const char* at = g_traceStartAt;
+    char text[640];
+    size_t n;
+    char* r;
+    if (!at) return NULL;
+    g_traceStartAt = NULL;
+    snprintf(text, sizeof text, "in thread 'Fire #%u', started at %s", (unsigned)fire_atomic_add(&g_traceThreads, 1) + 1u, at);
+    n = strlen(text);
+    r = (char*)malloc(n + 1);
+    if (r) memcpy(r, text, n + 1);
+    return r;
+}
 FIRE_FN void sectionAbort(void);   /* the end of a thread that is still inside a section */
 
 #ifdef FIRE_DEBUG
@@ -11048,6 +11126,7 @@ FIRE_FN void threadEntry(ThreadStart st) {
     g_tick = 4096;
     g_travel = st.travel;
     g_token = st.token;   /* (its count is the thread's now) */
+    g_traceTrailer = st.trailer;
 #ifdef FIRE_DEBUG
     fire_dbgThreadBegin();
 #endif
@@ -11069,6 +11148,8 @@ FIRE_FN void threadEntry(ThreadStart st) {
     free(st.args);
     free(g_pool.items);
     g_pool.items = NULL; g_pool.top = 0; g_pool.cap = 0;
+    free(g_traceTrailer);
+    g_traceTrailer = NULL;
 #ifdef FIRE_SLOT_SEGMENTS
     slotSpill(0);   /* (the free slots this thread kept go back to the others) */
 #endif
@@ -11246,6 +11327,7 @@ FIRE_FN void fireThreadStart(void (*fn)(const Value*), const Value* args, uint32
     boxed->travel = travel;
     boxed->token = g_fireToken;   /* (`fire ... until x`: the thread follows it; a thread never follows its caller) */
     g_fireToken = NULL;
+    boxed->trailer = fire_traceThreadLine();
     if (!boxed->args) allocFailed();
     for (i = 0; i < n; i++) boxed->args[i] = args[i];
     fire_atomic_add(&g_threadsLive, 1);
@@ -11429,9 +11511,7 @@ FIRE_FN Value actorAwait(Value self, MsgFn fn, const Value* args, uint32_t n) {
     if (o && o->owner == &reply->travel) ownUnlink(o);   /* (travels to the caller like a returned value: its adopt takes it) */
     destroyList(&reply->travel);
     free(reply);
-#ifdef FIRE_VM
-    if (failed && r.kind == K_Class) fire_vmTraceAwaited(asObj(r));   /* (where it is awaited: a section of its trace) */
-#endif
+    if (failed && r.kind == K_Class) fire_traceAwaitedHere(asObj(r));   /* (where it is awaited: a section of its trace) */
     if (failed) return throwValueR(r, false);
     return r;
 }
@@ -11569,9 +11649,7 @@ FIRE_FN Value fire_completion_wait(Value h, Value limit, OwnList* list) {
     fire_mutex_unlock(&g_cancelM);
     if (r.kind == K_String && refOf(r)->rc != IMMORTAL) { retain(r); poolPush(refOf(r)); }
     if (fire_atomic_loadAcquire(&n->done) == 2 && r.kind == K_Class) {
-#ifdef FIRE_VM
-        fire_vmTraceAwaited(asObj(r));   /* (where it is awaited: a section of its trace) */
-#endif
+        fire_traceAwaitedHere(asObj(r));   /* (where it is awaited: a section of its trace) */
         return throwValueR(r, false);
     }
     return r;
@@ -12574,9 +12652,7 @@ FIRE_FN Value awaitReplyOf(ActorReply* reply) {
     if (o && o->owner == &reply->travel) ownUnlink(o);
     destroyList(&reply->travel);
     free(reply);
-#ifdef FIRE_VM
-    if (failed && r.kind == K_Class) fire_vmTraceAwaited(asObj(r));   /* (where it is awaited: a section of its trace) */
-#endif
+    if (failed && r.kind == K_Class) fire_traceAwaitedHere(asObj(r));   /* (where it is awaited: a section of its trace) */
     if (failed) return throwValueR(r, false);
     return r;
 }
@@ -14128,6 +14204,7 @@ void (*g_domShareGlobals)(void) = NULL;
 #endif
 OwnList g_terminateOwn;
 fire_atomic32 g_threadsLive;
+fire_atomic32 g_traceThreads;
 PtrVec g_threadList;
 ValueQueue g_pendingExc;
 PtrVec g_graveyard;

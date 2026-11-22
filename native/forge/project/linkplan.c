@@ -532,7 +532,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
         linked->sourceFiles->items[total - plan->sources->count + i] = s->path ? (void*)pjFull(c, s->path, ".") : NULL;
         linked->sourceHashes->items[total - plan->sources->count + i] = (void*)fcSha256OfText(c, s->text);
     }
-    fcLinkTrace(c, linked, program, plan->settings->stackTrace, total - plan->sources->count, plan->sources->count);
+    fcLinkTrace(c, linked, program, processed, plan->settings->stackTrace, t ? t->stackTrace - 1 : -1, total - plan->sources->count, plan->sources->count);
     linked->optimize = in->o ? (in->o->optimize >= 0 ? in->o->optimize : t->optimize) : 0;
     linked->sourceModules = sourceModules;
     linked->moduleDeps = pjModuleDependencies(L, plan, processed);

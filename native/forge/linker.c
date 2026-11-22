@@ -657,13 +657,13 @@ static const char* fcTraceRelative(FcCtx* c, const char* dir, const char* file) 
 }
 /* LinkedProgram.StackTrace and TraceFiles: Debug always lines; the command line, the last `#stacktrace` of the program, the project, the mode's default
  * (Performance off, else lines) - StackTraceModes.Effective; the names of the sources (the program's `userCount` from `firstUser`). */
-static void fcLinkTrace(FcCtx* c, FcLinked* linked, const FcList* program, const char* projectSetting, int firstUser, int userCount) {
+static void fcLinkTrace(FcCtx* c, FcLinked* linked, const FcList* program, const FcList* processed, const char* projectSetting, int configured, int firstUser, int userCount) {
     int source = -1, project = fcStackTraceParse(projectSetting), i;
     FcList* files = linked->sourceFiles;
     const char* baseDir = NULL;
     for (i = 0; program && i < program->count; i++)
         if (((const FcStmt*)program->items[i])->kind == SK_StackTraceDirective) source = (int)((const FcStackTraceDirective*)program->items[i])->mode;
-    linked->stackTrace = linked->mode == 0 ? STM_Lines : fcProcessStackTrace >= 0 ? fcProcessStackTrace : source >= 0 ? source : project >= 0 ? project
+    linked->stackTrace = linked->mode == 0 ? STM_Lines : fcProcessStackTrace >= 0 ? fcProcessStackTrace : source >= 0 ? source : project >= 0 ? project : configured >= 0 ? configured
         : linked->mode == 2 ? STM_Off : STM_Lines;
     linked->traceFiles = fcListNew(c);
     if (!files) return;
@@ -682,7 +682,10 @@ static void fcLinkTrace(FcCtx* c, FcLinked* linked, const FcList* program, const
         const char* name = NULL;
         if (i >= firstUser && i < firstUser + userCount)
             name = !file ? fcFmt(c, "fire:source/%d", i - firstUser) : baseDir ? fcTraceRelative(c, baseDir, file) : fcTraceFileName(file);
-        else if (file && i < firstUser) name = fcTraceFileName(file);
+        else if (file && i < firstUser) {   /* (a library: its module before its file name - `lib:util.fire`) */
+            const char* module = processed && i < processed->count ? ((const FcProcessed*)processed->items[i])->module : NULL;
+            name = module ? fcFmt(c, "%s:%s", module, fcTraceFileName(file)) : fcTraceFileName(file);
+        }
         fcListAdd(c, linked->traceFiles, (void*)name);
     }
 }
@@ -737,7 +740,7 @@ static FcLinked* fcLinkFileFe(FcCtx* c, const char* path, const char* preludePat
         linked->sourceFiles->items[total - 1] = (void*)fcFullPath(c, ".", path);
         linked->sourceHashes->items[total - 1] = (void*)fcSha256OfText(c, fc8FromU16(c, fe->userText, fe->userLength));
     }
-    fcLinkTrace(c, linked, fe->program, NULL, total - 1, 1);
+    fcLinkTrace(c, linked, fe->program, NULL, NULL, -1, total - 1, 1);
     if (frontend) *frontend = fe;
     return linked;
 }

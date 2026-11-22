@@ -544,6 +544,11 @@ static FgTarget* nbApplyTargetDef(FcCtx* c, const FcJson* d, const FgTarget* b, 
     if ((v = fcJsonGet(d, "supportsThreads")) && v->kind == FJ_BOOL) t->supportsThreads = v->b;
     if ((s = fcJsonStr(d, "toolchain")) != NULL) t->toolchain = s;
     if ((v = fcJsonGet(d, "lineDirectives")) && v->kind == FJ_BOOL) t->lineDirectives = v->b;
+    if ((s = fcJsonStr(d, "stackTrace")) != NULL) {
+        int mode = fcStackTraceParse(s);
+        if (mode < 0) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: Target '%s': \"stackTrace\" must be \"off\", \"calls\" or \"lines\", not \"%s\".", name, s));
+        t->stackTrace = 1 + mode;
+    }
     if ((v = fcJsonGet(d, "entry")) && v->kind == FJ_OBJ) {
         FcJson* ek;
         if ((s = fcJsonStr(v, "name")) != NULL) t->entryName = s;

@@ -324,6 +324,7 @@ namespace fire.Native
             {
                 NativeNames = program.NativeNames, FloatWidth = program.FloatWidth, IntWidth = program.IntWidth, WordWidth = program.WordWidth, PackageNatives = program.PackageNatives, PackageNativeLibraries = program.PackageNativeLibraries,
                 SourceFiles = program.SourceFiles, SourceHashes = program.SourceHashes, SourceModules = program.SourceModules, ModuleDeps = program.ModuleDeps, SourceTextHashes = program.SourceTextHashes,
+                StackTrace = program.StackTrace, TraceFiles = program.TraceFiles,   // (the frames of the functions of the module, docs/spec/STACKTRACE.md)
             };
         }
 

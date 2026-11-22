@@ -38,6 +38,7 @@ typedef struct FgTarget {
     /* (the builder, Phase D 2) */
     const char* const* linkLibs; int linkLibCount;
     const char* const* toolchains; int toolchainCount;   /* the kinds of toolchain that can build for it; NULL: any */
+    int stackTrace;               /* TargetProfile.StackTrace (`"stackTrace"` of fire.native.json, docs/spec/STACKTRACE.md): 1 + STM_*, 0: none */
 } FgTarget;
 
 /* ---- OpInfo.Decode ---- */
@@ -315,6 +316,11 @@ struct FgGen {
     FcDict* hiddenProtos;
     FcDict* protoNames;
     FcDict* dbgLines;           /* SortedSet<(int Src, int Line)>: "src,line" (sorted when written) */
+    /* CppGenerator.Trace.cs (gen/trace.c) */
+    FcDict* traceFrameless;     /* function name -> 1: no frame (it cannot throw), 0: a frame */
+    FcDict* traceCallees;       /* the C names of the functions (fN, fN_c) -> the name */
+    int traceCalleesCount;
+    FcDict* traceNames;         /* FcChunk* -> its name in a trace (TraceNames) */
     /* CppGenerator.Json.cs */
     bool usesJson, callsJsonEngine;
     /* CppGenerator.Overloads.cs */
