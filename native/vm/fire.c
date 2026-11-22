@@ -231,6 +231,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     if (vm->quiet) g_zombies.quiet--;
     g_globalOwn = NULL;
     vmDgReset();
+    vmDgSeenFree(vm);
     vmUnregisterClasses(vm);
     vmNativesUnbind();
     vmJsonEnd();

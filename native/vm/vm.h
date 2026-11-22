@@ -348,6 +348,7 @@ typedef struct Vm {
     uint8_t awaitNext;      /* AwaitReply: the next method call on an actor gets a way back (`await a.M()`) */
     struct VmDbg* dbg;      /* the debugger's state of this strand (vm_debug.c), NULL: none */
     char* threadTrailer;    /* a fire thread: the line that ends the traces of its exceptions (`in thread 'Fire #1', started at main.fire:40`), NULL: none */
+    struct VmDgSeen* dgSeen;   /* Debug: the places of references to dead objects this strand reported (vm_dangle.c; each once per strand, like a VM of C#) */
 } Vm;
 
 /* A type argument of the VM: the runtime's TArg (its `display` is the text, `holds`/`adapt` stay NULL - the VM checks with its own fitsTArg, VM_SPIKE
@@ -365,6 +366,7 @@ static void vmDbgSnapshot(Vm* vm);
 #define VM_SCOPE_LIST 0x5C09u
 static void vmDgNote(struct Vm* vm, Value x, Value holder, const char* field);
 static void vmDgReset(void);
+static void vmDgSeenFree(struct Vm* vm);
 
 /* stack traces (vm_trace.c) */
 static void vmTraceLocation(const VmChunk* c, uint32_t off, int32_t* src, int32_t* line);

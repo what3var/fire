@@ -45,6 +45,7 @@ static Vm* vmStrandNew(Vm* top, uint32_t sharedCount) {
     vm->isStrand = 1;
     vm->awaitNext = 0;
     vm->threadTrailer = NULL;
+    vm->dgSeen = NULL;
     vm->global = scNew(vm, NULL);
     scReserve(vm->global, sharedCount + 16);
     while (vm->global->n < sharedCount) vm->global->slots[vm->global->n++] = Undef();   /* (placeholders: the main program's slots) */
@@ -80,6 +81,7 @@ static void vmStrandFree(Vm* vm, bool keepGlobal) {
     vmFreePinned(vm);
     while (vm->freeScopes) { VmScope* s = vm->freeScopes; vm->freeScopes = s->nextFree; free(s->slots); free(s->names); free(s); }
     vmDbgFree(vm);
+    vmDgSeenFree(vm);
     free(vm->stack);
     free(vm->frames);
     free(vm->threadTrailer);

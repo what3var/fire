@@ -1,0 +1,3 @@
+warning (line 13): an Item is destroyed at the end of the call it belonged to, but the array in the field 'vals' of a Dictionary still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).
+warning (line 13): an Item is destroyed at the end of the call it belonged to, but the array in the field 'vals' of a Dictionary still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).
+end

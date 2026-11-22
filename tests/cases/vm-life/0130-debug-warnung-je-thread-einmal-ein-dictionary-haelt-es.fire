@@ -1,0 +1,27 @@
+class Item { int n; construct(int n) { this.n = n } }
+class Ctx {
+    Dictionary items = new Dictionary()
+    Item slots[] = new Item[2]
+    undefined SetItem(string k, any v) { this.items[k] = v }
+    undefined SetSlot(Item v) { this.slots[0] = v }
+}
+class H {
+    static undefined Handle(Ctx ctx) {
+        var it = new Item(1)
+        ctx.SetItem("a", it)
+        var it2 = new Item(2)
+        ctx.SetSlot(it2)
+    }
+}
+var c = new Ctx()
+H.Handle(c)
+int done = 0
+fire {
+    var c2 = new Ctx()
+    H.Handle(c2)
+    sync global { done = 1 }
+}
+while (done == 0) { sync globals }
+print("end")
+//# modes: Debug
+//# name: Debug: die Warnung fuer eine Referenz auf ein Objekt des Aufrufs (ein Dictionary eines Parameters haelt es) einmal je Stelle und Thread

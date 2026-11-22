@@ -17,9 +17,8 @@ typedef struct VmDgEntry { Obj* target; struct VmDgEntry* next; uint32_t n; VmDg
 #define VM_DG_BUCKETS 1024u
 static VmDgEntry** g_vmDgTable;
 uint32_t g_vmDangling;   /* (the objects with noted holders - the runtime asks only while there are any) */
-/* the places reported (each once: a loop would repeat it) */
+/* the places a strand reported (each once: a loop would repeat it; per strand, as each thread has a VM of its own in C#) */
 typedef struct VmDgSeen { char* key; struct VmDgSeen* next; } VmDgSeen;
-static VmDgSeen* g_vmDgSeen;
 
 static uint32_t vmDgHash(const Obj* o) { uintptr_t p = (uintptr_t)o; return (uint32_t)((p >> 4) ^ (p >> 14)) & (VM_DG_BUCKETS - 1); }
 
@@ -190,12 +189,12 @@ void fire_vmDangling(Obj* o, OwnList* owner) {
             snprintf(key, sizeof key, "%s|%s|%d:%d", name,
                 r->holder.kind == K_Class ? vmDgClassName(vm, asObj(r->holder)) : "[]", (int)src, (int)line);
             if (r->holder.kind == K_Class && r->field) { size_t k = strlen(key); snprintf(key + k, sizeof key - k, ".%s", r->field); }
-            for (s = g_vmDgSeen; s && strcmp(s->key, key) != 0; s = s->next) {}
+            for (s = vm->dgSeen; s && strcmp(s->key, key) != 0; s = s->next) {}
             if (s) continue;
             s = (VmDgSeen*)malloc(sizeof(VmDgSeen));
             if (!s || !(s->key = strdup(key))) outOfMemory();
-            s->next = g_vmDgSeen;
-            g_vmDgSeen = s;
+            s->next = vm->dgSeen;
+            vm->dgSeen = s;
             vmDgWhere(vm, r->holder, r->field, where, sizeof where);
             snprintf(text, sizeof text, "warning (line %d): %s %s is destroyed at the end of the call it belonged to, but %s still points to it (it was given "
                 "only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).",
@@ -216,5 +215,7 @@ static void vmDgReset(void) {
         g_vmDgTable = NULL;
     }
     g_vmDangling = 0;
-    while (g_vmDgSeen) { VmDgSeen* n = g_vmDgSeen->next; free(g_vmDgSeen->key); free(g_vmDgSeen); g_vmDgSeen = n; }
+}
+static void vmDgSeenFree(Vm* vm) {
+    while (vm->dgSeen) { VmDgSeen* n = vm->dgSeen->next; free(vm->dgSeen->key); free(vm->dgSeen); vm->dgSeen = n; }
 }
