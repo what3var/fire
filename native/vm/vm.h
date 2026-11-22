@@ -168,6 +168,7 @@ struct VmClass {
     VmMeta* meta;           /* reflection (NULL: none) */
     struct VmThisReads { const char* key; const char** reads; uint32_t n; } * thisReads;   /* (NULL: none) */
     uint32_t nthisReads;
+    OwnList* plOwn;         /* a class of a fire plugin: the plugin's own global scope (its static fields' objects, docs/spec/PLUGINS.md); NULL: the program's */
 };
 typedef struct VmThisReads VmThisReads;
 

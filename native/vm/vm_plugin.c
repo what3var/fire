@@ -13,11 +13,13 @@
  *     may name join the program's;
  *   - its sources get the next source indexes of the program (the debugger hears of them: event `sources`, fire_debug.h);
  *   - its classes get the next class ids of the runtime (vmRegisterMore), then its static initialisers run in the order of their dependencies
- *     (CompiledProgram.StaticInitSequence); what they make belongs to the global scope.
+ *     (CompiledProgram.StaticInitSequence); what they make belongs to the plugin's own global scope (docs/spec/PLUGINS.md) - also when a fire thread loads
+ *     it; another Load meanwhile waits for them; lib.Unload() destroys the scope (its code stays).
  *
- * The errors are the texts of the C# VM ("The plugin 'Kit' cannot be loaded: ..."), which `Library.Load` throws as a LibraryException. Static fields need no
- * sharing with fire threads here: the VM runs with the GIL (FIRE_STR_CROSS is off - firePluginShareGlobals of a native build has nothing to do). A plugin is
- * not unloaded while its program runs (neither in the C# VM); everything it brought goes when the program ends (vmPluginsEnd). */
+ * What the static fields hold joins the globals' domain with its scope (markOwnedShared; the strings need nothing: FIRE_STR_CROSS is off).
+ *
+ * The errors are the texts of the C# VM ("The plugin 'Kit' cannot be loaded: ..."), which `Library.Load` throws as a LibraryException. Its code is not
+ * unloaded while its program runs (neither in the C# VM); everything it brought goes when the program ends (vmPluginsEnd). */
 
 #define VM_PLUGIN_FORMAT 1          /* ModuleInterface.Format */
 
@@ -42,7 +44,11 @@ typedef struct VmPluginFile {
     struct VmPluginFile* next;
 } VmPluginFile;
 
-typedef struct VmLinked { VmPluginFile* file; VmProgram* prog; VmClass** own; uint32_t nown; struct VmLinked* next; } VmLinked;
+/* (`initing`: its static initialisers run - on the strand `initBy`; another `Library.Load` of it waits for them, as the lock of the C# VM makes it.
+ * `scope`: the plugin's own global scope - what its static fields hold (docs/spec/PLUGINS.md); `unloaded`: lib.Unload() destroyed it, a Load fills it again) */
+typedef struct VmLinked { VmPluginFile* file; VmProgram* prog; VmClass** own; uint32_t nown; fire_atomic32 initing; Vm* initBy; OwnList scope; bool unloaded;
+    struct VmLinked* next; } VmLinked;
+static bool vmPlInitDone(void* ctx) { return fire_atomic_loadAcquire(&((VmLinked*)ctx)->initing) == 0; }
 
 static struct {
     VmPluginFile* files;
@@ -540,11 +546,28 @@ static void vmPlCatchFn(void* ctx, uint32_t ci, Value e) {
     exitJump(&c->h, 0);
 }
 
-/* Runs the static initialisers of its classes; NULL: done, else why not. */
-static const char* vmPlStatics(Vm* vm, VmProgram* pp, VmClass** own, uint32_t nown, char* why, size_t cap) {
+/* A value that goes into a static field of a plugin (its initialiser's result, a store): unclaimed - in the global scope where its ClaimToScope put it, or of
+ * no one - it joins the plugin's scope (docs/spec/PLUGINS.md), in the globals' domain when there are threads; one somebody else owns stays a reference. From
+ * a thread it moves there in a section like `x.TakeGlobal()` (the thread's references stay valid). */
+static void vmPlClaim(Vm* vm, Value v, OwnList* scope) {
+    Owned* o = ownedOf(v);
+    Vm* top = vm->top ? vm->top : vm;
+    bool ss;
+    if (!o || o->owner == scope) return;
+    if (o->owner && o->owner != &top->global->own && o->owner != g_globalOwn) return;
+    if (g_isThread && o->owner && mainGlobalsKind(v, true) != 1) return;
+    ss = sectionScopeEnter(g_isThread);
+    if (o->owner) ownUnlink(o);
+    ownLink(scope, o);
+    if (g_domainOn) { markOwnedShared(o); if (o->okind == O_Lambda) refShare(v); }
+    if (g_isThread) takeGlobalRehome(o, 0);
+    sectionScopeExit(ss);
+}
+
+/* Runs the static initialisers of its classes; NULL: done, else why not. What they make goes to the plugin's scope. */
+static const char* vmPlStatics(Vm* vm, VmProgram* pp, VmClass** own, uint32_t nown, OwnList* scope, char* why, size_t cap) {
     VmPlInit* inits;
     uint32_t n = 0, i, k;
-    Vm* top = vm->top ? vm->top : vm;
     for (i = 0; i < nown; i++) for (k = 0; k < own[i]->nstatic; k++) if (own[i]->sinit[k]) n++;
     if (!n) return NULL;
     inits = (VmPlInit*)malloc(n * sizeof(VmPlInit));
@@ -573,10 +596,17 @@ static const char* vmPlStatics(Vm* vm, VmProgram* pp, VmClass** own, uint32_t no
             free(inits);
             return why;
         }
-        adopt(r, &top->global->own);
-        retain(r);
-        release(c->svals[inits[i].index]);
-        c->svals[inits[i].index] = r;
+        /* (also when a fire thread loads it: the plugin's scope, not the thread's global scope - its end does not take it along; VM.Plugins.cs the same) */
+        vmPlClaim(vm, r, scope);
+        adopt(r, scope);   /* (a string: the count it came with goes to the pool) */
+        {
+            bool ss = sectionScopeEnter(g_isThread);   /* (a static field of the globals' domain: a thread writes it in a section) */
+            Value old = c->svals[inits[i].index];
+            retain(r);
+            c->svals[inits[i].index] = r;
+            release(old);
+            sectionScopeExit(ss);
+        }
     }
     free(inits);
     return NULL;
@@ -645,7 +675,23 @@ static Value vmPluginLink(Vm* vm, int64_t handle, OwnList* list) {
     top = vm->top ? vm->top : vm;
     hp = top->prog;
     for (l = g_vmPl.linked; l; l = l->next)
-        if (strcmp(l->file->name, f->name) == 0) return l->file == f || vmPlSameClasses(l->file, f) ? vmPlNames(f, list) : vmPlRefused(f, "another plugin of that name is loaded already.", list);
+        if (strcmp(l->file->name, f->name) == 0) {
+            if (l->file != f && !vmPlSameClasses(l->file, f)) return vmPlRefused(f, "another plugin of that name is loaded already.", list);
+            /* (another strand links it right now: its classes are there, its static fields not yet - this one waits for its initialisers, serving the
+             * sections and jobs of the threads meanwhile; its own initialiser that loads it again does not wait for itself) */
+            if (!vmPlInitDone(l) && l->initBy != vm && !(g_isThread ? blockUntil(vmPlInitDone, l, true, 0) : blockUntilServing(vmPlInitDone, l, true, 0))) return Undef();
+            if (l->unloaded) {   /* (unloaded before: its static initialisers run again, into its scope) */
+                l->unloaded = false;
+                l->initBy = vm;
+                fire_atomic_storeRelease(&l->initing, 1);
+                problem = vmPlStatics(vm, l->prog, l->own, l->nown, &l->scope, t, sizeof t);
+                l->initBy = NULL;
+                fire_atomic_storeRelease(&l->initing, 0);
+                if (problem) return vmPlRefused(f, problem, list);
+                if (g_unwind.active) return Undef();
+            }
+            return vmPlNames(f, list);
+        }
     if (f->format != VM_PLUGIN_FORMAT) return vmPlRefused(f, "it is a fire plugin of another version of fire - build it again.", list);
     /* the interfaces of the modules it was built against: the program's (a program file without them - an older one - is not checked) */
     if (hp->hasModules)
@@ -761,7 +807,12 @@ static Value vmPluginLink(Vm* vm, int64_t handle, OwnList* list) {
     }
     if (visit.problem) { snprintf(t, sizeof t, "%s", visit.problem); goto refused; }
     /* its units and enums: the program's */
-    if ((problem = vmPlUnitsAndEnums(top, pp, f)) != NULL) { snprintf(t, sizeof t, "%s", problem); goto refused; }
+    {
+        uint32_t udBefore = g_udCount;
+        problem = vmPlUnitsAndEnums(top, pp, f);
+        vmUnitsLent(udBefore);   /* (the rows it made: the texts are the plugin's) */
+    }
+    if (problem) { snprintf(t, sizeof t, "%s", problem); goto refused; }
     /* its sources: the next indexes after the program's (and the plugins' before); the sources of its libraries 0 (their code is the program's) */
     if (hp->nsources > 0 && f->sources.n >= 3) {
         uint32_t nsrc = 0;
@@ -832,14 +883,21 @@ static Value vmPluginLink(Vm* vm, int64_t handle, OwnList* list) {
     l = (VmLinked*)calloc(1, sizeof(VmLinked));
     if (!l) outOfMemory();
     l->file = f; l->prog = pp; l->own = own; l->nown = nown;
+    ownListInit(&l->scope, 0, NULL);
+    for (i = 0; i < nown; i++) own[i]->plOwn = &l->scope;
+    l->initBy = vm;
+    fire_atomic_storeRelease(&l->initing, 1);
     l->next = g_vmPl.linked;
     g_vmPl.linked = l;
     for (k = 0; k < nexts; k++) { free(exts[k].protos); free((void*)exts[k].names); }
     free(exts);
     free(reg);
     free(visit.seen);
-    /* the static initialisers of its classes; what they make belongs to the global scope */
-    if ((problem = vmPlStatics(vm, pp, own, nown, t, sizeof t)) != NULL) return vmPlRefused(f, problem, list);
+    /* the static initialisers of its classes; what they make belongs to the plugin's scope */
+    problem = vmPlStatics(vm, pp, own, nown, &l->scope, t, sizeof t);
+    l->initBy = NULL;
+    fire_atomic_storeRelease(&l->initing, 0);
+    if (problem) return vmPlRefused(f, problem, list);
     if (g_unwind.active) return Undef();
     return vmPlNames(f, list);
 refused:
@@ -856,13 +914,48 @@ refusedText:
     return vmPlText(t, list);
 }
 
-/* The end of the program: what its plugins brought goes (their classes' static fields with the program's, see fire.c; here their programs and tables). */
+/* The scope of a plugin goes (lib.Unload(), the end of the program): its objects in the order they came (their destructors run), then its static fields are
+ * undefined - its code stays (docs/spec/PLUGINS.md). */
+static void vmPlScopeEnd(VmLinked* l) {
+    uint32_t i, k;
+    destroyList(&l->scope);
+    for (i = 0; i < l->prog->nclasses; i++)
+        for (k = 0; k < l->prog->classes[i]->nstatic; k++) { Value old = l->prog->classes[i]->svals[k]; l->prog->classes[i]->svals[k] = Undef(); release(old); }
+}
+/* `__LibCall(8, handle)`: lib.Unload() of a fire plugin - undefined (done, or unloaded already), a string: why not. */
+static Value vmPluginUnload(Vm* vm, int64_t handle, OwnList* list) {
+    VmPluginFile* f = vmPluginOf(handle);
+    VmLinked* l;
+    bool ss;
+    if (!f) return vmPlText("The library is no fire plugin: only a fire plugin can be unloaded.", list);
+    for (l = g_vmPl.linked; l && strcmp(l->file->name, f->name) != 0; l = l->next) { }
+    if (!l) return Undef();
+    if (!vmPlInitDone(l) && l->initBy != vm && !(g_isThread ? blockUntil(vmPlInitDone, l, true, 0) : blockUntilServing(vmPlInitDone, l, true, 0))) return Undef();
+    if (l->unloaded) return Undef();
+    l->unloaded = true;
+    ss = sectionScopeEnter(g_isThread);   /* (the threads see its scope whole or gone) */
+    vmPlScopeEnd(l);
+    sectionScopeExit(ss);
+    return Undef();
+}
+/* The first `fire`: the objects of the plugins' scopes join the globals' domain (as ensureDomain does with the program's global scope). */
+static void vmPluginsShare(void) {
+    VmLinked* l;
+    Owned* o;
+    for (l = g_vmPl.linked; l; l = l->next) for (o = l->scope.head; o; o = o->next) markOwnedShared(o);
+}
+/* The end of the program, after its global scope: the scopes of its plugins in the order they were loaded (see fire.c). */
 static void vmPluginsReleaseStatics(void) {
     VmLinked* l;
-    uint32_t i, k;
-    for (l = g_vmPl.linked; l; l = l->next)
-        for (i = 0; i < l->prog->nclasses; i++)
-            for (k = 0; k < l->prog->classes[i]->nstatic; k++) { release(l->prog->classes[i]->svals[k]); l->prog->classes[i]->svals[k] = Undef(); }
+    uint32_t n = 0, i;
+    VmLinked** order;
+    for (l = g_vmPl.linked; l; l = l->next) n++;
+    if (!n) return;
+    order = (VmLinked**)malloc(n * sizeof(VmLinked*));
+    if (!order) outOfMemory();
+    for (l = g_vmPl.linked, i = n; l; l = l->next) order[--i] = l;
+    for (i = 0; i < n; i++) if (!order[i]->unloaded) { order[i]->unloaded = true; vmPlScopeEnd(order[i]); }
+    free(order);
 }
 static void vmPluginsEnd(void) {
     VmPluginFile* f;

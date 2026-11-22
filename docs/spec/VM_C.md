@@ -291,7 +291,16 @@ Prüfung am Ende des Konstruktors.
 "§"-kodierten Einheiten des Programms), `adaptUnit`, `coerceUnit`, `relabelUnit`, `stepOf`.
 
 **Ende**: `terminate(code)` beendet das Skript mit dem Code; eine unbehandelte Ausnahme und ein `fatal` der Runtime beenden nur das Skript (L6).
-Nach jedem Programm ist nichts mehr da (geprüft mit `--stats` für 60 Fälle in einem Prozess: 0 Handles, 0 Strings, 0 im Pool, 0 Klassen).
+Nach jedem Programm ist nichts mehr da (geprüft mit `--stats` für 60 Fälle in einem Prozess: 0 Handles, 0 Strings, 0 im Pool, 0 Klassen) - auch kein
+Speicher der VM: die Tabelle der Einheiten der Runtime (`unitsInit` legte sie an; `vmUninstallUnits` gibt sie frei mit den Namen und den Texten der
+Einheiten, die die Runtime selbst gemacht hat - `unitMul`, `unitDiv`, `unitInternText`; die Texte des Programms und seiner Plugins sind geliehen,
+`g_vmUnitLent`), die Dimensionen, die ein Plugin hinzufügte (`g_dimNames`, `g_dimsAdded`), die Einheiten, die ein Text nennen darf. Vorher blieb die
+Tabelle jedes Programms liegen (ein Leck je Programm, das nächste legte eine neue an), und `g_dimsAdded` eines Plugins galt für die folgenden Programme
+weiter. **Geprüft mit LeakSanitizer**: die 582 Fälle von `native`, `smoke`, `vm-life` und `vm-shutdown` je zweimal in einem Prozess von `fire` mit ASan
+gebaut - danach keine Meldung (vorher: 25 Fälle mit Lecks der Einheiten, 2 mit einem Lesen freigegebenen Speichers, siehe Trampoline); die Tests:
+`FIRE_TESTS_ONLY=cvmrun` (`CVmRunTests.Memory`: acht Fälle - Einheiten, Arrays einer Klasse, Threads, JSON, data.memory, eine unbehandelte Ausnahme
+in einem Thread - zweimal in einem Prozess, `CVmSanitized` baut `fire` mit `-fsanitize=address` aus den Quellen, die forge trägt) und
+`FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugin` (das Programm mit Kit und Meter und das mit einem Plugin in einem Thread je zweimal in einem Prozess).
 
 ### Rückrufe ohne Kontext (VM_SPIKE, Punkt 1)
 
@@ -301,7 +310,9 @@ Gelöst mit den beiden Wegen, die der Spike vorschlug:
   `FireClassDesc.recEq/recHash/recCheck` sind generisch (die Klasse steht im Objekt).
 * **ein fester Vorrat an Trampolinen**: `UnitConvFn` (16 Paare `vmUnitTo_k`/`vmUnitFrom_k`, je mit dem Index der Klasse der Umrechnung) und
   `ArrClass.fits/zero` (64 Paare, je mit dem `DeclaredType`-Text des Arrays). Reicht der Vorrat nicht, lehnt der Lader das Programm ab bzw. bleibt das
-  Array ungetypt.
+  Array ungetypt. (Die Namen der 64 Paare sind oktal - `vmAcf10` ist der Eintrag 8; bis zum 22.11. riefen die Einträge ab 8 den Text eines anderen
+  Eintrags auf - ab 64 hinter der Tabelle: ein Array der neunten Klasse nahm Objekte jeder Klasse, nach einem Programm mit mehr Einträgen las das nächste
+  einen freigegebenen Text. Korpus: `native/4450`.)
 
 Aus Schritt 5 dazu: `ProbeRawSet/Get` (die Probes) haben eine **eigene Fassung der VM** - `vmProbedSet` schreibt und liest das Mitglied über seinen
 Namen statt über die Rückrufe, die der Generator je Feld erzeugt; die Einträge (`ProbeNode`, `ProbeEntry`) und `probeRun` sind die der Runtime.
@@ -395,16 +406,33 @@ dass `kit.so` geht, liegt an seinem Bytecode daneben - wie in der C#-VM). `__Lib
 * **Einheiten und Enums** werden die des Programms: Dimensionen nach Namen in `g_dimNames` (neue in freie Plätze, `g_dimsAdded`), eine Einheit die des Programms
   mit denselben Dimensionen, Faktor, Offset, Symbol und denselben Klassen der Umrechnungsfunktionen (eine eigene des Plugins ist immer neu; ihre Klasse bekommt
   einen der 16 Plätze der Trampoline), Enums nach Namen (neue hinten an); die Konstanten seines Codes werden umgeschrieben; die Einheiten, die ein Text nennen
-  darf, kommen zu `g_textUnits`.
+  darf, kommen zu `g_textUnits`. Die Texte seiner Einheiten sind die des Plugins (`vmUnitsLent`: die Tabelle gibt sie am Ende nicht frei).
 * **Klassen**: die nächsten Ids (`vmRegisterMore`: die Tabellen wachsen als Kopien, die alten bleiben bis zum Ende des Programms - ein Thread liest
   `byId` jetzt über `vm->top`), dann die **statischen Initialisierer** in der Reihenfolge ihrer Abhängigkeiten (die `SetStaticFieldOnInit` des Top-Levels des
-  Plugins, `StaticInitSequence`), mit einem eigenen Handler: eine Ausnahme ist `the initialiser of 'C.f' threw X.`; was sie anlegen, gehört dem globalen Scope.
-  Das Teilen der statischen Felder mit fire-Threads (`firePluginShareGlobals` nativ) entfällt: die VM läuft mit der GIL.
+  Plugins, `StaticInitSequence`), mit einem eigenen Handler: eine Ausnahme ist `the initialiser of 'C.f' threw X.`; was sie anlegen, gehört dem **eigenen
+  Scope des Plugins** ([PLUGINS.md](PLUGINS.md): `VmLinked.scope`, ein `OwnList`; `VmClass.plOwn` seiner Klassen zeigt darauf).
+* **Der Scope des Plugins**: das Ergebnis eines Initialisierers und ein unbeanspruchter Wert, der in ein statisches Feld einer Klasse des Plugins geht (er
+  liegt im globalen Scope, wohin sein `ClaimToScope 65535` ihn legte, oder hat keinen Besitzer), kommen hinein (`vmPlClaim`; aus einem Thread in einer
+  Sektion wie `x.TakeGlobal()`, im `SetStaticField` eines Threads `toMainGlobals` mit dem Scope als Ziel); mit Threads gehört er zur Domäne der Globals
+  (`markOwnedShared`; beim ersten `fire` `vmPluginsShare`). `lib.Unload()` (`__LibCall(8)`, `vmPluginUnload`) zerstört ihn (`destroyList`, die
+  Destruktoren laufen) und setzt die statischen Felder seiner Klassen auf `undefined`, in einer Sektion; der Code bleibt; ein `Load` danach lässt die
+  Initialisierer noch einmal laufen. Am Ende des Programms: nach dem, was der globale Scope besitzt, die Scopes der Plugins in der Reihenfolge ihres Ladens
+  (`vmPluginsReleaseStatics`, solange der globale Scope noch da ist - ihre Destruktoren laufen als verschachtelte Aufrufe), dann die Globals.
+* **Geladen in einem fire-Thread**: bis zum 22.11. gehörte, was die Initialisierer anlegten, dem Thread - **in allen drei Engines**: die C-VM adoptierte das
+  Ergebnis in den globalen Scope, aber es hatte schon einen Besitzer (den globalen Scope des Threads, wohin sein `ClaimToScope` es legte), die C#-VM nahm
+  `TakeGlobal(_globalScope)` mit dem globalen Scope des Threads, der native Build `adopt(r, g_globalOwn)` mit dem des Threads (thread-lokal); das Ende des
+  Threads zerstörte die Objekte der statischen Felder, das Hauptprogramm und die anderen Threads bekamen die `DestroyedException`. Jetzt gehört es in allen
+  drei dem Scope des Plugins (`vmPlStatics`, `VM.RunPluginStatics`, `fire_pl_static`/`fire_pl_claim` beider Generatoren). **Gleichzeitig geladen**: ein
+  zweites `Library.Load` desselben Plugins, während ein anderer Thread seine Initialisierer laufen lässt, wartet auf sie (`VmLinked.initing`;
+  `blockUntil`/`blockUntilServing`: das Hauptprogramm gewährt währenddessen die Sektionen und Jobs der Threads) - vorher gab es die Klassen mit statischen
+  Feldern, die noch `undefined` waren (C-VM und nativ; nativ jetzt `g_pluginIniting` in `fireRegisterPlugin`); die C#-VM wartete schon (`lock`), aber ein
+  Hauptprogramm, das dort wartet, ist jetzt „away" (`NativeAwayBegin`), sonst hätte der Thread auf eine Sektion gewartet, die es nie gewährt. Ein
+  Initialisierer, der sein eigenes Plugin noch einmal lädt, wartet nicht auf sich.
 * **Debuggen**: die eigenen Quellen des Plugins (`Sources`) bekommen die nächsten Indizes nach denen des Programms (ein Debug-Programm mit Quellen), seine
   Zeilentabellen werden umgeschrieben, die Quellen seiner Libraries 0; der Agent schickt `sources` und wartet auf die Haltepunkte (`fire_dbgVmSources` in
   `fire_debug.h` hinter `FIRE_VM`, dasselbe Ereignis wie `fire_dbgPlugin`); `fire_dbgClass` wächst mit den Klassen.
-* **Ende**: ein Plugin wird nicht entladen, solange sein Programm läuft (wie in der C#-VM); am Ende gehen seine statischen Felder, sein Programm und die
-  ersetzten Tabellen (`vmPluginsEnd`) - das nächste Programm im selben Prozess fängt ohne an.
+* **Ende**: der Code eines Plugins bleibt, solange sein Programm läuft (auch nach `lib.Unload()`, wie in der C#-VM und nativ); am Ende gehen sein Scope,
+  sein Programm und die ersetzten Tabellen (`vmPluginsEnd`) - das nächste Programm im selben Prozess fängt ohne an.
 
 Tests: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugin` hat zu jedem Fall der C#-VM den der C-VM (das Programm als `.fbc` in `fire run`, `CVmRun`): Kit
 (Interface, Basisklasse, Reflection, Ausnahmen, Enum, statische Felder, `class extends`), `kit.so` mit dem Bytecode daneben, Meter (Einheiten, Natives in C++),
@@ -414,7 +442,12 @@ eine andere Schnittstelle von `Api`, zwei Plugins mit derselben Methode, JSON, N
 gemeldet, der Agent startet mit `#import` neu). Korpus: `native/4440` (eine `.fireplugin`, die keine ist: dieselben Meldungen in beiden VMs). Die
 Programmdateien beider forges mit den Schnittstellen der Module sind byte-gleich (Stichprobe des Korpus und ein Projekt mit Library).
 Windows: `fire.exe` (MinGW) unter Wine lädt Kit und Kit2 wie unter Linux (von Hand geprüft, kein Test: Meter braucht die Bibliothek seiner Natives als DLL).
-Offen: ein Test der C-VM unter Windows; ein Plugin, das in einem fire-Thread geladen wird (die Initialisierer laufen dort ohne eigene Sektion).
+Ein Plugin in einem fire-Thread: `PluginsInThreads` (TKit mit statischen Feldern - ein Objekt mit Destruktor, Listen, ein Text -, in einem Thread geladen,
+nach dessen Ende vom Hauptprogramm und einem zweiten Thread benutzt, frische Objekte eines Threads in einer statischen Liste; TKit2 mit Initialisierern,
+die warten, von einem Thread und dem Hauptprogramm gleichzeitig geladen; UKit mit `lib.Unload()`, einem zweiten `Unload`, einem neuen `Load`, dem `Unload`
+einer C-Bibliothek und der Reihenfolge am Ende) - nativ, VM, C-VM und die C-VM zweimal in einem Prozess mit ASan dieselbe Ausgabe.
+Ein Fall des Korpus geht dafür nicht: ein Plugin ist ein eigenes Projekt, das gebaut werden muss (die Fälle sind eine Datei).
+Offen: ein Test der C-VM unter Windows.
 
 ## JSON
 

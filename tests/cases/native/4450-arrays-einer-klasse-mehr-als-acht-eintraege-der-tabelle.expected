@@ -1,0 +1,13 @@
+An element of an array of Ant must be an Ant (or undefined), not Bee.
+An element of an array of Bee must be a Bee (or undefined), not Cat.
+An element of an array of Cat must be a Cat (or undefined), not Dog.
+An element of an array of Dog must be a Dog (or undefined), not Eel.
+An element of an array of Eel must be an Eel (or undefined), not Fox.
+An element of an array of Fox must be a Fox (or undefined), not Gnu.
+An element of an array of Gnu must be a Gnu (or undefined), not Hen.
+An element of an array of Hen must be a Hen (or undefined), not Ibis.
+An element of an array of Ibis must be an Ibis (or undefined), not Jay.
+An element of an array of Jay must be a Jay (or undefined), not Koi.
+An element of an array of Koi must be a Koi (or undefined), not Lynx.
+An element of an array of Lynx must be a Lynx (or undefined), not Ant.
+24

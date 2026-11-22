@@ -179,6 +179,8 @@ static Value vmCallExtern(VmProgram* p, const char* name, int argc, const Value*
 static int64_t vmPluginLoad(const char* path);
 static bool vmPlEndsWith(const char* s, const char* tail);
 static Value vmPluginLink(Vm* vm, int64_t handle, OwnList* list);
+static Value vmPluginUnload(Vm* vm, int64_t handle, OwnList* list);
+static Value vmPlText(const char* text, OwnList* list);
 #define VM_PLUGIN_HANDLE(v) ((v).kind == K_Int && (v).i <= -1000)
 
 /* `__LibCall(id, a, b, c, d)`. */
@@ -213,6 +215,7 @@ static Value vmLibraryCall(Vm* vm, uint32_t argc, const Value* a, OwnList* list)
         case 4: return vmLibCall(a[1], b, c, d, list);
 #endif
         case 5: return VM_PLUGIN_HANDLE(a[1]) ? vmPluginLink(vm, a[1].i, list) : Undef();   /* (undefined: a C library) */
+        case 8: return VM_PLUGIN_HANDLE(a[1]) ? vmPluginUnload(vm, a[1].i, list) : vmPlText("The library is no fire plugin: only a fire plugin can be unloaded.", list);
         default: return libCall(a[0], a[1], b, c, d, list);
     }
 }

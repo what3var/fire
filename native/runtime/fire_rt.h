@@ -3240,6 +3240,8 @@ typedef struct FirePlugin {
     uint32_t* arrMap;
     /* the first `fire` (the program's fire_shareGlobals, firePluginShareGlobals) - or its registration after it: refShare on its static fields (NULL: it has none) */
     void (*shareGlobals)(void);
+    /* lib.Unload() and the end of the program (firePluginsEnd): its own scope goes, its static fields are undefined (docs/spec/PLUGINS.md) */
+    void (*unload)(void);
 } FirePlugin;
 /* What a program that can load plugins tells the runtime (linkage "shared"; NULL: it cannot). */
 typedef struct FirePluginHost {
@@ -3255,6 +3257,9 @@ extern FIRE_RT_DATA const void** g_pluginRf;
 extern FIRE_RT_DATA uint32_t g_pluginRfCount;
 /* Registers a plugin (once; again: the same answer): an array of the names of its classes, or a string that says why it does not fit. */
 FIRE_RT_FN Value fireRegisterPlugin(const FirePlugin* p, OwnList* list);
+/* lib.Unload() of a registered plugin (undefined; again: nothing), and the end of the program after its global scope: the plugins' own scopes (PLUGINS.md). */
+FIRE_RT_FN Value firePluginUnload(const FirePlugin* p, OwnList* list);
+FIRE_RT_FN void firePluginsEnd(void);
 /* JSON of the classes of the plugins (the program's jsonClassAt, ... ask here for what is not in its tables): the JsonClassInfo of a class id (NULL: no class of a
  * plugin, or none with JSON), the id of a class name (-1: none), the text of a type argument of a plugin and back (NULL: none). */
 FIRE_RT_FN const void* firePluginJsonAt(uint32_t cls);
@@ -9432,6 +9437,16 @@ FIRE_FN Value libCall(Value id, Value a, Value b, Value c, Value d, OwnList* lis
             return Int(-1);   /* (this program cannot load fire plugins: not built with modules) */
 #endif
         }
+        case 8: {
+            /* lib.Unload() of a fire plugin (the prelude asks only for one) */
+            const void* info = a.kind == K_Int ? fire_plat_dlsym((void*)(intptr_t)a.i, "fire_module_info") : NULL;
+            if (!info) { static const char t[] = "The library is no fire plugin: only a fire plugin can be unloaded."; return newStrFromUtf8((const uint8_t*)t, sizeof t - 1, list); }
+#ifdef FIRE_MODULES
+            return firePluginUnload((const FirePlugin*)info, list);
+#else
+            return Undef();
+#endif
+        }
         case 6:
             if (!fire_libSigNorm(a, text, sizeof text) || fire_libSigArity(text) < 0) return Int(0);
             return Int(fire_libSigShape(text));
@@ -14898,23 +14913,86 @@ static Value fireRegisterPluginHeld(const FirePlugin* p, OwnList* list, bool* fr
     *fresh = true;
     return firePluginClassNames(p, list);
 }
+/* (lib.Unload() destroyed its scope: a Load runs its init again - docs/spec/PLUGINS.md) */
+static bool g_pluginUnloaded[64];
+#ifdef FIRE_THREADS
+/* (its init runs - on the thread whose g_isThread lives at g_pluginIniter: another Library.Load of it waits until its static fields are set, as in the VMs) */
+static fire_atomic32 g_pluginIniting[64];
+static const void* g_pluginIniter[64];
+static bool firePluginInited(void* ctx) { return fire_atomic_loadAcquire((fire_atomic32*)ctx) == 0; }
+/* (another thread runs its init right now: this one waits for it, serving the sections and jobs of the threads meanwhile - not its own init that loads it
+ * again) */
+static void firePluginWaitInit(uint32_t at) {
+    if (!firePluginInited(&g_pluginIniting[at]) && g_pluginIniter[at] != (const void*)&g_isThread)
+        (void)(g_isThread ? blockUntil(firePluginInited, &g_pluginIniting[at], true, 0) : blockUntilServing(firePluginInited, &g_pluginIniting[at], true, 0));
+}
+#endif
 /* (without the GIL one thread registers at a time - g_pluginM; what the plugin runs first, its init, runs after, outside the lock: it is fire code) */
 Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
-    bool fresh = false;
+    bool fresh = false, run;
     Value r;
+    uint32_t at = 0;
 #ifdef FIRE_NO_GIL
     fire_mutex_lock(&g_pluginM);
 #endif
     r = fireRegisterPluginHeld(p, list, &fresh);
+    while (at < g_pluginCount && g_plugins[at] != p) at++;
+#ifdef FIRE_THREADS
+    if (!fresh && at < g_pluginCount) {
+#ifdef FIRE_NO_GIL
+        fire_mutex_unlock(&g_pluginM);
+#endif
+        firePluginWaitInit(at);
+#ifdef FIRE_NO_GIL
+        fire_mutex_lock(&g_pluginM);
+#endif
+    }
+#endif
+    /* (registered now, or loaded again after lib.Unload(): its init runs) */
+    run = fresh || (at < g_pluginCount && g_pluginUnloaded[at]);
+    if (run && at < g_pluginCount) g_pluginUnloaded[at] = false;
+#ifdef FIRE_THREADS
+    if (run && at < g_pluginCount) { g_pluginIniter[at] = (const void*)&g_isThread; fire_atomic_storeRelease(&g_pluginIniting[at], 1); }
+#endif
 #ifdef FIRE_NO_GIL
     fire_mutex_unlock(&g_pluginM);
 #endif
-    if (fresh && p->init) p->init();
+    if (run && p->init) p->init();
 #ifdef FIRE_THREADS
     /* (registered after the first `fire`: what its static initialisers made is shared at once - before, the program's fire_shareGlobals shares it) */
-    if (fresh && g_domainOn && p->shareGlobals) p->shareGlobals();
+    if (run && g_domainOn && p->shareGlobals) p->shareGlobals();
+    if (run && at < g_pluginCount) fire_atomic_storeRelease(&g_pluginIniting[at], 0);
 #endif
     return r;
+}
+/* `__LibCall(8, handle)`: lib.Unload() of a fire plugin - its own scope is destroyed (its destructors run), its static fields are undefined, its code stays
+ * (docs/spec/PLUGINS.md); undefined, or a string: why not. */
+FIRE_RT_FN Value firePluginUnload(const FirePlugin* p, OwnList* list) {
+    uint32_t at = 0;
+    while (at < g_pluginCount && g_plugins[at] != p) at++;
+    if (at >= g_pluginCount || g_pluginUnloaded[at]) return Undef();
+#ifdef FIRE_THREADS
+    firePluginWaitInit(at);
+#endif
+    if (g_pluginUnloaded[at]) return Undef();
+    g_pluginUnloaded[at] = true;
+    if (p->unload) {
+#ifdef FIRE_THREADS
+        bool ss = sectionScopeEnter(g_isThread);   /* (the threads see its scope whole or gone) */
+        p->unload();
+        sectionScopeExit(ss);
+#else
+        p->unload();
+#endif
+    }
+    (void)list;
+    return Undef();
+}
+/* The end of a program that loads plugins, after its global scope: the scopes of the plugins in the order they were registered. */
+FIRE_RT_FN void firePluginsEnd(void) {
+    uint32_t i;
+    for (i = 0; i < g_pluginCount; i++)
+        if (!g_pluginUnloaded[i]) { g_pluginUnloaded[i] = true; if (g_plugins[i]->unload) g_plugins[i]->unload(); }
 }
 #endif
 #endif

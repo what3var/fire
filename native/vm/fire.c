@@ -222,13 +222,15 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     vm->sp = 0;
     vm->exitJump = NULL;
     vmPkgEnd();                          /* (the libraries of packages forget the program, the lambdas they had are let go) */
-    scLeave(vm, vm->global);             /* the globals and what the global scope owns (with their destructors - not after a failure) */
+    leave(&vm->global->temp);
+    leave(&vm->global->own);             /* what the global scope owns (with their destructors - not after a failure) */
+    vmPluginsReleaseStatics();           /* (then the own scopes of its fire plugins, in the order they were loaded - docs/spec/PLUGINS.md; the global scope */
+    scLeave(vm, vm->global);             /* is still there for their destructors), then the globals */
     vmFreePinned(vm);                    /* (the slots of left scopes that pointers could reach) */
     for (i = 0; i < p->nclasses; i++) {
         uint32_t k;
         for (k = 0; k < p->classes[i]->nstatic; k++) { release(p->classes[i]->svals[k]); p->classes[i]->svals[k] = Undef(); }
     }
-    vmPluginsReleaseStatics();           /* (and those of the classes of its fire plugins) */
     if (g_pool.top) poolRelease(0);
     vmThreadsEnd();
     if (vm->quiet) g_zombies.quiet--;
@@ -251,10 +253,9 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     g_vmDemands = NULL;
     g_vmSpecs = NULL;
     g_vmArrCount = 0; g_arrClasses = NULL;
-    g_textUnits = NULL; g_textUnitCount = 0;
-    free(g_vmTextUnits); g_vmTextUnits = NULL;
     vmUnload(p);
     vmPluginsEnd();                      /* (the programs of its fire plugins, the tables they made grow) */
+    vmUninstallUnits();                  /* (the runtime's table of units, the dimensions plugins added) */
     free(bytes);
     fflush(stdout);
     if (g_vmTime)   /* (--time: what the benchmarks compare - loading, running, taking down) */

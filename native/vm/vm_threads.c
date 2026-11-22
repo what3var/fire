@@ -15,6 +15,8 @@
  * trampolines (VM_CATCHES), each with the function of its index. */
 
 static void vmFreeDead(Vm* vm);
+static void vmPluginsShare(void);                          /* (vm_plugin.c) */
+static void vmPlClaim(Vm* vm, Value v, OwnList* scope);    /* (vm_plugin.c) */
 static Vm* g_vmMain;              /* the main program of the script that runs (its globals are the shared domain) */
 
 /* What `fire` hands its thread besides the values: the flag that it runs, the line that ends its traces (malloc'ed, NULL: none). */
@@ -167,7 +169,7 @@ static bool vmFire(Vm* vm, VmFrame* fr, VmProto* body, uint32_t globalSlots, uin
     (void)fr;
     av[0] = VM_PTRV(body);
     av[1] = Int((int64_t)globalSlots | ((int64_t)argc << 32));
-    ensureDomain();
+    if (!g_domainOn) { ensureDomain(); vmPluginsShare(); }   /* (the plugins' scopes join the domain too) */
     av[2] = VM_PTRV(&start);
     fire_atomic_store(&start.started, 0);
     start.trailer = vmTraceThreadLine(vm, fr);   /* (the thread owns it from now on) */

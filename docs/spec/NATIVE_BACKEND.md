@@ -1548,6 +1548,13 @@ Plugins (benannt nach dem Projekt bzw. der Ausgabe), alle anderen Module (core, 
 `<ausgabe>.so` (`.dll`, `.dylib`) und `<ausgabe>.fireplugin`, der Bytecode für die VM (Entscheidung 9.8; für die VM übersetzt - `#if vm` -, mit den Namen seiner
 Natives und den Schnittstellen der Module, wie die VM sie sieht).
 
+**Der eigene Scope** ([PLUGINS.md](PLUGINS.md)): das Plugin legt `fire_pl_scope` an (ein `OwnList`); was seine Initialisierer liefern (`fire_pl_static`) und ein
+unbeanspruchter Wert, der in eines seiner statischen Felder geht (`fire_pl_claim` hinter dem `SetStaticField` einer eigenen Klasse - aus einem Thread nach
+`toMainGlobals`, in einer Sektion), gehört dorthin; `fire_pl_share` nimmt ihn beim ersten `fire` in die Domäne der Globals; `fire_pl_unload`
+(`FirePlugin.unload`) zerstört ihn und setzt die statischen Felder auf `undefined` - für `lib.Unload()` (`__LibCall(8)`, `firePluginUnload`) und am Ende des
+Programms (`firePluginsEnd`, das ein Programm mit linkage "shared" nach seinem globalen Scope ruft). Ein `Library.Load` nach dem Entladen lässt `init` noch
+einmal laufen; ein zweites `Load`, während ein anderer Thread `init` laufen lässt, wartet darauf (`g_pluginIniting`).
+
 * **Das Plugin** ist ein Modul mit der Rolle einer Library (`_plugin`): es nummeriert seine Klassen ab einer Basis, ruft die anderen Module über ihre exportierten
   Namen, bedient seine eigenen Klassen selbst. Was das Programm sonst für eine Library festlegt, legt es selbst an und füllt es beim Registrieren: `fire_mb_<p>`
   (die Id seiner ersten Klasse), `fire_exct_<p>` (seine Typen von `catch`, nach Namen), `fire_enums_<p>` (seine Enums, nach Namen), `fire_units_<p>` (seine

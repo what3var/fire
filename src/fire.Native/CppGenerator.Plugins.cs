@@ -128,6 +128,21 @@ namespace fire.Native
             // (a debug build: the indexes of its sources among the program's, given when it is registered - fire_dbgPlugin)
             sb.AppendLine(DebugBuild ? $"static int32_t fire_dbgsrc_{id}[{Math.Max(1, _self.Sources.Count)}];"
                 : $"FIRE_MAYBE_UNUSED static const int32_t fire_dbgsrc_{id}[{Math.Max(1, _self.Sources.Count)}] = {{0}};");
+            sb.AppendLine("/* (the plugin's own global scope, docs/spec/PLUGINS.md: what its static fields hold - an unclaimed value stored there joins it; lib.Unload() destroys it) */");
+            sb.AppendLine("static OwnList fire_pl_scope;");
+            sb.AppendLine("static void fire_pl_claim(Value v) {");
+            sb.AppendLine("    Owned* o = ownedOf(v);");
+            sb.AppendLine("    if (!o || o->owner == &fire_pl_scope) return;");
+            sb.AppendLine("#ifdef FIRE_THREADS");
+            sb.AppendLine("    if (o->owner && o->owner != g_globalOwn && o->owner != g_domainRoot) return;");
+            sb.AppendLine("    if (g_isThread && o->owner && o->owner != g_domainRoot && mainGlobalsKind(v, true) != 1) return;");
+            sb.AppendLine("    { bool ss = sectionScopeEnter(g_isThread); if (o->owner) ownUnlink(o); ownLink(&fire_pl_scope, o); if (g_domainOn) { markOwnedShared(o); if (o->okind == O_Lambda) refShare(v); } if (g_isThread) takeGlobalRehome(o, 0); sectionScopeExit(ss); }");
+            sb.AppendLine("#else");
+            sb.AppendLine("    if (o->owner && o->owner != g_globalOwn) return;");
+            sb.AppendLine("    if (o->owner) ownUnlink(o);");
+            sb.AppendLine("    ownLink(&fire_pl_scope, o);");
+            sb.AppendLine("#endif");
+            sb.AppendLine("}");
             return sb.ToString();
         }
 
@@ -204,10 +219,24 @@ namespace fire.Native
             }
             var jsonFixups = new List<string>();
             string json = PluginJson(sb, jsonFixups);
+            // (what a static initialiser made belongs to the plugin's own scope, also when a fire thread loads it - not to the thread's global scope, which its end
+            // takes along; VM.Plugins.cs and vm_plugin.c the same)
+            if (_pluginStaticInits.Count > 0)
+            {
+                sb.AppendLine("static void fire_pl_static(Value* slot, Value r) {");
+                sb.AppendLine("    fire_pl_claim(r);");
+                sb.AppendLine("    adopt(r, &fire_pl_scope);");
+                sb.AppendLine("#ifdef FIRE_THREADS");
+                sb.AppendLine("    { bool ss = sectionScopeEnter(g_isThread); *slot = r; retain(r); sectionScopeExit(ss); }");
+                sb.AppendLine("#else");
+                sb.AppendLine("    *slot = r; retain(r);");
+                sb.AppendLine("#endif");
+                sb.AppendLine("}");
+            }
             sb.AppendLine("static void fire_pl_init(void) {");
             foreach (var fixup in jsonFixups) sb.AppendLine("    " + fixup);   // (the units of the fields JSON reads: the program's, known now)
             foreach (var (cls, field, init) in _pluginStaticInits)
-                sb.AppendLine($"    {{ Value r = {init.Name}(Undef()); {(_usesExceptions ? "if (g_unwind.active) return; " : "")}adopt(r, g_globalOwn); {StaticFieldVar(cls, field)} = r; retain(r); }}   // {cls}.{field}");
+                sb.AppendLine($"    {{ Value r = {init.Name}(Undef()); {(_usesExceptions ? "if (g_unwind.active) return; " : "")}fire_pl_static(&{StaticFieldVar(cls, field)}, r); }}   // {cls}.{field}");
             sb.AppendLine("}");
             // (the first `fire` - or its registration after it: what its static fields hold is shared with the fire threads from then on, as the program's own -
             // fire_rt.h firePluginShareGlobals, called by the program's fire_shareGlobals)
@@ -217,8 +246,16 @@ namespace fire.Native
                 share = "fire_pl_share";
                 sb.AppendLine("static void fire_pl_share(void) {");
                 foreach (var (cls, field, _) in _pluginStaticInits) sb.AppendLine($"    refShare({StaticFieldVar(cls, field)});");
+                sb.AppendLine("#ifdef FIRE_THREADS");
+                sb.AppendLine("    { Owned* c; for (c = fire_pl_scope.head; c; c = c->next) markOwnedShared(c); }");
+                sb.AppendLine("#endif");
                 sb.AppendLine("}");
             }
+            // (lib.Unload(), the end of the program: its scope goes - the destructors run -, then its static fields are undefined; its code stays)
+            sb.AppendLine("static void fire_pl_unload(void) {");
+            sb.AppendLine("    destroyList(&fire_pl_scope);");
+            foreach (var (cls, field, _) in _pluginStaticInits) sb.AppendLine($"    {{ Value o = {StaticFieldVar(cls, field)}; {StaticFieldVar(cls, field)} = Undef(); release(o); }}");
+            sb.AppendLine("}");
             // its `class extends` of classes it does not declare (of the program, of libraries, base types): their tables by the name of the class (the runtime adds
             // them to what an object of such a class finds by name - fireFindMethod)
             // (`class extends int` where nothing else extends int: `$int` is a class of the plugin - its table is an extension all the same)
@@ -242,7 +279,7 @@ namespace fire.Native
             }
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}extern const FirePlugin fire_module_info;");
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}const FirePlugin fire_module_info = {{FIRE_PLUGIN_FORMAT, {CString(_self.Name)}, \"{PluginHeadMark}\", {_pluginDeps.Count}u, {depNames}, {depAbis}, "
-                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}, {exts}, {debug}, {arr}, {share}}};");
+                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}, {exts}, {debug}, {arr}, {share}, fire_pl_unload}};");
             return sb.ToString();
         }
 

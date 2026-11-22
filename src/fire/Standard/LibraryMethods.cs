@@ -27,6 +27,9 @@ namespace fire.Standard
         Shape = 6,
         /// <summary>`(7, function, address)`: calls the release function of a `NativeHandle` (`void(void*)`) with its address.</summary>
         Release = 7,
+        /// <summary>`(8, handle)`: unloads a fire plugin (docs/spec/PLUGINS.md) - its own global scope is destroyed, its static fields are undefined, its code stays;
+        /// undefined: done (or unloaded already), a string: why not.</summary>
+        Unload = 8,
     }
 
     /// <summary>
@@ -128,6 +131,15 @@ namespace fire.Standard
                 any Classes() {
                     if (this.classes == undefined) { return [] }
                     return this.classes
+                }
+
+                /// Unloads a fire plugin: what its static fields hold (its own global scope) is destroyed - their destructors run, a reference to one of
+                /// those objects is the DestroyedException -, the static fields are undefined; its classes and their code stay, objects of them the program
+                /// has live on. `Library.Load` of it again runs its static initialisers again. A LibraryException for a C library.
+                undefined Unload() {
+                    if (this.classes == undefined) { throw new LibraryException("The library '" + this.path + "' is no fire plugin: only a fire plugin can be unloaded.") }
+                    any r = {{NativeName}}({{(int)LibraryMethod.Unload}}, this.handle)
+                    if (r is of string) { throw new LibraryException(r) }
                 }
 
                 /// Is the library a fire plugin?
