@@ -104,7 +104,9 @@ name past what the compiler sees - except in a class marked `[InferDefined]` (se
 
 - Reflection follows the same rules as normal code: `private`/`protected` apply to the calling code, `readonly` fields cannot be set, units are checked.
 - Errors are `ReflectionException`s.
-- Static members are described but cannot be used through `Reflect`.
+- Static members are described but cannot be used through `Reflect`: `Reflect.Get`/`Reflect.Set` of a static property is a `ReflectionException`
+  (`'Count' is a static property - Reflect.Set only sets members of objects.`), as `Reflect.Call` of a static method is, and a static field is no member of
+  the object (`has no writable member`) - in the VM and natively.
 - `Type.Interfaces` holds every interface an object of the class is of (as `is of` sees it): the ones the class names, the ones those extend and those
   of its base classes - each once, by its full name (`Geo.IShape`), the nearest first. `Type.DeclaredInterfaces` holds only the ones the class names
   itself (`class Ring : Circle, IPrintable`: `IPrintable`). Both are the same in the VM and in native builds (also for classes of modules and plugins).

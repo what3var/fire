@@ -637,13 +637,22 @@ static Value vmReflNative(Vm* vm, VmFrame* fr, uint32_t which, const Value* a, O
             if (!name) name = vmName(vm->prog, "");
             field = c && vmFieldIndex(c, name) >= 0;
             if (which == 5) {
-                if (!field && !(c && vmReflAccessor(vm, c, "get_", name, 0, NULL, obj, NULL))) { snprintf(text, sizeof text, "'%s' has no readable member '%s'.", c ? c->name : "?", name); return vmReflFail(text); }
+                VmProto* g = !field && c ? vmReflAccessor(vm, c, "get_", name, 0, NULL, obj, NULL) : NULL;
+                if (!field && !g) { snprintf(text, sizeof text, "'%s' has no readable member '%s'.", c ? c->name : "?", name); return vmReflFail(text); }
+                /* (a static property is no member of the object: Reflect does not use static members - like Reflect.Call, VM.Reflection.cs, natively rf_get) */
+                if (g && g->isStatic) { snprintf(text, sizeof text, "'%s' is a static property - Reflect.Get only reads members of objects.", name); return vmReflFail(text); }
                 return vmReflRead(vm, vmReflCaller(vm), obj, name, list);
             }
-            if (!field && !(c && vmReflAccessor(vm, c, "set_", name, 1, NULL, obj, NULL))) {
-                if (c && vmReflAccessor(vm, c, "get_", name, 0, NULL, obj, NULL)) snprintf(text, sizeof text, "The property '%s' of '%s' has no setter (only 'get').", name, c->name);
-                else snprintf(text, sizeof text, "'%s' has no writable member '%s'.", c ? c->name : "?", name);
-                return vmReflFail(text);
+            {
+                VmProto* st = !field && c ? vmReflAccessor(vm, c, "set_", name, 1, NULL, obj, NULL) : NULL;
+                if (!field && !st) {
+                    if (c && vmReflAccessor(vm, c, "get_", name, 0, NULL, obj, NULL)) snprintf(text, sizeof text, "The property '%s' of '%s' has no setter (only 'get').", name, c->name);
+                    else snprintf(text, sizeof text, "'%s' has no writable member '%s'.", c ? c->name : "?", name);
+                    return vmReflFail(text);
+                }
+                /* (a static property: its value would belong to the object, not to the scope of the static field - the program's, or a plugin's own,
+                 * docs/spec/PLUGINS.md) */
+                if (st && st->isStatic) { snprintf(text, sizeof text, "'%s' is a static property - Reflect.Set only sets members of objects.", name); return vmReflFail(text); }
             }
             {   /* a `readonly` field (the meta says it) */
                 VmClass* x;
