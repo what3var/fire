@@ -40,6 +40,44 @@ static class LinkageTests
         return output.ToString().Replace("\r\n", "\n");
     }
 
+    /// <summary>The program `fire` (the VM in C) the plugin tests run programs in: next to the tests (CVm.Locate), else built from native/vm/fire.c; null with a reason.</summary>
+    private static string? _cvmFire, _cvmFireError;
+    private static string? CVmFire(out string error)
+    {
+        error = _cvmFireError ?? "";
+        if (_cvmFire != null || _cvmFireError != null) return _cvmFire;
+        try { _cvmFire = CVm.Locate(64, 64); }
+        catch (Exception ex) { _cvmFireError = "fire: " + ex.Message; }
+        error = _cvmFireError ?? "";
+        return _cvmFire;
+    }
+
+    /// <summary>The program of a plan in the VM in C (docs/spec/VM_C.md "Plugins"): its program file (as `forge bytecode` writes it - with the interfaces of its
+    /// modules), run by `fire run` in a process of its own - stdout, and on failure the exit code and stderr (like <see cref="Exec"/>). The environment of this
+    /// process (FIRE_TEST_PLUGIN, ...) is the program's.</summary>
+    private static string CVmRun(BuildPlan plan, string folder, VmExecutionMode mode = VmExecutionMode.Release)
+    {
+        if (CVmFire(out string why) is not { } fireExe) return "(no fire) " + why;
+        LinkedProgram linked;
+        try { linked = new Linker { Plan = plan, SourcePaths = plan.SourcePaths.Cast<string?>().ToList(), PackageLibraries = true }.CompileAndLink(plan.SourceTexts, null, null, mode, null); }
+        catch (Exception ex) { return "(not compiled) " + ex.Message; }
+        Directory.CreateDirectory(folder);
+        string fbc = Path.Combine(folder, "program-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".fbc");
+        File.WriteAllBytes(fbc, fire.Bytecode.ProgramFile.Write(linked));
+        var psi = new ProcessStartInfo(fireExe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var a in CVmLaunch.Arguments(fbc, Array.Empty<string>())) psi.ArgumentList.Add(a);
+        foreach (var (k, v) in CVmLaunch.Environment(linked.PackageLibraryFiles ?? new List<string>())) psi.Environment[k] = v;
+        try
+        {
+            using var p = Process.Start(psi)!;
+            var err = p.StandardError.ReadToEndAsync();
+            string output = p.StandardOutput.ReadToEnd();
+            if (!p.WaitForExit(120000)) { try { p.Kill(true); } catch (Exception) { } return "(timeout)"; }
+            return output.Replace("\r\n", "\n") + (p.ExitCode != 0 ? $"(exit {p.ExitCode}) {err.Result}" : "");
+        }
+        finally { try { File.Delete(fbc); } catch (IOException) { } }
+    }
+
     private static string Exec(string exe, string? launcher = null)
     {
         var psi = new ProcessStartInfo(launcher ?? exe, launcher != null ? $"\"{exe}\"" : "") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
@@ -1260,8 +1298,10 @@ static class LinkageTests
             string native = host.Ok && kit.Ok ? Exec(host.Exe) : "";
             Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plugpacked-kit", "kit.fireplugin"));
             string vm = Vm(hostPlan.SourceTexts, hostPlan);
+            string cvm = CVmRun(hostPlan, Path.Combine(root, "plugpacked-cvm"));
             Check("Gepackte Objekte ueber Module: Basisklasse der Bibliothek, Ableitung im Plugin und im Programm - Methoden aller drei, Reflection, flat (nativ == VM)",
                 native == PackedExpected && vm == PackedExpected, $"{native}\n---\n{vm}\n{host.Log}\n{kit.Log}");
+            Check("Gepackte Objekte ueber Module: die C-VM wie nativ", cvm == PackedExpected, cvm);
         }
         finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); }
     }
@@ -1367,6 +1407,13 @@ static class LinkageTests
                 Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.fireplugin"));
                 string vm = Vm(hostPlan.SourceTexts, hostPlan);
                 Check("Plugin: die VM laedt den Bytecode des Plugins (.fireplugin) wie nativ", vm == PluginExpected, vm);
+                string cvmDir = Path.Combine(root, "plug-cvm");
+                string cvm = CVmRun(hostPlan, cvmDir);
+                Check("Plugin: die C-VM (fire) laedt den Bytecode des Plugins (.fireplugin) wie nativ", cvm == PluginExpected, cvm);
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.so"));
+                string cvmSo = CVmRun(hostPlan, cvmDir);
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.fireplugin"));
+                Check("Plugin: die C-VM laedt zu Library.Load(\"kit.so\") den Bytecode daneben", cvmSo == PluginExpected, cvmSo);
                 // (Library.Load of the .fireplugin file natively: the library next to it)
                 string viaBytecode = host.Ok && kit.Ok ? Exec(host.Exe) : "";
                 Check("Plugin: nativ laedt Library.Load(\"kit.fireplugin\") die Bibliothek daneben", viaBytecode == PluginExpected, viaBytecode);
@@ -1379,10 +1426,12 @@ static class LinkageTests
                 Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.fireplugin"));
                 Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", Path.Combine(root, "plug-meter", "meter.fireplugin"));
                 string unitsVm = Vm(hostPlan.SourceTexts, hostPlan);
+                string unitsCVm = CVmRun(hostPlan, cvmDir);
                 Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
                 Check("Plugin: Einheiten im Plugin (eigene, neue Dimension, Offset, eigene und Library-Umrechnungsfunktionen, Text) und des Programms - nativ",
                     unitsNative == PluginExpected + PluginUnitsExpected, $"{unitsNative}\n{meter.Log}");
                 Check("Plugin: Einheiten im Plugin - die VM wie nativ", unitsVm == PluginExpected + PluginUnitsExpected, unitsVm);
+                Check("Plugin: Einheiten und Natives in C++ des Plugins - die C-VM wie nativ", unitsCVm == PluginExpected + PluginUnitsExpected, unitsCVm);
 
                 // a plugin built against another interface of Api (a field more): readable error, in the VM too
                 string apiBefore = File.ReadAllText(apiSource);
@@ -1397,6 +1446,9 @@ static class LinkageTests
                     Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-other", "kit.fireplugin"));
                     string vmMismatch = Vm(hostPlan.SourceTexts, hostPlan);
                     Check("Plugin: die VM prueft die Schnittstelle genauso", vmMismatch.Contains("The plugin 'Kit' cannot be loaded: it was built against another interface of the module 'Api'"), vmMismatch);
+                    string cvmMismatch = CVmRun(hostPlan, cvmDir);
+                    Check("Plugin: die C-VM prueft die Schnittstelle genauso (die Programmdatei traegt die Schnittstellen ihrer Module)",
+                        cvmMismatch.Contains("load: The plugin 'Kit' cannot be loaded: it was built against another interface of the module 'Api'") && cvmMismatch.Contains("(exit 3)"), cvmMismatch);
                 }
                 finally { File.WriteAllText(apiSource, apiBefore); }
 
@@ -1419,10 +1471,12 @@ static class LinkageTests
                 Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.fireplugin"));
                 Environment.SetEnvironmentVariable("FIRE_TEST_DUP", Path.Combine(root, "plug-kit2", "kit2.fireplugin"));
                 string dupVm = Vm(hostPlan.SourceTexts, hostPlan);
+                string dupCVm = CVmRun(hostPlan, cvmDir);
                 Environment.SetEnvironmentVariable("FIRE_TEST_DUP", null);
                 const string dupText = "dup: The plugin 'Kit2' cannot be loaded: it adds the method 'Tag' (0 arguments) to 'Api.Device', which has it already";
                 Check("Plugin: zwei Plugins fuegen Api.Device dieselbe Methode hinzu - eine lesbare LibraryException (nativ)", dupNative.Contains(dupText), $"{dupNative}\n{kit2.Log}");
                 Check("Plugin: zwei Plugins fuegen dieselbe Methode hinzu - die VM wie nativ", dupVm.Contains(dupText), dupVm);
+                Check("Plugin: zwei Plugins fuegen dieselbe Methode hinzu - die C-VM wie nativ", dupCVm.Contains(dupText) && dupCVm.StartsWith(PluginExpected, StringComparison.Ordinal), dupCVm);
 
                 // a program with linkage "static" cannot load plugins
                 Directory.CreateDirectory(Path.Combine(root, "plug-static"));
@@ -1453,11 +1507,13 @@ static class LinkageTests
                 Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-json", "kit.fireplugin"));
                 Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", Path.Combine(root, "plug-json", "meter.fireplugin"));
                 string jsonVm = Vm(threadsPlan.SourceTexts, threadsPlan);
+                string jsonCVm = CVmRun(threadsPlan, cvmDir);
                 Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
                 Environment.SetEnvironmentVariable("FIRE_TEST_JSON", null);
                 Check("Plugin: JSON von Objekten der Plugins (Serialize, Deserialize mit $type und Klassenname, Felder mit Einheiten des Plugins) - nativ",
                     jsonNative == PluginExpected + PluginUnitsExpected + PluginJsonExpected, $"{jsonNative}\n{kitJson.Log}\n{meterJson.Log}");
                 Check("Plugin: JSON von Objekten der Plugins - die VM wie nativ", jsonVm == PluginExpected + PluginUnitsExpected + PluginJsonExpected, jsonVm);
+                Check("Plugin: JSON von Objekten der Plugins - die C-VM wie nativ", jsonCVm == PluginExpected + PluginUnitsExpected + PluginJsonExpected, jsonCVm);
 
                 // Windows (MinGW, under Wine): the plugin's DLL imports from the runtime's DLL and those of the program's modules, its pointers to the program are filled
                 // by its fire_link function from the program's table
@@ -1529,6 +1585,30 @@ static class LinkageTests
             Check("Plugin-Debug (nativ): das Programm endet mit dem Ergebnis", stdout.Result.Contains("result 16"), stdout.Result + stderr.Result);
         }
         catch (Exception ex) { Check("Plugin-Debug (nativ): ohne Ausnahme", false, ex.ToString()); }
+        // the same in the VM in C: the program file of the debug build (with its sources) in `fire --debug`, the bytecode of the plugin (its line tables, its sources)
+        try
+        {
+            if (CVmFire(out string why) is not { } fireExe) { Check("Plugin-Debug (C-VM): fire", false, why); return; }
+            var linked = new Linker { Plan = hostPlan, SourcePaths = hostPlan.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(hostPlan.SourceTexts, null, null, VmExecutionMode.Debug, null);
+            string fbc = Path.Combine(root, "plugdbg-out", "host.fbc");
+            File.WriteAllBytes(fbc, fire.Bytecode.ProgramFile.Write(linked));
+            using var listener = NativeDebugListener.Start();
+            var psi = new ProcessStartInfo(fireExe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = root };
+            foreach (var a in CVmLaunch.Arguments(fbc, Array.Empty<string>())) psi.ArgumentList.Add(a);
+            psi.Environment[NativeDebugListener.EnvironmentVariable] = listener.EnvironmentValue;
+            psi.Environment["FIRE_TEST_PLUGIN"] = Path.Combine(root, "plugdbg-out", "kit.fireplugin");
+            using var process = Process.Start(psi)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            using var target = listener.Accept(TimeSpan.FromSeconds(30), () => process.HasExited ? "the program ended: " + stderr.Result : null);
+            Check("Plugin-Debug (C-VM): der Debugger spricht mit der C-VM (engine vm)", target.Engine == "vm", target.Engine);
+            int user = Enumerable.Range(0, target.SourceFiles.Count).First(i => target.SourceFiles[i] is { } f && Path.GetFileName(f) == "main.fire");
+            DebuggerTests.PluginPlan(target, kitFile, user, null, (ok, title, detail) => Check("Plugin-Debug (C-VM): " + title, ok, detail));
+            target.MainThread.RunUntilEnd(() => false);
+            if (!process.WaitForExit(30000)) { try { process.Kill(true); } catch (Exception) { } }
+            Check("Plugin-Debug (C-VM): das Programm endet mit dem Ergebnis", stdout.Result.Contains("result 16"), stdout.Result + stderr.Result);
+        }
+        catch (Exception ex) { Check("Plugin-Debug (C-VM): ohne Ausnahme", false, ex.ToString()); }
     }
 
     /// <summary>A plugin that calls natives in C of a library (they live in the program, `fire_cn_<function>`): one that neither the program nor the library calls
@@ -1580,6 +1660,8 @@ static class LinkageTests
             Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plugc-plug", "cplug.fireplugin"));
             string vm = Vm(hostPlan.SourceTexts, hostPlan);
             Check("Plugin: ein Native in C einer Library - die VM wie nativ", vm == "2\n40\n", vm);
+            string cvm = CVmRun(hostPlan, Path.Combine(root, "plugc-cvm"));
+            Check("Plugin: ein Native in C einer Library - die C-VM wie nativ", cvm == "2\n40\n", cvm);
             // the package gets a native the program (built before) does not have
             File.WriteAllText(header, headerBefore + "static inline Value capi_hundred(Value x) { return Int(x.i * 100); }\n");
             File.WriteAllText(plugSource, plugBefore.Replace("__capi_ten(x)", "__capi_hundred(x)"));

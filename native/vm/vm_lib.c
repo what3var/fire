@@ -4,8 +4,8 @@
  * bits of a float in the low half of the register), and the function is called as one with 8 whole-number and 8 float parameters - on the calling
  * conventions where whole numbers and floats go in registers of their own, in order (System V x86-64, AArch64: what a C function of up to 8 parameters
  * reads is the same). Elsewhere (Windows x64: the registers by position) a signature is "not known" (Get says so). The rest of `__LibCall` - loading,
- * looking up, the shape of a signature, releasing a NativeHandle - is the runtime's libCall. A fire plugin (5) needs the modules of a native build: the VM
- * has no fire plugins yet (Library.Load says so). */
+ * looking up, the shape of a signature, releasing a NativeHandle - is the runtime's libCall. A fire plugin (1 of a `.fireplugin` file or of a library with
+ * one next to it, 5) is the VM's: its bytecode linked into the program (vm_plugin.c). */
 
 #if (defined(__x86_64__) && !defined(_WIN32)) || defined(__aarch64__)
 #define VM_LIB_CALLS 1
@@ -175,11 +175,30 @@ static Value vmCallExtern(VmProgram* p, const char* name, int argc, const Value*
 #endif
 }
 
+/* fire plugins (vm_plugin.c) */
+static int64_t vmPluginLoad(const char* path);
+static bool vmPlEndsWith(const char* s, const char* tail);
+static Value vmPluginLink(Vm* vm, int64_t handle, OwnList* list);
+#define VM_PLUGIN_HANDLE(v) ((v).kind == K_Int && (v).i <= -1000)
+
 /* `__LibCall(id, a, b, c, d)`. */
-static Value vmLibraryCall(uint32_t argc, const Value* a, OwnList* list) {
+static Value vmLibraryCall(Vm* vm, uint32_t argc, const Value* a, OwnList* list) {
     Value u = Undef();
     Value b = argc > 2 ? a[2] : u, c = argc > 3 ? a[3] : u, d = argc > 4 ? a[4] : u;
     switch (a[0].kind == K_Int ? (int)a[0].i : 0) {
+        case 1:
+            /* (a fire plugin: its bytecode - the `.fireplugin` file, or the one next to the library) */
+            if (a[1].kind == K_String) {
+                char path[4096];
+                int64_t h;
+                strToUtf8(a[1], path, sizeof path);
+                if ((h = vmPluginLoad(path)) != 0) return Int(h);
+                if (vmPlEndsWith(path, ".fireplugin")) return Int(0);   /* (no such file: not the library next to it either - the C# VM's NativeLibrary.Load) */
+            }
+            return libCall(a[0], a[1], b, c, d, list);
+        case 2:
+            if (VM_PLUGIN_HANDLE(a[1])) return Int(0);   /* (a fire plugin: no C functions) */
+            return libCall(a[0], a[1], b, c, d, list);
         case 3: {
             char text[256];
             int n;
@@ -193,7 +212,7 @@ static Value vmLibraryCall(uint32_t argc, const Value* a, OwnList* list) {
 #ifdef VM_LIB_CALLS
         case 4: return vmLibCall(a[1], b, c, d, list);
 #endif
-        case 5: return Undef();   /* (no fire plugins in the VM yet: a library is a C library) */
+        case 5: return VM_PLUGIN_HANDLE(a[1]) ? vmPluginLink(vm, a[1].i, list) : Undef();   /* (undefined: a C library) */
         default: return libCall(a[0], a[1], b, c, d, list);
     }
 }

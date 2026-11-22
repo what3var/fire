@@ -35,6 +35,7 @@ typedef struct VmNative {
 
 static VmNative* g_vmNat = NULL;    /* the natives of the imports of the program that runs, by index - VM_NNATIVES */
 static uint32_t g_vmNatCount = 0;
+static uint32_t g_vmNatCap = 0;     /* (room for the natives in C++ of fire plugins, vm_plugin.c: the table is never moved while the program runs) */
 
 static const char* const g_vmBridgeGraphics[] = {
 #define FIRE_BRIDGE_NATIVE(import, index, name) FIRE_BRIDGE_##import(name)
@@ -192,8 +193,10 @@ static void vmNativesBind(Vm* vm) {
     if (graphics) cap += (uint32_t)(sizeof g_vmBridgeGraphics / sizeof g_vmBridgeGraphics[0]);
     if (windows) cap += (uint32_t)(sizeof g_vmBridgeWindows / sizeof g_vmBridgeWindows[0]);
     if (reflection) cap += (uint32_t)(sizeof g_vmBridgeReflection / sizeof g_vmBridgeReflection[0]);
+    cap += 256;   /* (the natives fire plugins bring) */
     g_vmNat = (VmNative*)calloc(cap, sizeof(VmNative));
     if (!g_vmNat) outOfMemory();
+    g_vmNatCap = cap;
     vmCoreBind();
     g_vmPkgUsesGraphics = graphics;
     if (graphics) for (i = 0; g_vmBridgeGraphics[i]; i++) vmNatAdd(&n, g_vmBridgeGraphics[i], gfx);
@@ -203,7 +206,7 @@ static void vmNativesBind(Vm* vm) {
     g_vmNatCount = n;
 }
 
-static void vmNativesUnbind(void) { free(g_vmNat); g_vmNat = NULL; g_vmNatCount = 0; }
+static void vmNativesUnbind(void) { free(g_vmNat); g_vmNat = NULL; g_vmNatCount = 0; g_vmNatCap = 0; }
 
 /* The native of an import of this name (NULL: none). */
 static VmNative* vmNativeNamed(const char* name) {
@@ -290,7 +293,7 @@ static Value vmcResource(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, Own
 static Value vmcMath(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)list; return mathCall(a[0].i, a[1], VM_A(2)); }
 static Value vmcJson(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { return vmJsonCall(vm, fr, argc, a, list); }
 static Value vmcEnv(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; return envCall(a[0].i, VM_A(1), VM_A(2), list); }
-static Value vmcLib(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; return vmLibraryCall(argc, a, list); }
+static Value vmcLib(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)fr; return vmLibraryCall(vm, argc, a, list); }
 static Value vmcBits(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)list; return bitsCall(a[0].i, a[1], VM_A(2), VM_A(3)); }
 static Value vmcArrayCopy(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)fr; (void)argc; (void)list; return fire_arrayCopy(a[0], a[1], a[2]); }
 static Value vmcTypeArg(Vm* vm, VmFrame* fr, uint32_t argc, const Value* a, OwnList* list) { (void)vm; (void)argc; return vmTypeArgText(fr, a[0], list); }

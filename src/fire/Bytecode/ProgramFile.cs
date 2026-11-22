@@ -42,6 +42,9 @@ namespace fire.Bytecode
         /// <summary>Flag of the header: behind the sources the setting of the stack traces (docs/spec/STACKTRACE.md: a byte, StackTraceMode) and the name of each source
         /// in a trace (LinkedProgram.TraceFiles, by source index; none: the prelude). Written when the program shows traces (not with `#stacktrace off`).</summary>
         private const int FlagTrace = 4;
+        /// <summary>Flag of the header: behind the traces the interfaces of the program's library modules (module and ModuleInterface.Text, ordered by name) - what the VM
+        /// in C checks a fire plugin against when the program loads it (docs/spec/VM_C.md "Plugins"). Written when the program knows the modules of its sources.</summary>
+        private const int FlagModules = 8;
 
         // the tags of a constant
         private const byte TagUndefined = 0, TagBool = 1, TagInt = 2, TagFloat = 3, TagChar = 4, TagString = 5, TagWord = 6;
@@ -144,6 +147,13 @@ namespace fire.Bytecode
                     foreach (var name in names) Str(name);
                 }
 
+                var modules = ModulesOf(linked);
+                if (modules != null)
+                {
+                    Count(modules.Count);
+                    foreach (var (module, text) in modules) { Str(module); Str(text); }
+                }
+
                 // the tables are complete only now, and they stand before the program: the units and the enums first (they add names), then the names
                 var body = _out;
                 _out = new MemoryStream();
@@ -161,12 +171,20 @@ namespace fire.Bytecode
                 _out = new MemoryStream();
                 _out.Write(Magic);
                 U8(Version);
-                U8((byte)((_lines ? FlagLines : 0) | (sources ? FlagSources : 0) | (trace ? FlagTrace : 0)));
+                U8((byte)((_lines ? FlagLines : 0) | (sources ? FlagSources : 0) | (trace ? FlagTrace : 0) | (modules != null ? FlagModules : 0)));
                 Count(_stringList.Count);
                 foreach (var s in _stringList) Bytes(Encoding.UTF8.GetBytes(s));
                 tables.WriteTo(_out);
                 body.WriteTo(_out);
                 return _out.ToArray();
+            }
+
+            /// <summary>The interfaces of the library modules (null: the program does not know the modules of its sources).</summary>
+            private static List<(string Module, string Interface)>? ModulesOf(LinkedProgram linked)
+            {
+                if (linked.ModuleInterfaces is { } read) return read.ToList();
+                if (fire.Runtime.ModuleInterface.Modules(linked) is not { } modules) return null;
+                return modules.OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => (m.Key, fire.Runtime.ModuleInterface.Text(linked, m.Value.Classes, m.Value.Sources))).ToList();
             }
 
             public byte[] RunUnit(Unit u)
@@ -652,6 +670,12 @@ namespace fire.Bytecode
                     traceFiles = new List<string?>();
                     for (int n = Count(); n > 0; n--) traceFiles.Add(Str());
                 }
+                List<(string, string)>? moduleInterfaces = null;
+                if ((headerFlags & FlagModules) != 0)
+                {
+                    moduleInterfaces = new List<(string, string)>();
+                    for (int n = Count(); n > 0; n--) moduleInterfaces.Add((Name(), Name()));
+                }
                 if (_at != _in.Length) throw new ProgramFileException("The program file is damaged (bytes behind its end).");
 
                 var compiled = new CompiledProgram { TopLevel = topLevel, Classes = classes, ExternSignatures = externs, Resources = resources, EnumDecls = enumDecls, CustomUnits = customUnits };
@@ -660,7 +684,7 @@ namespace fire.Bytecode
                 {
                     FloatWidth = floatWidth, IntWidth = intWidth, WordWidth = wordWidth,
                     PackageNatives = packageNatives?.ToList()!, PackageNativeLibraries = packageLibraries?.ToList()!, GraphicsNatives = graphicsNatives?.ToList()!,
-                    SourceFiles = sourceFiles, SourceHashes = sourceHashes, StackTrace = stackTrace, TraceFiles = traceFiles,
+                    SourceFiles = sourceFiles, SourceHashes = sourceHashes, StackTrace = stackTrace, TraceFiles = traceFiles, ModuleInterfaces = moduleInterfaces,
                 };
             }
 

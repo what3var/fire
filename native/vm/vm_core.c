@@ -111,7 +111,8 @@ static VmScope* scAncestor(VmScope* s, uint32_t depth) { while (depth-- && s->pa
 
 /* ---- classes as the runtime sees them ---- */
 static VmClass* vmClassNamed(VmProgram* p, const char* name) { return name ? (VmClass*)fbMapGet(&p->classByName, name) : NULL; }
-static VmClass* vmClassOf(Vm* vm, uint32_t cls) { return cls >= vm->firstId && cls - vm->firstId < vm->nids ? vm->byId[cls - vm->firstId] : NULL; }
+/* (a strand reads the main program's table: a fire plugin may have grown it after the strand began) */
+static VmClass* vmClassOf(Vm* vm, uint32_t cls) { if (vm->top) vm = vm->top; return cls >= vm->firstId && cls - vm->firstId < vm->nids ? vm->byId[cls - vm->firstId] : NULL; }
 static VmClass* vmClassOfValue(Vm* vm, Value v) { return v.kind == K_Class && leafAlive(v) ? vmClassOf(vm, asObj(v)->cls) : NULL; }   /* (a destroyed one: its memory may be gone - a thread sees what the main program destroyed) */
 static const char* vmPlainName(const char* name, char* buf, size_t cap) {
     const char* tick = strchr(name, '`');
@@ -890,6 +891,7 @@ static bool vmRecCheck(Value a) {
 #define VM_IFACE_TYPE 0x40000000
 static uint32_t vmIfaceIndex(Vm* vm, const char* name) {
     uint32_t i;
+    if (vm->top) vm = vm->top;
     for (i = 0; i < vm->nifaces; i++) if (!strcmp(vm->ifaces[i], name)) return i;
     if ((vm->nifaces & 15) == 0) {
         vm->ifaces = (const char**)realloc((void*)vm->ifaces, (vm->nifaces + 16) * sizeof(char*));
@@ -900,17 +902,54 @@ static uint32_t vmIfaceIndex(Vm* vm, const char* name) {
 }
 static int32_t vmIfaceFind(Vm* vm, const char* name) {
     uint32_t i;
+    if (vm->top) vm = vm->top;
     for (i = 0; i < vm->nifaces; i++) if (!strcmp(vm->ifaces[i], name)) return (int32_t)i;
     return -1;
 }
 
 /* ---- the class descriptors: the program's classes registered at run time (like fireRegisterPlugin does for the classes of a plugin) ---- */
-static void vmRegisterClasses(Vm* vm) {
+/* The descriptor of a class whose id is set (its row `d`), its catch types. */
+static void vmDescribeClass(Vm* vm, VmClass* c, FireClassDesc* d) {
     VmProgram* p = vm->prog;
-    uint32_t base = g_classDescCount, i, n = p->nclasses;
     const char* message = vmName(p, "message");
     const char* toString = vmName(p, "ToString");
     const char* exception = vmName(p, "Exception");
+    VmClass* k;
+    uint32_t depth = 0, t = 0;
+    const char* tick;
+    vmLayout(p, c);
+    for (k = c; k; k = k->base) { depth++; if (k->name == exception) c->isException = true; if (k->dtor) c->hasDtor = true; }
+    tick = strchr(c->name, '`');
+    c->typeParams = tick ? atoi(tick + 1) : 0;
+    d->name = c->name;
+    d->nfields = c->nlayout;
+    d->messageIndex = vmFieldIndex(c, message);   /* (any object can be thrown: its `message`, if it has one) */
+    d->ticksIndex = vmFieldIndex(c, vmName(p, "ticks"));   /* (a TimeSpan for the waits: a class with a field `ticks`, fire_rt.h timeObjTicks) */
+    d->destroy = c->hasDtor ? vmDestroyObj : NULL;
+    d->toString = vmHasMethodNamed(c, toString) ? vmToString : NULL;
+    /* the catch types an object of the class is: every class of its chain (the catch type of class k is its id + 1; FIRE_EXC_ANY is 0) */
+    {   /* (any object can be thrown and caught by its class)  */
+        uint32_t ni = 0, j;
+        int32_t* types;
+        for (k = c; k; k = k->base) ni += k->ninterfaces;
+        types = (int32_t*)malloc((depth + ni + 1) * sizeof(int32_t));
+        if (!types) outOfMemory();
+        for (k = c; k; k = k->base) types[t++] = (int32_t)k->id + 1;
+        /* (`catch (IBase e)`: an interface of the chain - its own catch type) */
+        for (k = c; k; k = k->base)
+            for (j = 0; j < k->ninterfaces; j++) if (k->interfaces[j]) types[t++] = VM_IFACE_TYPE + (int32_t)vmIfaceIndex(vm, k->interfaces[j]);
+        types[t] = -1;
+        vm->excTypes[c->id - vm->firstId] = types;
+        d->excTypes = types;
+    }
+    d->flags = 0;
+    for (k = c; k; k = k->base) if (k->flags & VC_NOCOPY) d->flags = 1;
+    if (c->isException) d->flags |= 2;   /* (its text is `Class: message`, docs/spec/STACKTRACE.md) */
+    if (c->flags & VC_RECORD) { d->recEq = vmRecEq; d->recHash = vmRecHash; d->recCheck = vmRecCheck; }
+}
+static void vmRegisterClasses(Vm* vm) {
+    VmProgram* p = vm->prog;
+    uint32_t base = g_classDescCount, i, n = p->nclasses;
     FireClassDesc* rows = (FireClassDesc*)calloc(base + n + 1, sizeof(FireClassDesc));
     if (!rows) outOfMemory();
     if (base) memcpy(rows, g_classDescs, base * sizeof(FireClassDesc));
@@ -918,46 +957,38 @@ static void vmRegisterClasses(Vm* vm) {
     vm->nids = n;
     vm->byId = (VmClass**)calloc(n + 1, sizeof(VmClass*));
     vm->excTypes = (int32_t**)calloc(n + 1, sizeof(int32_t*));
+    if (!vm->byId || !vm->excTypes) outOfMemory();
     for (i = 0; i < n; i++) { p->classes[i]->id = base + i; vm->byId[i] = p->classes[i]; }
-    for (i = 0; i < n; i++) {
-        VmClass* c = p->classes[i];
-        VmClass* k;
-        FireClassDesc* d = &rows[base + i];
-        uint32_t depth = 0, t = 0;
-        const char* tick;
-        vmLayout(p, c);
-        for (k = c; k; k = k->base) { depth++; if (k->name == exception) c->isException = true; if (k->dtor) c->hasDtor = true; }
-        tick = strchr(c->name, '`');
-        c->typeParams = tick ? atoi(tick + 1) : 0;
-        d->name = c->name;
-        d->nfields = c->nlayout;
-        d->messageIndex = vmFieldIndex(c, message);   /* (any object can be thrown: its `message`, if it has one) */
-        d->ticksIndex = vmFieldIndex(c, vmName(p, "ticks"));   /* (a TimeSpan for the waits: a class with a field `ticks`, fire_rt.h timeObjTicks) */
-        d->destroy = c->hasDtor ? vmDestroyObj : NULL;
-        d->toString = vmHasMethodNamed(c, toString) ? vmToString : NULL;
-        /* the catch types an object of the class is: every class of its chain (the catch type of class k is its id + 1; FIRE_EXC_ANY is 0) */
-        {   /* (any object can be thrown and caught by its class)  */
-            uint32_t ni = 0, j;
-            int32_t* types;
-            for (k = c; k; k = k->base) ni += k->ninterfaces;
-            types = (int32_t*)malloc((depth + ni + 1) * sizeof(int32_t));
-            if (!types) outOfMemory();
-            for (k = c; k; k = k->base) types[t++] = (int32_t)k->id + 1;
-            /* (`catch (IBase e)`: an interface of the chain - its own catch type) */
-            for (k = c; k; k = k->base)
-                for (j = 0; j < k->ninterfaces; j++) if (k->interfaces[j]) types[t++] = VM_IFACE_TYPE + (int32_t)vmIfaceIndex(vm, k->interfaces[j]);
-            types[t] = -1;
-            vm->excTypes[i] = types;
-            d->excTypes = types;
-        }
-        d->flags = 0;
-        for (k = c; k; k = k->base) if (k->flags & VC_NOCOPY) d->flags = 1;
-        if (c->isException) d->flags |= 2;   /* (its text is `Class: message`, docs/spec/STACKTRACE.md) */
-        if (c->flags & VC_RECORD) { d->recEq = vmRecEq; d->recHash = vmRecHash; d->recCheck = vmRecCheck; }
-    }
+    for (i = 0; i < n; i++) vmDescribeClass(vm, p->classes[i], &rows[base + i]);
     vm->descs = rows;
     g_classDescs = rows;
     g_enumerateItems = vmEnumerateItems;
+    g_classDescCount = base + n;
+}
+static void vmPlGarbage(void* p);
+/* More classes for the program while it runs (a fire plugin, vm_plugin.c): the next ids. The tables grow as copies - the old ones stay until the program
+ * ends (another thread may be reading them). Nothing else registers classes while a program runs: its ids stay one range. */
+static void vmRegisterMore(Vm* vm, VmClass** cls, uint32_t n) {
+    uint32_t base = g_classDescCount, i, total = vm->nids + n;
+    FireClassDesc* rows;
+    VmClass** byId;
+    int32_t** exc;
+    if (!n) return;
+    rows = (FireClassDesc*)calloc(base + n + 1, sizeof(FireClassDesc));
+    byId = (VmClass**)calloc(total + 1, sizeof(VmClass*));
+    exc = (int32_t**)calloc(total + 1, sizeof(int32_t*));
+    if (!rows || !byId || !exc) outOfMemory();
+    memcpy(rows, g_classDescs, base * sizeof(FireClassDesc));
+    memcpy(byId, vm->byId, vm->nids * sizeof(VmClass*));
+    memcpy(exc, vm->excTypes, vm->nids * sizeof(int32_t*));
+    for (i = 0; i < n; i++) { cls[i]->id = base + i; byId[vm->nids + i] = cls[i]; }
+    vmPlGarbage(vm->byId); vmPlGarbage(vm->excTypes); vmPlGarbage(vm->descs);
+    vm->byId = byId;
+    vm->excTypes = exc;
+    vm->nids = total;
+    for (i = 0; i < n; i++) vmDescribeClass(vm, cls[i], &rows[base + i]);
+    vm->descs = rows;
+    g_classDescs = rows;
     g_classDescCount = base + n;
 }
 static void vmUnregisterClasses(Vm* vm) {

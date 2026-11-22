@@ -4,7 +4,8 @@
  * runtime's unit table when the program starts), the enums (the runtime's g_enums), the classes with their fields, field infos, statics, methods,
  * constructors (by arity and the extra ones of overloading by type) and destructor, the chunks (code, constants, units, functions, handlers, line tables)
  * and the functions (parameters, defaults, access, masks, overload descriptors, specializations). Parsed and skipped: custom units (their units are in the
- * unit table), externs, the meta data of the classes (reflection, phase B step 5), receiverTypeArgs. The names of locals and the sources are kept for the debugger (vm_debug.c). */
+ * unit table), externs, the meta data of the classes (reflection, phase B step 5), receiverTypeArgs. The names of locals and the sources are kept for the debugger (vm_debug.c),
+ * the interfaces of the library modules (flag 8) for the fire plugins (vm_plugin.c). */
 
 static void vmOom(void) { fputs("fire vm: out of memory\n", stderr); exit(3); }
 #define vmAlloc(a, n) fbAlloc((a), (n))
@@ -499,17 +500,20 @@ static void rdEnums(VmReader* r, FireEnum** out, uint32_t* count) {
     *count = n;
 }
 
-/* Reads a program file. NULL and the reason in `error` when it is not one or is damaged. */
-static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t errorCap) {
+/* Reads a program file. NULL and the reason in `error` when it is not one or is damaged. `host`: the program of a fire plugin (vm_plugin.c), read with the
+ * names of the program that loads it (they are interned there: a name compares by its pointer); NULL: a program of its own. */
+static VmProgram* vmLoadWith(const uint8_t* in, size_t len, VmProgram* host, char* error, size_t errorCap) {
     VmReader r;
     VmProgram* volatile p = (VmProgram*)calloc(1, sizeof(VmProgram));
     uint32_t n, i, flags;
     if (!p) vmOom();
     memset(&r, 0, sizeof r);
-    p->interns.arena = &p->arena;
+    if (host) p->interns = host->interns;   /* (given back below: the table grows) */
+    else p->interns.arena = &p->arena;
     r.in = in; r.len = len; r.p = p;
     if (setjmp(r.fail)) {
         VmProgram* q = r.p;
+        if (host) host->interns = q->interns;
         snprintf(error, errorCap, "%s", r.error);
         free(r.protos); free(r.chunks);
         for (i = 0; i < q->nstrs; i++) free(q->strs[i]);
@@ -610,6 +614,14 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
         p->traceFiles = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
         for (i = 0; i < n; i++) p->traceFiles[i] = rdStr(&r);
     }
+    if (flags & 8) {                         /* the interfaces of its library modules (ModuleInterface.Text): what a fire plugin is checked against (vm_plugin.c) */
+        n = rdCount(&r);
+        p->hasModules = true;
+        p->nmodules = n;
+        p->moduleNames = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
+        p->moduleAbis = (const char**)vmAlloc(&p->arena, (n + 1) * sizeof(char*));
+        for (i = 0; i < n; i++) { p->moduleNames[i] = rdName(&r); p->moduleAbis[i] = rdName(&r); }
+    }
     if (r.at != r.len) rdFail(&r, "bytes behind its end");
     free(r.protos);
     p->chunks = r.chunks; p->nchunks = r.nchunks;
@@ -621,8 +633,11 @@ static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t erro
     p->extClass[K_Float] = (VmClass*)fbMapGet(&p->classByName, "$float");
     p->extClass[K_Bool] = (VmClass*)fbMapGet(&p->classByName, "$bool");
     p->extClass[K_Array] = (VmClass*)fbMapGet(&p->classByName, "$array");
+    if (host) host->interns = p->interns;   /* (a plugin's program interns nothing after this: vm_plugin.c uses the program's names) */
     return p;
 }
+
+static VmProgram* vmLoad(const uint8_t* in, size_t len, char* error, size_t errorCap) { return vmLoadWith(in, len, NULL, error, errorCap); }
 
 static void vmUnload(VmProgram* p) {
     uint32_t i;

@@ -75,6 +75,10 @@ namespace fire.Runtime
         /// linking (not serialized): the native backend builds each module on its own when the linkage asks for it.</summary>
         public IReadOnlyList<string?>? SourceModules { get; init; }
 
+        /// <summary>The interfaces of its library modules as a program file carries them (ProgramFile, flag 8: module and ModuleInterface.Text, ordered by name) - what
+        /// the VM in C checks a fire plugin against (native/vm/vm_plugin.c). Null: not read from a file (they are computed from <see cref="SourceModules"/>).</summary>
+        public IReadOnlyList<(string Module, string Interface)>? ModuleInterfaces { get; init; }
+
         /// <summary>The modules each module needs (directly: its imports and the libraries it references; `core` is always needed). Only known while linking.</summary>
         public IReadOnlyDictionary<string, IReadOnlyList<string>>? ModuleDeps { get; init; }
 

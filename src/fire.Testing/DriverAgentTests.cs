@@ -68,7 +68,8 @@ static class DriverAgentTests
                 bool ok = agent.Start(new[] { new PackageDriver("fire-usb", "usb", "UsbDriver") });
                 var devices = ok ? agent.ListDevices(refresh: true).Select(d => d.Identifier).ToList() : new List<string>();
                 lock (notes)
-                    Check("ein Plugin, das nicht mehr passt (andere Schnittstelle von devices): gemeldet, der Agent startet neu mit #import und hat usb:sim",
+                    Check("ein Plugin, das nicht mehr passt (andere Schnittstelle von devices): gemeldet, der Agent startet neu mit #import und hat usb:sim"
+                        + (agent.RunsInFire ? " (in der C-VM: die Programmdatei traegt die Schnittstellen ihrer Module)" : ""),
                         ok && agent.PluginImports.Count == 0 && devices.Contains("usb:sim") && agent.StartErrors.Count == 0 && notes.Any(n => n.Contains("did not load") && n.Contains("devices")),
                         $"{ok} {agent.EndedWith} / {string.Join(",", devices)} / {string.Join(" | ", notes)} / {string.Join(";", agent.StartErrors)}");
             }
@@ -84,6 +85,10 @@ static class DriverAgentTests
         var manager = new DeviceManager();
         var captured = new List<PacketRecord>();
         string detail = agent.EndedWith ?? "";
+        // (the agent is a process of the VM in C - its plugins loaded there - unless no `fire` can be had)
+        bool cvm = false;
+        try { cvm = fire.Compiler.CVm.Locate(64, 64) != null && !fire.Debugging.CVmLaunch.UseDotnet; } catch (Exception) { }
+        if (cvm) Check($"der Treiber-Agent ({how}) laeuft in der C-VM (fire), ohne Rueckfall in die C#-VM", ok && agent.RunsInFire && agent.ChildFailure == null, $"{ok} {agent.RunsInFire} {agent.ChildFailure} {agent.EndedWith}");
         var ids = new List<string>();
         if (ok)
         {

@@ -164,8 +164,10 @@ static void vmJsonRow(Vm* vm, VmClass* c, JsonClassInfo* row) {
 }
 
 static void vmJsonTables(Vm* vm) {
-    VmProgram* p = vm->prog;
+    VmProgram* p;
     uint32_t i;
+    if (vm->top) vm = vm->top;   /* (the classes of the main program: a fire plugin may have added some) */
+    p = vm->prog;
     if (g_vmJson && g_vmJsonFirst == vm->firstId && g_vmJsonCount == vm->nids) return;
     free(g_vmJson);
     g_vmJsonCount = vm->nids;

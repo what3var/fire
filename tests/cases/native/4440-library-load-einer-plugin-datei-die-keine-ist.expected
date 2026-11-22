@@ -1,0 +1,3 @@
+The file '<dir>/text.fireplugin' is not a fire plugin.
+The plugin '<dir>/body.fireplugin' cannot be read: Not a fire program file (.fbc).
+The library '<dir>/missing.fireplugin' could not be loaded.
