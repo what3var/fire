@@ -608,7 +608,8 @@ static class LinkageTests
     }
 
     /// <summary>Fire threads in a program of modules run without the GIL like with linkage source (fire_rt.h FIRE_NO_GIL; the locks of the packages by name,
-    /// FIRE_PKG_NAMED): a thread runs while the main program is in a native of a package of a library module (compression), reads a static field and methods
+    /// FIRE_PKG_NAMED): a thread runs while the main program is in a native of a package of a library module (compression; its argument a local - the main
+    /// program goes away for the native, native/3540), reads a static field and methods
     /// of the program's classes and writes them in sections; many fire threads that sleep in `time` (a library) and write in sections end in a moment - with the
     /// GIL the 600 threads of native/1810 took five minutes. gcc static and shared, TinyCC static (no thread-local storage: the slots on one key of pthreads).</summary>
     private static void ModuleThreads(string root)
@@ -617,6 +618,7 @@ static class LinkageTests
             #import "compression"
             class Table {
                 int v[] = new int[16]
+                construct() { for (var i = 0; i < 16; i++) { this.v[i] = 0 } }
                 int Bump(int i) { this.v[i] = this.v[i] + 1; return this.v[i] }
             }
             class Shared {
@@ -631,14 +633,20 @@ static class LinkageTests
                 for (var i = 0; i < 2000; i++) { s = s + Shared.tab.Bump(i % 16) + Shared.name.length }
                 done.Send(s)
             }
-            var data = new byte[100000]
-            for (var i = 0; i < data.length; i++) { data[i] = (i * 7 + i / 13) % 251 }
-            go.Send(1)
-            var rounds = 0
-            while (done.Count == 0 && rounds < 4000) {
-                var packed = Compression.Deflate.Compress(data)
-                rounds++
+            class Frames {
+                static int Run(any done, any go) {
+                    var data = new byte[100000]
+                    for (var i = 0; i < data.length; i++) { data[i] = (i * 7 + i / 13) % 251 }
+                    go.Send(1)
+                    var rounds = 0
+                    while (done.Count == 0 && rounds < 4000) {
+                        var packed = Compression.Deflate.Compress(data)
+                        rounds++
+                    }
+                    return rounds
+                }
             }
+            var rounds = Frames.Run(done, go)
             var sum = 0
             for (var i = 0; i < 16; i++) { sum += Shared.tab.v[i] }
             print("thread ran while the main program was in natives: " + (rounds < 4000))

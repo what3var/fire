@@ -441,8 +441,43 @@ Gefunden und in beiden forges korrigiert (mit den Modulen - static, shared, `FIR
 `tests/cases` mit gcc static (1109 Fälle mit `.expected` ohne `.error`, ohne `skip`/`output: varies`; ein Fall gilt wie bei `tests/run-cases.sh`, ohne `--types
 strict`): 951 drucken die `.expected`, 135 übersetzen in beiden Linkages nicht (134 mit `.diagnostics`, `vm-sc/0050` mit eigener Klasse `Exception`), 8 sind
 Fälle von `//# types: strict` (ohne die Option gelaufen), 12 weichen auch mit linkage source ab (Meldungen der VM in `vm-*`, Schriften in 3210/4110). Nur mit den
-Modulen weichen 3 ab - die Module behalten die GIL (fire_rt.h, `FIRE_NO_GIL` nicht mit `FIRE_MODULES`): `native/1810` (600 fire-Threads, richtig, aber 5 Minuten),
+Modulen wichen 3 ab - die Module behielten die GIL (fire_rt.h, `FIRE_NO_GIL` nicht mit `FIRE_MODULES`): `native/1810` (600 fire-Threads, richtig, aber 5 Minuten),
 `native/3540` und `native/4424` (ein Thread läuft nicht, während das Hauptprogramm in Natives ist).
+
+**Die Module ohne die GIL.** Ausgeschlossen waren sie, weil zwei Stücke nur das Programm aus einer Datei hatte (ROADMAP_TASKS 1g): die Sperren der Pakete
+(`fire_pkgM[i]`, vom Programm nummeriert - `PkgLock` gab mit Modulen -1) und `fire_shareGlobals` (das Programm teilte beim ersten `fire` nur seine eigenen Globals).
+Eine Bibliothek ist für sich gebaut und über Programme hinweg im Cache: sie kann die Pakete nicht für das Programm nummerieren. Jetzt (beide Generatoren gleich):
+* die Sperre eines Pakets ist die der Laufzeit nach seinem Import-Schlüssel - `FIRE_PKG_ENTER(FIRE_PKG_NAMED(<modul>fire_pkgL[i], "pkg:io"))`; jedes Modul (Programm,
+  Bibliothek, Plugin) hat `static fire_atomic32 <Px>fire_pkgL[n]` (nur mit einem Native unter einer Sperre), der erste Aufruf holt die Nummer aus `fire_pkgLockIndex`
+  (Tabelle `g_pkgLocks`, unter `g_registryM`); die Bibliotheken brauchen dafür nichts vom Programm (keine neue Spalte der Schnittstelle, kein Symbol des Programms);
+* `fire_shareGlobals` des Programms aus Modulen teilt seine Globals und die statischen Felder aller Module (`SFx_...`, aus den Bedürfnissen der Module), `main` setzt
+  `g_domShareGlobals` wie mit einer Datei;
+* TinyCC: die Slots von `FIRE_TLS_EMULATED` auch mit Modulen (der Schlüssel einmal: `FIRE_ONCE` mit `FIRE_SPLIT`, wie schon für die GIL);
+* in der Laufzeit, was ohne die GIL ungeschützt war (auch mit einer Datei): `fieldPtrId` (die Deskriptoren der Feldzeiger: `realloc` der Tabelle, während ein anderer
+  Thread sie liest) unter `g_registryM`, die alte Tabelle bleibt; `fireRegisterPlugin` unter `g_pluginM` (das `init` des Plugins danach).
+Mit der GIL bleiben die DLLs von Windows (`FIRE_DLL`) und Debug-Builds.
+
+| Messung | Quellen | gleich |
+|---|---|---|
+| `cgen default`, `modules`, `static`, `shared` (`NATIVE_STRICT=1`): die ersten 60 Thread-Fälle (`fire`, `Channel<`, Actors) | 60 je Wort | 60 |
+| `cgen modules`, `static`, `shared`: die übrigen Thread-Fälle mit 1810, 3540, 4424 (die ersten 60 davon; `modules` auch die nächsten 8 und 15) | 60 je Wort (`modules` 83) | alle |
+| `buildplan static`, `shared`, `tc:gcc+static`, `tc:tcc+static`: 1810, 3540, 4424 und jeder 12. Thread-Fall | 18 je Satz | 18 |
+
+Echte Builds (198 Fälle: alle mit `fire`/Threads/Actors/Channels und die mit `#import "http"`/`"net..."`; 145 aus `native`, 53 aus smoke, syntax, trace, types,
+vm-*): 1810 0,1 s (vorher 5 Minuten), 3540 0,01 s, 4424 0,6 s mit gcc static und shared, mit TinyCC static 0,1 / 0,04 / 3,4 s.
+
+| Linkage | `native` (145) | der Rest (53) |
+|---|---|---|
+| gcc static | 145 | 42 - dieselben 11 wie mit source (die Meldungen der VM, `types: strict`, `.diagnostics`, ohne `.expected`) |
+| gcc shared | 144 (`native/3840`) | 42 - dieselben, statt `vm-shutdown/0040` `vm-life/0100` |
+| TinyCC static | 144 (`native/3840`) | 43 |
+| gcc source (das Programm in einer Datei, gegen Rückschritte) | 122 von 122 gelaufenen | 42 |
+
+`vm-shutdown/0040` und `vm-life/0100` sind Wettläufe der Fälle selbst (ein Thread gegen eine Schleife des Hauptprogramms), mit source genauso (0100 unter Last
+0 von 40, wie shared). `native/3840` (`IChannel<T>` mit `Net.Channel`: `DestroyedException` nach `net.Close()`) ist ein Fehler der Module, den es schon vorher gab:
+auch mit der GIL und auf dem Stand vor dieser Änderung (forge-c von `clippy`, gcc static: 0 von 10 Läufen richtig; mit source 10 von 10) - offen.
+LinkageTests (`FIRE_TESTS_FILTER=boundaries`, 11 Prüfungen grün): `ModuleThreads` - ein Thread läuft, während das Hauptprogramm im Native von compression steckt
+(mit `-DFIRE_GIL` gebaut nicht: 5 statt 2000 Schritte), und 400 schlafende fire-Threads in 0,06 s, je mit gcc static, shared und TinyCC static; `FIRE_TESTS_FILTER=plugin`: 25 von 29, die 4 anderen die unter Wine (`free(): invalid pointer`, wie vorher).
 
 ### Dateien
 
