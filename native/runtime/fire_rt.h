@@ -60,10 +60,10 @@
 /* Without the GIL (docs/ROADMAP_TASKS.md step 1): fire code runs on all cores, the shared parts have locks of their own (the slot table, the tables of the
  * threads, the lock of the globals, a lock per package; strings are copied where they cross to another thread). The default where the threads of the
  * platform are real ones (FIRE_PLAT_PARALLEL: posix, windows) and the compiler has atomics - also a program of modules (linkage static/shared,
- * FIRE_MODULES: the locks of the packages by name, FIRE_PKG_NAMED; the DLLs of Windows, FIRE_DLL: one system thread per fire thread, see below); a
- * scheduler of fire itself (dos, win16, wasm), FreeRTOS (FIRE_TLS_STRUCT) and a debug build (the debugger stops the threads at the GIL) keep it. FIRE_GIL
- * keeps it anywhere. */
-#if defined(FIRE_THREADS) && defined(FIRE_PLAT_PARALLEL) && !defined(FIRE_GIL) && !defined(FIRE_NO_GIL) && !defined(FIRE_DEBUG) \
+ * FIRE_MODULES: the locks of the packages by name, FIRE_PKG_NAMED; the DLLs of Windows, FIRE_DLL: tasks too, see below) and a debug build (the
+ * debugger has a stopped thread read the values it shows itself, under its own locks - fire_debug.h "without the GIL"); a scheduler of fire itself (dos,
+ * win16, wasm) and FreeRTOS (FIRE_TLS_STRUCT) keep it. FIRE_GIL keeps it anywhere. */
+#if defined(FIRE_THREADS) && defined(FIRE_PLAT_PARALLEL) && !defined(FIRE_GIL) && !defined(FIRE_NO_GIL) \
     && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER) || defined(FIRE_PLAT_ASM_ATOMICS))
 #define FIRE_NO_GIL 1
 #endif

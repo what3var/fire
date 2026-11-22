@@ -465,8 +465,16 @@ Im Modus `debug` (`#debug`, `-m DEBUG`) wird das Programm für den Debugger von 
   mit spark und wartet vor der ersten Instruktion; ohne die Variable läuft es ohne Debugger. Weitere Transporte (Protokoll, "Transport"): `FIRE_DEBUG=stdio`
   (gerahmt über stdout/stdin), auf dem ESP32 fest die Konsolen-UART (`FIRE_DEBUG_TRANSPORT_UART`), auf FreeRTOS fest stdio (`FIRE_DEBUG_TRANSPORT_STDIO`) -
   gerahmt wartet das Programm höchstens 3 s auf den Debugger. Er liest Werte nur, solange ihr
-  Thread steht (mit Threads unter der GIL), ruft nie fire-Code zum Anzeigen auf und fasst keinen Zähler an; `set` führt der angehaltene Thread selbst aus.
-  Ein angehaltener Thread wartet ohne GIL, die anderen laufen weiter; neue fire-Threads melden sich und laufen mit den Haltepunkten los.
+  Thread steht, ruft nie fire-Code zum Anzeigen auf und fasst keinen Zähler an; `set` führt der angehaltene Thread selbst aus.
+  Ein angehaltener Thread wartet und gibt seine Sperren ab, die anderen laufen weiter; neue fire-Threads melden sich und laufen mit den Haltepunkten los.
+  **Ohne die GIL** (seit 22.11.2026 auch der Debug-Build, mit Tasks wie Release): die Befehle, die Werte lesen (`scopes`, `this`, `globals`, `expand`),
+  beantwortet nicht der Agent, sondern ein angehaltener Thread selbst (eine `DbgTask` wie `set`): er nimmt seine Sperren wieder (das Hauptprogramm seinen
+  Bereich, ein fire-Thread die Leseseite des geteilten Bereichs - `strandAcquire`), schreibt die Antwort und gibt sie ab. Was er zeigt, sind seine eigenen
+  Werte (kein anderer Strang erreicht sie: Besitz) und die Globals des Hauptprogramms unter der Sperre der Globals - die anderen laufen derweil weiter, und
+  nichts wird gelesen, während ein anderer Strang es schreibt. `globals` und `expand` eines Globals beantwortet das Hauptprogramm, wenn es steht, sonst ein
+  anderer angehaltener Thread; laufen alle, ist die Antwort `the program is running` (mit der GIL las der Agent sie zwischen zwei Zeilen der anderen). Die
+  Tabelle des Profilers hat dann eine Sperre für sich. Ein Thread muss dafür nicht an einem "sicheren Punkt" stehen: gelesen wird nur von einem Strang,
+  der an seiner Zeile steht (`dbgPark`), und dort hält er keine Sperre, die ein anderer bräuchte.
 * Getestet in `fire.Testing` (`NativeDebugTests.cs`, Fälle "Native-Debugger"): 22 Skripte (Schleifen, Rekursion, Objekte, Properties, Destruktoren, Lambdas,
   try/catch/finally/resume, Strings, Einheiten, Arrays, statische Felder, Vererbung, Operatoren/ToString, Standardwerte, break/continue, Listen,
   unbehandelte Ausnahmen), je Haltepunkte/Schritte mit Aufrufstapel, Scopes, `this` und Globals sowie jeder Step Into und Step Over vom Start bis zum
