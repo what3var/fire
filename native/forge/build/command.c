@@ -26,7 +26,7 @@ static void nbDumpBuildPlan(FcCtx* c, const char* options, const char* path, con
         else if (streq0(w, "performance")) b.mode = 2;
         else if (streq0(w, "split")) config->split = FG_SPLIT_ON;
         else if (streq0(w, "nosplit")) config->split = FG_SPLIT_OFF;
-        else if (streq0(w, "static") || streq0(w, "shared")) config->linkage = w;   /* (FrontendDump.DumpStaticPlan: build/linkage.c) */
+        else if (streq0(w, "static") || streq0(w, "shared") || streq0(w, "plugin")) config->linkage = w;   /* (FrontendDump.DumpStaticPlan: build/linkage.c; plugin: build/plugin.c) */
         else if (streq0(w, "quick")) config->quick = 0;
         else if (streq0(w, "quick1")) config->quick = 1;
         else if (streq0(w, "speed")) { config->optimize = 0; config->optimizeFromCommandLine = true; }
@@ -54,7 +54,8 @@ static void nbDumpBuildPlan(FcCtx* c, const char* options, const char* path, con
     toolchain = nbResolveToolchain(c, config, target, toolchainName, NB_PURPOSE_BUILD);
     /* (the toolchain `files` writes into a temporary folder: `<build>`) */
     {
-        const char* folder = fcFmt(c, "%sfire-native-%s", nbTempPath(c), nbGuid(c));
+        /* (linkage plugin: the library is `<plugin>`, named after `plan-out` - FrontendDump) */
+        const char* folder = config->linkage && streq0(config->linkage, "plugin") ? fcFullPath(c, ".", "plan-out") : fcFmt(c, "%sfire-native-%s", nbTempPath(c), nbGuid(c));
         nbBuild(c, &b, config, target, toolchain, folder);
         if (nbDirExists(folder)) nbDeleteTree(c, folder);
     }
@@ -64,6 +65,7 @@ static void nbDumpBuildPlan(FcCtx* c, const char* options, const char* path, con
 /* `forge-c build <file> [options]`: a native build as `forge build <file> --engine native` makes it. */
 typedef struct NbArgs {
     const char* file; const char* output; const char* targetName; const char* toolchainName; const char* configFile; const char* linkage;
+    const char* host;     /* --host <program>: with --linkage plugin, the program (linkage "shared") the plugin is built for */
     const char* engine;   /* --engine vm|native (NULL: the configuration's, else vm - build/cvm.c) */
     bool strict;          /* --types strict (Linker.ProcessDefaultTypeChecking; lax is the default) */
     int mode, floatWidth, stripping, optimize, quick, split;
@@ -114,6 +116,10 @@ static int nbBuildMain(int argc, char** argv, const char* prelude, const char* s
             args.engine = fcAsciiIEq(e, "vm") ? "vm" : "native";
         }
         else if (streq0(a, "--linkage")) linkage = NB_VALUE();
+        else if (fcAsciiIEq(a, "--host")) {
+            args.host = NB_VALUE();
+            if (!args.host || !*fgTrim(c, args.host)) { fprintf(stderr, "--host must be followed by the program the plugin is built for.\n"); return 2; }
+        }
         else if (streq0(a, "--types")) {
             const char* v = NB_VALUE();
             if (!v || !(fcAsciiIEq(v, "lax") || fcAsciiIEq(v, "strict"))) { fprintf(stderr, "--types must be followed by lax or strict.\n"); return 2; }
@@ -195,6 +201,7 @@ static int nbBuildRun(NbArgs* argsIn, const char* prelude, const char* storeRoot
         else if (args.stripping >= 0) { config->stripping = args.stripping; config->strippingFromCommandLine = true; }
         if (args.optimize >= 0) { config->optimize = args.optimize; config->optimizeFromCommandLine = true; }
         if (args.linkage) config->linkage = args.linkage;
+        if (args.host) config->host = args.host;
         if (args.split >= 0) config->split = args.split;
         if (args.quick >= 0) config->quick = args.quick;
         /* ChooseEngine: the engine vm packs the program with the VM in C (build/cvm.c) */
@@ -219,7 +226,7 @@ static int nbBuildRun(NbArgs* argsIn, const char* prelude, const char* storeRoot
         if (*r.log) { fcOut8(&out, r.log); if (!fcEndsWith(r.log, "\n")) fcBufChar(&out, '\n'); }
         for (i = 0; i < c->diags->count; i++) fcDiagLogLine(&err, (const FcDiagnostic*)c->diags->items[i]);
         if (!r.ok) {
-            if (r.error) fcBufFmt(&err, "error %s: %s\n", strstr(r.error, "was not found") ? "E7003" : "E7002", r.error);
+            if (r.error) fcBufFmt(&err, "error %s: %s\n", r.config || strstr(r.error, "was not found") ? "E7003" : "E7002", r.error);
             fcBufFmt(&out, "The native build for %s failed.\n", target->name);
             result = 1;
         } else fcBufFmt(&out, "%s (native, target %s, toolchain %s)\n", r.output, target->name, nbKind(toolchain));

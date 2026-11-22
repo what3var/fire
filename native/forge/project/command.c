@@ -42,6 +42,18 @@ static FcLinked* pjNbLink(FcCtx* c, const NbBuild* b, const FgOptions* o, FcNati
     linked = pjLink(c, &in, registry);
     return linked;
 }
+/* the plan linked for the VM (a plugin's bytecode, build/plugin.c): with its store (the natives of its projects) */
+static FcLinked* pjNbVmLink(FcCtx* c, const NbBuild* b, FcNatives** registry, FcStore** store) {
+    PjLinkIn in;
+    memset(&in, 0, sizeof in);
+    in.plan = (PjPlan*)b->project;
+    in.prelude = b->prelude;
+    in.storeRoot = b->storeRoot;
+    in.modeOverride = b->mode;
+    in.floatWidthOverride = b->floatWidth;
+    in.storeOut = store;
+    return pjLink(c, &in, registry);
+}
 /* (ProjectNativeOverlay.Register for the generator: the natives of the plan's projects in its store, before the installed packages) */
 static void pjNbOverlay(FcCtx* c, const NbBuild* b, FcStore* store) { pjOverlayRegister(c, store, (const PjPlan*)b->project); }
 /* ProjectBuilder.Check: the plan compiled (VM: no target; a native build: for the target) */
@@ -247,6 +259,7 @@ static bool pjIsProjectFile(const char* path) {
 /* ---- `forge-c build <project|solution>` ---- */
 typedef struct PjBuildArgs {
     const char* file; const char* output; const char* targetName; const char* toolchainName; const char* configFile; const char* linkage; const char* engine; const char* projectName;
+    const char* host;   /* --host <program> (linkage plugin) */
     int mode, floatWidth, stripping, optimize, quick, split;
     bool keepAll, keep, stats, all, check;
     FcList* defines;
@@ -275,6 +288,7 @@ static NbConfig* pjConfigFor(FcCtx* c, const PjBuildArgs* a, const char* project
     else if (a->stripping >= 0) { config->stripping = a->stripping; config->strippingFromCommandLine = true; }
     if (a->optimize >= 0) { config->optimize = a->optimize; config->optimizeFromCommandLine = true; }
     if (a->linkage) config->linkage = a->linkage;
+    if (a->host) config->host = a->host;
     if (a->split >= 0) config->split = a->split;
     if (a->quick >= 0) config->quick = a->quick;
     return config;
@@ -387,7 +401,9 @@ static int pjBuildProgram(FcCtx* c, PjOut* po, const PjBuildArgs* a, PjPlan* pla
     b.prelude = prelude; b.storeRoot = storeRoot; b.mode = a->mode; b.floatWidth = a->floatWidth; b.intWidth = a->intWidth; b.keepSources = a->keep;
     b.link = pjNbLink;
     b.overlay = pjNbOverlay;
+    b.vmLink = pjNbVmLink;
     b.project = plan;
+    b.projectName = plan->project->project->name;
     pjStepInit(&step);
     if (report) step.diags = fcListNew(&step);
     FC_TRY(&step) {
@@ -417,7 +433,7 @@ static int pjBuildProgram(FcCtx* c, PjOut* po, const PjBuildArgs* a, PjPlan* pla
         pjForwardWarnings(po, &step);
         if (*r.log) { fcOut8(out, r.log); if (!fcEndsWith(r.log, "\n")) fcBufChar(out, '\n'); }
         if (!r.ok) {
-            if (r.error) fcBufFmt(err, "error %s: %s\n", strstr(r.error, "was not found") ? "E7003" : "E7002", r.error);
+            if (r.error) fcBufFmt(err, "error %s: %s\n", r.config || strstr(r.error, "was not found") ? "E7003" : "E7002", r.error);
             fcBufFmt(err, "The native build for %s failed.\n", target->name);
             return 1;
         }
@@ -429,7 +445,7 @@ static int pjBuildProgram(FcCtx* c, PjOut* po, const PjBuildArgs* a, PjPlan* pla
     if (r.log && *r.log) { fcOut8(out, r.log); if (!fcEndsWith(r.log, "\n")) fcBufChar(out, '\n'); }
     if (r.error) {
         FcDiagnostic* d = (FcDiagnostic*)fcAlloc(&step, sizeof *d);
-        d->line = 0; d->message = r.error; d->severity = FC_SEV_ERROR; d->code = strstr(r.error, "was not found") ? "E7003" : "E7002";
+        d->line = 0; d->message = r.error; d->severity = FC_SEV_ERROR; d->code = r.config || strstr(r.error, "was not found") ? "E7003" : "E7002";
         fcListInsert(&step, step.diags, 0, d);
     }
     for (i = 0; i < step.diags->count; i++) fcDiagLogLine(err, (const FcDiagnostic*)step.diags->items[i]);

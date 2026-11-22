@@ -170,10 +170,17 @@ namespace fire.Compiler
                 if (partOfNode.ContainsKey(node)) throw new InvalidDataException("A node is in the tree twice.");
                 var nd = nodes[node];
                 var p = new Part { Parent = parent, Name = nd.TryGetProperty("name", out var nm) ? nm.GetString() ?? "" : "node" + node };
-                if (nd.TryGetProperty("matrix", out var mx)) Decompose(mx.EnumerateArray().Select(e => e.GetDouble()).ToArray(), p);
-                if (nd.TryGetProperty("translation", out var t)) p.T = t.EnumerateArray().Select(e => e.GetDouble()).ToArray();
-                if (nd.TryGetProperty("rotation", out var r)) p.R = r.EnumerateArray().Select(e => e.GetDouble()).ToArray();
-                if (nd.TryGetProperty("scale", out var s)) p.S = s.EnumerateArray().Select(e => e.GetDouble()).ToArray();
+                // (the pose of a node has its numbers exactly: a shorter or longer array would be a broken rest pose and pose of every frame of a clip)
+                double[] Numbers(JsonElement e, string what, int want)
+                {
+                    var v = e.EnumerateArray().Select(x => x.GetDouble()).ToArray();
+                    if (v.Length != want) throw new InvalidDataException($"The node '{p.Name}' has a {what} of {v.Length} numbers ({want} expected).");
+                    return v;
+                }
+                if (nd.TryGetProperty("matrix", out var mx)) Decompose(Numbers(mx, "matrix", 16), p);
+                if (nd.TryGetProperty("translation", out var t)) p.T = Numbers(t, "translation", 3);
+                if (nd.TryGetProperty("rotation", out var r)) p.R = Numbers(r, "rotation", 4);
+                if (nd.TryGetProperty("scale", out var s)) p.S = Numbers(s, "scale", 3);
                 if (nd.TryGetProperty("mesh", out var meshEl)) ReadMesh(meshes[meshEl.GetInt32()], p);
                 int index = parts.Count;
                 parts.Add(p);
@@ -238,6 +245,9 @@ namespace fire.Compiler
                         double[][] values = Read(smp.GetProperty("output").GetInt32());
                         string interp = smp.TryGetProperty("interpolation", out var ip) ? ip.GetString() ?? "LINEAR" : "LINEAR";
                         if (times.Length == 0) continue;
+                        // (a key has the numbers of its path: 4 of a rotation, 3 of a translation or a scale)
+                        int want = path == "rotation" ? 4 : 3;
+                        if (values.Length > 0 && values[0].Length != want) throw new InvalidDataException($"The animation '{name}' gives the {path} of a node {values[0].Length} numbers a key ({want} expected).");
                         duration = Math.Max(duration, times[^1]);
                         channels.Add((part, path, times, values, interp));
                     }

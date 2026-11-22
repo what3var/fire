@@ -20,11 +20,14 @@
 # `native` (Phase D 1, docs/spec/FORGE_C.md) compares the C of `forge native` (`forge cgen <options> <file>`: the program, then the natives in C++ and the
 # units of a split program) for every option set of NATIVE_OPTIONS (default: "default"; words joined by `+`: debug, release, performance, split, strip0-3,
 # speed, size, i16, i32, f32, t:<target> - e.g. NATIVE_OPTIONS="default performance split t:esp32+size"). A program the generator in C does not port yet
-# is `unported: ...` - counted apart (NATIVE_STRICT=1: as a difference).
+# is `unported: ...` - counted apart (NATIVE_STRICT=1: as a difference). The library modules: `modules`, `static`, `shared`; a fire plugin: `plugin` (the
+# classes of the file as a plugin, CppGenerator.GeneratePlugin into a cache of its own) and `pluginhost` (first the program with linkage "shared", then the
+# plugin for it) - a source without classes is `unsupported: the plugin declares no classes` in both.
 # `buildplan` (Phase D 2) compares what a native build would run (`forge buildplan <options> <file>`: the toolchain, the lines of the log before the
 # commands, the compiler commands with the folder of the build as <build> and the program as <program>, the key of the program cache and every file of the
 # folder of the build with its SHA-256) for every option set of BUILDPLAN_OPTIONS (default: "default tc:gcc+quick"; the words of `native` and tc:<toolchain>,
-# quick, quick1, nosplit). `build` builds every BUILD_EVERY-th case of tests/cases (default 25) with both forges for real, with each toolchain of
+# quick, quick1, nosplit; `plugin`: NativeBuilder.BuildPlugin as a dry run - its bytecode for the VM, `.fireplugin`, is one of the files of the build -
+# e.g. BUILDPLAN_OPTIONS="plugin+tc:gcc"). `build` builds every BUILD_EVERY-th case of tests/cases (default 25) with both forges for real, with each toolchain of
 # BUILD_TOOLCHAINS (default "gcc tcc"; BUILD_FLAGS="--quick" for more switches), without the program cache, and compares the logs (normalized) and what the two
 # programs print - and counts the programs of forge-c that print the case's .expected.
 # `project` (Phase D 3) compares the model of projects: `forge projectplan <file>` (the workspace, the build order, every member's files, folders, build actions,

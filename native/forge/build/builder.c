@@ -1095,7 +1095,7 @@ static bool nbCompileUnits(FcCtx* c, FcList* commands, FcList* units, const char
 static NbToolchain* nbToolchainRequire(FcCtx* c, NbToolchain* wanted, const char* reason);
 static void nbApplyPeMetadata(FcCtx* c, const char* exe, const FcAsmInfo* info, const FgTarget* target, FcBuf* log);
 static const char* nbAfterLink(FcCtx* c, const NbToolchain* toolchain, const FgTarget* target, const char* exe);
-typedef struct NbResult { bool ok; const char* output; const char* log; const char* error; } NbResult;   /* error: the diagnostic of a failed build (NULL: none) */
+typedef struct NbResult { bool ok; const char* output; const char* log; const char* error; bool config; } NbResult;   /* error: the diagnostic of a failed build (NULL: none); config: of the configuration (E7003) */
 typedef struct NbBuild {
     const char* path;           /* the source */
     const char* prelude;
@@ -1112,6 +1112,9 @@ typedef struct NbBuild {
     void* project;
     /* the store of the generator gets the natives of the project (ProjectNativeOverlay, project/): NULL none */
     void (*overlay)(FcCtx* c, const struct NbBuild* b, FcStore* store);
+    /* a project: the link of its plan for the VM (a plugin's bytecode, build/plugin.c) and its name (NULL: the file) */
+    FcLinked* (*vmLink)(FcCtx* c, const struct NbBuild* b, FcNatives** registry, FcStore** store);
+    const char* projectName;
 } NbBuild;
 static int nbUnitOrderCmp(const void* a, const void* b);
 static bool nbUnitOrderNatives;

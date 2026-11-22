@@ -325,7 +325,7 @@ static FrOutcome frNativeBuild(FcCtx* c, const TcOptions* o, PjPlan* plan, bool 
     int i;
     memset(&b, 0, sizeof b);
     b.prelude = prelude; b.storeRoot = storeRoot; b.mode = o->mode; b.floatWidth = o->floatWidth; b.intWidth = o->intWidth; b.keepSources = o->keep;
-    b.link = pjNbLink; b.overlay = pjNbOverlay; b.project = plan;
+    b.link = pjNbLink; b.overlay = pjNbOverlay; b.vmLink = pjNbVmLink; b.project = plan; b.projectName = plan->files ? NULL : plan->project->project->name;
     fcCtxInit(&step);
     step.collecting = true;
     fcOnReport = NULL;
@@ -356,7 +356,7 @@ static FrOutcome frNativeBuild(FcCtx* c, const TcOptions* o, PjPlan* plan, bool 
     diags = step.diags;
     if (r.error) {
         FcDiagnostic* d = (FcDiagnostic*)fcAlloc(&step, sizeof *d);
-        d->line = 0; d->message = r.error; d->severity = FC_SEV_ERROR; d->code = strstr(r.error, "was not found") ? "E7003" : "E7002";
+        d->line = 0; d->message = r.error; d->severity = FC_SEV_ERROR; d->code = r.config || strstr(r.error, "was not found") ? "E7003" : "E7002";
         fcListInsert(&step, diags, 0, d);
     }
     frLogBlock(r.log);

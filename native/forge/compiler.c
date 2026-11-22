@@ -563,7 +563,7 @@ static FcCompiled* fcCompileJobs(FcCtx* c, FcList* program, FcResolveResult* rr,
     sh->errors = fcListNew(c);
     sh->refParams = fcRefParamsBuild(c, rr->classes);
     sh->enumTypes = fcDictNew(c, FC_KEY_STR);
-    sh->classMeta = classMeta;
+    sh->classMeta = classMeta || fcLinkClassMeta;
     sh->globalSlotCount = rr->noShadowGlobals ? 0 : rr->globalSlotCount;
     sh->rawTreeLambdas = fcDictNew(c, FC_KEY_PTR);
     sh->rawTreeValues = fcDictNew(c, FC_KEY_PTR);

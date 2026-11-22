@@ -378,6 +378,8 @@ struct FgGen {
     FcDict* hostArrays;         /* HashSet<string> */
     const char* libraryThunks;
     FcList* pluginDeps;         /* FgModuleDep* (module, abi) */
+    FcList* pluginStaticInits;  /* FgPluginInit*: the static initialisers of a plugin's classes */
+    const FcCompiled* pluginProgram;   /* a plugin: the whole program (the order of its static initialisers - the view has no top level) */
     FcList* sharedAbis;         /* FgModuleDep* with the spec (linkage "shared"), NULL: none */
     FcList* dllModules;         /* FgModuleOutput*, NULL: none */
     const char* runtimeKey;

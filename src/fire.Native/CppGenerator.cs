@@ -2238,6 +2238,7 @@ namespace fire.Native
                 sb.AppendLine("static void fire_shareGlobals(void) {");
                 foreach (var gl in _globals.OrderBy(x => x)) sb.AppendLine($"    refShare(G{gl});");
                 foreach (var (key, _) in _staticFields.OrderBy(kv => kv.Value)) sb.AppendLine($"    refShare({StaticFieldVar(key.Class, key.Field)});");
+                if (_openWorld) sb.AppendLine("    firePluginShareGlobals();   // (the static fields of the plugins it loaded)");
                 sb.AppendLine("}");
                 sb.AppendLine("#endif");
             }

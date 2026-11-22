@@ -203,8 +203,10 @@ namespace fire.Compiler
         /// text here (GeneratorIdentity), not by the version of its assembly - forge-c writes the same.</summary>
         private static void DumpModules(string linkage, string path, string full, fire.Runtime.TargetProfile target, fire.Runtime.VmExecutionMode? mode, int? floatWidth, fire.Native.NativeConfig config, StringBuilder o)
         {
-            var linked = new Linker { BasePath = Path.GetDirectoryName(full), Engine = "native", ToolchainKind = "files", SourcePaths = new string?[] { full }, GlobalJobsDefault = config.GlobalJobsValue,
+            bool plugin = linkage is "plugin" or "pluginhost";
+            var linked = new Linker { ClassMeta = plugin, BasePath = Path.GetDirectoryName(full), Engine = "native", ToolchainKind = "files", SourcePaths = new string?[] { full }, GlobalJobsDefault = config.GlobalJobsValue,
                 Optimize = NativeBuilder.OptimizeOf(config, (fire.Projects.BuildPlan?)null, target) }.CompileAndLink(new[] { File.ReadAllText(path) }, null, null, mode, floatWidth, target);
+            if (plugin) { DumpPlugin(linkage == "pluginhost", full, linked, target, config, o); return; }
             if (linkage == "modules")
             {
                 var sources = fire.Native.CppGenerator.GenerateModular(linked, target, config.Stripping);
@@ -237,6 +239,36 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>`cgen plugin|pluginhost` (Phase D 2 of the C port, docs/spec/FORGE_C.md): CppGenerator.GeneratePlugin into an empty cache of its own, the plugin
+        /// named after the file - its C, its natives in C++, the interfaces of the modules it needs and the log. `pluginhost`: first the program with linkage "shared"
+        /// into that cache (GenerateStatic), then the plugin for it (its description, `.firehost`).</summary>
+        private static void DumpPlugin(bool withHost, string full, fire.Runtime.LinkedProgram linked, fire.Runtime.TargetProfile target, fire.Native.NativeConfig config, StringBuilder o)
+        {
+            string identity = fire.Native.CppGenerator.GeneratorIdentity;
+            string cache = Path.Combine(Path.GetTempPath(), "fire-cgen-cache-" + Guid.NewGuid().ToString("N"));
+            fire.Native.CppGenerator.GeneratorIdentity = "cgen";
+            try
+            {
+                fire.Native.PluginHostInfo? host = null;
+                if (withHost)
+                {
+                    host = fire.Native.CppGenerator.GenerateStatic(linked, target, "cgen", config.Stripping, cache, shared: true).Host;
+                    o.Append("//==== host\n").Append(host?.ToJson()).Append('\n');
+                }
+                var plan = fire.Native.CppGenerator.GeneratePlugin(linked, target, Path.GetFileNameWithoutExtension(full), host, config.Stripping, "cgen", cache);
+                o.Append(plan.C);
+                if (plan.Natives != null) o.Append("//==== fire_plugin_natives.cpp\n").Append(plan.Natives);
+                o.Append("//==== deps\n");
+                foreach (var (module, abi) in plan.Deps) o.Append(module).Append(' ').Append(abi).Append('\n');
+                o.Append("//==== log\n").Append(plan.Log);
+            }
+            finally
+            {
+                fire.Native.CppGenerator.GeneratorIdentity = identity;
+                try { Directory.Delete(cache, true); } catch (IOException) { }
+            }
+        }
+
         private static int DumpNative(string options, string path, Stream output)
         {
             var lines = File.Exists(path) ? File.ReadAllLines(path) : Array.Empty<string>();
@@ -259,7 +291,7 @@ namespace fire.Compiler
                     case "i16": intWidth = 16; break;
                     case "i32": intWidth = 32; break;
                     case "f32": floatWidth = 32; break;
-                    case "modules": case "static": case "shared": linkage = word; break;
+                    case "modules": case "static": case "shared": case "plugin": case "pluginhost": linkage = word; break;
                     default:
                         if (word.StartsWith("strip", StringComparison.Ordinal) && int.TryParse(word.AsSpan(5), out int level)) { config.Stripping = (fire.Native.StrippingLevel)level; config.StrippingFromCommandLine = true; }
                         else if (word.StartsWith("t:", StringComparison.Ordinal)) targetName = word.Substring(2);
@@ -433,7 +465,7 @@ namespace fire.Compiler
                     case "performance": mode = fire.Runtime.VmExecutionMode.Performance; break;
                     case "split": config.Split = "on"; break;
                     case "nosplit": config.Split = "off"; break;
-                    case "static": case "shared": config.Linkage = word; break;
+                    case "static": case "shared": case "plugin": config.Linkage = word; break;
                     case "quick": config.Quick = 0; break;
                     case "quick1": config.Quick = 1; break;
                     case "speed": case "size": config.Optimize = word; config.OptimizeFromCommandLine = true; break;
@@ -470,6 +502,16 @@ namespace fire.Compiler
                 var toolchain = config.ResolveToolchain(target, toolchainName ?? plan?.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
                 string exe = Path.GetFullPath("plan-out" + target.ProgramExtension);
                 var log = new StringBuilder();
+                if (config.Linkage == "plugin")
+                {
+                    // (`--linkage plugin`: NativeBuilder.BuildPlugin as a dry run - a file or a project; the library is `<plugin>`)
+                    var pluginToolchain = NativeBuilder.WithDirection(toolchain, NativeBuilder.OptimizeOf(config, plan, target));
+                    var pluginOut = new StringBuilder();
+                    if (plan != null) NativeBuilder.PlanPlugin(plan.SourceTexts, config, target, pluginToolchain, Path.GetFullPath("plan-out"), mode, floatWidth, null, plan, null, pluginOut);
+                    else NativeBuilder.PlanPlugin(new[] { File.ReadAllText(path) }, config, target, pluginToolchain, Path.GetFullPath("plan-out"), mode, floatWidth, Path.GetDirectoryName(full), null, new string?[] { full }, pluginOut);
+                    o.Append(pluginOut);
+                    goto written;
+                }
                 if (config.Linkage != null && plan == null && DumpStaticPlan(path, full, target, toolchain, exe, mode, floatWidth, config, o, log)) goto written;
                 NativeBuilder.NativeProgram program;
                 while (true)

@@ -3178,7 +3178,7 @@ FIRE_RT_FN Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
  * runs (`Library.Load`). Its file exports `fire_module_info`; the runtime checks it against the program (the configuration of the runtime, the interfaces of the
  * modules it needs - ROADMAP 9.6: the hashes only), gives its classes the next ids (g_classDescs grows), maps its catch types and enums to the program's by name and
  * runs its static initialisers. Only a program with linkage "shared" can load one: it fills g_pluginHost. ---- */
-#define FIRE_PLUGIN_FORMAT 6
+#define FIRE_PLUGIN_FORMAT 7
 /* A plugin that calls a native in C of the program (`fire_cn_<function>`) the program does not export: what Load says (the function: %.*s). */
 #define FIRE_PLUGIN_CNATIVE "it calls the native function '%.*s' in C, which this program does not export to plugins (natives in C are the program's: build the program again with the package of the native; of graphics and windows it exports only those its libraries call)."
 typedef struct FirePlugin {
@@ -3234,6 +3234,8 @@ typedef struct FirePlugin {
     uint32_t narr;
     const ArrClass* arrClasses;
     uint32_t* arrMap;
+    /* the first `fire` (the program's fire_shareGlobals, firePluginShareGlobals) - or its registration after it: refShare on its static fields (NULL: it has none) */
+    void (*shareGlobals)(void);
 } FirePlugin;
 /* What a program that can load plugins tells the runtime (linkage "shared"; NULL: it cannot). */
 typedef struct FirePluginHost {
@@ -3255,6 +3257,9 @@ FIRE_RT_FN const void* firePluginJsonAt(uint32_t cls);
 FIRE_RT_FN int32_t firePluginJsonNamed(const char* name);
 FIRE_RT_FN const char* firePluginTArgText(const TArg* t);
 FIRE_RT_FN const TArg* firePluginTArgFor(const char* text);
+/* The first `fire` of a program that loads plugins (its fire_shareGlobals): what the static fields of the plugins it registered hold is shared with the fire
+ * threads from then on (FirePlugin.shareGlobals). */
+FIRE_RT_FN void firePluginShareGlobals(void);
 #endif
 /* The catch type `Exception` (catches every exception object): always type id 0. */
 #define FIRE_EXC_ANY 0
@@ -14532,6 +14537,10 @@ static Value firePluginClassNames(const FirePlugin* p, OwnList* list) {
     return ArrV(names);
 }
 
+void firePluginShareGlobals(void) {
+    uint32_t i;
+    for (i = 0; i < g_pluginCount; i++) if (g_plugins[i]->shareGlobals) g_plugins[i]->shareGlobals();
+}
 const void* firePluginJsonAt(uint32_t cls) {
     uint32_t i, n = g_pluginCount;
     for (i = 0; i < n; i++) {
@@ -14818,6 +14827,10 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
     fire_mutex_unlock(&g_pluginM);
 #endif
     if (fresh && p->init) p->init();
+#ifdef FIRE_THREADS
+    /* (registered after the first `fire`: what its static initialisers made is shared at once - before, the program's fire_shareGlobals shares it) */
+    if (fresh && g_domainOn && p->shareGlobals) p->shareGlobals();
+#endif
     return r;
 }
 #endif

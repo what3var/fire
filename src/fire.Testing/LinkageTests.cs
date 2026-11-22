@@ -53,12 +53,65 @@ static class LinkageTests
 
     private sealed record Built(bool Ok, string Exe, string Log, double Seconds, long Size);
 
+    /// <summary>FIRE_TESTS_FORGE=<forge> (with FIRE_TESTS_FILTER=plugin): the programs and plugins of projects in the plugin tests are built by that forge - `forge-c`,
+    /// the C port (`build <project> --engine native --linkage ... [--host <program>]`) - instead of NativeBuilder in this process; their outputs are checked the same.</summary>
+    private static string? _externalForge;
+
+    /// <summary>A native build of a project by <see cref="_externalForge"/>: its toolchain in a fire.native.json of its own (the definition, as `gcc` or MinGW).</summary>
+    private static Built ExternalBuild(BuildPlan plan, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output, VmExecutionMode? mode)
+    {
+        string dir = Path.GetDirectoryName(Path.GetFullPath(output))!;
+        Directory.CreateDirectory(dir);
+        string configFile = Path.Combine(dir, "fire.native." + Guid.NewGuid().ToString("N") + ".json");
+        var def = new Dictionary<string, string?> { ["kind"] = toolchain.Kind, ["compiler"] = toolchain.Compiler, ["cCompiler"] = toolchain.CCompiler, ["std"] = toolchain.Std, ["cStd"] = toolchain.CStd, ["optimization"] = toolchain.Optimization }
+            .Where(kv => kv.Value != null).ToDictionary(kv => kv.Key, kv => kv.Value);
+        File.WriteAllText(configFile, JsonSerializer.Serialize(new Dictionary<string, object> { ["toolchains"] = new Dictionary<string, object> { ["test"] = def } }));
+        var args = new List<string> { "build", plan.Project.FilePath, "--engine", "native", "--config", configFile, "--toolchain", "test", "-t", target.Name, "-o", output };
+        if (config.Linkage != null) { args.Add("--linkage"); args.Add(config.Linkage); }
+        if (config.Host != null) { args.Add("--host"); args.Add(config.Host); }
+        if (mode == VmExecutionMode.Debug) { args.Add("-m"); args.Add("debug"); }
+        var psi = new ProcessStartInfo(_externalForge!) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        // (the other forge reads the files: those whose text in the plan is another - a test that changed a file after planning - for the time of the build)
+        var restore = new List<(string Path, string Text)>();
+        foreach (var source in plan.Sources)
+            if (File.Exists(source.Path) && File.ReadAllText(source.Path) is var now && now != source.Text) { restore.Add((source.Path, now)); File.WriteAllText(source.Path, source.Text); }
+        var watch = Stopwatch.StartNew();
+        string log;
+        Task<string> err;
+        int exitCode;
+        try
+        {
+            using var process = Process.Start(psi)!;
+            err = process.StandardError.ReadToEndAsync();
+            log = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            exitCode = process.ExitCode;
+        }
+        finally { foreach (var (path, text) in restore) File.WriteAllText(path, text); }
+        try { File.Delete(configFile); } catch (IOException) { }
+        log += err.Result;
+        bool ok = exitCode == 0;
+        // (a plugin: the library; a program: the program)
+        string exe = config.Linkage == "plugin" ? Path.GetFullPath(output) + NativeBuilder.PluginExtension(target) : output;
+        return new Built(ok, exe, log, watch.Elapsed.TotalSeconds, File.Exists(exe) ? new FileInfo(exe).Length : 0);
+    }
+
+    /// <summary>A plugin of a project (`--linkage plugin`, the config's host): in this process, or by <see cref="_externalForge"/>.</summary>
+    private static Built PluginBuild(BuildPlan plan, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output, VmExecutionMode? mode = null)
+    {
+        if (_externalForge != null) return ExternalBuild(plan, config, target, toolchain, output, mode);
+        var result = NativeBuilder.BuildSafe(plan.SourceTexts, config, target, toolchain, output, mode, plan: plan);
+        return new Built(result.Ok, result.Output, result.Log, 0, 0);
+    }
+
     private static Built Build(IReadOnlyList<string> sources, string linkage, string exe, ToolchainDef? toolchain = null, TargetProfile? target = null, BuildPlan? plan = null, VmExecutionMode? mode = null,
         StrippingLevel? stripping = null)
     {
         var config = new NativeConfig { Linkage = linkage, Stripping = stripping };
         target ??= TargetProfile.Host;
         toolchain ??= config.ResolveToolchain(target, "gcc");
+        if (_externalForge != null && plan != null && stripping == null) return ExternalBuild(plan, config, target, toolchain, exe, mode);
         var watch = Stopwatch.StartNew();
         var result = NativeBuilder.BuildSafe(sources, config, target, toolchain, exe, mode, plan: plan);
         return new Built(result.Ok, exe, result.Log, watch.Elapsed.TotalSeconds, File.Exists(exe) ? new FileInfo(exe).Length : 0);
@@ -278,7 +331,13 @@ static class LinkageTests
             string filter = Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") ?? "";
             // (=cancel: only the progress and the cancelling of a build, spark's build window)
             if (filter.Contains("plugindebug", StringComparison.OrdinalIgnoreCase)) PluginDebug(root);   // (only debugging a plugin)
-            else if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) { Plugins(root); PackedPlugins(root); }
+            else if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase))
+            {
+                _externalForge = Environment.GetEnvironmentVariable("FIRE_TESTS_FORGE") is { Length: > 0 } forge ? Path.GetFullPath(forge) : null;
+                if (_externalForge != null) Console.WriteLine($"(the programs and plugins of projects: built by {_externalForge})");
+                try { Plugins(root); PackedPlugins(root); }
+                finally { _externalForge = null; }
+            }
             else if (filter.Contains("library", StringComparison.OrdinalIgnoreCase)) LibraryLoad(root);
             else if (filter.Contains("cancel", StringComparison.OrdinalIgnoreCase)) ProgressAndCancel(root);
             else if (filter.Contains("vmgraphics", StringComparison.OrdinalIgnoreCase)) VmGraphicsForWindows(root);
@@ -1196,7 +1255,7 @@ static class LinkageTests
             var host = Build(hostPlan.SourceTexts, "shared", Path.Combine(root, "plugpacked-host", "host"), plan: hostPlan);
             var kitPlan = Plan("Kit");
             var config = new NativeConfig { Linkage = "plugin", Host = host.Exe };
-            var kit = NativeBuilder.BuildSafe(kitPlan.SourceTexts, config, TargetProfile.Host, config.ResolveToolchain(TargetProfile.Host, "gcc"), Path.Combine(root, "plugpacked-kit", "kit"), plan: kitPlan);
+            var kit = PluginBuild(kitPlan, config, TargetProfile.Host, config.ResolveToolchain(TargetProfile.Host, "gcc"), Path.Combine(root, "plugpacked-kit", "kit"));
             Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plugpacked-kit", "kit.so"));
             string native = host.Ok && kit.Ok ? Exec(host.Exe) : "";
             Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plugpacked-kit", "kit.fireplugin"));
@@ -1287,8 +1346,7 @@ static class LinkageTests
             var config = new NativeConfig { Linkage = "plugin", Host = host };
             target ??= TargetProfile.Host;
             toolchain ??= config.ResolveToolchain(target, "gcc");
-            var result = NativeBuilder.BuildSafe(plan.SourceTexts, config, target, toolchain, output, plan: plan);
-            return new Built(result.Ok, result.Output, result.Log, 0, 0);
+            return PluginBuild(plan, config, target, toolchain, output);
         }
         string? before = Environment.GetEnvironmentVariable("FIRE_TEST_PLUGIN");
         Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
@@ -1451,7 +1509,7 @@ static class LinkageTests
         var host = Build(hostPlan.SourceTexts, "shared", Path.Combine(root, "plugdbg-out", "host"), plan: hostPlan, mode: VmExecutionMode.Debug);
         var kitPlan = Plan("Kit");
         var config = new NativeConfig { Linkage = "plugin", Host = host.Exe };
-        var kit = NativeBuilder.BuildSafe(kitPlan.SourceTexts, config, TargetProfile.Host, config.ResolveToolchain(TargetProfile.Host, "gcc"), Path.Combine(root, "plugdbg-out", "kit"), VmExecutionMode.Debug, plan: kitPlan);
+        var kit = PluginBuild(kitPlan, config, TargetProfile.Host, config.ResolveToolchain(TargetProfile.Host, "gcc"), Path.Combine(root, "plugdbg-out", "kit"), VmExecutionMode.Debug);
         if (!host.Ok || !kit.Ok) { Check("Plugin-Debug: Debug-Build von Programm und Plugin", false, host.Log + "\n" + kit.Log); return; }
         Check("Plugin-Debug: das Plugin ist ein Debug-Build (-O0 -g)", kit.Log.Contains("-O0 -g"), kit.Log);
         try
@@ -1499,8 +1557,7 @@ static class LinkageTests
             var config = new NativeConfig { Linkage = "plugin", Host = host };
             target ??= TargetProfile.Host;
             toolchain ??= config.ResolveToolchain(target, "gcc");
-            var result = NativeBuilder.BuildSafe(Plan("CPlug").SourceTexts, config, target, toolchain, output, plan: Plan("CPlug"));
-            return new Built(result.Ok, result.Output, result.Log, 0, 0);
+            return PluginBuild(Plan("CPlug"), config, target, toolchain, output);
         }
         string headerBefore = File.ReadAllText(header), plugBefore = File.ReadAllText(plugSource);
         const string Missing = "cannot be loaded: it calls the native function 'capi_hundred' in C, which this program does not export to plugins";

@@ -674,6 +674,12 @@ static void mdReadMesh(MdGltf* g, FjValue* mesh, MdPart* p) {
     if (p->positions.count > 65535) mdInvalidData(c, fcFmt(c, "The mesh of '%s' has %d corners (at most 65535 a part).", p->name, p->positions.count));
 }
 
+/* the numbers of the pose of a node: exactly `want` of them */
+static MdVec mdNodeNumbers(FcCtx* c, const FjValue* x, const MdPart* p, const char* what, int want) {
+    MdVec v = mdDoubles(c, x);
+    if (v.n != want) mdInvalidData(c, fcFmt(c, "The node '%s' has a %s of %d numbers (%d expected).", mdNative(c, p->name), what, v.n, want));
+    return v;
+}
 static void mdVisit(MdGltf* g, int node, int parent) {
     FcCtx* c = g->c;
     FjValue *nd, *nm, *mx, *t, *r, *s, *meshEl, *ch;
@@ -686,10 +692,11 @@ static void mdVisit(MdGltf* g, int node, int parent) {
     nm = mdTry(c, nd, "name");
     if (nm) { const char* sn = mdStr(c, nm); p->name = sn ? sn : ""; }
     else p->name = fcFmt(c, "node%d", node);
-    if ((mx = mdTry(c, nd, "matrix")) != NULL) mdDecompose(c, mdDoubles(c, mx), p);
-    if ((t = mdTry(c, nd, "translation")) != NULL) p->t = mdDoubles(c, t);
-    if ((r = mdTry(c, nd, "rotation")) != NULL) p->r = mdDoubles(c, r);
-    if ((s = mdTry(c, nd, "scale")) != NULL) p->s = mdDoubles(c, s);
+    /* (the pose of a node has its numbers exactly: a shorter or longer array would be a broken rest pose and pose of every frame of a clip) */
+    if ((mx = mdTry(c, nd, "matrix")) != NULL) mdDecompose(c, mdNodeNumbers(c, mx, p, "matrix", 16), p);
+    if ((t = mdTry(c, nd, "translation")) != NULL) p->t = mdNodeNumbers(c, t, p, "translation", 3);
+    if ((r = mdTry(c, nd, "rotation")) != NULL) p->r = mdNodeNumbers(c, r, p, "rotation", 4);
+    if ((s = mdTry(c, nd, "scale")) != NULL) p->s = mdNodeNumbers(c, s, p, "scale", 3);
     if ((meshEl = mdTry(c, nd, "mesh")) != NULL) mdReadMesh(g, mdAt(c, g->meshes, mdInt(c, meshEl)), p);
     index = g->partCount;
     mdPartPush(c, &g->parts, &g->partCount, &g->partCap, p);
@@ -868,6 +875,11 @@ static const uint8_t* mdConvert(FcCtx* c, const uint8_t* file, size_t fileLen, c
                 m->interp = ip ? mdStr(c, ip) : "LINEAR";
                 if (!m->interp) m->interp = "LINEAR";
                 if (nt == 0) continue;
+                /* (a key has the numbers of its path: 4 of a rotation, 3 of a translation or a scale) */
+                {
+                    int want = strcmp(path, "rotation") == 0 ? 4 : 3;
+                    if (nv > 0 && vv[0].n != want) mdInvalidData(c, fcFmt(c, "The animation '%s' gives the %s of a node %d numbers a key (%d expected).", mdNative(c, name), path, vv[0].n, want));
+                }
                 duration = mdMax(duration, m->times[nt - 1]);
                 m->part = part;
                 m->path = path;

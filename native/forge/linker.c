@@ -741,6 +741,9 @@ static FcLinked* fcLinkFileFe(FcCtx* c, const char* path, const char* preludePat
         linked->sourceHashes->items[total - 1] = (void*)fcSha256OfText(c, fc8FromU16(c, fe->userText, fe->userLength));
     }
     fcLinkTrace(c, linked, fe->program, NULL, NULL, -1, total - 1, 1);
+    /* (LinkedProgram.SourceModules: "core", then the module of each source - a plugin's bytecode, build/plugin.c) */
+    linked->sourceModules = fcListNew(c);
+    for (i = 0; i < fe->processed->count; i++) fcListAdd(c, linked->sourceModules, i == 0 ? (void*)"core" : (void*)((FcProcessed*)fe->processed->items[i])->module);
     if (frontend) *frontend = fe;
     return linked;
 }

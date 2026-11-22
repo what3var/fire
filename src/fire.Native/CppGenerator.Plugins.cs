@@ -66,6 +66,8 @@ namespace fire.Native
         private bool _plugin;
         /// <summary>A plugin: the modules it needs with their interfaces (the runtime compares them with the program's).</summary>
         private List<(string Module, string Abi)> _pluginDeps = new();
+        /// <summary>A plugin: the order of the static initialisers of the whole program (its view of the program has no top level).</summary>
+        private List<(string Class, string Field)>? _pluginInitSequence;
         private const string PluginHeadMark = "@FIRE_PLUGIN_HEAD@";
 
         private static string InsertAfterRuntime(string text, string insert)
@@ -151,7 +153,8 @@ namespace fire.Native
             // the static initialisers of its classes (the compiler puts them at the start of a program's top level): what they make belongs to the global scope
             _pluginStaticInits.Clear();
             // (in the order of their dependencies, as the top level has them - CompiledProgram.StaticInitSequence)
-            var sequence = _program.Program.StaticInitSequence();
+            // (of the whole program: the view of a library module has no top level - GenerateLibrary)
+            var sequence = _pluginInitSequence ?? _program.Program.StaticInitSequence();
             int Rank(string cls, string field) { int i = sequence.IndexOf((cls, field)); return i < 0 ? int.MaxValue : i; }
             foreach (var (cls, field, init) in _program.Program.Classes.Values.Where(c => _self.Classes.Contains(c.Name))
                 .SelectMany(rc => rc.StaticFields.Select(sf => (rc.Name, sf.Name, sf.Init))).OrderBy(x => Rank(x.Item1, x.Item2)).ToList())
@@ -206,6 +209,16 @@ namespace fire.Native
             foreach (var (cls, field, init) in _pluginStaticInits)
                 sb.AppendLine($"    {{ Value r = {init.Name}(Undef()); {(_usesExceptions ? "if (g_unwind.active) return; " : "")}adopt(r, g_globalOwn); {StaticFieldVar(cls, field)} = r; retain(r); }}   // {cls}.{field}");
             sb.AppendLine("}");
+            // (the first `fire` - or its registration after it: what its static fields hold is shared with the fire threads from then on, as the program's own -
+            // fire_rt.h firePluginShareGlobals, called by the program's fire_shareGlobals)
+            string share = "NULL";
+            if (_pluginStaticInits.Count > 0)
+            {
+                share = "fire_pl_share";
+                sb.AppendLine("static void fire_pl_share(void) {");
+                foreach (var (cls, field, _) in _pluginStaticInits) sb.AppendLine($"    refShare({StaticFieldVar(cls, field)});");
+                sb.AppendLine("}");
+            }
             // its `class extends` of classes it does not declare (of the program, of libraries, base types): their tables by the name of the class (the runtime adds
             // them to what an object of such a class finds by name - fireFindMethod)
             // (`class extends int` where nothing else extends int: `$int` is a class of the plugin - its table is an extension all the same)
@@ -229,7 +242,7 @@ namespace fire.Native
             }
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}extern const FirePlugin fire_module_info;");
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}const FirePlugin fire_module_info = {{FIRE_PLUGIN_FORMAT, {CString(_self.Name)}, \"{PluginHeadMark}\", {_pluginDeps.Count}u, {depNames}, {depAbis}, "
-                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}, {exts}, {debug}, {arr}}};");
+                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}, {exts}, {debug}, {arr}, {share}}};");
             return sb.ToString();
         }
 
