@@ -5698,7 +5698,7 @@ typedef struct FireFnInfo { const char* name; const char* file; } FireFnInfo;
  * function that owns its `try` the top while it runs (FIRE_TF_CATCH ... FIRE_TF_CATCH_END), so a throw in it does not show the frames of the first throw
  * site. throwValueR walks the chain at the first throw of an exception. */
 struct FireTFrame { struct FireTFrame* prev; const FireFnInfo* fn; int32_t line; };
-#define FIRE_TF_ENTER(f, d) ((f).prev = g_traceTop, (f).fn = (d), (f).line = 0, g_traceTop = &(f))
+#define FIRE_TF_ENTER(f, d) ((f).prev = g_traceTop, (f).fn = (d), g_traceTop = &(f))   /* (the line: the code stores it before its first instruction where it is read - in a file, with lines) */
 #define FIRE_TF_LEAVE(f) (g_traceTop = (f).prev)
 #define FIRE_TF_CATCH(f) FireTFrame* const tfTop_ = g_traceTop; const FireFnInfo* const tfFn_ = (f).fn; int32_t const tfLine_ = (f).line; g_traceTop = &(f); \
     (void)tfTop_; (void)tfFn_; (void)tfLine_
@@ -5848,16 +5848,18 @@ FIRE_FN void fire_tracePrintHere(void) { }
 #else
 /* The native build: the frames of this strand as a trace (innermost first; the thread's line at its end). */
 FIRE_COLD FIRE_FN FireTrace* fire_traceCapture(void) {
+    const FireTFrame* const top = g_traceTop;
     const FireTFrame* f;
     uint32_t total = 0, k = 0;
+    bool lines = g_stackTrace == FIRE_TRACE_LINES;
     FireTrace* t;
-    for (f = g_traceTop; f; f = f->prev) total++;
+    for (f = top; f; f = f->prev) total++;
     t = fire_traceNew(total, g_traceTrailer);
-    for (f = g_traceTop; f; f = f->prev, k++) {
-        FireTraceFrame* slot = fire_traceSlot(t, k);
+    for (f = top; f; f = f->prev, k++) {
+        FireTraceFrame* slot = total <= FIRE_TRACE_MAX ? &t->frames[k] : fire_traceSlot(t, k);
         if (!slot) continue;
         slot->fn = f->fn;
-        slot->line = f->fn && f->fn->file ? f->line : 0;
+        slot->line = lines && f->fn && f->fn->file ? f->line : 0;   /* (read only where the code stores it: in a file, with lines) */
     }
     return t;
 }

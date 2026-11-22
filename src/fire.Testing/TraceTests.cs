@@ -51,6 +51,10 @@ static class TraceTests
         Check("Dateinamen im Trace: relativ, Prelude ohne, Bibliothek mit ihrem Namen, eine Quelle ohne Datei", names[0] == null && names[1] == "pkg.fire" && names[2] == null
             && names[3] == "main.fire" && names[4] == "sub/u.fire" && names[5] == "../other.fire" && names[6] == "fire:source/3" && names[7] == null, string.Join(" | ", names));
 
+        var withModules = ExceptionTrace.DisplayFiles(new string?[] { null, root + "lib" + Path.DirectorySeparatorChar + "pkg.fire", root + "app" + Path.DirectorySeparatorChar + "main.fire" }, 2, 1,
+            new string?[] { null, "Lib", null });
+        Check("Dateinamen im Trace: eine Bibliothek mit dem Namen ihres Moduls (Lib:pkg.fire)", withModules[1] == "Lib:pkg.fire" && withModules[2] == "main.fire", string.Join(" | ", withModules));
+
         // spark's output: a line of a trace is a place to jump to (relative to the folder of the program), a frame of the prelude is not
         Check("Output-Panel: '   at Store.Find (main.fire:16)' ist klickbar", fire.Compiler.OutputLocations.TraceFrame("   at Store.Find (main.fire:16)") is ("main.fire", 16));
         Check("Output-Panel: ein Unterordner, ein Frame des Preludes nicht, ohne Zeile nicht", fire.Compiler.OutputLocations.TraceFrame("   at <lambda> (lib/util.fire:3)") is ("lib/util.fire", 3)

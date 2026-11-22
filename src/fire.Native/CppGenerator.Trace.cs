@@ -30,6 +30,7 @@ namespace fire.Native
         private readonly Dictionary<string, bool> _traceFrameless = new(StringComparer.Ordinal);
         /// <summary>The C names of the functions (`fN`, `fN_c`) -> the function's name.</summary>
         private Dictionary<string, string>? _traceCallees;
+        private int _traceCalleesCount;
         private Dictionary<Chunk, string>? _traceNames;
 
         /// <summary>The name of a function in a trace (TraceNames; a fire body that is no member `&lt;fire&gt;`).</summary>
@@ -100,10 +101,11 @@ namespace fire.Native
         /// <summary>The function cannot throw: what its code calls is in <see cref="TracePureCalls"/>, itself, or functions without frames.</summary>
         private bool TraceCannotThrow(Func f, string code)
         {
-            if (_traceCallees == null || _traceCallees.Count != _funcs.Count * 2 + 1)
+            if (_traceCallees == null || _traceCalleesCount != _funcs.Count)
             {
                 _traceCallees = new Dictionary<string, string>(StringComparer.Ordinal);
-                foreach (var g in _funcs.Append(_main!)) { _traceCallees.TryAdd(g.Name, g.Name); _traceCallees.TryAdd(g.Name + "_c", g.Name); }
+                foreach (var g in _funcs) { _traceCallees.TryAdd(g.Name, g.Name); _traceCallees.TryAdd(g.Name + "_c", g.Name); }
+                _traceCalleesCount = _funcs.Count;
             }
             int i = 0, n = code.Length;
             while (i < n)

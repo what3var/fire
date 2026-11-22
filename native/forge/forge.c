@@ -76,6 +76,7 @@ static bool fcStrictTag(const char* path);
 #include "gen/misc.c"
 #include "gen/reflection.c"
 #include "gen/debug.c"
+#include "gen/trace.c"      /* stack traces (CppGenerator.Trace.cs) */
 #include "gen/split.c"
 #include "gen/stats.c"
 #include "gen/cppgenerator4.c"

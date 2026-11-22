@@ -186,6 +186,7 @@ static FcLinked* fgLinkNativeKind(FcCtx* c, const char* path, const char* prelud
         linked->sourceFiles->items[total - 1] = (void*)full;
         linked->sourceHashes->items[total - 1] = (void*)fcSha256OfText(c, fc8FromU16(c, userText, userLength));
     }
+    fcLinkTrace(c, linked, program, processed, NULL, t->stackTrace - 1, total - 1, 1);   /* (the stack traces: docs/spec/STACKTRACE.md) */
     linked->optimize = o->optimize >= 0 ? o->optimize : t->optimize;
     linked->sourceModules = sourceModules;
     linked->moduleDeps = fgModuleDependencies(L, processed);

@@ -1748,7 +1748,9 @@ static const char* RuntimeHooks(FgGen* g) {
     return fcBufDone(g->c, &sb);
 }
 
-static const char* DescFlags(const FcRtClass* rc) { return fgIsNoCopy(rc) ? "1u" : "0u"; }
+/* (2: `Exception` or derived from it - its text is `Class: message`, docs/spec/STACKTRACE.md) */
+static bool fgIsExceptionClass(const FcRtClass* rc) { for (; rc; rc = rc->base) if (streq0(rc->name, "Exception")) return true; return false; }
+static const char* DescFlags(const FcRtClass* rc) { int f = (fgIsNoCopy(rc) ? 1 : 0) | (fgIsExceptionClass(rc) ? 2 : 0); return f == 3 ? "3u" : f == 2 ? "2u" : f == 1 ? "1u" : "0u"; }
 static const char* RecordFunctions(FgGen* g, const FgClassInfo* cls, int id, FcBuf* sb);
 /* The descriptor of a class (a row of FireClassDesc) */
 static const char* DescRow(FgGen* g, const FgClassInfo* cls, int id, FcBuf* sb, FcBuf* columns, bool excTypes) {
@@ -1769,7 +1771,7 @@ static const char* DescRow(FgGen* g, const FgClassInfo* cls, int id, FcBuf* sb, 
     }
     m = FG_FIND(cls->rc, "ToString", 0).proto;
     toString = m && m->paramCount == 0 ? ((FgFunc*)fcDictGet(g->funcByProto, m))->name : "NULL";
-    if (g->usesExceptions && (i = fgFieldIndexOf(g, cls->rc, "message")) >= 0) { FieldPlace(g, cls->rc, i, &slot, &half); message = slot; }
+    if ((g->usesExceptions || fgIsExceptionClass(cls->rc)) && (i = fgFieldIndexOf(g, cls->rc, "message")) >= 0) { FieldPlace(g, cls->rc, i, &slot, &half); message = slot; }
     if (g->needsTimeObj && (i = fgFieldIndexOf(g, cls->rc, "ticks")) >= 0) { FieldPlace(g, cls->rc, i, &slot, &half); ticks = slot; }
     if (g->usesExceptions && excTypes) {
         FcList* ids = fcListNew(g->c);

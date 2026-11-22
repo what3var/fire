@@ -83,10 +83,11 @@ namespace fire.Runtime
             f.File == null ? "prelude" : mode == StackTraceMode.Lines && f.Line > 0 ? f.File + ":" + f.Line : f.File;
 
         /// <summary>The display names of the sources (by source index) for a trace: a source of the program relative to the folder of its first source (with `/`;
-        /// `fire:source/N` for a source without a file), a library by its file name, the prelude, the preludes of the imports and the sources of a test
-        /// driver null. <paramref name="files"/>: the full path of each source (LinkedProgram.SourceFiles); the program's are <paramref name="userCount"/> from
-        /// <paramref name="firstUser"/>.</summary>
-        public static List<string?> DisplayFiles(IReadOnlyList<string?> files, int firstUser, int userCount)
+        /// `fire:source/N` for a source without a file), a library by the name of its module (its import) and its file name (`lib:util.fire`; without a module
+        /// its file name), the prelude, the preludes of the imports and the sources of a test driver null. <paramref name="files"/>: the full path of each
+        /// source (LinkedProgram.SourceFiles); the program's are <paramref name="userCount"/> from <paramref name="firstUser"/>; <paramref name="modules"/>: the
+        /// module of each source (ProcessedSource.Module; null: none).</summary>
+        public static List<string?> DisplayFiles(IReadOnlyList<string?> files, int firstUser, int userCount, IReadOnlyList<string?>? modules = null)
         {
             var names = new List<string?>(files.Count);
             string? baseDir = firstUser >= 0 && firstUser < files.Count && files[firstUser] is { } first ? System.IO.Path.GetDirectoryName(first) : null;
@@ -95,7 +96,7 @@ namespace fire.Runtime
                 string? file = files[i];
                 if (i >= firstUser && i < firstUser + userCount)
                     names.Add(file == null ? "fire:source/" + (i - firstUser) : baseDir != null ? Relative(baseDir, file) : System.IO.Path.GetFileName(file));
-                else names.Add(file != null && i < firstUser ? System.IO.Path.GetFileName(file) : null);
+                else names.Add(file != null && i < firstUser ? (modules != null && i < modules.Count && modules[i] is { } module ? module + ":" : "") + System.IO.Path.GetFileName(file) : null);
             }
             return names;
         }

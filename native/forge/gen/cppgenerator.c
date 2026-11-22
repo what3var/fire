@@ -27,6 +27,9 @@ enum { FunctionScope = -1, GlobalScope = -2 };
 static bool fgDebugBuild(FgGen* g) { return g->program->mode == 0; }
 #define DebugBuild fgDebugBuild(g)
 #define Wrapped DebugBuild
+/* (stack traces: CppGenerator.Trace.cs, gen/trace.c) */
+#define TraceOn (g->program->stackTrace != STM_Off)
+#define TraceLines (g->program->stackTrace == STM_Lines)
 static bool fgCheckAccess(FgGen* g) { return g->program->mode != 2; }
 #define CheckAccess fgCheckAccess(g)
 #define ScalarsOn (!DebugBuild && (g->program->intWidth == 32 || g->program->intWidth == 64))

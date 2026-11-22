@@ -246,6 +246,7 @@ namespace fire.Native
             // (whether its natives in C live in its file depends on the other imports of the program: a variant of its own)
             sb.Append("natives-here ").Append(NativesStandAlone(program, spec.Name, target)).Append('\n');
             sb.Append("flags ").Append(flags?.ToString() ?? "own").Append('\n');
+            sb.Append("stacktrace ").Append(StackTraceModes.Name(program.StackTrace)).Append('\n');   // (the frames of its functions, docs/spec/STACKTRACE.md)
             // (a library keeps everything with stripping 0, else its API: two variants - see LibraryStripping)
             if (stripping == StrippingLevel.None) sb.Append("stripping 0\n");
             return Hash(sb.ToString()).Substring(0, 40);

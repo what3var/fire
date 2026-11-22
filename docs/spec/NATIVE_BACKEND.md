@@ -474,6 +474,34 @@ Im Modus `debug` (`#debug`, `-m DEBUG`) wird das Programm für den Debugger von 
   Gerahmt: drei Fälle über `FIRE_DEBUG=stdio` und zwei auf dem FreeRTOS-Simulator (`native/sim`, Ziel `freertos`) mit denselben Plänen gegen die VM, die Eingabe
   des Programms durch den Agenten, Text, der wie ein Rahmen aussieht, ein verfälschter Rahmen, die Wartezeit ohne Debugger; ein ESP32 unter QEMU (siehe "ESP32").
 
+## Stack-Traces
+
+Eine Ausnahme bekommt bei ihrem ersten Wurf den Trace des Stacks ([STACKTRACE.md](STACKTRACE.md), Stand in Abschnitt 13), in Release standardmäßig mit
+Zeilen, in Performance nur auf Wunsch (`#stacktrace lines|calls|off`, `"stackTrace"` im Projekt oder im Ziel von `fire.native.json`, `--stacktrace`):
+
+* **Schatten-Frames**: jede fire-Funktion, die werfen kann, hat einen Frame auf dem C-Stack (`FireTFrame TF`: der Frame des Aufrufers, ihr Deskriptor, ihre
+  Zeile), den sie am Anfang auflegt (`FIRE_TF_ENTER`) und vor jedem `return` abnimmt (`{ FIRE_TF_LEAVE(TF); return x; }` - ein Ausdruck, der kein Name oder
+  keine Konstante ist, wird vorher berechnet). Der oberste Frame ist ein Wert des Strangs (`g_traceTop`: ohne Threads eine globale Variable, mit Tasks im
+  Zustand des Tasks). Die Zeile steht dort, wo eine Zeile der Zeilentabelle beginnt und an jedem Sprungziel (die Stellen von `FIRE_DBG_L` im Debug-Build):
+  `TF.line = 12;` - nicht in Funktionen des Preludes (ihr Frame zeigt keine Zeile) und nicht bei `calls`. Eine Funktion mit Code in mehreren Dateien (die
+  oberste Ebene eines Programms aus mehreren Quellen) wechselt dort auch den Deskriptor (`TF.fn = &kFI_fN[1];`).
+* **Deskriptoren**: `static const FireFnInfo kFI_fN[] = {{"Store.Find", "main.fire"}}` - der Name nach `TraceNames`, die Datei nach
+  `LinkedProgram.TraceFiles`; statische Daten des Moduls, das die Funktion hat (eine Bibliothek trägt ihre eigenen).
+* **Catch-Blöcke** machen den Frame ihrer Funktion zum obersten, solange sie laufen (`FIRE_TF_CATCH(TF)` ... `FIRE_TF_CATCH_END(TF)` vor jedem `return`):
+  ein Wurf im Catch-Block zeigt nicht die Frames der ersten Wurfstelle, `resume` findet die Zeile der Funktion unverändert.
+* **Kein Frame**, wenn die Funktion nicht werfen kann: ihr Code ruft nur `Int`/`Float`/`Bool`/`Undef`, sich selbst und Funktionen ohne Frame (ein Fixpunkt über
+  die Runden des Generators; `M.Fib`, Getter einer Konstante). Ihre Zeilen fallen weg.
+* **Aufnehmen**: `throwValueR` (`fire_traceThrowHere`) läuft über die Frames, wenn das Objekt noch keinen Trace hat; ein Programm ohne Ausnahmen druckt die
+  Frames in `fatalException`. Threads: der Generator setzt vor `fireThread` `g_traceStartAt = "main.fire:40"`, der Start macht daraus die Zeile `in thread
+  'Fire #1', started at ...` (`fire_traceThreadLine`, `ThreadStart.trailer`); das Warten (`Completion.Wait`, die Antwort eines Aktors) hängt den Abschnitt
+  `--- awaited at ---` an (`fire_traceAwaitedHere`, dieselben Stellen wie die C-VM).
+* **`off`** erzeugt nichts davon (das C ist das von vorher; mit Modulen setzt `fire_main` `g_stackTrace = FIRE_TRACE_OFF`, damit die Frames einer
+  Bibliothek, die mit Frames gebaut ist, nicht erscheinen), **`calls`** keine Zeilen (`g_stackTrace = FIRE_TRACE_CALLS`). Die Einstellung gehört zum
+  Schlüssel des Caches der statischen Bibliotheken (`stacktrace <mode>`).
+* **Debug-Build**: derselbe Frame neben dem `DbgFrame` (einfacher als den `DbgFrame` zu lesen, dessen Namen die des Debuggers sind; ein Debug-Build ist ohnehin
+  langsam).
+* Ausnahmeklassen haben im Deskriptor das Bit 2 (`FireClassDesc.flags`): `print(e)` gibt `Klasse: message` wie die VMs.
+
 ## Messwerte
 
 **C gegen C++** (während des Ports, gcc 13 `-O2`, beste von 25 Läufen, mit Prozessstart): die neun Benchmarks von `fire.Benchmarks` waren als C 4-16 % schneller

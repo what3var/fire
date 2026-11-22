@@ -670,7 +670,7 @@ static FgStep xFire(FgSC* x) {
         if ((isChannel = ChannelLikeTest(g, fcFmt(g->c, "av[%d]", k))) != NULL)
             fcBufFmt(&sbf, "if (%s) { Value e_ = %s(av[%d]%s); Owned* eo_ = ownedOf(e_); if (eo_) { if (eo_->owner) ownUnlink(eo_); ownLink(travel, eo_); } av[%d] = e_; } ", isChannel, CallFn(g, "__End", 0, "call_"), k, DispatchTail(g, "__End", 0, "travel", "0xFFFFFFFFu"), k);
     }
-    fcBufFmt(&sbf, "ensureDomain(); %s(%s, av, %d, travel); }", dedicatedThread ? "fireThreadDedicated" : "fireThread", body->name, argc);
+    fcBufFmt(&sbf, "ensureDomain(); %s%s(%s, av, %d, travel); }", TraceStartAt(g, x->chunk, ins), dedicatedThread ? "fireThreadDedicated" : "fireThread", body->name, argc);
     if (takingCount > 0) fcBufStr(&sbf, " }");
     ES(fcBufDone(g->c, &sbf));
     if (takingCount > 0) Check();
