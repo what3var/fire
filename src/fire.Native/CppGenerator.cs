@@ -4340,6 +4340,7 @@ namespace fire.Native
             if (_usesThreads) emit("mainFinish();");
             if (_collectStats && !Modular) emit("fire_heapReport();");   // (`--stats`: what lives, before the globals go)
             EmitLeave(f, GlobalScope, emit);
+            if (_openWorld) emit("firePluginsEnd();");   // (then the scopes of the plugins it loaded, in their order - docs/spec/PLUGINS.md)
             foreach (var g in _globals.OrderBy(x => x))
                 if (VarRef($"G{g}")) emit($"release(G{g});");
             foreach (var (key, index) in _staticFields.OrderBy(kv => kv.Value))
@@ -7056,6 +7057,9 @@ namespace fire.Native
                         Check();
                     }
                     StoreVar(sfVar, d - 1);
+                    // (a static field of the plugin's own classes: an unclaimed value joins the plugin's own scope - docs/spec/PLUGINS.md)
+                    if (_plugin && FindClass(Str(ins.A[0])).FindStaticFieldOwner(Str(ins.A[1])) is { } plStatic && _self!.Classes.Contains(plStatic.Name) && !IsPlainType(Ty(d - 1)))
+                        E($"fire_pl_claim({sfVar});");
                     return Next();
                 }
 

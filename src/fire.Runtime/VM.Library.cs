@@ -37,6 +37,8 @@ namespace fire.Runtime
                         a.Length > 4 && a[4].Kind == ValueKind.Int ? a[4].AsInt() : 0);
                 case LibraryMethod.Plugin:
                     return LibraryPlugin(a[1].AsInt());
+                case LibraryMethod.Unload:
+                    return LibraryUnload(a[1].AsInt());
                 case LibraryMethod.Shape:
                 {
                     if (LibraryMethods.Parse(a[1].AsString()) is not { } sig) return Value.MakeInt(0);

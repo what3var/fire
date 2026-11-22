@@ -920,6 +920,7 @@ static void HaltCode(FgGen* g, FgFunc* f, FgEmit* emit) {
     if (g->usesThreads) EMITS(emit, "mainFinish();");
     if (g->collectStats && !Modular) EMITS(emit, "fire_heapReport();");
     EmitLeave(g, f, GlobalScope, emit);
+    if (g->openWorld) EMITS(emit, "firePluginsEnd();");   /* (then the scopes of the plugins it loaded, in their order - docs/spec/PLUGINS.md) */
     items = fgISetItems(g->c, g->globals, true, &n);
     for (i = 0; i < n; i++) if (VarRef(g, fcFmt(g->c, "G%d", items[i]))) EMIT(emit, "release(G%d);", items[i]);
     {

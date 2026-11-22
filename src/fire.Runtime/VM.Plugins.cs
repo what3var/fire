@@ -30,6 +30,21 @@ namespace fire.Runtime
         private static long s_nextPluginHandle = -1000;
         /// <summary>The plugins linked into a set of classes (a program): by their name.</summary>
         private static readonly ConditionalWeakTable<object, Dictionary<string, PluginBytecode>> LinkedPlugins = new();
+        /// <summary>A plugin linked into a program: its own global scope (docs/spec/PLUGINS.md - what its static fields hold), its classes, its static initialisers
+        /// in their order, whether `lib.Unload()` destroyed the scope (a Load fills a new one).</summary>
+        private sealed class PluginState
+        {
+            public required string Name;
+            public required Scope Scope;
+            public required List<RuntimeClass> Own;
+            public required List<(RuntimeClass Class, string Field, FunctionProto Init)> Inits;
+            public bool Unloaded;
+        }
+        /// <summary>The plugins linked into a set of classes (a program), in the order they were loaded.</summary>
+        private static readonly ConditionalWeakTable<object, List<PluginState>> PluginStates = new();
+        /// <summary>The scope of the plugin a class belongs to (its static fields'): a class of the program has none.</summary>
+        private static readonly ConditionalWeakTable<RuntimeClass, Scope> PluginScopes = new();
+
         /// <summary>The interfaces of the modules of a program (a set of classes) as it was built, by module.</summary>
         private static readonly ConditionalWeakTable<object, Dictionary<string, string>> HostInterfaces = new();
 
@@ -78,22 +93,131 @@ namespace fire.Runtime
             string? why;
             // (another thread links a plugin right now - its initialisers may wait for a section of the globals: the main program that waits here is away meanwhile,
             // like in a native, so the threads take their sections themselves)
-            if (!System.Threading.Monitor.TryEnter(LinkedPlugins))
-            {
-                bool away = NativeAwayBegin(Array.Empty<Value>());
-                System.Threading.Monitor.Enter(LinkedPlugins);
-                if (away) NativeAwayEnd();
-            }
+            EnterPluginLock();
             try { why = LinkPlugin(plugin); }
             finally { System.Threading.Monitor.Exit(LinkedPlugins); }
             return why != null ? Value.MakeString($"The plugin '{plugin.Name}' cannot be loaded: {why}") : Names(plugin.Classes.Where(c => !c.StartsWith("__", StringComparison.Ordinal)).ToList());
+        }
+
+        /// <summary>The lock of the plugins (one links at a time): a main program that waits for it is away meanwhile, like in a native, so the threads take their
+        /// sections themselves (a thread that links may wait for one in its initialisers).</summary>
+        private void EnterPluginLock()
+        {
+            if (System.Threading.Monitor.TryEnter(LinkedPlugins)) return;
+            bool away = NativeAwayBegin(Array.Empty<Value>());
+            System.Threading.Monitor.Enter(LinkedPlugins);
+            if (away) NativeAwayEnd();
+        }
+
+        /// <summary>`__LibCall(8, handle)`: lib.Unload() - the plugin's scope is destroyed (its destructors run), its static fields are undefined, its code stays
+        /// (docs/spec/PLUGINS.md); undefined, or a string: why not.</summary>
+        private Value LibraryUnload(long handle)
+        {
+            if (!PluginFiles.TryGetValue(handle, out var entry) || entry.Plugin is not { } plugin) return Value.MakeString("The library is no fire plugin: only a fire plugin can be unloaded.");
+            EnterPluginLock();
+            try
+            {
+                if (!PluginStates.TryGetValue(_classes, out var states) || states.Find(p => p.Name == plugin.Name) is not { Unloaded: false } state) return Value.MakeUndefined();
+                state.Unloaded = true;
+                bool section = _threadBroker != null;   // (the threads see the scope whole or gone)
+                if (section) EnterGlobalsSection();
+                try
+                {
+                    state.Scope.Release(this);
+                    foreach (var rc in state.Own) foreach (var name in rc.StaticFieldValues.Keys.ToList()) rc.StaticFieldValues[name] = Value.MakeUndefined();
+                }
+                finally { if (section) ExitGlobalsSection(); }
+                return Value.MakeUndefined();
+            }
+            finally { System.Threading.Monitor.Exit(LinkedPlugins); }
+        }
+
+        /// <summary>The end of the program, after its global scope: the scopes of its plugins in the order they were loaded (docs/spec/PLUGINS.md).</summary>
+        private void ReleasePluginScopes()
+        {
+            if (!PluginStates.TryGetValue(_classes, out var states)) return;
+            foreach (var state in states.ToList())
+                if (!state.Unloaded) { state.Unloaded = true; state.Scope.Release(this); }
+        }
+
+        /// <summary>The first `fire`: what the plugins' scopes own joins the globals' domain, like the program's globals (ShareGlobals).</summary>
+        private void SharePluginScopes(ThreadShareLock treeLock, HashSet<object> seen)
+        {
+            if (!PluginStates.TryGetValue(_classes, out var states)) return;
+            foreach (var state in states)
+                foreach (var owned in state.Scope.OwnedObjects.ToArray()) ShareValue(Value.MakeClassRef(owned), treeLock, seen);
+        }
+
+        /// <summary>A value that goes into a static field of a plugin (its initialiser's result, a store): unclaimed - in a global scope where its ClaimToScope put
+        /// it, a temporary, of no one - it joins the plugin's scope, in the globals' domain when there are threads; one somebody else owns stays a reference.
+        /// From a thread it moves there in a section like `x.TakeGlobal()` (the thread's references stay valid). vm_plugin.c vmPlClaim the same.</summary>
+        private void ClaimToPluginScope(Value value, Scope scope)
+        {
+            bool alive = value.Kind == ValueKind.Class ? value.AsObjectRef() is ObjectInstance { IsDestroyed: false } : value.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && !IsDestroyedLeaf(value);
+            if (!alive) return;
+            var owner = OwnerOfValue(value);
+            if (ReferenceEquals(owner, scope)) return;
+            if (owner != null && owner is not Scope { IsGlobal: true } && !IsUnclaimed(value)) return;
+            void Move()
+            {
+                if (value.Kind == ValueKind.Class) ((ObjectInstance)value.AsObjectRef()).ReparentTo(scope);
+                else if (LeafOf(value) is { } leaf) LeafOwnership.Reparent(leaf, scope);
+            }
+            if (_threadBroker is { } broker)
+            {
+                if (InMainGlobals(value)) return;
+                EnterGlobalsSection();
+                try
+                {
+                    Move();
+                    ShareValue(value, broker.Lock, new HashSet<object>(ReferenceEqualityComparer.Instance));
+                    RehomeToMain(value);
+                }
+                finally { ExitGlobalsSection(); }
+                return;
+            }
+            Move();
+            if (_ownerBroker is { } ob) ShareValue(value, ob.Lock, new HashSet<object>(ReferenceEqualityComparer.Instance));
+        }
+
+        /// <summary>Runs the static initialisers of a plugin into its scope; null: done, else why not.</summary>
+        private string? RunPluginStatics(PluginState state)
+        {
+            foreach (var (rc, field, init) in state.Inits)
+            {
+                if (CallInline(new LambdaValue(init, null), Array.Empty<Value>(), out var value) is { } error) return $"the initialiser of '{rc.Name}.{field}' threw {error.ClassName}.";
+                // (also when a fire thread loads it: the plugin's scope, not the thread's global scope - its end does not take it along)
+                ClaimToPluginScope(value, state.Scope);
+                var lk = (_threadBroker ?? _ownerBroker)?.Lock;
+                if (_threadBroker != null) EnterGlobalsSection();
+                try
+                {
+                    lk?.Enter();
+                    try { rc.StaticFieldValues[field] = value; }
+                    finally { lk?.Exit(); }
+                }
+                finally { if (_threadBroker != null) ExitGlobalsSection(); }
+            }
+            return null;
         }
 
         /// <summary>Links the classes of a plugin into the classes of this program; null: done (or done before), else why not.</summary>
         private string? LinkPlugin(PluginBytecode plugin)
         {
             var linked = LinkedPlugins.GetOrCreateValue(_classes);
-            if (linked.TryGetValue(plugin.Name, out var known)) return ReferenceEquals(known, plugin) || known.Classes.SequenceEqual(plugin.Classes) ? null : "another plugin of that name is loaded already.";
+            if (linked.TryGetValue(plugin.Name, out var known))
+            {
+                if (!ReferenceEquals(known, plugin) && !known.Classes.SequenceEqual(plugin.Classes)) return "another plugin of that name is loaded already.";
+                // (unloaded before: its static initialisers run again, into a new scope of its own)
+                if (PluginStates.TryGetValue(_classes, out var states) && states.Find(p => p.Name == plugin.Name) is { Unloaded: true } again)
+                {
+                    again.Unloaded = false;
+                    again.Scope = new Scope(null);
+                    foreach (var rc in again.Own) PluginScopes.AddOrUpdate(rc, again.Scope);
+                    return RunPluginStatics(again);
+                }
+                return null;
+            }
             if (plugin.Format != ModuleInterface.Format) return "it is a fire plugin of another version of fire - build it again.";
             if (_classes is not Dictionary<string, RuntimeClass> classes) return "this program cannot load fire plugins.";
             var program = plugin.Program!;
@@ -181,34 +305,18 @@ namespace fire.Runtime
             // may name (`"5in".ToFloat()`) needs the program to know them
             if (host != null && program.Program.CustomUnits.Count > 0) Unit.AddCustomUnits(host.Program.CustomUnits, program.Program.CustomUnits);
             // the static initialisers of its classes, in the order of their declarations (as the top level of a program runs them first); what they make belongs to the
-            // global scope (like the values of the top level)
+            // plugin's own global scope (docs/spec/PLUGINS.md)
             // (in the order of their dependencies, as the plugin's own top level has them - CompiledProgram.StaticInitSequence; the rest after it)
             var sequence = program.Program.StaticInitSequence();
             int Rank(RuntimeClass rc, string field) { int i = sequence.IndexOf((rc.Name, field)); return i < 0 ? int.MaxValue : i; }
-            foreach (var (rc, field, init) in own.SelectMany(rc => rc.StaticFields.Select(sf => (rc, sf.Name, sf.Init))).OrderBy(x => Rank(x.rc, x.Name)).ToList())
-                {
-                    if (CallInline(new LambdaValue(init, null), Array.Empty<Value>(), out var value) is { } error) return $"the initialiser of '{rc.Name}.{field}' threw {error.ClassName}.";
-                    if (_threadBroker is { } broker)
-                    {
-                        // (loaded in a fire thread: the static fields are the main program's - what the initialiser made goes to its global scope and into the globals'
-                        // domain like `x.TakeGlobal()` of the thread, in a section; the thread's end does not take it along - vm_plugin.c the same)
-                        EnterGlobalsSection();
-                        try
-                        {
-                            bool alive = value.Kind == ValueKind.Class ? value.AsObjectRef() is ObjectInstance { IsDestroyed: false } : value.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && !IsDestroyedLeaf(value);
-                            if (alive && !InMainGlobals(value)) TakeGlobalMain(value);
-                            broker.Lock.Enter();
-                            try { rc.StaticFieldValues[field] = value; }
-                            finally { broker.Lock.Exit(); }
-                        }
-                        finally { ExitGlobalsSection(); }
-                        continue;
-                    }
-                    if (value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance obj) obj.TakeGlobal(_globalScope);
-                    else if (LeafOf(value) is { } leaf) LeafOwnership.Reparent(leaf, _globalScope);
-                    rc.StaticFieldValues[field] = value;
-                }
-            return null;
+            var state = new PluginState
+            {
+                Name = plugin.Name, Scope = new Scope(null), Own = own,
+                Inits = own.SelectMany(rc => rc.StaticFields.Select(sf => (rc, sf.Name, sf.Init))).OrderBy(x => Rank(x.rc, x.Name)).ToList(),
+            };
+            foreach (var rc in own) PluginScopes.AddOrUpdate(rc, state.Scope);
+            PluginStates.GetOrCreateValue(_classes).Add(state);
+            return RunPluginStatics(state);
         }
 
         /// <summary>A plugin's sources got the next source indexes of the program (its lines are told apart from the program's): the classes of the program, the first new

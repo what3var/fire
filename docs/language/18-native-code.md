@@ -119,7 +119,18 @@ print(d.Name())                            // my driver
   target, version of fire). Otherwise `Load` throws a `LibraryException` that says why ("The plugin 'Kit' cannot be loaded: it was built against another
   interface of the module 'Api' ..."). A program without linkage "shared" says that it cannot load plugins.
 - `lib.Classes()` are the names of the plugin's classes (empty for a C library), `lib.IsPlugin` says whether it is one. Loading the same plugin again gives
-  the same classes; a plugin is never unloaded.
+  the same classes.
+- **A plugin has its own global scope** (whichever thread loads it): what the initialisers of its static fields make, and a new object stored into one of its
+  static fields, belongs to that scope - not to the global scope of the thread that called `Load` (a plugin loaded in a `fire` thread keeps its static fields
+  after the thread ended) and not to the program's. The main program and every thread use the static fields like the program's own (they are part of the
+  shared globals: a thread writes them in a section, a fresh object moves there - rule 10). A second `Load` while another thread runs the initialisers waits
+  for them.
+- **`lib.Unload()`** destroys the plugin's scope: the objects of its static fields are destroyed (their destructors run, in the order they came), a reference
+  the program kept to one of them gives the `DestroyedException`, the static fields are `undefined`. Its classes and their code stay - objects of its classes
+  the program owns keep working; `Library.Load` of it again runs the initialisers again. `Unload` of a C library is a `LibraryException`; a second `Unload`
+  does nothing.
+- At the end of the program the program's global scope goes first, then the scopes of its plugins in the order they were loaded (the destructors of the
+  program's objects may still use the plugins' static fields). Details: [PLUGINS.md](../spec/PLUGINS.md).
 - A plugin may declare **units** of its own (`unit`, `prefixed unit`, `coerce`) and use those of fire, of its libraries and the program's values with
   theirs: a unit is the program's when it has the same dimensions, factor and symbol; a new dimension of the plugin (`3pears`) takes a free place - a native
   program has room for 16 dimensions in all, more and `Load` says so.

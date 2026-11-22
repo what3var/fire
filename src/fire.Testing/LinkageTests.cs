@@ -1423,6 +1423,71 @@ static class LinkageTests
     private const string ThreadExpected = "t1: 2 first kit7 1\nmain: first kit7 2\nt2: first kit7 3 kept 1\nmain: first kit7 3 kept 2\nmain: 10 1\nt3: 10 1\nend\n"
         + "item first destroyed\nitem kept destroyed\nitem kept destroyed\n";
 
+    /// <summary>A plugin with an own scope to unload (docs/spec/PLUGINS.md): an object with a destructor, a list, a field set from a thread to a fresh object.</summary>
+    private const string UnloadKit = """
+        #import "TApi"
+        namespace UKit {
+            class Item {
+                string name
+                construct(string name) { this.name = name }
+                destruct() { print("item " + name + " destroyed") }
+            }
+            class Store : TApi.IBox {
+                static UKit.Item first = new UKit.Item("u-first")
+                static List<int> marks = new List<int>()
+                static UKit.Item later = undefined
+                construct() { }
+                string Show() { return (UKit.Store.first == undefined ? "undefined" : UKit.Store.first.name) + " " + (UKit.Store.marks == undefined ? "-" : "" + UKit.Store.marks.Count) }
+                undefined Note(string s) { UKit.Store.later = new UKit.Item(s); UKit.Store.marks.Add(1) }
+                string Keep() { return UKit.Store.later == undefined ? "no later" : UKit.Store.later.name }
+                UKit.Item First() { return UKit.Store.first }
+            }
+        }
+        """;
+
+    /// <summary>lib.Unload() (its scope goes, its static fields are undefined, a reference the program held is destroyed, its code stays - Show still runs),
+    /// a second Unload, Load again (the initialisers run again), the Unload of a C library, the end: the program's global scope, then the plugin's.</summary>
+    private const string UnloadHost = """
+        #import "TApi"
+        #import "reflection"
+        #import "time"
+        string path = Environment.Get("FIRE_TEST_PLUGIN3")
+        string clib = Environment.Get("FIRE_TEST_CLIB")
+        class Guard {
+            string n
+            construct(string n) { this.n = n }
+            destruct() { print("program " + n + " destroyed") }
+        }
+        var guard = new Guard("guard")
+        var lib = Library.Load(path)
+        any st = Reflect.New("UKit.Store", [])
+        print("loaded: " + st.Show() + " " + st.Keep())
+        any held = st.First()
+        // (a static field set in a fire thread to a fresh object: it joins the plugin's scope - the end of the thread does not take it along)
+        var ch = new Channel<string>()
+        fire with ch {
+            any t = Reflect.New("UKit.Store", [])
+            t.Note("from-thread")
+            ch.Send("thread: " + t.Keep())
+        }
+        print(ch.Receive())
+        Sleep(150ms)
+        print("after the thread: " + st.Keep() + " " + st.Show())
+        // (lib.Unload(): the plugin's scope goes - its destructors run -, its static fields are undefined; what the program held of it is destroyed; its code stays)
+        lib.Unload()
+        print("unloaded: " + st.Show() + " " + st.Keep())
+        try { print(held.name) } catch (DestroyedException e) { print("held: " + e.message) }
+        lib.Unload()
+        print("again: " + st.Show())
+        // (loaded again: its static initialisers run again, into a new scope)
+        Library.Load(path)
+        print("reloaded: " + st.Show() + " " + st.First().name)
+        try { Library.Load(clib).Unload() } catch (LibraryException e) { print("c: " + e.message.Replace(clib, "<clib>")) }
+        print("end")
+        """;
+
+    private const string UnloadExpected = "loaded: u-first 0 no later\nthread: from-thread\nafter the thread: from-thread u-first 1\nitem u-first destroyed\nitem from-thread destroyed\nunloaded: undefined - no later\nheld: Access to a destroyed object.\nagain: undefined -\nreloaded: u-first 0 u-first\nc: The library '<clib>' is no fire plugin: only a fire plugin can be unloaded.\nend\nprogram guard destroyed\nitem u-first destroyed\n";
+
     /// <summary>Library.Load of a plugin in a fire thread: what the static initialisers make belongs to the main program's globals (not to the thread's global
     /// scope - it outlives the thread and is shared with the other threads), the main program and other threads use the static fields after the loading thread
     /// ended, and a Load while another thread runs the initialisers waits for them - natively, in the VM and in the C VM (also twice in one process with ASan).</summary>
@@ -1438,7 +1503,11 @@ static class LinkageTests
         Write(s, "TKit2/TKit2.fireproj", """{ "name": "TKit2", "references": [ { "project": "../TApi/TApi.fireproj" } ], "settings": { "linkage": "plugin" } }""");
         Write(s, "THost/main.script", ThreadHost);
         Write(s, "THost/THost.fireproj", """{ "name": "THost", "references": [ { "project": "../TApi/TApi.fireproj" } ], "settings": { "linkage": "shared" } }""");
-        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["TApi/TApi.fireproj", "TKit/TKit.fireproj", "TKit2/TKit2.fireproj", "THost/THost.fireproj"], "startup": "THost" }""");
+        Write(s, "UKit/ukit.script", UnloadKit);
+        Write(s, "UKit/UKit.fireproj", """{ "name": "UKit", "references": [ { "project": "../TApi/TApi.fireproj" } ], "settings": { "linkage": "plugin" } }""");
+        Write(s, "UHost/main.script", UnloadHost);
+        Write(s, "UHost/UHost.fireproj", """{ "name": "UHost", "references": [ { "project": "../TApi/TApi.fireproj" } ], "settings": { "linkage": "shared" } }""");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["TApi/TApi.fireproj", "TKit/TKit.fireproj", "TKit2/TKit2.fireproj", "THost/THost.fireproj", "UKit/UKit.fireproj", "UHost/UHost.fireproj"], "startup": "THost" }""");
         BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
         string? before = Environment.GetEnvironmentVariable("FIRE_TEST_PLUGIN");
         string? before2 = Environment.GetEnvironmentVariable("FIRE_TEST_PLUGIN2");
@@ -1469,11 +1538,33 @@ static class LinkageTests
             if (twice is var (twiceOut, twiceLeaks))
                 Check("Plugin in einem fire-Thread geladen - zweimal in einem Prozess der C-VM (ASan): dieselbe Ausgabe, LeakSanitizer findet nichts",
                     twiceOut == ThreadExpected + ThreadExpected && twiceLeaks.Length == 0, $"{twiceLeaks}\n{twiceOut}");
+
+            // lib.Unload(): the plugin's own scope
+            var uhostPlan = Plan("UHost");
+            var uhost = Build(uhostPlan.SourceTexts, "shared", Path.Combine(hostDir, "uhost"), plan: uhostPlan);
+            var uconfig = new NativeConfig { Linkage = "plugin", Host = uhost.Exe };
+            var ukit = PluginBuild(Plan("UKit"), uconfig, TargetProfile.Host, uconfig.ResolveToolchain(TargetProfile.Host, "gcc"), Path.Combine(kitDir, "ukit"));
+            Environment.SetEnvironmentVariable("FIRE_TEST_CLIB", "libm.so.6");
+            Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN3", Path.Combine(kitDir, "ukit.so"));
+            string unative = uhost.Ok && ukit.Ok ? Exec(uhost.Exe) : "";
+            Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN3", Path.Combine(kitDir, "ukit.fireplugin"));
+            string uvm = Vm(uhostPlan.SourceTexts, uhostPlan);
+            string ucvm = CVmRun(uhostPlan, cvmDir);
+            var utwice = CVmTwiceSanitized(uhostPlan, cvmDir);
+            Check("Plugin: lib.Unload() - sein Scope geht (Destruktoren), statische Felder undefined, gehaltene Referenzen zerstoert, Code bleibt; wieder geladen; Ende: erst das Programm, dann das Plugin - nativ",
+                unative == UnloadExpected, $"{unative}\n{uhost.Log}\n{ukit.Log}");
+            Check("Plugin: lib.Unload() - die VM wie nativ", uvm == UnloadExpected, uvm);
+            Check("Plugin: lib.Unload() - die C-VM wie nativ", ucvm == UnloadExpected, ucvm);
+            if (utwice is var (utwiceOut, utwiceLeaks))
+                Check("Plugin: lib.Unload() - zweimal in einem Prozess der C-VM (ASan): dieselbe Ausgabe, LeakSanitizer findet nichts",
+                    utwiceOut == UnloadExpected + UnloadExpected && utwiceLeaks.Length == 0, $"{utwiceLeaks}\n{utwiceOut}");
         }
         finally
         {
             Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before);
             Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN2", before2);
+            Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN3", null);
+            Environment.SetEnvironmentVariable("FIRE_TEST_CLIB", null);
         }
     }
 

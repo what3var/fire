@@ -409,25 +409,30 @@ dass `kit.so` geht, liegt an seinem Bytecode daneben - wie in der C#-VM). `__Lib
   darf, kommen zu `g_textUnits`. Die Texte seiner Einheiten sind die des Plugins (`vmUnitsLent`: die Tabelle gibt sie am Ende nicht frei).
 * **Klassen**: die nächsten Ids (`vmRegisterMore`: die Tabellen wachsen als Kopien, die alten bleiben bis zum Ende des Programms - ein Thread liest
   `byId` jetzt über `vm->top`), dann die **statischen Initialisierer** in der Reihenfolge ihrer Abhängigkeiten (die `SetStaticFieldOnInit` des Top-Levels des
-  Plugins, `StaticInitSequence`), mit einem eigenen Handler: eine Ausnahme ist `the initialiser of 'C.f' threw X.`; was sie anlegen, gehört dem globalen Scope
-  des Hauptprogramms (in der Domäne der Globals, sobald es Threads gibt: `ownLink` in `g_domainRoot`; `firePluginShareGlobals` nativ).
-* **Geladen in einem fire-Thread**: die statischen Felder sind die des Hauptprogramms (wie ein `SetStaticField` eines Threads, Regel 10) - was ein
-  Initialisierer anlegt, geht in einer Sektion in den globalen Scope des Hauptprogramms und in die Domäne der Globals (`takeGlobalMain`, wie
-  `x.TakeGlobal()` des Threads), nicht in den des Threads. Bis zum 22.11. gehörte es dem Thread - **in allen drei Engines**: die C-VM adoptierte das
-  Ergebnis in den globalen Scope, aber es hatte schon einen Besitzer (den Scope des Threads), die C#-VM nahm `TakeGlobal(_globalScope)` mit dem globalen
-  Scope des Threads, der native Build `adopt(r, g_globalOwn)` mit dem des Threads (thread-lokal); das Ende des Threads zerstörte die Objekte der statischen
-  Felder, das Hauptprogramm und die anderen Threads bekamen die `DestroyedException`. Jetzt alle drei gleich (`vmPlStatics`, `VM.LinkPlugin`,
-  `fire_pl_static` des Generators, `CppGenerator.Plugins.cs`). **Gleichzeitig geladen**: ein zweites `Library.Load` desselben Plugins, während ein
-  anderer Thread seine Initialisierer laufen lässt, wartet auf sie (`VmLinked.initing`; `blockUntil`/`blockUntilServing`: das Hauptprogramm gewährt
-  währenddessen die Sektionen und Jobs der Threads) - vorher gab es die Klassen mit statischen Feldern, die noch `undefined` waren (C-VM und nativ;
-  nativ jetzt `g_pluginIniting` in `fireRegisterPlugin`); die C#-VM wartete schon (`lock`), aber ein Hauptprogramm, das dort wartet, ist jetzt
-  „away" (`NativeAwayBegin`), sonst hätte der Thread auf eine Sektion gewartet, die es nie gewährt. Ein Initialisierer, der sein eigenes Plugin noch einmal
-  lädt, wartet nicht auf sich.
+  Plugins, `StaticInitSequence`), mit einem eigenen Handler: eine Ausnahme ist `the initialiser of 'C.f' threw X.`; was sie anlegen, gehört dem **eigenen
+  Scope des Plugins** ([PLUGINS.md](PLUGINS.md): `VmLinked.scope`, ein `OwnList`; `VmClass.plOwn` seiner Klassen zeigt darauf).
+* **Der Scope des Plugins**: das Ergebnis eines Initialisierers und ein unbeanspruchter Wert, der in ein statisches Feld einer Klasse des Plugins geht (er
+  liegt im globalen Scope, wohin sein `ClaimToScope 65535` ihn legte, oder hat keinen Besitzer), kommen hinein (`vmPlClaim`; aus einem Thread in einer
+  Sektion wie `x.TakeGlobal()`, im `SetStaticField` eines Threads `toMainGlobals` mit dem Scope als Ziel); mit Threads gehört er zur Domäne der Globals
+  (`markOwnedShared`; beim ersten `fire` `vmPluginsShare`). `lib.Unload()` (`__LibCall(8)`, `vmPluginUnload`) zerstört ihn (`destroyList`, die
+  Destruktoren laufen) und setzt die statischen Felder seiner Klassen auf `undefined`, in einer Sektion; der Code bleibt; ein `Load` danach lässt die
+  Initialisierer noch einmal laufen. Am Ende des Programms: nach dem, was der globale Scope besitzt, die Scopes der Plugins in der Reihenfolge ihres Ladens
+  (`vmPluginsReleaseStatics`, solange der globale Scope noch da ist - ihre Destruktoren laufen als verschachtelte Aufrufe), dann die Globals.
+* **Geladen in einem fire-Thread**: bis zum 22.11. gehörte, was die Initialisierer anlegten, dem Thread - **in allen drei Engines**: die C-VM adoptierte das
+  Ergebnis in den globalen Scope, aber es hatte schon einen Besitzer (den globalen Scope des Threads, wohin sein `ClaimToScope` es legte), die C#-VM nahm
+  `TakeGlobal(_globalScope)` mit dem globalen Scope des Threads, der native Build `adopt(r, g_globalOwn)` mit dem des Threads (thread-lokal); das Ende des
+  Threads zerstörte die Objekte der statischen Felder, das Hauptprogramm und die anderen Threads bekamen die `DestroyedException`. Jetzt gehört es in allen
+  drei dem Scope des Plugins (`vmPlStatics`, `VM.RunPluginStatics`, `fire_pl_static`/`fire_pl_claim` beider Generatoren). **Gleichzeitig geladen**: ein
+  zweites `Library.Load` desselben Plugins, während ein anderer Thread seine Initialisierer laufen lässt, wartet auf sie (`VmLinked.initing`;
+  `blockUntil`/`blockUntilServing`: das Hauptprogramm gewährt währenddessen die Sektionen und Jobs der Threads) - vorher gab es die Klassen mit statischen
+  Feldern, die noch `undefined` waren (C-VM und nativ; nativ jetzt `g_pluginIniting` in `fireRegisterPlugin`); die C#-VM wartete schon (`lock`), aber ein
+  Hauptprogramm, das dort wartet, ist jetzt „away" (`NativeAwayBegin`), sonst hätte der Thread auf eine Sektion gewartet, die es nie gewährt. Ein
+  Initialisierer, der sein eigenes Plugin noch einmal lädt, wartet nicht auf sich.
 * **Debuggen**: die eigenen Quellen des Plugins (`Sources`) bekommen die nächsten Indizes nach denen des Programms (ein Debug-Programm mit Quellen), seine
   Zeilentabellen werden umgeschrieben, die Quellen seiner Libraries 0; der Agent schickt `sources` und wartet auf die Haltepunkte (`fire_dbgVmSources` in
   `fire_debug.h` hinter `FIRE_VM`, dasselbe Ereignis wie `fire_dbgPlugin`); `fire_dbgClass` wächst mit den Klassen.
-* **Ende**: ein Plugin wird nicht entladen, solange sein Programm läuft (wie in der C#-VM); am Ende gehen seine statischen Felder, sein Programm und die
-  ersetzten Tabellen (`vmPluginsEnd`) - das nächste Programm im selben Prozess fängt ohne an.
+* **Ende**: der Code eines Plugins bleibt, solange sein Programm läuft (auch nach `lib.Unload()`, wie in der C#-VM und nativ); am Ende gehen sein Scope,
+  sein Programm und die ersetzten Tabellen (`vmPluginsEnd`) - das nächste Programm im selben Prozess fängt ohne an.
 
 Tests: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugin` hat zu jedem Fall der C#-VM den der C-VM (das Programm als `.fbc` in `fire run`, `CVmRun`): Kit
 (Interface, Basisklasse, Reflection, Ausnahmen, Enum, statische Felder, `class extends`), `kit.so` mit dem Bytecode daneben, Meter (Einheiten, Natives in C++),
@@ -439,7 +444,8 @@ Programmdateien beider forges mit den Schnittstellen der Module sind byte-gleich
 Windows: `fire.exe` (MinGW) unter Wine lädt Kit und Kit2 wie unter Linux (von Hand geprüft, kein Test: Meter braucht die Bibliothek seiner Natives als DLL).
 Ein Plugin in einem fire-Thread: `PluginsInThreads` (TKit mit statischen Feldern - ein Objekt mit Destruktor, Listen, ein Text -, in einem Thread geladen,
 nach dessen Ende vom Hauptprogramm und einem zweiten Thread benutzt, frische Objekte eines Threads in einer statischen Liste; TKit2 mit Initialisierern,
-die warten, von einem Thread und dem Hauptprogramm gleichzeitig geladen) - nativ, VM, C-VM und die C-VM zweimal in einem Prozess mit ASan dieselbe Ausgabe.
+die warten, von einem Thread und dem Hauptprogramm gleichzeitig geladen; UKit mit `lib.Unload()`, einem zweiten `Unload`, einem neuen `Load`, dem `Unload`
+einer C-Bibliothek und der Reihenfolge am Ende) - nativ, VM, C-VM und die C-VM zweimal in einem Prozess mit ASan dieselbe Ausgabe.
 Ein Fall des Korpus geht dafür nicht: ein Plugin ist ein eigenes Projekt, das gebaut werden muss (die Fälle sind eine Datei).
 Offen: ein Test der C-VM unter Windows.
 

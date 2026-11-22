@@ -1676,7 +1676,8 @@ static void vmRun(Vm* vm, int32_t base) {
                 }
                 if (FIRE_UNLIKELY(g_isThread)) {   /* (a static field of the main program from a fire thread: a section, rule 10) */
                     bool ss = sectionScopeEnter(true);
-                    if (!toMainGlobals(&x, NULL, "A static field")) { sectionScopeExit(ss); goto unwind; }
+                    /* (one of a plugin: a fresh object goes to the plugin's scope, docs/spec/PLUGINS.md) */
+                    if (!toMainGlobals(&x, c->plOwn, "A static field")) { sectionScopeExit(ss); goto unwind; }
                     old = c->svals[i];
                     retain(x);
                     c->svals[i] = x;
@@ -1685,6 +1686,7 @@ static void vmRun(Vm* vm, int32_t base) {
                     if (op == OP_SetStaticField) sp[-1] = x;
                     break;
                 }
+                if (FIRE_UNLIKELY(c->plOwn != NULL)) vmPlClaim(vm, x, c->plOwn);   /* (an unclaimed value of a plugin's static field: its scope's) */
                 retain(x);
                 c->svals[i] = x;
                 release(old);

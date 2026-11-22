@@ -422,6 +422,8 @@ static FgStep StepCore(FgGen* gg, FgFunc* ff, FcChunk* fchunk, FgInstr* fins, Fg
                 Check();
             }
             StoreVar(sfVar, d - 1);
+            /* (a static field of the plugin's own classes: an unclaimed value joins the plugin's own scope - docs/spec/PLUGINS.md) */
+            if (g->plugin && owner && fcListHasStr(g->self->classes, owner->name) && !IsPlainType(Ty(d - 1))) E("fire_pl_claim(%s);", sfVar);
             return Next();
         }
         case OP_ReleaseTemps: {

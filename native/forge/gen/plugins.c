@@ -104,6 +104,21 @@ static const char* PluginDeclarations(FgGen* g) {
     /* (a debug build: the indexes of its sources among the program's, given when it is registered - fire_dbgPlugin) */
     if (DebugBuild) fcBufFmt(&sb, "static int32_t fire_dbgsrc_%s[%d];\n", id, nsrc > 1 ? nsrc : 1);
     else fcBufFmt(&sb, "FIRE_MAYBE_UNUSED static const int32_t fire_dbgsrc_%s[%d] = {0};\n", id, nsrc > 1 ? nsrc : 1);
+    fcBufStr(&sb, "/* (the plugin's own global scope, docs/spec/PLUGINS.md: what its static fields hold - an unclaimed value stored there joins it; lib.Unload() destroys it) */\n");
+    fcBufStr(&sb, "static OwnList fire_pl_scope;\n");
+    fcBufStr(&sb, "static void fire_pl_claim(Value v) {\n");
+    fcBufStr(&sb, "    Owned* o = ownedOf(v);\n");
+    fcBufStr(&sb, "    if (!o || o->owner == &fire_pl_scope) return;\n");
+    fcBufStr(&sb, "#ifdef FIRE_THREADS\n");
+    fcBufStr(&sb, "    if (o->owner && o->owner != g_globalOwn && o->owner != g_domainRoot) return;\n");
+    fcBufStr(&sb, "    if (g_isThread && o->owner && o->owner != g_domainRoot && mainGlobalsKind(v, true) != 1) return;\n");
+    fcBufStr(&sb, "    { bool ss = sectionScopeEnter(g_isThread); if (o->owner) ownUnlink(o); ownLink(&fire_pl_scope, o); if (g_domainOn) { markOwnedShared(o); if (o->okind == O_Lambda) refShare(v); } if (g_isThread) takeGlobalRehome(o, 0); sectionScopeExit(ss); }\n");
+    fcBufStr(&sb, "#else\n");
+    fcBufStr(&sb, "    if (o->owner && o->owner != g_globalOwn) return;\n");
+    fcBufStr(&sb, "    if (o->owner) ownUnlink(o);\n");
+    fcBufStr(&sb, "    ownLink(&fire_pl_scope, o);\n");
+    fcBufStr(&sb, "#endif\n");
+    fcBufStr(&sb, "}\n");
     return fcBufDone(g->c, &sb);
 }
 
@@ -415,14 +430,17 @@ static const char* PluginTrailer(FgGen* g) {
     }
     jsonFixups = fcListNew(g->c);
     json = PluginJson(g, &sb, jsonFixups);
-    /* (what a static initialiser made belongs to the main program's global scope; loaded in a fire thread it goes there like `x.TakeGlobal()` of the thread, in a
-     * section - not to the thread's global scope, which its end takes along; VM.Plugins.cs and vm_plugin.c the same) */
+    /* (what a static initialiser made belongs to the plugin's own scope, also when a fire thread loads it - not to the thread's global scope, which its end takes
+     * along; VM.Plugins.cs and vm_plugin.c the same) */
     if (g->pluginStaticInits && g->pluginStaticInits->count > 0) {
         fcBufStr(&sb, "static void fire_pl_static(Value* slot, Value r) {\n");
+        fcBufStr(&sb, "    fire_pl_claim(r);\n");
+        fcBufStr(&sb, "    adopt(r, &fire_pl_scope);\n");
         fcBufStr(&sb, "#ifdef FIRE_THREADS\n");
-        fcBufStr(&sb, "    if (g_isThread) { bool ss = sectionScopeEnter(true); if (mainGlobalsKind(r, true) == 1) takeGlobalMain(ownedOf(r)); adopt(r, g_domainRoot); *slot = r; retain(r); sectionScopeExit(ss); return; }\n");
+        fcBufStr(&sb, "    { bool ss = sectionScopeEnter(g_isThread); *slot = r; retain(r); sectionScopeExit(ss); }\n");
+        fcBufStr(&sb, "#else\n");
+        fcBufStr(&sb, "    *slot = r; retain(r);\n");
         fcBufStr(&sb, "#endif\n");
-        fcBufStr(&sb, "    adopt(r, g_globalOwn); *slot = r; retain(r);\n");
         fcBufStr(&sb, "}\n");
     }
     fcBufStr(&sb, "static void fire_pl_init(void) {\n");
@@ -442,8 +460,20 @@ static const char* PluginTrailer(FgGen* g) {
             const FgPluginInit* pi = (const FgPluginInit*)g->pluginStaticInits->items[i];
             fcBufFmt(&sb, "    refShare(%s);\n", StaticFieldVar(g, pi->cls, pi->field));
         }
+        fcBufStr(&sb, "#ifdef FIRE_THREADS\n");
+        fcBufStr(&sb, "    { Owned* c; for (c = fire_pl_scope.head; c; c = c->next) markOwnedShared(c); }\n");
+        fcBufStr(&sb, "#endif\n");
         fcBufStr(&sb, "}\n");
     }
+    /* (lib.Unload(), the end of the program: its scope goes - the destructors run -, then its static fields are undefined; its code stays) */
+    fcBufStr(&sb, "static void fire_pl_unload(void) {\n");
+    fcBufStr(&sb, "    destroyList(&fire_pl_scope);\n");
+    for (i = 0; g->pluginStaticInits && i < g->pluginStaticInits->count; i++) {
+        const FgPluginInit* pi = (const FgPluginInit*)g->pluginStaticInits->items[i];
+        const char* v = StaticFieldVar(g, pi->cls, pi->field);
+        fcBufFmt(&sb, "    { Value o = %s; %s = Undef(); release(o); }\n", v, v);
+    }
+    fcBufStr(&sb, "}\n");
     /* its `class extends` of classes it does not declare (of the program, of libraries, base types): their tables by the name of the class (the runtime adds them to
      * what an object of such a class finds by name - fireFindMethod) (`class extends int` where nothing else extends int: `$int` is a class of the plugin - its
      * table is an extension all the same) */
@@ -473,7 +503,7 @@ static const char* PluginTrailer(FgGen* g) {
     }
     dllx = g->dll ? "__declspec(dllexport) " : "";
     fcBufFmt(&sb, "%sextern const FirePlugin fire_module_info;\n", dllx);
-    fcBufFmt(&sb, "%sconst FirePlugin fire_module_info = {FIRE_PLUGIN_FORMAT, %s, \"%s\", %du, %s, %s, %du, kPlClasses, &fire_mb_%s, fire_pl_fill, %du, %s, fire_enums_%s, %du, kPlExc, fire_exct_%s, %s, fire_pl_init, %s, %s, %s, %s, %s, %s, %s};\n",
+    fcBufFmt(&sb, "%sconst FirePlugin fire_module_info = {FIRE_PLUGIN_FORMAT, %s, \"%s\", %du, %s, %s, %du, kPlClasses, &fire_mb_%s, fire_pl_fill, %du, %s, fire_enums_%s, %du, kPlExc, fire_exct_%s, %s, fire_pl_init, %s, %s, %s, %s, %s, %s, %s, fire_pl_unload};\n",
         dllx, CString(g, g->self->name), FG_PLUGIN_HEAD_MARK, g->pluginDeps->count, depNames, depAbis, g->self->classes->count, id, g->enumList->count, enums, id, g->excTypes->count, id, rf, link, units, json, exts, debug, arr, share);
     return fcBufDone(g->c, &sb);
 }

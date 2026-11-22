@@ -65,6 +65,8 @@ print(d.Name())                                      // my driver
   may differ), and a native plugin must be built for the program's configuration. Otherwise `Library.Load` throws a `LibraryException` that says why.
 - The plugin's classes are then the program's: `Reflect.New`, `Type.Of`, `is of`, `catch`, calls through interfaces, JSON. A plugin may declare units,
   extend classes of its libraries (`class extends`), have natives - and it can be debugged in spark like the program.
+- A plugin has its own global scope: its static fields keep what they hold whichever thread loaded it, until `kit.Unload()` (or the end of the program)
+  destroys it.
 
 The step-by-step guide is in [building a library](building.md#a-plugin-step-by-step); everything about `Library.Load` in
 [native code](../language/18-native-code.md#fire-plugins).

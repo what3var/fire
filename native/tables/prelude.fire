@@ -1856,6 +1856,15 @@ class Library {
         return this.classes
     }
 
+    /// Unloads a fire plugin: what its static fields hold (its own global scope) is destroyed - their destructors run, a reference to one of
+    /// those objects is the DestroyedException -, the static fields are undefined; its classes and their code stay, objects of them the program
+    /// has live on. `Library.Load` of it again runs its static initialisers again. A LibraryException for a C library.
+    undefined Unload() {
+        if (this.classes == undefined) { throw new LibraryException("The library '" + this.path + "' is no fire plugin: only a fire plugin can be unloaded.") }
+        any r = __LibCall(8, this.handle)
+        if (r is of string) { throw new LibraryException(r) }
+    }
+
     /// Is the library a fire plugin?
     bool IsPlugin { get { return this.classes != undefined } }
 

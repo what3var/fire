@@ -544,6 +544,7 @@ namespace fire.Runtime
             foreach (var rc in _classes.Values)
                 foreach (var staticValue in rc.StaticFieldValues.Values.ToArray())
                     ShareValue(staticValue, broker.Lock, seen);
+            SharePluginScopes(broker.Lock, seen);
         }
 
         private static void ShareValue(Value value, ThreadShareLock treeLock, HashSet<object> seen)
@@ -1279,7 +1280,7 @@ namespace fire.Runtime
         private void ReleaseGlobalScope()
         {
             if (IsFireThreadVm) _globalScope.ReleaseWhere(this, o => !o.IsTakingCopy);
-            else _globalScope.Release(this);
+            else { _globalScope.Release(this); ReleasePluginScopes(); }   // (then the plugins' own scopes, in the order they were loaded)
         }
 
         /// <summary>Should the normal program end release the global scope (default: yes)? `false` for hosts that still
@@ -4422,8 +4423,11 @@ namespace fire.Runtime
             if (!GuardFieldArray(setValue, setOwner.FindFieldRequiredArray(setFieldName), setOwner.FindFieldArrayUnit(setFieldName))) return;
 
             var staticWriteBroker = _threadBroker ?? _ownerBroker;
+            // (a static field of a plugin: an unclaimed value goes to the plugin's own scope, docs/spec/PLUGINS.md)
+            Scope? pluginScope = PluginScopes.TryGetValue(setOwner, out var ps) ? ps : null;
             if (staticWriteBroker == null)
             {
+                if (pluginScope != null) ClaimToPluginScope(setValue, pluginScope);
                 setOwner.StaticFieldValues[setFieldName] = setValue;
             }
             else
@@ -4434,7 +4438,8 @@ namespace fire.Runtime
                 try
                 {
                     // (rule 10: what a fire thread stores here is the main program's - see ToMainGlobals)
-                    if (staticInThread && !ToMainGlobals(ref setValue, _threadBroker!.Scope, _threadBroker.Lock, "A static field")) return;
+                    if (staticInThread && !ToMainGlobals(ref setValue, pluginScope ?? _threadBroker!.Scope, _threadBroker!.Lock, "A static field")) return;
+                    if (!staticInThread && pluginScope != null) ClaimToPluginScope(setValue, pluginScope);
                     staticWriteBroker.Lock.Enter();
                     try { setOwner.StaticFieldValues[setFieldName] = setValue; }
                     finally { staticWriteBroker.Lock.Exit(); }
