@@ -1,0 +1,4 @@
+in catch
+still in catch
+warning (line 15): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Ctx still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).
+1

@@ -1,0 +1,22 @@
+class Item { int n; construct(int n) { this.n = n } }
+class Ctx { Item last }
+class T {
+    static int Thrower(Ctx c) {
+        var d = new Item(1)
+        c.last = d
+        throw new Exception("boom")
+    }
+    static int Run(Ctx c) {
+        try {
+            return T.Thrower(c)
+        } catch (e) {
+            print("in catch")
+            print("still in catch")
+            return 1
+        }
+    }
+}
+var c = new Ctx()
+print(T.Run(c))
+//# modes: Debug
+//# name: Debug: die Warnung fuer ein Objekt des Wurforts, das nach dem catch-Block stirbt, nennt die Zeile, an der der catch-Block verlassen wird

@@ -1994,7 +1994,7 @@ static void vmRun(Vm* vm, int32_t base) {
             ip += 2;
             if (!r) outOfMemory();
             if (!t->resolved) vmResolveHandler(vm, t);
-            r->vm = vm; r->t = t; r->frame = vm->nframes - 1; r->scope = fr->scope; r->sp = (uint32_t)(sp - st); r->extraExits = 0; r->inCatch = false; r->ncarry = 0; r->deferred = NULL;
+            r->vm = vm; r->t = t; r->frame = vm->nframes - 1; r->scope = fr->scope; r->sp = (uint32_t)(sp - st); r->extraExits = 0; r->inCatch = false; r->ncarry = 0; r->deferred = NULL; r->exitChunk = NULL; r->exitIp = NULL;
             r->h.fn = vmCatchFn; r->h.ctx = r; r->h.info = &t->info;
             pushHandler(&r->h);
             break;
@@ -2223,6 +2223,7 @@ static int vmUnwind(Vm* vm, int32_t base) {
             }
         }
         /* a frame above the target: it goes */
+        if (f->kind == FR_CATCH && tg == &f->rec->h) { f->rec->exitChunk = f->chunk; f->rec->exitIp = f->ip; }   /* (vm_dangle.c) */
         if (f->kind == FR_CATCH && tg != &f->rec->h && !(g_unwind.kind == UW_RESUME && g_unwind.token == f->rec->token)) {
             /* a catch block left by another exception (or a resume of another throw): nothing comes back to its handler - it goes when the
              * runtime is done with it (after its throwValue returned: at the next landing), unless it still has a finally to run */

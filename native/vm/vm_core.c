@@ -820,6 +820,8 @@ static void vmCatchFn(void* ctx, uint32_t ci, Value e) {
     rec->token = g_pending ? g_pending->token : 0;
     rec->inCatch = true;
     rec->deferred = NULL;
+    rec->exitChunk = NULL;
+    rec->exitIp = NULL;
     s = scNew(vm, rec->scope);
     scDefine(s, e);
     f = &vm->frames[vm->nframes++];

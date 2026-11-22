@@ -181,7 +181,11 @@ void fire_vmDangling(Obj* o, OwnList* owner) {
             VmDgSeen* s;
             const char* name;
             if (!leafAlive(r->holder) || !(h = ownedOf(r->holder)) || vmDgDiesWith(h, scope) || !vmDgStillHolds(vm, r->holder, r->field, o)) continue;
-            if (vm->nframes > 0) {
+            if (g_unwind.active && g_unwind.target && g_unwind.target->fn == vmCatchFn && ((VmHandlerRec*)g_unwind.target)->exitChunk) {
+                /* (the throw site's frames below a catch block that is left: where the catch block was left - the C# VM runs it without them) */
+                VmHandlerRec* rec = (VmHandlerRec*)g_unwind.target;
+                vmTraceLocation(rec->exitChunk, (uint32_t)(rec->exitIp - rec->exitChunk->code), &src, &line);
+            } else if (vm->nframes > 0) {
                 VmFrame* f = &vm->frames[vm->nframes - 1];
                 vmTraceLocation(f->chunk, (uint32_t)(f->ip - f->chunk->code), &src, &line);   /* (the next instruction's, as VM.CurrentLocation) */
             }

@@ -282,6 +282,9 @@ struct VmHandlerRec {
     struct VmScope* deferred;   /* the catch block's own scope, left: it dies when the owner leaves the try's scope - after the scopes of the throw site
                                  * (SPEC 2.3, CppGenerator DeferCatchRelease) */
     VmHandlerRec* nextDead; /* given up (its catch block ended with another exception): freed at the next landing */
+    const VmChunk* exitChunk;   /* its catch block left (by a return, a jump, its end): where - the place of what dies with the throw site after it, as in
+                                 * the C# VM, whose frames of the throw site are gone while the catch block runs (vm_dangle.c) */
+    const uint8_t* exitIp;
 };
 
 /* A finally block that runs (EnterFinallyNormal, or an exit through it): what happens at its EndFinally. */
