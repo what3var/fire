@@ -121,19 +121,13 @@ namespace fire.Compiler
         /// <summary>Compiles and starts the program (`basePath`: where its `#include`s are looked for). Compile errors are thrown here.</summary>
         public void Start(string script, string? basePath = null)
         {
-            if (!InProcessOnly && !fire.Debugging.CVmLaunch.UseDotnet && LocateFire() is { } vm)
+            if (InProcessOnly || fire.Debugging.CVmLaunch.UseDotnet)
             {
-                StartChild(script, basePath, vm);
+                StartInProcess(script, basePath);
                 return;
             }
-            StartInProcess(script, basePath);
-        }
-
-        /// <summary>The `fire` of 64-bit widths (null: none can be had - no C compiler -, the program then runs in the C# VM here).</summary>
-        private static string? LocateFire()
-        {
-            try { return CVm.Locate(64, 64); }
-            catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException or UnauthorizedAccessException) { return null; }
+            // (no `fire` - no C compiler to build it -: the view says why, as F5 does; FIRE_SPARK_VM=dotnet still runs it in the C# VM here until M1)
+            StartChild(script, basePath, CVmScript.Locate() ?? throw new InvalidOperationException("There is no `fire` (the VM in C) to run the view in: it is built with the C compiler of the machine (or set FIRE_SPARK_VM=dotnet)."));
         }
 
         private void StartChild(string script, string? basePath, string vm)
@@ -193,29 +187,12 @@ namespace fire.Compiler
                     }
                 }
                 catch (InvalidOperationException) { }
-                // a program that fails in `fire` before its first picture (the VM in C does not run everything the C# VM runs yet - docs/spec/VM_C.md, "Stand"): it
-                // starts again in the C# VM of this process, so that the view works; why stays in ChildFailure
-                if (error != null && Interlocked.Read(ref _frame) == 0 && !_stopping && !NoFallback)
-                {
-                    ChildFailure = error;
-                    var display = _display;
-                    _display = null;
-                    _child = null;
-                    display?.Dispose();
-                    DeleteChildFolder();
-                    try { StartInProcess(script, basePath); return; }
-                    catch (Exception ex) { error = CompileErrors.Describe(ex); }
-                }
+                // (a program that fails in `fire` ends its view with the reason - no second start in the C# VM any more: the VM in C runs the whole corpus and the
+                // circuit editor, docs/spec/VM_C.md, "Stand")
                 Ended?.Invoke(error);
             }) { IsBackground = true, Name = "fire live session (fire)" };
             _thread.Start();
         }
-
-        /// <summary>Why the program did not run in `fire` and runs in the C# VM here instead (null: it did not fail there).</summary>
-        public string? ChildFailure { get; private set; }
-
-        /// <summary>No second start in the C# VM when the program fails in `fire` (the tests of the VM in C).</summary>
-        public bool NoFallback { get; init; }
 
         private void DeleteChildFolder()
         {

@@ -679,14 +679,15 @@ static class CircuitEditorTests
             Check("Live-Sitzung: Stop beendet das Programm", !live.IsRunning);
         }
 
-        // one print is one message, also one of several lines (in fire: FIRE_PRINT_RECORDS); a program that fails in fire before its first picture starts again
-        // in the C# VM here (the view still works; why: ChildFailure)
+        // one print is one message, also one of several lines (in fire: FIRE_PRINT_RECORDS); a program that fails in fire ends its view with the reason - no
+        // second start in the C# VM any more (the fallback is gone)
         using (var live = new LiveSession())
         {
             var messages = new List<string>();
             var ended = new ManualResetEventSlim();
+            string? endedWith = null;
             live.Message += m => { lock (messages) messages.Add(m); };
-            live.Ended += _ => ended.Set();
+            live.Ended += e => { endedWith = e; ended.Set(); };
             live.Start("""
                 print("@two\nlines")
                 if (Environment.Get("FIRE_DISPLAY_SHM") != undefined && Environment.Get("FIRE_DISPLAY_SHM") != "") { throw new Exception("only in fire") }
@@ -696,17 +697,18 @@ static class CircuitEditorTests
             string all;
             lock (messages) all = string.Join("|", messages.Select(m => m.Replace("\n", "\\n")));
             Check("Live-Sitzung: ein print mit Zeilenumbruch ist eine Nachricht", messages.Contains("@two\nlines"), all);
-            Check("Live-Sitzung: scheitert das Programm in fire vor dem ersten Bild, laeuft es in der C#-VM hier", done && messages.Contains("@done")
-                && (fire.Debugging.CVmLaunch.UseDotnet ? live.ChildFailure == null : live.ChildFailure is { } why && why.Contains("only in fire") && live.InProcess), $"{all} / {live.ChildFailure}");
+            Check("Live-Sitzung: scheitert das Programm in fire, endet die Ansicht mit dem Grund (kein Rueckfall in die C#-VM)", done
+                && (fire.Debugging.CVmLaunch.UseDotnet ? messages.Contains("@done") && endedWith == null : !messages.Contains("@done") && endedWith is { } why && why.Contains("only in fire") && !live.InProcess),
+                $"{all} / {endedWith}");
         }
 
-        // the program of spark's circuit editor (CircuitEditorControl.HostScript, the parts that draw) in fire, without the fallback: every sample circuit
+        // the program of spark's circuit editor (CircuitEditorControl.HostScript, the parts that draw) in fire: every sample circuit
         // gets its pictures, also after a resize and "fit" right after the start as spark sends them (the view ran into a DestroyedException in
         // UI.CircuitView.DrawBackground in fire and the session went back to the C# VM)
         if (!fire.Debugging.CVmLaunch.UseDotnet)
             foreach (var sample in CircuitSamples.All)
             {
-                using var live = new LiveSession { NoFallback = true };
+                using var live = new LiveSession();
                 var messages = new List<string>();
                 var frames = 0;
                 string? endedWith = null;
@@ -729,8 +731,8 @@ static class CircuitEditorTests
                 string tail;
                 lock (messages) tail = string.Join("|", messages.Where(m => m.StartsWith("@error")).Take(3));
                 Check($"Live-Sitzung in fire: der Schaltplan '{sample.File}' zeichnet (Bilder, Groesse, fit), ohne Rueckfall in die C#-VM",
-                    !live.InProcess && live.ChildFailure == null && running && Volatile.Read(ref frames) >= 3 && tail == "",
-                    $"in process {live.InProcess}, frames {frames}, running {running}, ended with {endedWith ?? "-"}, failure {live.ChildFailure ?? "-"} {tail}");
+                    !live.InProcess && running && Volatile.Read(ref frames) >= 3 && tail == "",
+                    $"in process {live.InProcess}, frames {frames}, running {running}, ended with {endedWith ?? "-"} {tail}");
             }
 
         Console.WriteLine(_failures == 0 ? "Alle Schaltungseditor-Pruefungen bestanden." : $"FEHLER: {_failures} Schaltungseditor-Pruefung(en) fehlgeschlagen.");
