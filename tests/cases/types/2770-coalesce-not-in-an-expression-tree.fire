@@ -1,0 +1,7 @@
+class P { string name
+ construct(string n) { this.name = n } }
+class Probe { string Show(lambda expression<P> e) { return e.ToString() } }
+var pr = new Probe()
+print(pr.Show(p => p.name ?? "none"))
+//# modes: Release
+//# name: types: ?? cannot be in an expression tree (TC030 says what to write instead)

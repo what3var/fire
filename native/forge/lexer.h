@@ -53,7 +53,9 @@
     X(Eof) \
     X(KwWord) \
     X(QuestionDot) \
-    X(QuestionQuestionDot)
+    X(QuestionQuestionDot) \
+    X(QuestionQuestion) \
+    X(QuestionQuestionAssign)
 
 typedef enum FcTokenType {
 #define FC_TT_ENUM(name) TT_##name,

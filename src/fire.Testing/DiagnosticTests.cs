@@ -365,8 +365,9 @@ static class DiagnosticTests
 
         // ---- Ruhrpott-Raser: a keyword where a name is expected, static initialisers in order, a temporary kept by a constructor, lines going on ----
         {
-            foreach (var (src, word, code) in new[] { ("int where = 3\nprint(where)", "where", "E3057"), ("class A {\n    static int F(int from) { return from }\n}", "from", "E3145"),
-                                                       ("var base = 1", "base", "E3055"), ("class A {\n    int under\n}", "under", "E3137") })
+            // (`where`, `from`, `is`, `of`, `under` are contextual words - names, tests/cases/native/4560 - `in`, `on`, `base`, `word` stay keywords)
+            foreach (var (src, word, code) in new[] { ("int in = 3\nprint(in)", "in", "E3057"), ("class A {\n    static int F(int on) { return on }\n}", "on", "E3145"),
+                                                       ("var base = 1", "base", "E3055"), ("class A {\n    int word\n}", "word", "E3137") })
             {
                 var (kw, _) = Compile(src);
                 Check($"Schluesselwort als Name: die Meldung nennt '{word}' und behaelt ihren Code", kw.Count == 1 && kw[0].Code == code && kw[0].Message.Contains($"'{word}' is a keyword and cannot be a name"), string.Join("\n", kw.Select(d => d.ToLogLine())));

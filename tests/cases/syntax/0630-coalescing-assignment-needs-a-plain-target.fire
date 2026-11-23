@@ -1,0 +1,7 @@
+class C { int Make() { return 1 } }
+var c = new C()
+any slots[] = new any[3]
+slots[0] ??= 2
+slots[c.Make()] ??= 3
+//# modes: Release
+//# name: syntax: the target of ??= must not contain a call (it is evaluated twice when undefined), like the target of +=

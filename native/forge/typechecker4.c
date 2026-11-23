@@ -654,6 +654,74 @@ static void CheckBlockTakeLocal(FcTC* t, const char* name, FcTLFrame* frame, int
         if (declaredThere) return;
     }
 }
+/* TC036 (TypeChecker.TakeLocal.cs CheckStoredLocal): the new value of `name` (declared by the statement at frame->index) stored plainly in a field that
+ * outlives the block */
+static const char* fcSLRoot(FcExpr* e) {
+    if (e->kind == EK_IdentifierExpr) return ((FcIdentifierExpr*)e)->name;
+    if (e->kind == EK_ThisExpr || e->kind == EK_BaseExpr) return "this";
+    if (e->kind == EK_MemberExpr) return fcSLRoot(((FcMemberExpr*)e)->target);
+    if (e->kind == EK_IndexExpr) return fcSLRoot(((FcIndexExpr*)e)->target);
+    return NULL;
+}
+static void CheckStoredLocal(FcTC* t, const char* name, FcTLFrame* frame) {
+    FcDict* inner = fcDictNew(TC_, FC_KEY_STR);
+    FcList* restT = fcListNew(TC_);
+    FcList* restN = fcListNew(TC_);
+    int k, q;
+    for (k = 0; k < frame->declared->count; k++) fcSetAdd(inner, frame->declared->items[k]);
+    for (k = 0; k < frame->statements->count; k++) {
+        FcNodes nodes = AllNodes(t, FN_STMT, frame->statements->items[k], true, false);
+        for (q = 0; q < nodes.nodes->count; q++) {
+            FcNodeTag tag = (FcNodeTag)FC_VALI(nodes.tags->items[q]);
+            void* node = nodes.nodes->items[q];
+            if (tag == FN_STMT && ((FcStmt*)node)->kind == SK_VarDeclStmt) fcSetAdd(inner, ((FcVarDeclStmt*)node)->name);
+            if (k > frame->index) { fcListAdd(TC_, restT, nodes.tags->items[q]); fcListAdd(TC_, restN, node); }
+        }
+    }
+    /* (given away, returned or overwritten anywhere in the block: no warning - the order is not followed) */
+    for (q = 0; q < restN->count; q++) {
+        FcNodeTag tag = (FcNodeTag)FC_VALI(restT->items[q]);
+        void* node = restN->items[q];
+        if (Moves(tag, node, name)) return;
+        if (tag == FN_STMT && ((FcStmt*)node)->kind == SK_ReturnStmt && ((FcReturnStmt*)node)->value && fcIsName(((FcReturnStmt*)node)->value, name)) return;
+        if (tag == FN_EXPR && (((FcExpr*)node)->kind == EK_CallExpr || ((FcExpr*)node)->kind == EK_NewExpr)) {
+            FcList* args = ((FcExpr*)node)->kind == EK_CallExpr ? ((FcCallExpr*)node)->args : ((FcNewExpr*)node)->args;
+            int a;
+            for (a = 0; a < args->count; a++) if (fcIsName((FcExpr*)args->items[a], name)) return;
+        }
+    }
+    for (q = 0; q < restN->count; q++) {
+        FcNodeTag tag = (FcNodeTag)FC_VALI(restT->items[q]);
+        FcAssignExpr* a;
+        const char* where = NULL;
+        const char* r;
+        if (tag != FN_EXPR || ((FcExpr*)restN->items[q])->kind != EK_AssignExpr) continue;
+        a = (FcAssignExpr*)restN->items[q];
+        if (!fcIsName(a->value, name)) continue;
+        if (a->target->kind == EK_MemberExpr) {
+            FcMemberExpr* m = (FcMemberExpr*)a->target;
+            if (!fcDictHas(t->tlProperties, m->name) && (r = fcSLRoot(a->target)) != NULL && !fcDictHas(inner, r)) where = TF(t, "the field '%s'", m->name);
+        } else if (a->target->kind == EK_IndexExpr && ((FcIndexExpr*)a->target)->target->kind == EK_MemberExpr) {
+            if ((r = fcSLRoot(a->target)) != NULL && !fcDictHas(inner, r)) where = TF(t, "an element of the field '%s'", ((FcMemberExpr*)((FcIndexExpr*)a->target)->target)->name);
+        }
+        if (where != NULL)
+            Report(t, TC_StoredLocalCode, TF(t, "'%s' holds a new value of its block, and %s only refers to it: the value is destroyed when the block ends, and %s then holds a destroyed object (DestroyedException at its next use). Give it to the field with '= take %s' (or '%s.TakeTo(...)'), or make it where it is kept",
+                name, where, where, name, name), a->h.line);
+    }
+}
+static void fcCollectPropertyNames(FcTC* t, FcList* statements, FcDict* names) {
+    int i;
+    for (i = 0; i < statements->count; i++) {
+        FcStmt* stmt = (FcStmt*)statements->items[i];
+        switch (stmt->kind) {
+            case SK_PropertyDecl: fcSetAdd(names, ((FcPropertyDecl*)stmt)->name); break;
+            case SK_ClassDecl: fcCollectPropertyNames(t, ((FcClassDecl*)stmt)->members, names); break;
+            case SK_NamespaceDecl: fcCollectPropertyNames(t, ((FcNamespaceDecl*)stmt)->members, names); break;
+            case SK_ClassExtensionDecl: fcCollectPropertyNames(t, ((FcClassExtensionDecl*)stmt)->members, names); break;
+            default: break;
+        }
+    }
+}
 static void fcDirectExprs(FcTC* t, FcStmt* stmt, FcList* out) {
     int i;
     switch (stmt->kind) {
@@ -685,6 +753,10 @@ static void TakeLocalWalk(FcTC* t, FcList* statements, FcTLFrame* outer, FcList*
         FcList* direct = fcListNew(TC_);
         here->statements = statements; here->index = i; here->outer = outer; here->declared = declared;
         if (outer != NULL && (name = TakeLocalTarget(stmt)) != NULL) CheckBlockTakeLocal(t, name, here, stmt->line);
+        if (stmt->kind == SK_VarDeclStmt && ((FcVarDeclStmt*)stmt)->initializer && !(outer == NULL && statements == t->tlProgramTop)) {
+            FcExprKind ik = ((FcVarDeclStmt*)stmt)->initializer->kind;
+            if (ik == EK_NewExpr || ik == EK_NewArrayExpr || ik == EK_NewBufferExpr || ik == EK_ArrayLiteralExpr) CheckStoredLocal(t, ((FcVarDeclStmt*)stmt)->name, here);
+        }
         fcDirectExprs(t, stmt, direct);
         for (k = 0; k < direct->count; k++) TakeLocalLambdas(t, (FcExpr*)direct->items[k]);
         switch (stmt->kind) {
@@ -722,6 +794,8 @@ static void TakeLocalWalk(FcTC* t, FcList* statements, FcTLFrame* outer, FcList*
 static void CheckBlockTakeLocals(FcTC* t, FcList* program) {
     int saved = t->source, i;
     FcDict* topLevel = fcDictNew(TC_, FC_KEY_STR);
+    t->tlProperties = fcDictNew(TC_, FC_KEY_STR);
+    fcCollectPropertyNames(t, program, t->tlProperties);
     for (i = 0; i < program->count; i++) {
         FcStmt* stmt = (FcStmt*)program->items[i];
         if (stmt->source < t->reportFrom) continue;
@@ -738,8 +812,10 @@ static void CheckBlockTakeLocals(FcTC* t, FcList* program) {
     }
     FC_DICT_EACH(topLevel, e) {
         t->source = atoi((const char*)e->key);
+        t->tlProgramTop = (FcList*)e->value;
         TakeLocalBody(t, (FcList*)e->value);
     }
+    t->tlProgramTop = NULL;
     t->source = saved;
 }
 
@@ -1390,6 +1466,7 @@ static void DisqualifyFields(FcTC* t) {
                 }
                 case EK_BinaryExpr: {
                     FcBinaryExpr* cmp = (FcBinaryExpr*)e;
+                    if (cmp->op == BOP_Coalesce && (n = fcAccessName(cmp->left)) != NULL) { fcSetAdd(asked, n); break; }
                     if (cmp->op != BOP_Eq && cmp->op != BOP_NotEq) break;
                     if (cmp->left->kind == EK_LiteralExpr && ((FcLiteralExpr*)cmp->left)->value.kind == VK_Undefined && (n = fcAccessName(cmp->right)) != NULL) fcSetAdd(asked, n);
                     if (cmp->right->kind == EK_LiteralExpr && ((FcLiteralExpr*)cmp->right)->value.kind == VK_Undefined && (n = fcAccessName(cmp->left)) != NULL) fcSetAdd(asked, n);

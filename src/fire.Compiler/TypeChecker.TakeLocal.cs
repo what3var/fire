@@ -9,10 +9,23 @@ namespace fire.Compiler
     // or a container from outside it (`list.Add(x)`, which takes only what belongs to the call), or x used after the block (`return x` after an `if`).
     // At the top level of a function (method, constructor, lambda, the program) TakeLocal binds x to the function's scope, and `return x` hands it
     // to the caller: no warning there - nor for a `return x` inside the block itself (the return gives it to the caller as well).
+    //
+    // TC036: `var x = new ...` (a new object, array or buffer: it belongs to its block) and then `obj.f = x` - the field only refers to it. The block
+    // ends, x is destroyed, and the field holds a destroyed object (a DestroyedException at its next use). Reported when the place outlives the block:
+    // a field of `this`, of a parameter, of a variable from outside the block or of a class (a static field), or an element of such an array - unless
+    // x is given away somewhere in the block (`take x`, `x.TakeTo(...)`, ..., `return x`) or gets another value, or the member is a property (its setter
+    // may take it). Not at the top level of the program (there the variable lives as long as the program).
     public sealed partial class TypeChecker
     {
         /// <summary>`x.TakeLocal()` in an inner block and x leaves that block (stored where it outlives the block, or used after it) - a warning in strict mode too.</summary>
         public const string BlockTakeLocalCode = "TC035";
+
+        /// <summary>A new value of a block (`var x = new ...`) stored plainly in a field that outlives the block - a warning in strict mode too.</summary>
+        public const string StoredLocalCode = "TC036";
+
+        // the names of the properties of the program (`obj.Name = x` may be a setter that takes x), and the statements of the top level of the program
+        private HashSet<string>? _tlProperties;
+        private IReadOnlyList<Stmt>? _tlProgramTop;
 
         // the methods of a container that keep their argument (List, Dictionary, HashSet, JsonObject, queues and stacks)
         private static readonly HashSet<string> s_keepingMethods = new() { "Add", "Insert", "Set", "Push", "Enqueue" };
@@ -23,6 +36,8 @@ namespace fire.Compiler
             int saved = _source;
             // (the statements of the program's top level, per file: the top level of the program's scope)
             var topLevel = new Dictionary<int, List<Stmt>>();
+            _tlProperties = new HashSet<string>();
+            CollectPropertyNames(program, _tlProperties);
             foreach (var stmt in program)
             {
                 if (stmt.Source < _reportFrom) continue;
@@ -38,9 +53,23 @@ namespace fire.Compiler
             foreach (var (source, statements) in topLevel)
             {
                 _source = source;
+                _tlProgramTop = statements;
                 TakeLocalBody(statements);
             }
+            _tlProgramTop = null;
             _source = saved;
+        }
+
+        private static void CollectPropertyNames(IEnumerable<Stmt> statements, HashSet<string> names)
+        {
+            foreach (var stmt in statements)
+                switch (stmt)
+                {
+                    case PropertyDecl p: names.Add(p.Name); break;
+                    case ClassDecl c: CollectPropertyNames(c.Members, names); break;
+                    case NamespaceDecl n: CollectPropertyNames(n.Members, names); break;
+                    case ClassExtensionDecl x: CollectPropertyNames(x.Members, names); break;
+                }
         }
 
         private void TakeLocalDecl(Stmt decl)
@@ -75,6 +104,8 @@ namespace fire.Compiler
                 var stmt = statements[i];
                 var here = new TakeLocalFrame(statements, i, outer, declared);
                 if (outer != null && TakeLocalTarget(stmt) is { } name) CheckBlockTakeLocal(name, here, stmt.Line);
+                if (stmt is VarDeclStmt { Initializer: NewExpr or NewArrayExpr or NewBufferExpr or ArrayLiteralExpr } fresh && !(outer == null && ReferenceEquals(statements, _tlProgramTop)))
+                    CheckStoredLocal(fresh.Name, here);
                 foreach (var e in DirectExprs(stmt)) TakeLocalLambdas(e);
                 switch (stmt)
                 {
@@ -161,6 +192,39 @@ namespace fire.Compiler
                     }
                 }
                 if (f.Declared.Contains(name) || Enumerable.Range(0, f.Index).Any(k => f.Statements[k] is VarDeclStmt v && v.Name == name)) return;   // (declared there: it ends with that block)
+            }
+        }
+
+        /// <summary>TC036: the new value of `name` (declared by the statement at frame.Index) stored plainly in a field that outlives the block.</summary>
+        private void CheckStoredLocal(string name, TakeLocalFrame frame)
+        {
+            // the names declared in the block (and those of its foreach/for/catch): what they hold ends with the block as well
+            var inner = new HashSet<string>(frame.Declared);
+            var rest = new List<object>();
+            for (int k = 0; k < frame.Statements.Count; k++)
+                foreach (var node in AllNodes(frame.Statements[k], intoLambdas: false))
+                {
+                    if (node is VarDeclStmt v) inner.Add(v.Name);
+                    if (k > frame.Index) rest.Add(node);
+                }
+            // (given away, returned, handed to a call - which may take it: `panel.Add(x)` - or overwritten anywhere in the block: no warning; the order
+            // is not followed)
+            foreach (var node in rest)
+                if (Moves(node, name) || node is ReturnStmt { Value: IdentifierExpr r } && r.Name == name
+                    || node is CallExpr call && call.Args.Any(arg => arg is IdentifierExpr id && id.Name == name)
+                    || node is NewExpr made && made.Args.Any(arg => arg is IdentifierExpr id && id.Name == name)) return;
+            static string? Root(Expr e) => e switch { IdentifierExpr id => id.Name, ThisExpr or BaseExpr => "this", MemberExpr m => Root(m.Target), IndexExpr ix => Root(ix.Target), _ => null };
+            foreach (var node in rest)
+            {
+                if (node is not AssignExpr { Value: IdentifierExpr value } a || value.Name != name) continue;
+                string? where = a.Target switch
+                {
+                    MemberExpr m when !_tlProperties!.Contains(m.Name) && Root(m) is { } r && !inner.Contains(r) => $"the field '{m.Name}'",
+                    IndexExpr { Target: MemberExpr m } ix when Root(ix) is { } r && !inner.Contains(r) => $"an element of the field '{m.Name}'",
+                    _ => null,
+                };
+                if (where != null)
+                    Report(StoredLocalCode, $"'{name}' holds a new value of its block, and {where} only refers to it: the value is destroyed when the block ends, and {where} then holds a destroyed object (DestroyedException at its next use). Give it to the field with '= take {name}' (or '{name}.TakeTo(...)'), or make it where it is kept", a.Line);
             }
         }
 

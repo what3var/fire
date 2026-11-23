@@ -140,4 +140,639 @@ class Json {
 
     /// <summary>JSON without classes: an object is a JsonObject, an array an array, the rest numbers, strings, bools and `undefined` (null).</summary>
     static any Parse(string text) { return __JsonCall(3, text) }
+
+    /// <summary>Json.Parse with JsonReadOptions: `new JsonReadOptions(true)` also reads comments and trailing commas.</summary>
+    static any Parse(string text, JsonReadOptions options) { return __JsonCall(3, JsonTextReader.Clean(text, options)) }
+
+    /// <summary>Json.Deserialize&lt;T&gt; with JsonReadOptions (comments, trailing commas).</summary>
+    static T Deserialize<T>(string text, JsonReadOptions options) {
+        any read = __JsonCall(2, JsonTextReader.Clean(text, options))
+        any hooks = read[1]
+        for (int i = 0; i < hooks.length; i++) { hooks[i].OnDeserialized() }
+        return read[0]
+    }
+}
+
+// ---- JSON as a tree of nodes, read and written in a fixed format (the formats of System.Text.Json) ----
+
+/// <summary>The kind of a JsonNode.</summary>
+enum JsonKind { Null, Bool, Number, String, Array, Object, Raw }
+
+/// <summary>How a JSON text is read (JsonNode.Parse, Json.Parse, Json.Deserialize). The default is strict JSON (RFC 8259), as System.Text.Json reads
+/// it; `comments` and `trailingCommas` are its `ReadCommentHandling.Skip` and `AllowTrailingCommas`.</summary>
+class JsonReadOptions {
+    /// <summary>`// ...` and `/* ... */` between the tokens are skipped (default: an error).</summary>
+    bool comments
+    /// <summary>A comma after the last element of an array or the last member of an object is allowed (default: an error).</summary>
+    bool trailingCommas
+    /// <summary>How deep arrays and objects may nest in JsonNode.Parse (default 64, as in System.Text.Json).</summary>
+    defined int maxDepth
+
+    construct() {
+        this.comments = false
+        this.trailingCommas = false
+        this.maxDepth = 64
+    }
+
+    /// <summary>`new JsonReadOptions(true)`: comments and trailing commas are allowed.</summary>
+    construct(bool lenient) {
+        this.comments = lenient
+        this.trailingCommas = lenient
+        this.maxDepth = 64
+    }
+}
+
+/// <summary>Which characters of a string the writer escapes.</summary>
+enum JsonEscaping {
+    /// <summary>The default encoder of System.Text.Json (JavaScriptEncoder.Default): a quote as `"`, everything outside of ASCII and the
+    /// characters HTML cares about as `\uXXXX`.</summary>
+    Default,
+    /// <summary>UnsafeRelaxedJsonEscaping: only quotes (`\"`), backslashes and control characters; the rest is written as it is.</summary>
+    Relaxed
+}
+
+/// <summary>How JsonNodes are written (JsonNode.ToJson). The default is compact: everything on one line, no spaces (`{"a":1,"b":[true]}`).</summary>
+class JsonWriteOptions {
+    /// <summary>One member or element per line, indented by `indent` per level, `"name": value` - System.Text.Json's `WriteIndented`.</summary>
+    bool indented
+    /// <summary>The indentation of one level (default two spaces).</summary>
+    string indent
+    /// <summary>The line break of the indented form (default "\n").</summary>
+    string newLine
+    JsonEscaping escaping
+
+    construct() {
+        this.indented = false
+        this.indent = "  "
+        this.newLine = "\n"
+        this.escaping = JsonEscaping.Default
+    }
+
+    construct(bool indented) {
+        this.indented = indented
+        this.indent = "  "
+        this.newLine = "\n"
+        this.escaping = JsonEscaping.Default
+    }
+
+    construct(bool indented, JsonEscaping escaping) {
+        this.indented = indented
+        this.indent = "  "
+        this.newLine = "\n"
+        this.escaping = escaping
+    }
+}
+
+/// <summary>A JSON value as a tree: null, a bool, a number (kept as its text, so that nothing is rounded), a string, an array or an object (its members in
+/// the order of the text; a name may come twice). Unlike JsonObject it keeps everything of the text and is written back in a fixed format.</summary>
+class JsonNode {
+    JsonKind kind
+    /// <summary>The value of a bool.</summary>
+    bool flag
+    /// <summary>The text of a number, the value of a string, the JSON of a raw value.</summary>
+    string text
+    /// <summary>The elements of an array, the values of the members of an object.</summary>
+    List<JsonNode> items
+    /// <summary>The names of the members of an object (items[i] is the value of keys[i]).</summary>
+    List<string> keys
+
+    construct(JsonKind kind) {
+        this.kind = kind
+        this.flag = false
+        this.text = ""
+        this.items = new List<JsonNode>(Owns.Values)
+        this.keys = new List<string>()
+    }
+
+    static JsonNode MakeNull() { return new JsonNode(JsonKind.Null) }
+    static JsonNode MakeBool(bool b) {
+        var n = new JsonNode(JsonKind.Bool)
+        n.flag = b
+        return n
+    }
+    /// <summary>A whole number (undefined: null).</summary>
+    static JsonNode MakeInt(int v) {
+        if (v == undefined) { return new JsonNode(JsonKind.Null) }
+        var n = new JsonNode(JsonKind.Number)
+        n.text = "" + v
+        return n
+    }
+    /// <summary>A number given as its JSON text (written as it is).</summary>
+    static JsonNode MakeNumber(string text) {
+        var n = new JsonNode(JsonKind.Number)
+        n.text = text
+        return n
+    }
+    /// <summary>A string (undefined: null).</summary>
+    static JsonNode MakeText(string s) {
+        if (s == undefined) { return new JsonNode(JsonKind.Null) }
+        var n = new JsonNode(JsonKind.String)
+        n.text = s
+        return n
+    }
+    /// <summary>A piece of JSON written as it is (System.Text.Json's WriteRawValue): in an indented array it follows the comma on the same line.</summary>
+    static JsonNode MakeRaw(string json) {
+        var n = new JsonNode(JsonKind.Raw)
+        n.text = json
+        return n
+    }
+    static JsonNode MakeArray() { return new JsonNode(JsonKind.Array) }
+    static JsonNode MakeObject() { return new JsonNode(JsonKind.Object) }
+    /// <summary>An array of the strings of a list or an array.</summary>
+    static JsonNode Strings(any list) {
+        var n = new JsonNode(JsonKind.Array)
+        foreach (s in list) { n.items.Add(JsonNode.MakeText(s)) }
+        return n
+    }
+
+    bool IsNull { get { return this.kind == JsonKind.Null } }
+    bool IsObject { get { return this.kind == JsonKind.Object } }
+    bool IsArray { get { return this.kind == JsonKind.Array } }
+    bool IsString { get { return this.kind == JsonKind.String } }
+    bool IsNumber { get { return this.kind == JsonKind.Number } }
+    bool IsBool { get { return this.kind == JsonKind.Bool } }
+    /// <summary>The number of elements of an array or members of an object.</summary>
+    defined int Count { get { return this.items.Count } }
+
+    /// <summary>Adds a member to an object (the node is taken; a name that is there already comes twice, as in a text).</summary>
+    undefined Put(string key, JsonNode value) {
+        this.keys.Add(key)
+        this.items.Add(take value)
+    }
+
+    /// <summary>Sets a member of an object: replaces the last one of that name, or adds it (the node is taken).</summary>
+    undefined Set(string key, JsonNode value) {
+        for (int i = this.keys.Count - 1; i >= 0; i--) {
+            if (this.keys[i] == key) {
+                this.items[i] = take value
+                return
+            }
+        }
+        this.keys.Add(key)
+        this.items.Add(take value)
+    }
+
+    /// <summary>Adds an element to an array (the node is taken).</summary>
+    undefined Push(JsonNode value) { this.items.Add(take value) }
+
+    /// <summary>The element of an array (or the value of the i-th member of an object).</summary>
+    JsonNode At(defined int i) { return this.items[i] }
+
+    /// <summary>The name of the i-th member of an object.</summary>
+    string KeyAt(defined int i) { return this.keys[i] }
+
+    /// <summary>The member of that name (the last of several, as System.Text.Json reads it), or undefined.</summary>
+    JsonNode Get(string key) {
+        for (int i = this.keys.Count - 1; i >= 0; i--) {
+            if (this.keys[i] == key) { return this.items[i] }
+        }
+        return undefined
+    }
+
+    /// <summary>The member of that name, without regard to case when there is no exact match (PropertyNameCaseInsensitive).</summary>
+    JsonNode GetIgnoreCase(string key) {
+        var exact = this.Get(key)
+        if (exact != undefined) { return exact }
+        string lower = key.ToLower()
+        for (int i = this.keys.Count - 1; i >= 0; i--) {
+            if (this.keys[i].ToLower() == lower) { return this.items[i] }
+        }
+        return undefined
+    }
+
+    bool Has(string key) { return this.Get(key) != undefined }
+
+    /// <summary>Is it a number without a fraction and an exponent?</summary>
+    bool IsWholeNumber() {
+        if (this.kind != JsonKind.Number) { return false }
+        return this.text.IndexOf(".") < 0 && this.text.IndexOf("e") < 0 && this.text.IndexOf("E") < 0
+    }
+
+    /// <summary>The string (undefined for null; a JsonException for another kind).</summary>
+    string AsString() {
+        if (this.kind == JsonKind.Null) { return undefined }
+        if (this.kind != JsonKind.String) { throw new JsonException("The JSON value is not a string but " + this.Describe() + ".") }
+        return this.text
+    }
+
+    /// <summary>The whole number (undefined for null; a JsonException for another kind, a fraction or a number that does not fit).</summary>
+    int AsInt() {
+        if (this.kind == JsonKind.Null) { return undefined }
+        any parsed = undefined
+        if (this.IsWholeNumber()) { parsed = this.text.TryToInt() }
+        if (parsed == undefined) { throw new JsonException("The JSON value is not a whole number but " + this.Describe() + ".") }
+        return parsed
+    }
+
+    /// <summary>The number (undefined for null; a JsonException for another kind).</summary>
+    float AsFloat() {
+        if (this.kind == JsonKind.Null) { return undefined }
+        any parsed = undefined
+        if (this.kind == JsonKind.Number) { parsed = this.text.TryToFloat() }
+        if (parsed == undefined) { throw new JsonException("The JSON value is not a number but " + this.Describe() + ".") }
+        return parsed
+    }
+
+    /// <summary>The bool (undefined for null; a JsonException for another kind).</summary>
+    bool AsBool() {
+        if (this.kind == JsonKind.Null) { return undefined }
+        if (this.kind != JsonKind.Bool) { throw new JsonException("The JSON value is not a bool but " + this.Describe() + ".") }
+        return this.flag
+    }
+
+    private string Describe() {
+        if (this.kind == JsonKind.Number) { return this.text }
+        if (this.kind == JsonKind.Bool) { return this.flag ? "true" : "false" }
+        return "" + this.kind
+    }
+
+    /// <summary>Reads JSON text strictly (RFC 8259, as System.Text.Json does by default). A JsonException says what is wrong and where, in the words of
+    /// System.Text.Json (`... LineNumber: 0 | BytePositionInLine: 5.`, both counted from 0).</summary>
+    static JsonNode Parse(string text) { return JsonTextReader.Read(text, new JsonReadOptions()) }
+
+    /// <summary>Reads JSON text with these options (comments, trailing commas, the depth).</summary>
+    static JsonNode Parse(string text, JsonReadOptions options) { return JsonTextReader.Read(text, options) }
+
+    /// <summary>The node as compact JSON (one line, no spaces), strings escaped by the default encoder.</summary>
+    string ToJson() { return JsonTextWriter.Write(this, new JsonWriteOptions()) }
+
+    /// <summary>The node as JSON in the format of the options.</summary>
+    string ToJson(JsonWriteOptions options) { return JsonTextWriter.Write(this, options) }
+}
+
+/// <summary>The reader behind JsonNode.Parse (and the lenient forms of Json.Parse and Json.Deserialize: JsonTextReader.Clean).</summary>
+class JsonTextReader {
+    private string s
+    private defined int pos
+    private defined int n
+    private JsonReadOptions options
+
+    construct(string text, JsonReadOptions options) {
+        this.s = text
+        this.pos = 0
+        this.n = text.Length
+        this.options = options
+        // a byte-order mark
+        if (this.n > 0 && this.s[0].ToInt() == 0xFEFF) { this.pos = 1 }
+    }
+
+    static JsonNode Read(string text, JsonReadOptions options) {
+        var r = new JsonTextReader(text, options)
+        r.Space()
+        if (r.pos >= r.n) { throw new JsonException(r.Where("The input does not contain any JSON tokens.")) }
+        var v = r.Value(0)
+        r.Space()
+        if (r.pos < r.n) { throw new JsonException(r.Where("'" + r.s[r.pos] + "' is invalid after a single JSON value. Expected end of data.")) }
+        return v
+    }
+
+    /// <summary>The text with the comments and trailing commas that the options allow replaced by spaces (line breaks stay): strict JSON with the same lines
+    /// and columns, for the readers of the runtime.</summary>
+    static string Clean(string text, JsonReadOptions options) {
+        if (!options.comments && !options.trailingCommas) { return text }
+        var sb = new StringBuilder()
+        // a comma waits until the next token shows whether it is a trailing one; what follows it meanwhile (spaces, comments) waits with it
+        var pending = new StringBuilder()
+        bool comma = false
+        int n = text.Length
+        int i = 0
+        while (i < n) {
+            char c = text[i]
+            if (options.comments && c == '/' && i + 1 < n && (text[i + 1] == '/' || text[i + 1] == '*')) {
+                var to = sb
+                if (comma) { to = pending }
+                if (text[i + 1] == '/') {
+                    while (i < n && text[i] != '\n') {
+                        to.Append(' ')
+                        i++
+                    }
+                    continue
+                }
+                int end = text.IndexOf("*/", i + 2)
+                // (a comment that does not end stays: the reader reports it)
+                if (end < 0) {
+                    to.Append(text.Substring(i))
+                    i = n
+                    continue
+                }
+                while (i < end + 2) {
+                    if (text[i] == '\n' || text[i] == '\r') { to.Append(text[i]) } else { to.Append(' ') }
+                    i++
+                }
+                continue
+            }
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                if (comma) { pending.Append(c) } else { sb.Append(c) }
+                i++
+                continue
+            }
+            if (comma) {
+                if (options.trailingCommas && (c == ']' || c == '}')) { sb.Append(' ') } else { sb.Append(',') }
+                sb.Append(pending.ToString())
+                pending.Clear()
+                comma = false
+            }
+            if (c == ',') {
+                comma = true
+                i++
+                continue
+            }
+            if (c == '"') {
+                int start = i
+                i++
+                while (i < n && text[i] != '"') {
+                    if (text[i] == '\\') { i++ }
+                    i++
+                }
+                if (i < n) { i++ }
+                if (i > n) { i = n }
+                sb.Append(text.Substring(start, i - start))
+                continue
+            }
+            sb.Append(c)
+            i++
+        }
+        if (comma) {
+            sb.Append(',')
+            sb.Append(pending.ToString())
+        }
+        return sb.ToString()
+    }
+
+    private string Where(string what) {
+        int line = 0
+        int col = 0
+        for (int i = 0; i < this.pos && i < this.n; i++) {
+            if (this.s[i] == '\n') {
+                line++
+                col = 0
+            } else { col++ }
+        }
+        return what + " LineNumber: " + line + " | BytePositionInLine: " + col + "."
+    }
+
+    private undefined Space() {
+        while (this.pos < this.n) {
+            char c = this.s[this.pos]
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                this.pos++
+                continue
+            }
+            if (this.options.comments && c == '/' && this.pos + 1 < this.n && this.s[this.pos + 1] == '/') {
+                while (this.pos < this.n && this.s[this.pos] != '\n') { this.pos++ }
+                continue
+            }
+            if (this.options.comments && c == '/' && this.pos + 1 < this.n && this.s[this.pos + 1] == '*') {
+                int end = this.s.IndexOf("*/", this.pos + 2)
+                if (end < 0) { throw new JsonException(this.Where("Expected end of comment, but instead reached end of data.")) }
+                this.pos = end + 2
+                continue
+            }
+            return
+        }
+    }
+
+    private JsonNode Value(defined int depth) {
+        if (depth > this.options.maxDepth) { throw new JsonException(this.Where("The maximum configured depth of " + this.options.maxDepth + " has been exceeded.")) }
+        this.Space()
+        if (this.pos >= this.n) { throw new JsonException(this.Where("Expected a value, but instead reached end of data.")) }
+        char c = this.s[this.pos]
+        if (c == '{') {
+            this.pos++
+            var obj = JsonNode.MakeObject()
+            bool afterComma = false
+            while (true) {
+                this.Space()
+                if (this.pos >= this.n) { throw new JsonException(this.Where("Expected a property name, but instead reached end of data.")) }
+                if (this.s[this.pos] == '}') {
+                    if (afterComma && !this.options.trailingCommas) {
+                        throw new JsonException(this.Where("The JSON object contains a trailing comma at the end which is not supported in this mode. Change the reader options."))
+                    }
+                    this.pos++
+                    return obj
+                }
+                if (this.s[this.pos] != '"') { throw new JsonException(this.Where("'" + this.s[this.pos] + "' is an invalid start of a property name. Expected a '\"'.")) }
+                string key = this.Str()
+                this.Space()
+                if (this.pos >= this.n || this.s[this.pos] != ':') { throw new JsonException(this.Where("Expected ':' after a property name.")) }
+                this.pos++
+                obj.Put(key, this.Value(depth + 1))
+                this.Space()
+                if (this.pos < this.n && this.s[this.pos] == ',') {
+                    this.pos++
+                    afterComma = true
+                    continue
+                }
+                if (this.pos < this.n && this.s[this.pos] == '}') {
+                    this.pos++
+                    return obj
+                }
+                throw new JsonException(this.Where("Expected either ',' or '}' after a property value."))
+            }
+        }
+        if (c == '[') {
+            this.pos++
+            var arr = JsonNode.MakeArray()
+            bool afterComma = false
+            while (true) {
+                this.Space()
+                if (this.pos >= this.n) { throw new JsonException(this.Where("Expected a value, but instead reached end of data.")) }
+                if (this.s[this.pos] == ']') {
+                    if (afterComma && !this.options.trailingCommas) {
+                        throw new JsonException(this.Where("The JSON array contains a trailing comma at the end which is not supported in this mode. Change the reader options."))
+                    }
+                    this.pos++
+                    return arr
+                }
+                arr.Push(this.Value(depth + 1))
+                this.Space()
+                if (this.pos < this.n && this.s[this.pos] == ',') {
+                    this.pos++
+                    afterComma = true
+                    continue
+                }
+                if (this.pos < this.n && this.s[this.pos] == ']') {
+                    this.pos++
+                    return arr
+                }
+                throw new JsonException(this.Where("Expected either ',' or ']' after a value."))
+            }
+        }
+        if (c == '"') { return JsonNode.MakeText(this.Str()) }
+        if (this.Word("true")) { return JsonNode.MakeBool(true) }
+        if (this.Word("false")) { return JsonNode.MakeBool(false) }
+        if (this.Word("null")) { return JsonNode.MakeNull() }
+        if (c == '-' || c.IsDigit()) {
+            int start = this.pos
+            if (this.s[this.pos] == '-') { this.pos++ }
+            int digits = this.pos
+            while (this.pos < this.n && this.s[this.pos].IsDigit()) { this.pos++ }
+            if (this.pos == digits) { throw new JsonException(this.Where("'-' is an invalid start of a value.")) }
+            if (this.pos < this.n && this.s[this.pos] == '.') {
+                this.pos++
+                while (this.pos < this.n && this.s[this.pos].IsDigit()) { this.pos++ }
+            }
+            if (this.pos < this.n && (this.s[this.pos] == 'e' || this.s[this.pos] == 'E')) {
+                this.pos++
+                if (this.pos < this.n && (this.s[this.pos] == '+' || this.s[this.pos] == '-')) { this.pos++ }
+                while (this.pos < this.n && this.s[this.pos].IsDigit()) { this.pos++ }
+            }
+            return JsonNode.MakeNumber(this.s.Substring(start, this.pos - start))
+        }
+        throw new JsonException(this.Where("'" + c + "' is an invalid start of a value."))
+    }
+
+    private bool Word(string w) {
+        if (this.pos + w.Length > this.n) { return false }
+        if (this.s.Substring(this.pos, w.Length) != w) { return false }
+        this.pos += w.Length
+        return true
+    }
+
+    static int HexValue(char h) {
+        if (h >= '0' && h <= '9') { return h.ToInt() - 48 }
+        if (h >= 'a' && h <= 'f') { return h.ToInt() - 87 }
+        if (h >= 'A' && h <= 'F') { return h.ToInt() - 55 }
+        return -1
+    }
+
+    private string Str() {
+        this.pos++
+        var sb = new StringBuilder()
+        while (true) {
+            if (this.pos >= this.n) { throw new JsonException(this.Where("Expected end of string, but instead reached end of data.")) }
+            char c = this.s[this.pos]
+            this.pos++
+            if (c == '"') { return sb.ToString() }
+            if (c.ToInt() < 32) { throw new JsonException(this.Where("'" + c + "' is invalid within a JSON string. The string should be correctly escaped.")) }
+            if (c != '\\') {
+                sb.Append(c)
+                continue
+            }
+            if (this.pos >= this.n) { throw new JsonException(this.Where("Expected end of string, but instead reached end of data.")) }
+            char e = this.s[this.pos]
+            this.pos++
+            if (e == '"') { sb.Append('"') }
+            else if (e == '\\') { sb.Append('\\') }
+            else if (e == '/') { sb.Append('/') }
+            else if (e == 'n') { sb.Append('\n') }
+            else if (e == 'r') { sb.Append('\r') }
+            else if (e == 't') { sb.Append('\t') }
+            else if (e == 'b') { sb.Append(8.ToChar()) }
+            else if (e == 'f') { sb.Append(12.ToChar()) }
+            else if (e == 'u') {
+                if (this.pos + 4 > this.n) { throw new JsonException(this.Where("'\\u' is not followed by four hex digits.")) }
+                int code = 0
+                for (int i = 0; i < 4; i++) {
+                    int v = JsonTextReader.HexValue(this.s[this.pos + i])
+                    if (v < 0) { throw new JsonException(this.Where("'\\u' is not followed by four hex digits.")) }
+                    code = code * 16 + v
+                }
+                this.pos += 4
+                sb.Append(code.ToChar())
+            } else { throw new JsonException(this.Where("'" + e + "' is an invalid escapable character within a JSON string. The string should be correctly escaped.")) }
+        }
+    }
+}
+
+/// <summary>The writer behind JsonNode.ToJson: the compact and the indented form of System.Text.Json (Utf8JsonWriter), byte for byte.</summary>
+class JsonTextWriter {
+    static string Hex4(defined int code) {
+        string digits = "0123456789ABCDEF"
+        var sb = new StringBuilder()
+        sb.Append(digits[(code >> 12) & 15])
+        sb.Append(digits[(code >> 8) & 15])
+        sb.Append(digits[(code >> 4) & 15])
+        sb.Append(digits[code & 15])
+        return sb.ToString()
+    }
+
+    /// <summary>A string as JSON (with the quotes), escaped as System.Text.Json does with that encoder.</summary>
+    static string Quote(string s, JsonEscaping escaping) {
+        bool relaxed = escaping == JsonEscaping.Relaxed
+        var sb = new StringBuilder()
+        sb.Append('"')
+        for (int i = 0; i < s.Length; i++) {
+            char c = s[i]
+            int code = c.ToInt()
+            if (c == '"') {
+                if (relaxed) { sb.Append("\\\"") } else { sb.Append("\\u0022") }
+            }
+            else if (c == '\\') { sb.Append("\\\\") }
+            else if (c == '\n') { sb.Append("\\n") }
+            else if (c == '\r') { sb.Append("\\r") }
+            else if (c == '\t') { sb.Append("\\t") }
+            else if (code == 8) { sb.Append("\\b") }
+            else if (code == 12) { sb.Append("\\f") }
+            else if (code < 32 || (code >= 0x7F && code <= 0x9F)) { sb.Append("\\u" + JsonTextWriter.Hex4(code)) }
+            else if (code >= 0xD800 && code <= 0xDFFF) {
+                // a surrogate pair stays (relaxed) - a lone one is escaped
+                bool high = code <= 0xDBFF && i + 1 < s.Length && s[i + 1].ToInt() >= 0xDC00 && s[i + 1].ToInt() <= 0xDFFF
+                if (relaxed && high) {
+                    sb.Append(c)
+                    sb.Append(s[i + 1])
+                    i++
+                } else if (high) {
+                    sb.Append("\\u" + JsonTextWriter.Hex4(code))
+                    sb.Append("\\u" + JsonTextWriter.Hex4(s[i + 1].ToInt()))
+                    i++
+                } else { sb.Append("\\uFFFD") }
+            }
+            else if (!relaxed && (code > 126 || c == '&' || c == '\'' || c == '+' || c == '<' || c == '>' || c == '`')) { sb.Append("\\u" + JsonTextWriter.Hex4(code)) }
+            else { sb.Append(c) }
+        }
+        sb.Append('"')
+        return sb.ToString()
+    }
+
+    static string Write(JsonNode node, JsonWriteOptions options) {
+        var sb = new StringBuilder()
+        JsonTextWriter.WriteTo(sb, node, 0, options)
+        return sb.ToString()
+    }
+
+    private static undefined Break(StringBuilder sb, defined int level, JsonWriteOptions options) {
+        sb.Append(options.newLine)
+        for (int i = 0; i < level; i++) { sb.Append(options.indent) }
+    }
+
+    private static undefined WriteTo(StringBuilder sb, JsonNode node, defined int level, JsonWriteOptions options) {
+        var k = node.kind
+        if (k == JsonKind.Null) { sb.Append("null") }
+        else if (k == JsonKind.Bool) {
+            if (node.flag) { sb.Append("true") } else { sb.Append("false") }
+        }
+        else if (k == JsonKind.Number || k == JsonKind.Raw) { sb.Append(node.text) }
+        else if (k == JsonKind.String) { sb.Append(JsonTextWriter.Quote(node.text, options.escaping)) }
+        else if (k == JsonKind.Array) {
+            if (node.items.Count == 0) {
+                sb.Append("[]")
+                return
+            }
+            // (a raw value - WriteRawValue - gets the comma but no new line and no indentation, as System.Text.Json writes it)
+            sb.Append("[")
+            for (int i = 0; i < node.items.Count; i++) {
+                if (i > 0) { sb.Append(",") }
+                if (options.indented && node.items[i].kind != JsonKind.Raw) { JsonTextWriter.Break(sb, level + 1, options) }
+                JsonTextWriter.WriteTo(sb, node.items[i], level + 1, options)
+            }
+            if (options.indented) { JsonTextWriter.Break(sb, level, options) }
+            sb.Append("]")
+        } else {
+            if (node.items.Count == 0) {
+                sb.Append("{}")
+                return
+            }
+            sb.Append("{")
+            for (int i = 0; i < node.items.Count; i++) {
+                if (i > 0) { sb.Append(",") }
+                if (options.indented) { JsonTextWriter.Break(sb, level + 1, options) }
+                sb.Append(JsonTextWriter.Quote(node.keys[i], options.escaping))
+                if (options.indented) { sb.Append(": ") } else { sb.Append(":") }
+                JsonTextWriter.WriteTo(sb, node.items[i], level + 1, options)
+            }
+            if (options.indented) { JsonTextWriter.Break(sb, level, options) }
+            sb.Append("}")
+        }
+    }
 }

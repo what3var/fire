@@ -102,6 +102,27 @@ for (int i = 0; i < 3; i++) { fs.Add(() => (taking i)) }
 foreach (g in fs) { print(g()) }        // 0 1 2
 ```
 
+### Using a list without copying it: sorting by keys
+
+Capturing is by value: a comparator that reads a list of the code around it (`index.Sort((a, b) => orders[a] - orders[b])`) gets a **deep copy**
+of `orders` when the lambda is made (`TC023`). The copy is lent to the calls (it is only read), so it is made once per lambda, not per comparison -
+but it costs the time and memory of copying the whole list (and of what its elements own) every time such a lambda is made, and a change of
+`orders` after that is not seen. This is the rule, not a slip: a lambda never refers to a local of its caller, so it can outlive it, go to a thread
+or into a field.
+
+To use the list itself, bind it with `on` - the lambda then refers to the object, nothing is copied:
+
+```fire
+var orders = new List<int>([30, 10, 20])
+var index = new List<int>([0, 1, 2])
+index.Sort(func (int a, int b) on orders => this[a] - this[b])   // `this` is the bound list
+print(", ".Join(index))                                          // 1, 2, 0
+```
+
+For more than one value, put them into an object (a small class with the lists as fields, or the object the method belongs to: `on this`) and bind
+that, or pass the list as a parameter of a lambda you call yourself. A lambda bound with `on` must not outlive the object it is bound to (the call of
+`Sort` does not). Globals (the variables of the top-level code) are not captured at all, so a lambda there reads them as they are.
+
 ### A lambda has an owner
 
 A lambda belongs to an owner like an object (see [Ownership](13-ownership.md)): the scope of the variable it is assigned to first, the object or the list it is

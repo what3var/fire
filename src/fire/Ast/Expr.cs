@@ -170,7 +170,8 @@ namespace fire.Ast
     public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy, Take, Trust, TryTake }
     public sealed record UnaryExpr(int Line, UnaryOp Op, Expr Operand) : Expr(Line);
 
-    public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power, ShiftRightLogical }
+    /// <summary>`Coalesce` is `a ?? b`: a, or b when a is undefined (b is evaluated only then, like the right side of `&amp;&amp;` and `||`).</summary>
+    public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power, ShiftRightLogical, Coalesce }
     public sealed record BinaryExpr(int Line, BinaryOp Op, Expr Left, Expr Right) : Expr(Line)
     {
         /// <summary>`a ^ b` whose target is a float (set by the type checker, SPEC 1.1): the float power (OpCode.PowerFloat) even of two ints, which otherwise give

@@ -31,14 +31,15 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | Import | Contents |
 |---|---|
 | `"time"` | `Sleep(duration)`, `DateTime` (`Now`, `UtcNow`, `Today`, `Parse`, arithmetic), `TimeSpan` |
-| `"random"` | `PseudoRandom`: `Next()`, `Next(max)`, `Next(min, max)`, `NextFloat()`, `NextBool()`, `Pick(list)`, `Shuffle(list)` (a `List` or an array) |
-| `"json"` | `Json.Serialize(value)`, `Json.Deserialize<T>(text)`, `Json.Parse(text)` (`JsonObject`), `[NonSerialized]`/`[JsonName "x"]` on fields - see JSON (`docs/stdlib/json.md`) |
+| `"random"` | `PseudoRandom`: `Next()`, `Next(max)`, `Next(min, max)`, `NextFloat()`, `NextBool()`, `Pick(list)`, `Shuffle(list)` (a `List` or an array); `Guid`: `NewGuid()`, `Parse`, `TryParse`, `ToString("D"/"N"/"B"/"P")` - see Random numbers (`docs/stdlib/more.md`) |
+| `"json"` | `Json.Serialize(value)`, `Json.Deserialize<T>(text)`, `Json.Parse(text)` (`JsonObject`), `[NonSerialized]`/`[JsonName "x"]` on fields, `JsonNode` (read strictly or with comments and trailing commas, written compact or indented) - see JSON (`docs/stdlib/json.md`) |
+| `"regex"` | regular expressions: `new Regex(pattern, options)`, `IsMatch`, `Match` (groups, named groups), `Matches`, `Replace` (`$1`, `${name}`), `Split`, `Regex.Escape` - a backtracking subset of .NET's syntax, see Regular expressions (`docs/stdlib/regex.md`) |
 | `"circuits"` | circuit simulation after Falstad: `Circuits.Circuit`, parts (`Resistor`, `Capacitor`, `Inductor`, sources, `Switch`) with ports, nested circuits, `Scope`, `Multimeter`, `Fft`; the units `V`, `A`, `Ohm`, `F`, `H`, `Hz` - see Circuits (`docs/circuits/README.md`) |
 | `"testing"` | namespace `Testing`: `Assert` (`AreEqual`, `IsTrue`, `Throws`, ...) for the tests that `forge test` runs - see Testing: forge test (`docs/tools/testing.md`) |
 | `"linq"` | queries over arrays, lists and `IEnumerable`s - see [Arrays and lists](07-arrays-and-lists.md#queries-import-linq) |
 | `"process"` | `Process.Run(file, args)` (exit code and output), `Process.Start` with pipes as IO streams, `WaitForExit`, `Kill`, the output line by line as events - see Processes: (`docs/stdlib/process.md`) |
 | `"hash"` | `Hash.Sha256.HexOf(data)` / `.Of(data)` (also `Sha1`, `Sha384`, `Sha512`, `Md5`), `Hash.Crc32.Of`, `Hash.Adler32.Of`, `Hash.Hmac`, incremental hashers (`Update`, `Finish`), `Hash.Hex`; data is bytes, a string (UTF-8) or a stream - see Hash functions (`docs/stdlib/hash.md`) |
-| `"compression"` | `Compression.GZip.Compress/Decompress` (also `Deflate`, `ZLib`), `GZipStream`/`DeflateStream`/`ZLibStream` as IO streams, Zip archives: `Zip.Archive.Open`/`Create`, `Entries`, `ExtractTo`, `Add`, `CreateFromDirectory` - see Compression and Zip (`docs/stdlib/compression.md`) |
+| `"compression"` | `Compression.GZip.Compress/Decompress` (also `Deflate`, `ZLib`), `GZipStream`/`DeflateStream`/`ZLibStream` as IO streams, Zip archives: `Zip.Archive.Open`/`Create`, `Entries`, `ExtractTo`, `Add`, `CreateFromDirectory`, tar and .tar.gz archives to read: `Tar.Archive.Open`, `ExtractTo` - see Compression, Zip and Tar (`docs/stdlib/compression.md`) |
 | `"reflection"` | `Type`, `Member`, `Reflect`, selectors - see [Probes and reflection](16-probes-and-reflection.md) |
 | `"io"` | namespace `IO`: streams (`MemoryStream`, your own), text (`TextReader`, `TextWriter`, `Utf8`), console input and output (`Stdio`) |
 | `"console"` | the text console: `Console.Write`/`WriteAt` in colour (`ConsoleColor`), `Clear`, the cursor, single keys (`ReadKey`, `KeyAvailable`, `ConsoleKey`) - see The text console (`docs/stdlib/console.md`) |
@@ -99,7 +100,7 @@ print(Math.Min(weights))            // 500g
 | Member | What |
 |---|---|
 | `Environment.Args` | the arguments of the program as a `string[]`, without the program's name |
-| `Environment.ProgramPath` | the path of the running program (the executable; for `forge run` and *Run* in spark the main source file) |
+| `Environment.ProgramPath` | the path of the running executable: of a built program (`forge build`, VM or native) the program itself; under `forge run` (and *Run* in spark), which run the source in the virtual machine `fire`, the path of `fire` - not of the source file |
 | `Environment.Get(name)` | the value of an environment variable, `undefined` if it is not set |
 | `Environment.Set(name, value)` | sets a variable for the program and the processes it starts; `undefined` removes it |
 | `Environment.Variables` | all variables as a `Dictionary<string, string>` (sorted by name) |

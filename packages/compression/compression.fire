@@ -834,3 +834,257 @@ namespace Zip {
         }
     }
 }
+
+// ---- Tar (ustar, pax and the GNU long names), also as .tar.gz ----
+
+namespace Tar {
+    enum EntryType { File, Directory, SymbolicLink, HardLink, Other }
+
+    // An archive that cannot be read as tar, or a name that would land outside of the target folder.
+    class TarException : IO.IOException {
+        construct(string message) : base(message, 9) { }
+    }
+
+    // An entry of a tar archive: a file, a folder, a link (a link is listed, not extracted).
+    class Entry {
+        Tar.Archive archive
+        string fullName
+        string linkName = ""
+        defined int length
+        defined int dataOffset
+        defined int mode
+        defined int mtime
+        defined int typeFlag
+
+        // The path in the archive ("docs/readme.txt"; a folder's has no "/" at the end).
+        string FullName { get { return this.fullName } }
+        // The last part of the path ("readme.txt").
+        string Name {
+            get {
+                any cut = this.fullName.LastIndexOf("/")
+                if (cut < 0) { return this.fullName }
+                return this.fullName.Substring(cut + 1)
+            }
+        }
+        defined int Length { get { return this.length } }
+        // The permissions of Unix (0644 is 420).
+        defined int Mode { get { return this.mode } }
+        // The target of a link.
+        string LinkName { get { return this.linkName } }
+        // The type flag of the header as it is ('0' a file, '5' a folder, '2' a symbolic link ...).
+        char TypeFlag { get { return this.typeFlag.ToChar() } }
+        Tar.EntryType Type {
+            get {
+                int t = this.typeFlag
+                if (t == 48 || t == 0 || t == 55) { return Tar.EntryType.File }
+                if (t == 53) { return Tar.EntryType.Directory }
+                if (t == 50) { return Tar.EntryType.SymbolicLink }
+                if (t == 49) { return Tar.EntryType.HardLink }
+                return Tar.EntryType.Other
+            }
+        }
+        bool IsDirectory { get { return this.Type == Tar.EntryType.Directory } }
+        bool IsFile { get { return this.Type == Tar.EntryType.File } }
+        // The time of the last change (UTC, from the seconds since 1970 of the header).
+        DateTime LastWriteTime { get { return DateTime.FromUnixSeconds(this.mtime) } }
+        // The seconds since 1970 of the header.
+        defined int UnixTime { get { return this.mtime } }
+
+        byte[] ReadAllBytes() {
+            if (!this.IsFile) { return new byte[0] }
+            return this.archive.data.Slice(this.dataOffset, this.length)
+        }
+        string ReadAllText() { return IO.Utf8.GetString(this.archive.data, this.dataOffset, this.length) }
+
+        // Writes the entry into a file (a folder entry makes the folder; a link or another type is skipped); an existing file only with `overwrite`.
+        undefined ExtractToFile(string path, bool overwrite = false) {
+            if (this.IsDirectory) {
+                IO.Directory.CreateDirectory(path)
+                return
+            }
+            if (!this.IsFile) { return }
+            if (!overwrite && IO.File.Exists(path)) { throw new IO.FileExistsException("The file '" + path + "' already exists.") }
+            var parent = IO.Path.GetDirectoryName(path)
+            if (parent != undefined && parent != "") { IO.Directory.CreateDirectory(parent) }
+            IO.File.WriteAllBytes(path, this.ReadAllBytes())
+        }
+    }
+
+    // A tar archive read into memory: plain tar, or gzip around it (.tar.gz, .tgz - told by the first bytes, not by the name).
+    class Archive {
+        byte data[]
+        List<Tar.Entry> entries
+
+        construct() { this.entries = new List<Tar.Entry>(Owns.Values) }
+
+        // The entries in the order of the archive (pax and GNU headers are applied to their entry, not listed).
+        List<Tar.Entry> Entries { get { return this.entries } }
+        defined int Count { get { return this.entries.Count } }
+
+        static Tar.Archive Open(string path) { return Tar.Archive.FromBytes(IO.File.ReadAllBytes(path)) }
+
+        static Tar.Archive Read(IO.Stream stream) { return Tar.Archive.FromBytes(stream.ReadAll()) }
+
+        // A tar archive from its bytes; gzip data (1F 8B) is decompressed first (Compression.InvalidDataException when that is broken).
+        static Tar.Archive FromBytes(byte bytes[]) {
+            var a = new Tar.Archive()
+            if (bytes.length >= 2 && bytes[0] == 0x1F && bytes[1] == 0x8B) { a.data = Compression.GZip.Decompress(bytes) } else { a.data = bytes }
+            a.data.TakeTo(a)
+            a.ReadEntries()
+            return a
+        }
+
+        Tar.Entry GetEntry(string fullName) {
+            foreach (e in this.entries) { if (e.fullName == fullName) { return e } }
+            return undefined
+        }
+
+        // A number of a header: octal digits, ended by a space or a zero (GNU's base-256 form for big values too).
+        static defined int Octal(byte h[], defined int at, defined int length) {
+            if ((h[at] & 0x80) != 0) {
+                int big = h[at] & 0x7F
+                for (int i = at + 1; i < at + length; i++) { big = big * 256 + h[i] }
+                return big
+            }
+            int value = 0
+            bool digits = false
+            for (int i = at; i < at + length; i++) {
+                int c = h[i]
+                if (c == 0 || c == 32) {
+                    if (digits) { break }
+                    continue
+                }
+                if (c < 48 || c > 55) { throw new Tar.TarException("A bad number in a tar header.") }
+                value = value * 8 + (c - 48)
+                digits = true
+            }
+            return value
+        }
+
+        // A text field of a header (up to its first zero), UTF-8.
+        static string Text(byte h[], defined int at, defined int length) {
+            int end = at
+            while (end < at + length && h[end] != 0) { end++ }
+            return IO.Utf8.GetString(h, at, end - at)
+        }
+
+        // The value of a key of pax records ("len key=value\n"), or undefined.
+        static string Pax(byte data[], defined int at, defined int size, string key) {
+            int pos = at
+            int stop = at + size
+            while (pos < stop) {
+                int space = pos
+                while (space < stop && data[space] != 32) { space++ }
+                if (space >= stop) { break }
+                any len = IO.Utf8.GetString(data, pos, space - pos).TryToInt()
+                if (len == undefined || len <= space - pos + 1 || pos + len > stop) { break }
+                // (the length counts the bytes of the whole record, with its own digits and the line break)
+                string record = IO.Utf8.GetString(data, space + 1, pos + len - space - 1)
+                int eq = record.IndexOf("=")
+                if (eq > 0 && record.Substring(0, eq) == key) {
+                    string value = record.Substring(eq + 1)
+                    if (value.EndsWith("\n")) { value = value.Substring(0, value.Length - 1) }
+                    return value
+                }
+                pos = pos + len
+            }
+            return undefined
+        }
+
+        undefined ReadEntries() {
+            var d = this.data
+            int pos = 0
+            string longName = undefined
+            string longLink = undefined
+            any paxSize = undefined
+            while (pos + 512 <= d.length) {
+                bool zero = true
+                for (int i = pos; i < pos + 512 && zero; i++) { if (d[i] != 0) { zero = false } }
+                // (the end: two zero blocks - one is enough)
+                if (zero) { break }
+                // (the check sum: the bytes of the header with its own field as spaces - unsigned, or signed as some old tools wrote it)
+                int sum = 0
+                int signed = 0
+                for (int i = pos; i < pos + 512; i++) {
+                    int b = d[i]
+                    if (i >= pos + 148 && i < pos + 156) { b = 32 }
+                    sum += b
+                    if (b >= 128) { signed += b - 256 } else { signed += b }
+                }
+                int stored = Tar.Archive.Octal(d, pos + 148, 8)
+                if (stored != sum && stored != signed) { throw new Tar.TarException("A tar header with a wrong check sum (at byte " + pos + ").") }
+                int size = Tar.Archive.Octal(d, pos + 124, 12)
+                int type = d[pos + 156]
+                if (paxSize != undefined && type != 120 && type != 103) { size = paxSize }
+                int start = pos + 512
+                if (size < 0 || start + size > d.length) { throw new Tar.TarException("The archive ends inside an entry.") }
+                int next = start + ((size + 511) / 512) * 512
+                if (type == 120 || type == 103 || type == 76 || type == 75) {
+                    // a pax header of the next entry (x), a global one (g: not applied), a GNU long name (L) or long link name (K)
+                    if (type == 76) { longName = Tar.Archive.Text(d, start, size) }
+                    if (type == 75) { longLink = Tar.Archive.Text(d, start, size) }
+                    if (type == 120) {
+                        string p = Tar.Archive.Pax(d, start, size, "path")
+                        if (p != undefined) { longName = p }
+                        string l = Tar.Archive.Pax(d, start, size, "linkpath")
+                        if (l != undefined) { longLink = l }
+                        string s = Tar.Archive.Pax(d, start, size, "size")
+                        if (s != undefined) { paxSize = s.TryToInt() }
+                    }
+                    pos = next
+                    continue
+                }
+                var e = new Tar.Entry()
+                e.archive = this
+                string name = Tar.Archive.Text(d, pos, 100)
+                if (Tar.Archive.Text(d, pos + 257, 5) == "ustar") {
+                    string prefix = Tar.Archive.Text(d, pos + 345, 155)
+                    if (prefix.Length > 0) { name = prefix + "/" + name }
+                }
+                if (longName != undefined) { name = longName }
+                e.linkName = Tar.Archive.Text(d, pos + 157, 100)
+                if (longLink != undefined) { e.linkName = longLink }
+                while (name.EndsWith("/") && name.Length > 1) { name = name.Substring(0, name.Length - 1) }
+                e.fullName = name
+                e.length = size
+                e.dataOffset = start
+                e.mode = Tar.Archive.Octal(d, pos + 100, 8)
+                e.mtime = Tar.Archive.Octal(d, pos + 136, 12)
+                e.typeFlag = type
+                this.entries.Add(e)
+                longName = undefined
+                longLink = undefined
+                paxSize = undefined
+                pos = next
+            }
+            if (pos < d.length && pos + 512 > d.length) { throw new Tar.TarException("The archive ends inside a header.") }
+        }
+
+        // Extracts the files and folders into `folder` (links and other types are skipped). Every name is checked first: one that would land outside of
+        // `folder` ("../x", "/etc/x", "C:\x") is a TarException and nothing is written.
+        undefined ExtractTo(string folder, bool overwrite = false) {
+            var root = IO.Path.GetFullPath(folder)
+            var targets = new List<string>()
+            foreach (e in this.entries) { targets.Add(Tar.Archive.TargetOf(root, e.fullName)) }
+            IO.Directory.CreateDirectory(root)
+            for (var i = 0; i < this.entries.Count; i++) { this.entries[i].ExtractToFile(targets[i], overwrite) }
+        }
+
+        // Where an entry goes inside `root` (a full path); a TarException for a name that leaves it.
+        static string TargetOf(string root, string name) {
+            any relative = name.Replace("\\", "/")
+            if (relative.StartsWith("/") || (relative.Length >= 2 && relative[1] == ':')) { throw new Tar.TarException("The entry '" + name + "' has an absolute path: it is not extracted.") }
+            foreach (part in relative.Split("/")) {
+                if (part == "..") { throw new Tar.TarException("The entry '" + name + "' would land outside of the target folder: it is not extracted.") }
+            }
+            var full = IO.Path.GetFullPath(IO.Path.Combine(root, relative))
+            var inside = root
+            if (!inside.EndsWith(IO.Path.DirectorySeparatorChar)) { inside = inside + IO.Path.DirectorySeparatorChar }
+            if (!full.StartsWith(inside) && full + IO.Path.DirectorySeparatorChar != inside) { throw new Tar.TarException("The entry '" + name + "' would land outside of the target folder: it is not extracted.") }
+            return full
+        }
+
+        // Extracts an archive file (.tar, .tar.gz) into `folder`.
+        static undefined ExtractToDirectory(string tarPath, string folder, bool overwrite = false) { Tar.Archive.Open(tarPath).ExtractTo(folder, overwrite) }
+    }
+}

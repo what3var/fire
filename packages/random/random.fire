@@ -132,3 +132,148 @@ class PseudoRandom {
         return list
     }
 }
+// A 128-bit identifier (RFC 9562, the GUID of .NET): NewGuid (version 4), Parse, ToString in the forms of .NET.
+class Guid {
+    private byte data[]
+    // the generator of NewGuid(): made at the first call, seeded from the clock and the state of the process
+    private static PseudoRandom shared = undefined
+
+    construct() { this.data = new byte[16] }
+
+    // The Guid of all zeros.
+    static Guid Empty { get { return new Guid() } }
+
+    // A new random Guid (version 4, variant RFC 9562). Its bits come from a PseudoRandom seeded once per program from the clock and the memory of the
+    // process: unique in practice, but not unguessable - for a token use Guid.FromBytes(Net.SecureRandom.Bytes(16)).
+    static Guid NewGuid() {
+        if (Guid.shared == undefined) {
+            defined int seed = DateTime.UtcNow.Ticks
+            seed = seed # (Environment.ProcessMemory << 20) # Environment.FreeMemory
+            Guid.shared = new PseudoRandom(seed)
+        }
+        return Guid.NewGuid(Guid.shared)
+    }
+
+    // A new version 4 Guid with the bits of this generator (the same seed gives the same Guids).
+    static Guid NewGuid(PseudoRandom random) {
+        var g = new Guid()
+        for (int i = 0; i < 16; i += 4) {
+            defined int v = random.NextUInt32()
+            g.data[i] = (v >> 24) & 255
+            g.data[i + 1] = (v >> 16) & 255
+            g.data[i + 2] = (v >> 8) & 255
+            g.data[i + 3] = v & 255
+        }
+        g.data[6] = (g.data[6] & 15) | 64
+        g.data[8] = (g.data[8] & 63) | 128
+        return g
+    }
+
+    // A Guid of 16 bytes in the order of its text (RFC 9562, big-endian) - not the order of .NET's ToByteArray, whose first three fields are little-endian.
+    // The bytes are taken as they are (version and variant included).
+    static Guid FromBytes(byte bytes[]) {
+        if (bytes == undefined || bytes.length != 16) { throw new ArgumentException("A Guid is made of 16 bytes.") }
+        var g = new Guid()
+        for (int i = 0; i < 16; i++) { g.data[i] = bytes[i] }
+        return g
+    }
+
+    // The 16 bytes in the order of the text (see FromBytes).
+    byte[] ToBytes() {
+        var b = new byte[16]
+        for (int i = 0; i < 16; i++) { b[i] = this.data[i] }
+        return b
+    }
+
+    // Reads the forms of .NET: "D" (8-4-4-4-12 hex digits), "N" (32 digits), "B" ({D}), "P" ((D)); either case, spaces around it. An ArgumentException
+    // for anything else.
+    static Guid Parse(string text) {
+        var g = Guid.TryParse(text)
+        if (g == undefined) { throw new ArgumentException("'" + text + "' is not a Guid (32 hex digits, as 8-4-4-4-12 with hyphens, optionally in {} or ()).") }
+        return g
+    }
+
+    // Like Parse, undefined when the text is not a Guid.
+    static Guid TryParse(string text) {
+        if (text == undefined) { return undefined }
+        string t = text.Trim()
+        if (t.Length == 38 && ((t[0] == '{' && t[37] == '}') || (t[0] == '(' && t[37] == ')'))) { t = t.Substring(1, 36) }
+        if (t.Length == 36) {
+            if (t[8] != '-' || t[13] != '-' || t[18] != '-' || t[23] != '-') { return undefined }
+            t = t.Substring(0, 8) + t.Substring(9, 4) + t.Substring(14, 4) + t.Substring(19, 4) + t.Substring(24)
+        }
+        if (t.Length != 32) { return undefined }
+        var g = new Guid()
+        for (int i = 0; i < 16; i++) {
+            int hi = Guid.Hex(t[i * 2])
+            int lo = Guid.Hex(t[i * 2 + 1])
+            if (hi < 0 || lo < 0) { return undefined }
+            g.data[i] = hi * 16 + lo
+        }
+        return g
+    }
+
+    private static defined int Hex(char h) {
+        if (h >= '0' && h <= '9') { return h.ToInt() - 48 }
+        if (h >= 'a' && h <= 'f') { return h.ToInt() - 87 }
+        if (h >= 'A' && h <= 'F') { return h.ToInt() - 55 }
+        return -1
+    }
+
+    // The text in the form "D": 8-4-4-4-12 lower-case hex digits, as .NET writes it.
+    string ToString() { return this.ToString("D") }
+
+    // "D" (with hyphens), "N" (32 digits), "B" ({...}), "P" ((...)); an upper-case letter does the same (the digits stay lower-case, as in .NET).
+    string ToString(string format) {
+        string f = format.ToUpper()
+        string digits = "0123456789abcdef"
+        var sb = new StringBuilder()
+        if (f == "B") { sb.Append('{') }
+        if (f == "P") { sb.Append('(') }
+        if (f != "D" && f != "N" && f != "B" && f != "P") { throw new ArgumentException("The format of a Guid is \"D\", \"N\", \"B\" or \"P\", not \"" + format + "\".") }
+        for (int i = 0; i < 16; i++) {
+            if (f != "N" && (i == 4 || i == 6 || i == 8 || i == 10)) { sb.Append('-') }
+            int b = this.data[i]
+            sb.Append(digits[b >> 4])
+            sb.Append(digits[b & 15])
+        }
+        if (f == "B") { sb.Append('}') }
+        if (f == "P") { sb.Append(')') }
+        return sb.ToString()
+    }
+
+    // The version (4 for NewGuid, the high four bits of byte 6).
+    defined int Version { get { return this.data[6] >> 4 } }
+
+    bool IsEmpty {
+        get {
+            for (int i = 0; i < 16; i++) { if (this.data[i] != 0) { return false } }
+            return true
+        }
+    }
+
+    // Two Guids are equal when their bits are.
+    bool operator==(any other) {
+        if (!(other is of Guid)) { return false }
+        return this.CompareTo(other) == 0
+    }
+
+    bool operator!=(any other) { return !(this == other) }
+
+    bool Equals(any other) { return this == other }
+
+    defined int GetHashCode() {
+        defined int h = 0
+        for (int i = 0; i < 16; i++) { h = (h * 31 + this.data[i]) & 2147483647 }
+        return h
+    }
+
+    // -1, 0 or 1: the order of the bytes (of the text).
+    defined int CompareTo(any other) {
+        byte o[] = other.ToBytes()
+        for (int i = 0; i < 16; i++) {
+            if (this.data[i] != o[i]) { return this.data[i] < o[i] ? -1 : 1 }
+        }
+        return 0
+    }
+}

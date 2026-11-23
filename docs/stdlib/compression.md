@@ -1,4 +1,4 @@
-# Compression and Zip (`#import "compression"`)
+# Compression, Zip and Tar (`#import "compression"`)
 
 The package `fire-compression` compresses with Deflate - as raw data, with the zlib framing or as gzip - and reads and writes Zip archives. The Deflate is the
 package's own C (no zlib, no library): the compressed bytes are the same in the virtual machine, in a native build, with TinyCC and on a board, and the
@@ -81,6 +81,29 @@ Zip64 is written only where a number does not fit, so an archive below 4 GB with
 
 `Zip.Archive.TestZip64Limits(size, count)` lowers the limits (Zip64 from `size` bytes and `count` entries on) so that tests take these paths with a few bytes;
 `TestZip64Limits(0, 0)` restores 4 GB / 65535.
+
+## Tar
+
+`Tar.Archive` reads tar archives - plain or as `.tar.gz`/`.tgz` (gzip is told by the first two bytes, `1F 8B`, not by the name) - as GitHub, `git archive`,
+GNU tar, bsdtar and Python's `tarfile` write them: ustar (with the `prefix` field), pax extended headers (`path`, `linkpath`, `size`; a global header `g` is
+skipped) and the GNU long names (`L`, `K`; GNU's base-256 numbers too). The archive is read into memory. Writing tar is not supported.
+
+```fire
+#import "compression"
+
+var a = Tar.Archive.Open("kit-1.0.0.tar.gz")
+foreach (e in a.Entries) { print(e.Type + " " + e.FullName + " " + e.Length) }
+print(a.GetEntry("kit-1.0.0/README.md").ReadAllText())
+a.ExtractTo("out")
+```
+
+| Member | Meaning |
+|---|---|
+| `Tar.Archive.Open(path)`, `Tar.Archive.Read(stream)`, `Tar.Archive.FromBytes(bytes)` | an archive to read, gzipped or not |
+| `archive.Entries`, `archive.Count`, `archive.GetEntry(fullName)` | the entries in the order of the archive (pax and GNU headers are applied to their entry, not listed); `GetEntry` gives `undefined` for a name that is not there |
+| `archive.ExtractTo(folder, overwrite = false)`, `Tar.Archive.ExtractToDirectory(tarPath, folder, overwrite = false)` | extracts the files and folders - links and other types (devices, FIFOs) are skipped; every name is checked first: one that would land outside of `folder` (`../x`, `/etc/x`, `C:\x`) is a `TarException` and nothing is written |
+| `Tar.Entry` | `FullName` (without a `/` at the end, also for a folder), `Name`, `Length`, `Type` (`Tar.EntryType.File`, `Directory`, `SymbolicLink`, `HardLink`, `Other`), `IsFile`, `IsDirectory`, `TypeFlag` (the flag of the header as a `char`), `Mode` (the Unix permissions), `LinkName`, `LastWriteTime` (UTC), `UnixTime`; `ReadAllBytes()`, `ReadAllText()`, `ExtractToFile(path, overwrite = false)` |
+| `Tar.TarException` | (an `IO.IOException`) a header with a wrong check sum or a bad number, an archive that ends inside a header or an entry, a name outside of the target folder; broken gzip is a `Compression.InvalidDataException` |
 
 ## Implementation
 

@@ -1,0 +1,9 @@
+one two|x
+arr zero
+3
+42
+4
+The arguments of a process are a string[] or a List<string>, not one string (each argument reaches the program as it is: ["-c", "echo hi"]).
+The arguments of a process are a string[] or a List<string>, not a value of another kind.
+Argument 0 of the process is undefined.
+0

@@ -32,7 +32,7 @@ class NetChannelLines {
             while (size < this.count + n) { size = size * 2 }
             byte grown[] = new byte[size]
             for (int i = 0; i < this.count; i++) { grown[i] = this.data[i] }
-            this.data = grown
+            this.data = take grown
         }
         for (int i = 0; i < n; i++) { this.data[this.count + i] = buffer[i] }
         this.count = this.count + n

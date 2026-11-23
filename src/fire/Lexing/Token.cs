@@ -67,6 +67,8 @@ namespace fire.Lexing
         KwWord, // 'word' - the machine word of the target, unsigned, without a unit (SPEC 8.10); `word a[]` is a buffer of words (at the end: the numbers of the others stay)
         QuestionDot,          // '?.'  -> `a?.b`: only when a is not undefined
         QuestionQuestionDot,  // '??.' -> `a??.b`: only when a is not undefined and has the member b (checked at run time where the type cannot prove it)
+        QuestionQuestion,       // '??'  -> `a ?? b`: a, or b when a is undefined (null-coalescing)
+        QuestionQuestionAssign, // '??=' -> `a ??= b`: b goes into a only when a is undefined (desugared by Parser.ParseAssignment to `a ?? (a = b)`)
     }
 
     public readonly struct Token

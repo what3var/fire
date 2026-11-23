@@ -92,7 +92,7 @@ class PackageStore {
             if (other != undefined && !Ci.Eq(other.Name, manifest.name)) { throw new PackageException("The import '" + import.name + "' already belongs to the package '" + other.Name + "'.") }
         }
         IO.Directory.CreateDirectory(this.root)
-        string temp = IO.Path.Combine(this.root, ".tmp-" + Guid.NewText())
+        string temp = IO.Path.Combine(this.root, ".tmp-" + Guid.NewGuid().ToString("N"))
         try {
             Fpk.Extract(fpkPath, temp)
             string target = IO.Path.Combine(this.root, manifest.name)
@@ -155,8 +155,8 @@ class GitHubLockEntry {
         return text
     }
 
-    static GitHubLockEntry Read(JNode v, string path) {
-        if (v.kind != JNode.KObject) { throw Json2.Mismatch(v, "fire.Package.Manager.GitHubLockEntry", path) }
+    static GitHubLockEntry Read(JsonNode v, string path) {
+        if (v.kind != JsonKind.Object) { throw Json2.Mismatch(v, "fire.Package.Manager.GitHubLockEntry", path) }
         var e = new GitHubLockEntry()
         e.repository = Json2.Str(v, "repository", path, e.repository, true)
         e.reference = Json2.Str(v, "ref", path, e.reference, true)
@@ -172,19 +172,19 @@ class GitHubLockEntry {
         return e
     }
 
-    JNode ToNode() {
-        var n = JNode.MakeObject()
-        n.Put("repository", JNode.MakeText(this.repository))
-        n.Put("ref", JNode.MakeText(this.reference))
-        n.Put("kind", JNode.MakeText(this.kind))
-        if (this.tag != undefined) { n.Put("tag", JNode.MakeText(this.tag)) }
-        n.Put("commit", JNode.MakeText(this.commit))
-        if (this.asset != undefined) { n.Put("asset", JNode.MakeText(this.asset)) }
-        n.Put("sha256", JNode.MakeText(this.sha256))
-        n.Put("verified", JNode.MakeText(this.verified))
-        n.Put("package", JNode.MakeText(this.package))
-        n.Put("version", JNode.MakeText(this.version))
-        n.Put("installed", JNode.MakeText(this.installed))
+    JsonNode ToNode() {
+        var n = JsonNode.MakeObject()
+        n.Put("repository", JsonNode.MakeText(this.repository))
+        n.Put("ref", JsonNode.MakeText(this.reference))
+        n.Put("kind", JsonNode.MakeText(this.kind))
+        if (this.tag != undefined) { n.Put("tag", JsonNode.MakeText(this.tag)) }
+        n.Put("commit", JsonNode.MakeText(this.commit))
+        if (this.asset != undefined) { n.Put("asset", JsonNode.MakeText(this.asset)) }
+        n.Put("sha256", JsonNode.MakeText(this.sha256))
+        n.Put("verified", JsonNode.MakeText(this.verified))
+        n.Put("package", JsonNode.MakeText(this.package))
+        n.Put("version", JsonNode.MakeText(this.version))
+        n.Put("installed", JsonNode.MakeText(this.installed))
         return n
     }
 
@@ -234,26 +234,26 @@ class PackageLock {
         var result = new PackageLock()
         result.path = path
         if (!IO.File.Exists(path)) { return result }
-        JNode root = undefined
+        JsonNode root = undefined
         try {
             root = JsonReader.Parse(IO.File.ReadAllText(path))
-            if (root.kind == JNode.KNull) { return result }
-            if (root.kind != JNode.KObject) { throw Json2.Mismatch(root, "fire.Package.Manager.PackageLock", "$") }
+            if (root.kind == JsonKind.Null) { return result }
+            if (root.kind != JsonKind.Object) { throw Json2.Mismatch(root, "fire.Package.Manager.PackageLock", "$") }
             result.format = Json2.IntOf(root, "format", "$", 1, true)
-            var list = root.GetCi("github")
-            if (list != undefined && list.kind != JNode.KNull) {
-                if (list.kind != JNode.KArray) { throw Json2.Mismatch(list, "System.Collections.Generic.List`1[fire.Package.Manager.GitHubLockEntry]", "$.github") }
+            var list = root.GetIgnoreCase("github")
+            if (list != undefined && list.kind != JsonKind.Null) {
+                if (list.kind != JsonKind.Array) { throw Json2.Mismatch(list, "System.Collections.Generic.List`1[fire.Package.Manager.GitHubLockEntry]", "$.github") }
                 for (int i = 0; i < list.items.Count; i++) { result.github.Add(GitHubLockEntry.Read(list.items[i], "$.github[" + i + "]")) }
             }
-        } catch (JsonError e) { throw new PackageException(path + " is not valid: " + e.message) }
+        } catch (JsonException e) { throw new PackageException(path + " is not valid: " + e.message) }
         if (result.format > 1) { throw new PackageException(path + " has format " + result.format + "; this version of ember reads format 1 - a newer ember is needed.") }
         return result
     }
 
     string ToJson() {
-        var n = JNode.MakeObject()
-        n.Put("format", JNode.MakeInt(this.format))
-        var list = JNode.MakeArray()
+        var n = JsonNode.MakeObject()
+        n.Put("format", JsonNode.MakeInt(this.format))
+        var list = JsonNode.MakeArray()
         foreach (e in this.github) { list.Push(e.ToNode()) }
         n.Put("gitHub", list)
         return Json2.Write(n, true)

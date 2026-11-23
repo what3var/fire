@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-regex",
+  "type": "library",
+  "import": "regex",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'regex' of fire: regular expressions (a backtracking engine in fire; prelude)."
+  }
+}

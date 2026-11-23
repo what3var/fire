@@ -8,6 +8,6 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'random' of fire: prelude."
+    "description": "The standard library 'random' of fire: PseudoRandom and Guid (prelude)."
   }
 }

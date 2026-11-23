@@ -1,0 +1,15 @@
+6
+Directory 8 repo-abc 0 493 
+File 18 README.md 6 420 
+File 21 kit.fire 14 420 
+SymbolicLink 13 link 0 420 README.md
+File 142 file.txt 14 420 
+File 135 ü.txt 9 420 
+# kit
+2023 1700000000
+6 pax path
+class Kit { }
+False
+A tar header with a wrong check sum (at byte 0).
+The archive ends inside an entry.
+gzip: The compressed data ends too early.

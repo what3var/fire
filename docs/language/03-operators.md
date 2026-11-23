@@ -6,8 +6,9 @@ From the loosest to the tightest binding:
 
 | Operators | Meaning |
 |---|---|
-| `=` `+=` `-=` `*=` `/=` `%=` `^=` `&=` `\|=` `#=` `<<=` `>>=` `>>>=` | assignment (right-associative) |
+| `=` `+=` `-=` `*=` `/=` `%=` `^=` `&=` `\|=` `#=` `<<=` `>>=` `>>>=` `??=` | assignment (right-associative) |
 | `cond ? a : b` | conditional (right-associative) |
+| `a ?? b` | null-coalescing: `a`, or `b` when `a` is `undefined` (right-associative, see below) |
 | `\|\|` `or` | logical or |
 | `&&` `and` | logical and |
 | `\|` | bitwise or (int only) |
@@ -173,6 +174,33 @@ class Bag {
     construct() { this.item = new Item() }
 }
 ```
+
+## Null-coalescing: `??` and `??=`
+
+`a ?? b` is `a` when it is not `undefined`, otherwise `b`. `a` is evaluated once; `b` only when it is needed (like the right side of `&&` and `||`).
+Only `undefined` counts: `false`, `0`, `""` and an empty list are values. `a ??= b` puts `b` into `a` only when `a` is `undefined` (and gives what `a` holds
+then); it is `a ?? (a = b)`, so - as with `+=` - its target must not contain a call, `++`, `--` or an assignment.
+
+```fire
+string name = undefined
+print(name ?? "nobody")                 // nobody
+print(node?.next?.name ?? "no next")    // ?. and ?? together: the chain gives undefined, ?? the fallback
+int count = undefined
+print((count ?? 0) + 1)                 // 1 - ?? binds looser than +, write the brackets
+name ??= "Ada"
+name ??= "Grace"                        // name is defined: nothing happens
+print(name)                             // Ada
+this.items ??= new List<string>()       // a field made on first use (the object owns the new list)
+```
+
+- **Precedence** as in C#: below `||` and above `?:` - `a ?? b || c` is `a ?? (b || c)`, `a ?? b ? x : y` is `(a ?? b) ? x : y`. It is
+  right-associative: `a ?? b ?? c` is `a ?? (b ?? c)`. At the start of a line `??` continues the expression of the line before, like the other
+  binary operators.
+- **Type**: the common type of both sides (as for `c ? a : b`): `string ?? string` is a `string`, `Dog ?? Cat` their nearest base class, an `int`
+  and a `float` a `float`, other mixtures `any`. The result is `defined` when `b` is (or `a` is): `int total = (n ?? 0) + 1` gives the type checker no
+  `TC022`. Like `== undefined` it counts as asking whether a field is undefined (a field is then not derived as never undefined).
+- `??` tests only for `undefined`, never calls an `operator==` of the class. A destroyed object is not `undefined`.
+- An expression tree (`lambda expression<T>`) cannot hold `??` (`TC030`): write `a != undefined ? a : b` there.
 
 ## Conditional access: `?.` and `??.`
 

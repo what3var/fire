@@ -52,10 +52,8 @@ namespace fire.Compiler
             ["catch"] = TokenType.Catch,
             ["finally"] = TokenType.Finally,
             ["throw"] = TokenType.Throw,
-            ["is"] = TokenType.Is,
-            ["of"] = TokenType.Of,
-            ["from"] = TokenType.From,
-            ["under"] = TokenType.Under,
+            // (`is`, `of`, `from`, `under` and `where` are contextual: identifiers the parser reads as words where they mean something - `x is of T`,
+            // `x is from o`, `x is under o`, `coerce from`, `where T is of A` - and names everywhere else; TokenType.Is ... stay for the numbering)
             ["extern"] = TokenType.Extern,
             ["unsafe"] = TokenType.Unsafe,
             ["interface"] = TokenType.Interface,
@@ -74,7 +72,6 @@ namespace fire.Compiler
             ["default"] = TokenType.Default,
             ["break"] = TokenType.Break,
             ["continue"] = TokenType.Continue,
-            ["where"] = TokenType.Where,
             ["fire"] = TokenType.Fire,
             ["taking"] = TokenType.Taking,
             ["handover"] = TokenType.Handover,
@@ -721,6 +718,9 @@ namespace fire.Compiler
                     // `a?.b`, `a??.b` (conditional access) - not `c ?.5 : x` (a number after the dot stays the conditional operator)
                     if (Peek() == '.' && !char.IsDigit(PeekNext())) { Advance(); return Tok(TokenType.QuestionDot, "?.", line, col, newlineBefore); }
                     if (Peek() == '?' && PeekNext() == '.') { Advance(); Advance(); return Tok(TokenType.QuestionQuestionDot, "??.", line, col, newlineBefore); }
+                    // `a ?? b`, `a ??= b`
+                    if (Peek() == '?' && PeekNext() == '=') { Advance(); Advance(); return Tok(TokenType.QuestionQuestionAssign, "??=", line, col, newlineBefore); }
+                    if (Match('?')) return Tok(TokenType.QuestionQuestion, "??", line, col, newlineBefore);
                     return Tok(TokenType.Question, "?", line, col, newlineBefore);
 
                 case ':':

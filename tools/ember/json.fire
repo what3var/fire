@@ -2,452 +2,66 @@
 #import "compression"
 #import "hash"
 #import "http"
+#import "json"
 #import "process"
 #import "random"
 #import "time"
 
-// ember: JSON as ember reads and writes it (the files of System.Text.Json in the C# ember: package.json, ember-lock.json, index.json, ember.json).
-// Reading takes comments and trailing commas (as the C# ember does); writing is the indented form of System.Text.Json: two spaces per level,
-// `"name": value`, `[]`/`{}` for empty lists, and one of its two escapers (the relaxed one of package.json and the lock file, the default one of index.json).
+// ember: JSON as ember reads and writes it (the files of System.Text.Json in the C# ember: package.json, ember-lock.json, index.json, ember.json), with the
+// JsonNode of the package json. Reading takes comments and trailing commas (as the C# ember does); writing is the indented form of System.Text.Json: two
+// spaces per level, `"name": value`, `[]`/`{}` for empty lists, and one of its two escapers (the relaxed one of package.json and the lock file, the
+// default one of index.json).
 
-/// <summary>A JSON value: null, a bool, a number (its text), a string, an array or an object (members in order).</summary>
-class JNode {
-    static int KNull = 0
-    static int KBool = 1
-    static int KNumber = 2
-    static int KText = 3
-    static int KArray = 4
-    static int KObject = 5
-    /// <summary>Only for writing: `text` is written as it is (a value on one line, as `WriteRawValue` does).</summary>
-    static int KRaw = 6
-
-    int kind
-    bool flag
-    string text
-    List<JNode> items
-    List<string> keys
-
-    construct(int kind) {
-        this.kind = kind
-        this.flag = false
-        this.text = ""
-        this.items = new List<JNode>(Owns.Values)
-        this.keys = new List<string>()
-    }
-
-    static JNode MakeNull() { return new JNode(JNode.KNull) }
-    static JNode MakeBool(bool b) {
-        var n = new JNode(JNode.KBool)
-        n.flag = b
-        return n
-    }
-    static JNode MakeInt(int v) {
-        var n = new JNode(JNode.KNumber)
-        n.text = "" + v
-        return n
-    }
-    static JNode MakeText(string s) {
-        if (s == undefined) { return new JNode(JNode.KNull) }
-        var n = new JNode(JNode.KText)
-        n.text = s
-        return n
-    }
-    static JNode MakeRaw(string s) {
-        var n = new JNode(JNode.KRaw)
-        n.text = s
-        return n
-    }
-    static JNode MakeArray() { return new JNode(JNode.KArray) }
-    static JNode MakeObject() { return new JNode(JNode.KObject) }
-    /// <summary>An array of the strings of a list.</summary>
-    static JNode Strings(List<string> list) {
-        var n = new JNode(JNode.KArray)
-        foreach (s in list) { n.items.Add(JNode.MakeText(s)) }
-        return n
-    }
-
-    bool IsNull { get { return this.kind == JNode.KNull } }
-    bool IsObject { get { return this.kind == JNode.KObject } }
-    bool IsArray { get { return this.kind == JNode.KArray } }
-    bool IsString { get { return this.kind == JNode.KText } }
-    defined int Count { get { return this.items.Count } }
-
-    /// <summary>Adds a member (an object) - the node is taken.</summary>
-    undefined Put(string key, JNode value) {
-        this.keys.Add(key)
-        this.items.Add(take value)
-    }
-
-    /// <summary>Adds an element (an array) - the node is taken.</summary>
-    undefined Push(JNode value) { this.items.Add(take value) }
-
-    /// <summary>The member of that name (exact; the last of several), or undefined.</summary>
-    JNode Get(string key) {
-        for (int i = this.keys.Count - 1; i >= 0; i--) {
-            if (this.keys[i] == key) { return this.items[i] }
-        }
-        return undefined
-    }
-
-    /// <summary>The member of that name, not case sensitive when there is no exact match (PropertyNameCaseInsensitive).</summary>
-    JNode GetCi(string key) {
-        var exact = this.Get(key)
-        if (exact != undefined) { return exact }
-        string lower = key.ToLower()
-        for (int i = this.keys.Count - 1; i >= 0; i--) {
-            if (this.keys[i].ToLower() == lower) { return this.items[i] }
-        }
-        return undefined
-    }
-
-    /// <summary>The number as an int (it must be a whole number).</summary>
-    bool IsWholeNumber() {
-        if (this.kind != JNode.KNumber) { return false }
-        return this.text.IndexOf(".") < 0 && this.text.IndexOf("e") < 0 && this.text.IndexOf("E") < 0
-    }
-}
-
-/// <summary>A JSON text that cannot be read, or a value of the wrong kind.</summary>
-class JsonError : Exception {
-    construct(string message) : base(message) { }
-}
-
-/// <summary>Reads JSON text (with `//` and `/* */` comments and trailing commas).</summary>
+/// <summary>Reads JSON text as the C# ember does: with `//` and `/* */` comments and trailing commas.</summary>
 class JsonReader {
-    string s
-    defined int pos
-    defined int n
-
-    construct(string text) {
-        this.s = text
-        this.pos = 0
-        this.n = text.Length
-        // a byte-order mark
-        if (this.n > 0 && this.s[0].ToInt() == 0xFEFF) { this.pos = 1 }
-    }
-
-    static JNode Parse(string text) {
-        var r = new JsonReader(text)
-        r.Space()
-        if (r.pos >= r.n) { throw new JsonError(r.Where("The input does not contain any JSON tokens.")) }
-        var v = r.Value(0)
-        r.Space()
-        if (r.pos < r.n) { throw new JsonError(r.Where("'" + r.s[r.pos] + "' is invalid after a single JSON value. Expected end of data.")) }
-        return v
-    }
-
-    string Where(string what) {
-        int line = 0
-        int col = 0
-        for (int i = 0; i < this.pos && i < this.n; i++) {
-            if (this.s[i] == '\n') {
-                line++
-                col = 0
-            } else { col++ }
-        }
-        return what + " LineNumber: " + line + " | BytePositionInLine: " + col + "."
-    }
-
-    undefined Space() {
-        while (this.pos < this.n) {
-            char c = this.s[this.pos]
-            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                this.pos++
-                continue
-            }
-            if (c == '/' && this.pos + 1 < this.n && this.s[this.pos + 1] == '/') {
-                while (this.pos < this.n && this.s[this.pos] != '\n') { this.pos++ }
-                continue
-            }
-            if (c == '/' && this.pos + 1 < this.n && this.s[this.pos + 1] == '*') {
-                int end = this.s.IndexOf("*/", this.pos + 2)
-                if (end < 0) { throw new JsonError(this.Where("Expected end of comment, but instead reached end of data.")) }
-                this.pos = end + 2
-                continue
-            }
-            return
-        }
-    }
-
-    JNode Value(defined int depth) {
-        if (depth > 64) { throw new JsonError(this.Where("The maximum configured depth of 64 has been exceeded.")) }
-        this.Space()
-        if (this.pos >= this.n) { throw new JsonError(this.Where("Expected a value, but instead reached end of data.")) }
-        char c = this.s[this.pos]
-        if (c == '{') {
-            this.pos++
-            var obj = JNode.MakeObject()
-            while (true) {
-                this.Space()
-                if (this.pos >= this.n) { throw new JsonError(this.Where("Expected a property name, but instead reached end of data.")) }
-                if (this.s[this.pos] == '}') {
-                    this.pos++
-                    return obj
-                }
-                if (this.s[this.pos] != '"') { throw new JsonError(this.Where("'" + this.s[this.pos] + "' is an invalid start of a property name. Expected a '\"'.")) }
-                string key = this.Str()
-                this.Space()
-                if (this.pos >= this.n || this.s[this.pos] != ':') { throw new JsonError(this.Where("Expected ':' after a property name.")) }
-                this.pos++
-                obj.Put(key, this.Value(depth + 1))
-                this.Space()
-                if (this.pos < this.n && this.s[this.pos] == ',') {
-                    this.pos++
-                    continue
-                }
-                if (this.pos < this.n && this.s[this.pos] == '}') {
-                    this.pos++
-                    return obj
-                }
-                throw new JsonError(this.Where("Expected either ',' or '}' after a property value."))
-            }
-        }
-        if (c == '[') {
-            this.pos++
-            var arr = JNode.MakeArray()
-            while (true) {
-                this.Space()
-                if (this.pos >= this.n) { throw new JsonError(this.Where("Expected a value, but instead reached end of data.")) }
-                if (this.s[this.pos] == ']') {
-                    this.pos++
-                    return arr
-                }
-                arr.Push(this.Value(depth + 1))
-                this.Space()
-                if (this.pos < this.n && this.s[this.pos] == ',') {
-                    this.pos++
-                    continue
-                }
-                if (this.pos < this.n && this.s[this.pos] == ']') {
-                    this.pos++
-                    return arr
-                }
-                throw new JsonError(this.Where("Expected either ',' or ']' after a value."))
-            }
-        }
-        if (c == '"') { return JNode.MakeText(this.Str()) }
-        if (this.Word("true")) { return JNode.MakeBool(true) }
-        if (this.Word("false")) { return JNode.MakeBool(false) }
-        if (this.Word("null")) { return JNode.MakeNull() }
-        if (c == '-' || c.IsDigit()) {
-            int start = this.pos
-            if (this.s[this.pos] == '-') { this.pos++ }
-            int digits = this.pos
-            while (this.pos < this.n && this.s[this.pos].IsDigit()) { this.pos++ }
-            if (this.pos == digits) { throw new JsonError(this.Where("'-' is an invalid start of a value.")) }
-            if (this.pos < this.n && this.s[this.pos] == '.') {
-                this.pos++
-                while (this.pos < this.n && this.s[this.pos].IsDigit()) { this.pos++ }
-            }
-            if (this.pos < this.n && (this.s[this.pos] == 'e' || this.s[this.pos] == 'E')) {
-                this.pos++
-                if (this.pos < this.n && (this.s[this.pos] == '+' || this.s[this.pos] == '-')) { this.pos++ }
-                while (this.pos < this.n && this.s[this.pos].IsDigit()) { this.pos++ }
-            }
-            var num = new JNode(JNode.KNumber)
-            num.text = this.s.Substring(start, this.pos - start)
-            return num
-        }
-        throw new JsonError(this.Where("'" + c + "' is an invalid start of a value."))
-    }
-
-    bool Word(string w) {
-        if (this.pos + w.Length > this.n) { return false }
-        if (this.s.Substring(this.pos, w.Length) != w) { return false }
-        this.pos += w.Length
-        return true
-    }
-
-    string Str() {
-        this.pos++
-        var sb = new StringBuilder()
-        while (true) {
-            if (this.pos >= this.n) { throw new JsonError(this.Where("Expected end of string, but instead reached end of data.")) }
-            char c = this.s[this.pos]
-            this.pos++
-            if (c == '"') { return sb.ToString() }
-            if (c.ToInt() < 32) { throw new JsonError(this.Where("'" + c + "' is invalid within a JSON string. The string should be correctly escaped.")) }
-            if (c != '\\') {
-                sb.Append(c)
-                continue
-            }
-            if (this.pos >= this.n) { throw new JsonError(this.Where("Expected end of string, but instead reached end of data.")) }
-            char e = this.s[this.pos]
-            this.pos++
-            if (e == '"') { sb.Append('"') }
-            else if (e == '\\') { sb.Append('\\') }
-            else if (e == '/') { sb.Append('/') }
-            else if (e == 'n') { sb.Append('\n') }
-            else if (e == 'r') { sb.Append('\r') }
-            else if (e == 't') { sb.Append('\t') }
-            else if (e == 'b') { sb.Append(8.ToChar()) }
-            else if (e == 'f') { sb.Append(12.ToChar()) }
-            else if (e == 'u') {
-                if (this.pos + 4 > this.n) { throw new JsonError(this.Where("'\\u' is not followed by four hex digits.")) }
-                int code = 0
-                for (int i = 0; i < 4; i++) {
-                    int v = Json2.HexValue(this.s[this.pos + i])
-                    if (v < 0) { throw new JsonError(this.Where("'\\u' is not followed by four hex digits.")) }
-                    code = code * 16 + v
-                }
-                this.pos += 4
-                sb.Append(code.ToChar())
-            } else { throw new JsonError(this.Where("'" + e + "' is an invalid escapable character within a JSON string. The string should be correctly escaped.")) }
-        }
-    }
+    static JsonNode Parse(string text) { return JsonNode.Parse(text, new JsonReadOptions(true)) }
 }
 
-/// <summary>Writes JSON like System.Text.Json with WriteIndented (two spaces, `\n`).</summary>
+/// <summary>Writes JSON like System.Text.Json with WriteIndented, and reads typed values the way it does.</summary>
 class Json2 {
-    static int HexValue(char h) {
-        if (h >= '0' && h <= '9') { return h.ToInt() - 48 }
-        if (h >= 'a' && h <= 'f') { return h.ToInt() - 87 }
-        if (h >= 'A' && h <= 'F') { return h.ToInt() - 55 }
-        return -1
-    }
+    static string Quote(string s, bool relaxed) { return JsonTextWriter.Quote(s, relaxed ? JsonEscaping.Relaxed : JsonEscaping.Default) }
 
-    static string Hex4(defined int code) {
-        string digits = "0123456789ABCDEF"
-        var sb = new StringBuilder()
-        sb.Append(digits[(code >> 12) & 15])
-        sb.Append(digits[(code >> 8) & 15])
-        sb.Append(digits[(code >> 4) & 15])
-        sb.Append(digits[code & 15])
-        return sb.ToString()
-    }
-
-    /// <summary>A string as JSON: `relaxed` is UnsafeRelaxedJsonEscaping (only quotes, backslashes and control characters), else the default
-    /// encoder of System.Text.Json (also everything outside of ASCII and the characters HTML cares about).</summary>
-    static string Quote(string s, bool relaxed) {
-        var sb = new StringBuilder()
-        sb.Append('"')
-        for (int i = 0; i < s.Length; i++) {
-            char c = s[i]
-            int code = c.ToInt()
-            if (c == '"') {
-                if (relaxed) { sb.Append("\\\"") } else { sb.Append("\\u0022") }
-            }
-            else if (c == '\\') { sb.Append("\\\\") }
-            else if (c == '\n') { sb.Append("\\n") }
-            else if (c == '\r') { sb.Append("\\r") }
-            else if (c == '\t') { sb.Append("\\t") }
-            else if (code == 8) { sb.Append("\\b") }
-            else if (code == 12) { sb.Append("\\f") }
-            else if (code < 32 || (code >= 0x7F && code <= 0x9F)) { sb.Append("\\u" + Json2.Hex4(code)) }
-            else if (code >= 0xD800 && code <= 0xDFFF) {
-                // a surrogate pair stays (relaxed) - a lone one is escaped
-                bool high = code <= 0xDBFF && i + 1 < s.Length && s[i + 1].ToInt() >= 0xDC00 && s[i + 1].ToInt() <= 0xDFFF
-                if (relaxed && high) {
-                    sb.Append(c)
-                    sb.Append(s[i + 1])
-                    i++
-                } else if (high) {
-                    sb.Append("\\u" + Json2.Hex4(code))
-                    sb.Append("\\u" + Json2.Hex4(s[i + 1].ToInt()))
-                    i++
-                } else { sb.Append("\\uFFFD") }
-            }
-            else if (!relaxed && (code > 126 || c == '&' || c == '\'' || c == '+' || c == '<' || c == '>' || c == '`')) { sb.Append("\\u" + Json2.Hex4(code)) }
-            else { sb.Append(c) }
-        }
-        sb.Append('"')
-        return sb.ToString()
-    }
-
-    static string Write(JNode node, bool relaxed) {
-        var sb = new StringBuilder()
-        Json2.WriteTo(sb, node, 0, relaxed)
-        return sb.ToString()
-    }
-
-    static undefined Indent(StringBuilder sb, defined int level) {
-        for (int i = 0; i < level; i++) { sb.Append("  ") }
-    }
-
-    static undefined WriteTo(StringBuilder sb, JNode node, defined int level, bool relaxed) {
-        int k = node.kind
-        if (k == JNode.KNull) { sb.Append("null") }
-        else if (k == JNode.KBool) {
-            if (node.flag) { sb.Append("true") } else { sb.Append("false") }
-        }
-        else if (k == JNode.KNumber || k == JNode.KRaw) { sb.Append(node.text) }
-        else if (k == JNode.KText) { sb.Append(Json2.Quote(node.text, relaxed)) }
-        else if (k == JNode.KArray) {
-            if (node.items.Count == 0) {
-                sb.Append("[]")
-                return
-            }
-            // (a raw value - WriteRawValue - gets the comma but no new line and no indentation, as System.Text.Json writes it)
-            sb.Append("[")
-            for (int i = 0; i < node.items.Count; i++) {
-                if (i > 0) { sb.Append(",") }
-                if (node.items[i].kind != JNode.KRaw) {
-                    sb.Append("\n")
-                    Json2.Indent(sb, level + 1)
-                }
-                Json2.WriteTo(sb, node.items[i], level + 1, relaxed)
-            }
-            sb.Append("\n")
-            Json2.Indent(sb, level)
-            sb.Append("]")
-        } else {
-            if (node.items.Count == 0) {
-                sb.Append("{}")
-                return
-            }
-            sb.Append("{\n")
-            for (int i = 0; i < node.items.Count; i++) {
-                if (i > 0) { sb.Append(",\n") }
-                Json2.Indent(sb, level + 1)
-                sb.Append(Json2.Quote(node.keys[i], relaxed))
-                sb.Append(": ")
-                Json2.WriteTo(sb, node.items[i], level + 1, relaxed)
-            }
-            sb.Append("\n")
-            Json2.Indent(sb, level)
-            sb.Append("}")
-        }
-    }
+    static string Write(JsonNode node, bool relaxed) { return node.ToJson(new JsonWriteOptions(true, relaxed ? JsonEscaping.Relaxed : JsonEscaping.Default)) }
 
     // ---- reading typed values (System.Text.Json: a value of the wrong kind is an error; null is null) ----
 
-    static string Kind(JNode n) {
+    static string Kind(JsonNode n) {
         string names[] = ["Null", "True", "Number", "String", "StartArray", "StartObject", "Raw"]
-        if (n.kind == JNode.KBool && !n.flag) { return "False" }
-        return names[n.kind]
+        if (n.kind == JsonKind.Bool && !n.flag) { return "False" }
+        return names[n.kind!int]
     }
 
-    static JsonError Mismatch(JNode n, string type, string path) {
-        return new JsonError("The JSON value could not be converted to " + type + ". Path: " + path + ".")
+    static JsonException Mismatch(JsonNode n, string type, string path) {
+        return new JsonException("The JSON value could not be converted to " + type + ". Path: " + path + ".")
     }
 
     /// <summary>A string member: undefined when it is missing (then `fallback`) or null.</summary>
-    static string Str(JNode obj, string key, string path, string fallback, bool ci = false) {
-        JNode v = undefined
-        if (ci) { v = obj.GetCi(key) } else { v = obj.Get(key) }
+    static string Str(JsonNode obj, string key, string path, string fallback, bool ci = false) {
+        JsonNode v = undefined
+        if (ci) { v = obj.GetIgnoreCase(key) } else { v = obj.Get(key) }
         if (v == undefined) { return fallback }
-        if (v.kind == JNode.KNull) { return undefined }
-        if (v.kind != JNode.KText) { throw Json2.Mismatch(v, "System.String", path + "." + key) }
+        if (v.kind == JsonKind.Null) { return undefined }
+        if (v.kind != JsonKind.String) { throw Json2.Mismatch(v, "System.String", path + "." + key) }
         return v.text
     }
 
-    static any BoolOf(JNode obj, string key, string path, any fallback, bool ci = false) {
-        JNode v = undefined
-        if (ci) { v = obj.GetCi(key) } else { v = obj.Get(key) }
+    static any BoolOf(JsonNode obj, string key, string path, any fallback, bool ci = false) {
+        JsonNode v = undefined
+        if (ci) { v = obj.GetIgnoreCase(key) } else { v = obj.Get(key) }
         if (v == undefined) { return fallback }
-        if (v.kind == JNode.KNull) {
+        if (v.kind == JsonKind.Null) {
             if (fallback == undefined) { return undefined }
             throw Json2.Mismatch(v, "System.Boolean", path + "." + key)
         }
-        if (v.kind != JNode.KBool) { throw Json2.Mismatch(v, "System.Boolean", path + "." + key) }
+        if (v.kind != JsonKind.Bool) { throw Json2.Mismatch(v, "System.Boolean", path + "." + key) }
         return v.flag
     }
 
-    static any IntOf(JNode obj, string key, string path, any fallback, bool ci = false) {
-        JNode v = undefined
-        if (ci) { v = obj.GetCi(key) } else { v = obj.Get(key) }
+    static any IntOf(JsonNode obj, string key, string path, any fallback, bool ci = false) {
+        JsonNode v = undefined
+        if (ci) { v = obj.GetIgnoreCase(key) } else { v = obj.Get(key) }
         if (v == undefined) { return fallback }
-        if (v.kind == JNode.KNull && fallback == undefined) { return undefined }
+        if (v.kind == JsonKind.Null && fallback == undefined) { return undefined }
         if (!v.IsWholeNumber()) { throw Json2.Mismatch(v, "System.Int32", path + "." + key) }
         any parsed = v.text.TryToInt()
         if (parsed == undefined) { throw Json2.Mismatch(v, "System.Int32", path + "." + key) }
@@ -455,40 +69,40 @@ class Json2 {
     }
 
     /// <summary>A list of strings: undefined when the member is missing (the caller keeps its default) or null.</summary>
-    static List<string> StrList(JNode obj, string key, string path, bool ci = false) {
-        JNode v = undefined
-        if (ci) { v = obj.GetCi(key) } else { v = obj.Get(key) }
-        if (v == undefined || v.kind == JNode.KNull) { return undefined }
-        if (v.kind != JNode.KArray) { throw Json2.Mismatch(v, "System.Collections.Generic.List`1[System.String]", path + "." + key) }
+    static List<string> StrList(JsonNode obj, string key, string path, bool ci = false) {
+        JsonNode v = undefined
+        if (ci) { v = obj.GetIgnoreCase(key) } else { v = obj.Get(key) }
+        if (v == undefined || v.kind == JsonKind.Null) { return undefined }
+        if (v.kind != JsonKind.Array) { throw Json2.Mismatch(v, "System.Collections.Generic.List`1[System.String]", path + "." + key) }
         var list = new List<string>()
         for (int i = 0; i < v.items.Count; i++) {
             var item = v.items[i]
-            if (item.kind == JNode.KNull) { list.Add(undefined) }
-            else if (item.kind != JNode.KText) { throw Json2.Mismatch(item, "System.String", path + "." + key + "[" + i + "]") }
+            if (item.kind == JsonKind.Null) { list.Add(undefined) }
+            else if (item.kind != JsonKind.String) { throw Json2.Mismatch(item, "System.String", path + "." + key + "[" + i + "]") }
             else { list.Add(item.text) }
         }
         return list
     }
 
     /// <summary>A dictionary of strings (in the order of the text).</summary>
-    static Dictionary<string, string> StrMap(JNode obj, string key, string path) {
+    static Dictionary<string, string> StrMap(JsonNode obj, string key, string path) {
         var v = obj.Get(key)
-        if (v == undefined || v.kind == JNode.KNull) { return undefined }
-        if (v.kind != JNode.KObject) { throw Json2.Mismatch(v, "System.Collections.Generic.Dictionary`2[System.String,System.String]", path + "." + key) }
+        if (v == undefined || v.kind == JsonKind.Null) { return undefined }
+        if (v.kind != JsonKind.Object) { throw Json2.Mismatch(v, "System.Collections.Generic.Dictionary`2[System.String,System.String]", path + "." + key) }
         var map = new Dictionary<string, string>()
         for (int i = 0; i < v.items.Count; i++) {
             var item = v.items[i]
-            if (item.kind == JNode.KNull) { map[v.keys[i]] = undefined }
-            else if (item.kind != JNode.KText) { throw Json2.Mismatch(item, "System.String", path + "." + key + "." + v.keys[i]) }
+            if (item.kind == JsonKind.Null) { map[v.keys[i]] = undefined }
+            else if (item.kind != JsonKind.String) { throw Json2.Mismatch(item, "System.String", path + "." + key + "." + v.keys[i]) }
             else { map[v.keys[i]] = item.text }
         }
         return map
     }
 
     /// <summary>A string map as an object node.</summary>
-    static JNode MapNode(Dictionary<string, string> map) {
-        var n = JNode.MakeObject()
-        foreach (pair in map) { n.Put(pair.Key, JNode.MakeText(pair.Value)) }
+    static JsonNode MapNode(Dictionary<string, string> map) {
+        var n = JsonNode.MakeObject()
+        foreach (pair in map) { n.Put(pair.Key, JsonNode.MakeText(pair.Value)) }
         return n
     }
 }

@@ -164,6 +164,14 @@ _Noreturn static void Error(FcParser* p, const char* message, const FcToken* at)
 }
 _Noreturn static void ParseError(FcParser* p, const char* message, int line, int column) { fcThrow(p->ctx, FC_ERR_PARSE, line, column, NULL, message); }
 
+/* A contextual word (`is`, `of`, `from`, `under`, `where`, ...): an identifier with that text, read as a word only where it means something. */
+static bool CheckWord(FcParser* p, const char* word, int offset) { FcToken* t = PeekAt(p, offset); return t->type == TT_Identifier && streq(t->lexeme, word); }
+static bool MatchWord(FcParser* p, const char* word) { if (!CheckWord(p, word, 0)) return false; Advance(p); return true; }
+/* `is in`, `is of`, `is from`, `is under` at `offset`: the operator, not a variable `is` */
+static bool IsOperatorAt(FcParser* p, int offset) {
+    return CheckWord(p, "is", offset) && (PeekAt(p, offset + 1)->type == TT_In || CheckWord(p, "of", offset + 1) || CheckWord(p, "from", offset + 1) || CheckWord(p, "under", offset + 1));
+}
+
 static FcToken* Expect(FcParser* p, FcTokenType type, const char* message) {
     if (Check(p, type)) return Advance(p);
     Error(p, message, Peek(p));
@@ -172,7 +180,7 @@ static FcToken* Expect(FcParser* p, FcTokenType type, const char* message) {
 static bool ContinuesAtLineStart(FcParser* p, FcTokenType type) {
     return (type == TT_Dot && p->withVarStack->count == 0) || type == TT_QuestionDot || type == TT_QuestionQuestionDot
         || type == TT_And || type == TT_Or || type == TT_Plus || type == TT_Minus || type == TT_Slash || type == TT_Percent || type == TT_Caret || type == TT_Pipe
-        || type == TT_Eq || type == TT_NotEq || type == TT_Lt || type == TT_LtEq || type == TT_Gt || type == TT_GtEq || type == TT_Question;
+        || type == TT_Eq || type == TT_NotEq || type == TT_Lt || type == TT_LtEq || type == TT_Gt || type == TT_GtEq || type == TT_Question || type == TT_QuestionQuestion;
 }
 static bool LineContinues(FcParser* p) { return p->bracketDepth > 0 || !Peek(p)->newlineBefore || ContinuesAtLineStart(p, Peek(p)->type); }
 
@@ -999,7 +1007,7 @@ static FcStmt* ParseUnitDecl(FcParser* p) {
             if (!(Check(p, TT_Identifier) && streq(Peek(p)->lexeme, "coerce")))
                 Error(p, "Expected 'coerce' in the body of a unit ('coerce m => 0.0254', 'coerce to m => value * 0.0254', 'coerce from m => value / 0.0254')", Peek(p));
             coerceLine = Advance(p)->line;
-            if (Match(p, TT_From)) direction = COE_From;
+            if (MatchWord(p, "from")) direction = COE_From;
             else if (Check(p, TT_Identifier) && streq(Peek(p)->lexeme, "to") && PeekAt(p, 1)->type != TT_Arrow) { Advance(p); direction = COE_To; }
             if (!IsWord(Peek(p))) Error(p, "Expected the unit to convert from or to after 'coerce'", Peek(p));
             {
@@ -1617,7 +1625,8 @@ static bool NextLooksLikeTypeThenName(FcParser* p) {
         offset = end;
     }
     while (PeekAt(p, offset)->type == TT_LBracket && PeekAt(p, offset + 1)->type == TT_RBracket) offset += 2;
-    return PeekAt(p, offset)->type == TT_Identifier;
+    /* (`x is of Dog` is the test, not a variable `is` of the type x) */
+    return PeekAt(p, offset)->type == TT_Identifier && !IsOperatorAt(p, offset);
 }
 
 static bool TypeThenOperatorAhead(FcParser* p) {
@@ -2646,8 +2655,8 @@ static FcList* ParseOptionalTypeParamNames(FcParser* p) {
 
 static FcTypeConstraint* ParseOneTypeConstraint(FcParser* p) {
     FcTypeConstraint* tc = (FcTypeConstraint*)fcAlloc(p->ctx, sizeof *tc);
-    Expect(p, TT_Is, "Expected 'is' in a where condition");
-    if (Match(p, TT_Of)) { tc->kind = TCK_IsOf; tc->name = ParseTypeAnnotationName(p); return tc; }
+    if (!MatchWord(p, "is")) Error(p, "Expected 'is' in a where condition", Peek(p));
+    if (MatchWord(p, "of")) { tc->kind = TCK_IsOf; tc->name = ParseTypeAnnotationName(p); return tc; }
     if (Match(p, TT_In)) {
         FcToken* tok = Expect(p, TT_StringLiteral, "Expected a unit name (as a string) after 'is in'");
         tc->kind = TCK_IsIn; tc->name = tok->stringValue;
@@ -2662,7 +2671,7 @@ static FcList* ParseWhereClauses(FcParser* p, FcList* typeParamNames, int declLi
     FcList* result = L(p);
     int i, k;
     (void)declLine;
-    while (Match(p, TT_Where)) {
+    while (MatchWord(p, "where")) {
         const char* tpName = Expect(p, TT_Identifier, "Expected a type parameter name after 'where'")->lexeme;
         FcList* groups = L(p);
         if (!fcListHasStr(typeParamNames, tpName)) {
@@ -3422,11 +3431,11 @@ static bool IsNamedArgumentStart(FcParser* p) {
     colon = PeekAt(p, 1);
     after = PeekAt(p, 2);
     if (after->type == TT_Colon || after->type == TT_RParen || after->type == TT_Comma || after->type == TT_Eof) return false;
-    if (NoExpressionStart(after->type)) return false;
+    if (NoExpressionStart(after->type) || IsOperatorAt(p, 2)) return false;
     if (after->type == TT_Bang) {
         FcToken* negated = PeekAt(p, 3);
         if (negated->type == TT_RParen || negated->type == TT_Comma || negated->type == TT_Eof || negated->type == TT_Colon || negated->type == TT_Minus
-            || NoExpressionStart(negated->type) || IsTypeKeyword(negated->type)) return false;
+            || NoExpressionStart(negated->type) || IsOperatorAt(p, 3) || IsTypeKeyword(negated->type)) return false;
     }
     adjacent = after->line == colon->line && after->column == colon->column + 1 && !after->newlineBefore;
     return !(adjacent && (after->type == TT_Identifier || IsCustomUnitWordAt(p, 2)));
@@ -3508,6 +3517,15 @@ static FcExpr* ParseAssignment(FcParser* p) {
         if (IsAssignTarget(left)) return mkAssign(p, line, left, value);
         Error(p, "Invalid assignment target", Previous(p));
     }
+    if (LineContinues(p) && Check(p, TT_QuestionQuestionAssign)) {
+        /* `a ?\?= b` is `a ?? (a = b)`: a is evaluated twice (only when it is undefined), so it must not have effects of its own */
+        FcToken* opTok = Advance(p);
+        FcExpr* value = ParseAssignment(p);
+        if (!IsAssignTarget(left)) Error(p, "Invalid assignment target", opTok);
+        if (!IsPlainTarget(left))
+            Error(p, S(p, "The target of '%s' must not contain a call, '++', '--' or an assignment (write the assignment out)", opTok->lexeme), opTok);
+        return mkBinary(p, opTok->line, BOP_Coalesce, left, mkAssign(p, opTok->line, left, value));
+    }
     if (LineContinues(p) && (op = CompoundOperator(Peek(p)->type)) != BOP__NONE) {
         FcToken* opTok = Advance(p);
         FcExpr* value = ParseAssignment(p);
@@ -3521,8 +3539,19 @@ static FcExpr* ParseAssignment(FcParser* p) {
 
 static FcExpr* ParseOr(FcParser* p);
 
+/* `a ?? b` (null-coalescing, as in C#): below `||`, above `?:`, right-associative (`a ?? b ?? c` is `a ?? (b ?? c)`) */
+static FcExpr* ParseCoalesce(FcParser* p) {
+    FcExpr* left = ParseOr(p);
+    int line;
+    FcExpr* right;
+    if (!(LineContinues(p) && Check(p, TT_QuestionQuestion))) return left;
+    line = Advance(p)->line;
+    right = ParseCoalesce(p);
+    return mkBinary(p, line, BOP_Coalesce, left, right);
+}
+
 static FcExpr* ParseConditional(FcParser* p) {
-    FcExpr* condition = ParseOr(p);
+    FcExpr* condition = ParseCoalesce(p);
     int line, savedSuppress;
     FcExpr* then;
     FcExpr* otherwise;
@@ -3603,17 +3632,17 @@ static FcExpr* ParseRelationalOrIs(FcParser* p) {
             FcBinaryOp op = opTok->type == TT_Lt ? BOP_Lt : opTok->type == TT_LtEq ? BOP_LtEq : opTok->type == TT_Gt ? BOP_Gt : BOP_GtEq;
             FcExpr* r = ParseRange(p);
             left = mkBinary(p, opTok->line, op, left, r);
-        } else if (Check(p, TT_Is)) {
+        } else if (CheckWord(p, "is", 0)) {
             int line = Advance(p)->line;
             if (Match(p, TT_In)) {
                 const char* unitName = IsCustomUnitWordAt(p, 0) ? Advance(p)->lexeme : Expect(p, TT_Identifier, "Expected a unit name after 'is in'")->lexeme;
                 left = (FcExpr*)FC_NEW(C_, FcIsInExpr, .h = {EK_IsInExpr, line}, .operand = left, .unitName = unitName);
-            } else if (Match(p, TT_Of)) {
+            } else if (MatchWord(p, "of")) {
                 const char* typeName = ParseTypeAnnotationName(p);
                 FcTypeRef* t = newTypeRef(p, typeName, FC_NULL_INT, 0);
                 t->namespaces = CurrentNamespaces(p);
                 left = (FcExpr*)FC_NEW(C_, FcIsOfExpr, .h = {EK_IsOfExpr, line}, .operand = left, .typeRef = t);
-            } else if (Match(p, TT_From)) {
+            } else if (MatchWord(p, "from")) {
                 FcTokenType t1 = PeekAt(p, 1)->type;
                 if (Check(p, TT_Identifier) && (streq(Peek(p)->lexeme, "local") || streq(Peek(p)->lexeme, "global")) && !(t1 == TT_Dot || t1 == TT_LParen || t1 == TT_LBracket)) {
                     const char* place = Advance(p)->lexeme;
@@ -3622,7 +3651,7 @@ static FcExpr* ParseRelationalOrIs(FcParser* p) {
                     FcExpr* owner = ParseShift(p);
                     left = (FcExpr*)FC_NEW(C_, FcIsFromExpr, .h = {EK_IsFromExpr, line}, .operand = left, .ownerExpr = owner);
                 }
-            } else if (Match(p, TT_Under)) {
+            } else if (MatchWord(p, "under")) {
                 FcExpr* owner = ParseShift(p);
                 left = (FcExpr*)FC_NEW(C_, FcIsFromExpr, .h = {EK_IsFromExpr, line}, .operand = left, .ownerExpr = owner, .transitive = true);
             } else Error(p, "Expected 'in', 'of', 'from' or 'under' after 'is'", Peek(p));

@@ -95,6 +95,24 @@ class Web {
         return client.Request("GET", url, undefined, headers)
     }
 
+    /// <summary>A GET whose body is streamed (`response.stream`): read it with Downloads.SaveLimited or `response.ReadBody()`, or Close the response.</summary>
+    static Http.Response Send(string url, Http.Headers headers, bool follow, defined int timeout) {
+        var client = new Http.Client()
+        client.timeout = timeout
+        client.followRedirects = follow
+        // (the limit is the caller's: SaveLimited checks the Content-Length and counts what comes, as the C# ember does)
+        client.maxBodyBytes = 1099511627776
+        client.userAgent = "ember/1"
+        return client.Send("GET", url, undefined, headers)
+    }
+
+    /// <summary>The Content-Length of an answer (undefined when it has none).</summary>
+    static any ContentLength(Http.Response response) {
+        string cl = response.Header("Content-Length")
+        if (cl == undefined) { return undefined }
+        return cl.Trim().TryToInt()
+    }
+
     /// <summary>The message .NET's EnsureSuccessStatusCode gives.</summary>
     static string StatusText(Http.Response r) { return "Response status code does not indicate success: " + r.status + " (" + r.reason + ")." }
 
@@ -108,40 +126,40 @@ class PackageIndex {
     /// <summary>`resolveBase`: the folder (a local index) or the address (a web index) a relative url is relative to.</summary>
     static List<PackageListing> Parse(string json, string sourceName, string resolveBase, bool remote) {
         var result = new List<PackageListing>(Owns.Values)
-        JNode root = undefined
+        JsonNode root = undefined
         any format = 1
         try {
             root = JsonReader.Parse(json)
-            if (root.kind == JNode.KNull) { return result }
-            if (root.kind != JNode.KObject) { throw Json2.Mismatch(root, "fire.Package.Manager.PackageIndex+IndexFile", "$") }
+            if (root.kind == JsonKind.Null) { return result }
+            if (root.kind != JsonKind.Object) { throw Json2.Mismatch(root, "fire.Package.Manager.PackageIndex+IndexFile", "$") }
             format = Json2.IntOf(root, "format", "$", 1, true)
-        } catch (JsonError e) { throw new PackageException("The index of '" + sourceName + "' is not valid: " + e.message) }
+        } catch (JsonException e) { throw new PackageException("The index of '" + sourceName + "' is not valid: " + e.message) }
         if (format > PackageIndex.Format) { throw new PackageException("The index of '" + sourceName + "' has format " + format + "; this version of ember reads format " + PackageIndex.Format + " - a newer ember is needed.") }
         try {
-            var packages = root.GetCi("packages")
-            if (packages == undefined || packages.kind == JNode.KNull) { return result }
-            if (packages.kind != JNode.KArray) { throw Json2.Mismatch(packages, "System.Collections.Generic.List`1[fire.Package.Manager.PackageIndex+IndexPackage]", "$.packages") }
+            var packages = root.GetIgnoreCase("packages")
+            if (packages == undefined || packages.kind == JsonKind.Null) { return result }
+            if (packages.kind != JsonKind.Array) { throw Json2.Mismatch(packages, "System.Collections.Generic.List`1[fire.Package.Manager.PackageIndex+IndexPackage]", "$.packages") }
             for (int i = 0; i < packages.items.Count; i++) {
                 var p = packages.items[i]
                 string path = "$.packages[" + i + "]"
-                if (p.kind == JNode.KNull) { continue }
-                if (p.kind != JNode.KObject) { throw Json2.Mismatch(p, "fire.Package.Manager.PackageIndex+IndexPackage", path) }
+                if (p.kind == JsonKind.Null) { continue }
+                if (p.kind != JsonKind.Object) { throw Json2.Mismatch(p, "fire.Package.Manager.PackageIndex+IndexPackage", path) }
                 string name = Json2.Str(p, "name", path, "", true)
                 if (Ci.IsBlank(name)) { continue }
                 var listing = new PackageListing(name)
-                listing.author = Ci.Or(Json2.Str(p, "author", path, "", true), "")
-                listing.description = Ci.Or(Json2.Str(p, "description", path, "", true), "")
-                listing.license = Ci.Or(Json2.Str(p, "license", path, undefined, true), "")
-                listing.homepage = Ci.Or(Json2.Str(p, "homepage", path, undefined, true), "")
+                listing.author = Json2.Str(p, "author", path, "", true) ?? ""
+                listing.description = Json2.Str(p, "description", path, "", true) ?? ""
+                listing.license = Json2.Str(p, "license", path, undefined, true) ?? ""
+                listing.homepage = Json2.Str(p, "homepage", path, undefined, true) ?? ""
                 listing.source = sourceName
-                var versions = p.GetCi("versions")
-                if (versions != undefined && versions.kind != JNode.KNull) {
-                    if (versions.kind != JNode.KArray) { throw Json2.Mismatch(versions, "System.Collections.Generic.List`1[fire.Package.Manager.PackageIndex+IndexVersion]", path + ".versions") }
+                var versions = p.GetIgnoreCase("versions")
+                if (versions != undefined && versions.kind != JsonKind.Null) {
+                    if (versions.kind != JsonKind.Array) { throw Json2.Mismatch(versions, "System.Collections.Generic.List`1[fire.Package.Manager.PackageIndex+IndexVersion]", path + ".versions") }
                     for (int k = 0; k < versions.items.Count; k++) {
                         var v = versions.items[k]
                         string vpath = path + ".versions[" + k + "]"
-                        if (v.kind == JNode.KNull) { continue }
-                        if (v.kind != JNode.KObject) { throw Json2.Mismatch(v, "fire.Package.Manager.PackageIndex+IndexVersion", vpath) }
+                        if (v.kind == JsonKind.Null) { continue }
+                        if (v.kind != JsonKind.Object) { throw Json2.Mismatch(v, "fire.Package.Manager.PackageIndex+IndexVersion", vpath) }
                         string url = Json2.Str(v, "url", vpath, "", true)
                         if (Ci.IsBlank(url)) { continue }
                         any yanked = Json2.BoolOf(v, "yanked", vpath, undefined, true)
@@ -151,7 +169,7 @@ class PackageIndex {
                 }
                 result.Add(take listing)
             }
-        } catch (JsonError e) { throw new PackageException("The index of '" + sourceName + "' is not valid: " + e.message) }
+        } catch (JsonException e) { throw new PackageException("The index of '" + sourceName + "' is not valid: " + e.message) }
         return result
     }
 
@@ -164,35 +182,35 @@ class PackageIndex {
     /// <summary>`ember index`: the index of the package files in a folder (`baseUrl`: where the files will be).</summary>
     static string Build(string folder, string baseUrl) {
         var names = new List<string>()
-        var nodes = new List<JNode>(Owns.Values)
+        var nodes = new List<JsonNode>(Owns.Values)
         foreach (fpk in Sources.FpkFiles(folder)) {
             var m = Fpk.ReadManifest(fpk)
             int at = -1
             for (int i = 0; i < names.Count; i++) { if (Ci.Eq(names[i], m.name)) { at = i } }
             if (at < 0) {
                 names.Add(m.name)
-                var created = JNode.MakeObject()
-                created.Put("name", JNode.MakeText(m.name))
+                var created = JsonNode.MakeObject()
+                created.Put("name", JsonNode.MakeText(m.name))
                 nodes.Add(take created)
                 at = names.Count - 1
             }
             var entry = nodes[at]
             // the newest file wins (they are sorted by name): author, description, licence and homepage are set again
             var versions = PackageIndex.VersionsOf(entry)
-            var fresh = JNode.MakeObject()
-            fresh.Put("name", JNode.MakeText(entry.Get("name").text))
-            fresh.Put("author", JNode.MakeText(Ci.Or(m.author, "")))
-            fresh.Put("description", JNode.MakeText(Ci.Or(m.description, "")))
-            if (!Ci.IsBlank(m.license)) { fresh.Put("license", JNode.MakeText(m.license)) }
-            if (!Ci.IsBlank(m.homepage)) { fresh.Put("homepage", JNode.MakeText(m.homepage)) }
+            var fresh = JsonNode.MakeObject()
+            fresh.Put("name", JsonNode.MakeText(entry.Get("name").text))
+            fresh.Put("author", JsonNode.MakeText(m.author ?? ""))
+            fresh.Put("description", JsonNode.MakeText(m.description ?? ""))
+            if (!Ci.IsBlank(m.license)) { fresh.Put("license", JsonNode.MakeText(m.license)) }
+            if (!Ci.IsBlank(m.homepage)) { fresh.Put("homepage", JsonNode.MakeText(m.homepage)) }
             string file = IO.Path.GetFileName(fpk)
             string url = file
             if (baseUrl != undefined && baseUrl.Length > 0) { url = Sources.TrimEndChar(baseUrl, '/') + "/" + file }
-            var v = JNode.MakeObject()
-            v.Put("version", JNode.MakeText(m.version))
-            v.Put("url", JNode.MakeText(url))
-            v.Put("sha256", JNode.MakeText(Downloads.Sha256Of(fpk)))
-            v.Put("size", JNode.MakeInt(IO.File.Size(fpk)))
+            var v = JsonNode.MakeObject()
+            v.Put("version", JsonNode.MakeText(m.version))
+            v.Put("url", JsonNode.MakeText(url))
+            v.Put("sha256", JsonNode.MakeText(Downloads.Sha256Of(fpk)))
+            v.Put("size", JsonNode.MakeInt(IO.File.Size(fpk)))
             versions.Push(take v)
             fresh.Put("versions", take versions)
             nodes[at] = take fresh
@@ -204,27 +222,27 @@ class PackageIndex {
             while (pos > 0 && Ci.Compare(names[order[pos - 1]], names[i]) > 0) { pos-- }
             order.Insert(pos, i)
         }
-        var list = JNode.MakeArray()
+        var list = JsonNode.MakeArray()
         foreach (i in order) { list.Push(PackageIndex.CopyOf(nodes[i])) }
-        var root = JNode.MakeObject()
-        root.Put("format", JNode.MakeInt(1))
+        var root = JsonNode.MakeObject()
+        root.Put("format", JsonNode.MakeInt(1))
         root.Put("packages", take list)
         return Json2.Write(root, false)
     }
 
     /// <summary>A copy of the versions of an entry of the index that is being built.</summary>
-    static JNode VersionsOf(JNode entry) {
+    static JsonNode VersionsOf(JsonNode entry) {
         var versions = entry.Get("versions")
-        if (versions == undefined) { return JNode.MakeArray() }
+        if (versions == undefined) { return JsonNode.MakeArray() }
         return PackageIndex.CopyOf(versions)
     }
 
-    static JNode CopyOf(JNode n) {
-        var c = new JNode(n.kind)
+    static JsonNode CopyOf(JsonNode n) {
+        var c = new JsonNode(n.kind)
         c.flag = n.flag
         c.text = n.text
         for (int i = 0; i < n.items.Count; i++) {
-            if (n.kind == JNode.KObject) { c.Put(n.keys[i], PackageIndex.CopyOf(n.items[i])) }
+            if (n.kind == JsonKind.Object) { c.Put(n.keys[i], PackageIndex.CopyOf(n.items[i])) }
             else { c.Push(PackageIndex.CopyOf(n.items[i])) }
         }
         return c
@@ -266,11 +284,11 @@ class FolderSource : IPackageSource {
             foreach (l in result) { if (Ci.Eq(l.name, m.name)) { entry = l } }
             if (entry == undefined) {
                 var created = new PackageListing(m.name)
-                created.author = Ci.Or(m.author, "")
-                created.description = Ci.Or(m.description, "")
+                created.author = m.author ?? ""
+                created.description = m.description ?? ""
                 created.source = this.folder
-                created.license = Ci.Or(m.license, "")
-                created.homepage = Ci.Or(m.homepage, "")
+                created.license = m.license ?? ""
+                created.homepage = m.homepage ?? ""
                 result.Add(take created)
                 entry = result[result.Count - 1]
             }
@@ -327,22 +345,22 @@ class EmberSettings {
     static string FileName = "ember.json"
     static string DefaultIndexUrl = "https://what3var.github.io/packages/index.json"
 
-    static JNode LoadFile() {
+    static JsonNode LoadFile() {
         string file = Here.File(EmberSettings.FileName)
         if (!IO.File.Exists(file)) { return undefined }
         try {
             return JsonReader.Parse(IO.File.ReadAllText(file))
-        } catch (JsonError e) { throw new PackageException(file + " is not valid: " + e.message) }
+        } catch (JsonException e) { throw new PackageException(file + " is not valid: " + e.message) }
     }
 
     static List<IPackageSource> LoadSources() {
         var specs = new List<string>()
         var root = EmberSettings.LoadFile()
         if (root != undefined) {
-            if (root.kind == JNode.KObject) {
+            if (root.kind == JsonKind.Object) {
                 var list = root.Get("sources")
-                if (list != undefined && list.kind == JNode.KArray) {
-                    foreach (item in list.items) { if (item.kind == JNode.KText && item.text.Length > 0) { specs.Add(item.text) } }
+                if (list != undefined && list.kind == JsonKind.Array) {
+                    foreach (item in list.items) { if (item.kind == JsonKind.String && item.text.Length > 0) { specs.Add(item.text) } }
                 }
             }
         } else {
@@ -365,13 +383,13 @@ class EmberSettings {
         string api = undefined
         string token = undefined
         var root = EmberSettings.LoadFile()
-        if (root != undefined && root.kind == JNode.KObject) {
+        if (root != undefined && root.kind == JsonKind.Object) {
             var gh = root.Get("github")
-            if (gh != undefined && gh.kind == JNode.KObject) {
+            if (gh != undefined && gh.kind == JsonKind.Object) {
                 var a = gh.Get("api")
-                if (a != undefined && a.kind == JNode.KText) { api = a.text }
+                if (a != undefined && a.kind == JsonKind.String) { api = a.text }
                 var t = gh.Get("token")
-                if (t != undefined && t.kind == JNode.KText) { token = t.text }
+                if (t != undefined && t.kind == JsonKind.String) { token = t.text }
             }
         }
         return GitHubSettings.Resolve(api, token)
@@ -389,10 +407,38 @@ class Downloads {
         } finally { stream.Close() }
     }
 
-    /// <summary>The body of a GET into a file, at most `limit` bytes.</summary>
+    /// <summary>The body of a GET into a file as it comes (not into memory), at most `limit` bytes: a Content-Length above it is refused before anything is
+    /// read, more bytes than it stop the download (the file is deleted). The response is closed.</summary>
     static undefined SaveLimited(Http.Response response, string target, int limit, string url) {
-        if (response.body.length > limit) { throw new PackageException("'" + url + "' is bigger than " + limit + " bytes - ember stopped the download.") }
-        IO.File.WriteAllBytes(target, response.body)
+        any announced = Web.ContentLength(response)
+        if (announced != undefined && announced > limit) {
+            response.Close()
+            throw new PackageException("'" + url + "' has " + announced + " bytes - more than ember takes (" + limit + " bytes).")
+        }
+        var output = IO.File.Create(target)
+        var buffer = new byte[81920]
+        int total = 0
+        try {
+            while (true) {
+                int n = response.stream.Read(buffer, 0, buffer.length)
+                if (n <= 0) { break }
+                total += n
+                if (total > limit) { throw new PackageException("'" + url + "' is bigger than " + limit + " bytes - ember stopped the download.") }
+                output.Write(buffer, 0, n)
+            }
+        } catch (PackageException e) {
+            output.Close()
+            IO.File.Delete(target)
+            response.Close()
+            throw e
+        } catch (Exception e) {
+            output.Close()
+            IO.File.Delete(target)
+            response.Close()
+            throw new PackageException("Cannot download '" + url + "': " + e.message)
+        }
+        output.Close()
+        response.Close()
     }
 
     static string Fetch(PackageVersion version, string directory) {
@@ -412,12 +458,12 @@ class Downloads {
             if (version.size != undefined && version.size <= Downloads.MaxPackageBytes) { limit = version.size }
             Http.Response r = undefined
             try {
-                r = Web.Get(url, undefined, true, 120000, limit)
-            } catch (Http.HttpException e) {
-                if (e.code == 4) { throw new PackageException("'" + url + "' is bigger than " + limit + " bytes - ember stopped the download.") }
-                throw new PackageException("Cannot download '" + url + "': " + e.message)
+                r = Web.Send(url, undefined, true, 120000)
             } catch (Exception e) { throw new PackageException("Cannot download '" + url + "': " + e.message) }
-            if (!r.Ok) { throw new PackageException("Cannot download '" + url + "': " + Web.StatusText(r)) }
+            if (!r.Ok) {
+                r.Close()
+                throw new PackageException("Cannot download '" + url + "': " + Web.StatusText(r))
+            }
             Downloads.SaveLimited(r, target, limit, url)
         } else {
             string source = url

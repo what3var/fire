@@ -1,0 +1,26 @@
+// A comparator that reads a list: bound with `on` (an object holding it, or the list itself as `this`) it uses the list, no copy (docs/language/12-lambdas.md)
+class Keys {
+    List<int> orders
+    construct(List<int> orders) { this.orders = orders }
+    int Compare(int a, int b) { return this.orders[a] - this.orders[b] }
+}
+class Demo {
+    static undefined Run() {
+        var orders = new List<int>([30, 10, 20])
+        var index = new List<int>([0, 1, 2])
+        // a holder bound with `on`: no copy of the list
+        var keys = new Keys(orders)
+        index.Sort(func (int a, int b) on keys => this.orders[a] - this.orders[b])
+        print(", ".Join(index))
+        orders[0] = 0
+        var index2 = new List<int>([0, 1, 2])
+        index2.Sort(func (int a, int b) on keys => Compare(a, b))
+        print(", ".Join(index2))
+        // `on` the list itself
+        var index3 = new List<int>([0, 1, 2])
+        index3.Sort(func (int a, int b) on orders => this[a] - this[b])
+        print(", ".Join(index3))
+    }
+}
+Demo.Run()
+//# name: lambdas: sorting by a list of keys without a copy of it - the comparator bound with `on` to a holder (Compare of the holder, its field) or to the list itself (`this[a]`); a change of the list is seen

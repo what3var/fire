@@ -13,10 +13,11 @@ static const FcKeyword fcKeywords[] = {
     {"var", TT_Var}, {"func", TT_Func}, {"class", TT_Class}, {"construct", TT_Construct}, {"destruct", TT_Destruct}, {"return", TT_Return},
     {"if", TT_If}, {"else", TT_Else}, {"while", TT_While}, {"do", TT_Do}, {"for", TT_For}, {"foreach", TT_Foreach}, {"in", TT_In}, {"on", TT_On},
     {"new", TT_New}, {"base", TT_Base}, {"this", TT_This}, {"try", TT_Try}, {"catch", TT_Catch}, {"finally", TT_Finally}, {"throw", TT_Throw},
-    {"is", TT_Is}, {"of", TT_Of}, {"from", TT_From}, {"under", TT_Under}, {"extern", TT_Extern}, {"unsafe", TT_Unsafe}, {"interface", TT_Interface},
+    /* (`is`, `of`, `from`, `under` and `where` are contextual: identifiers the parser reads as words where they mean something, names elsewhere) */
+    {"extern", TT_Extern}, {"unsafe", TT_Unsafe}, {"interface", TT_Interface},
     {"readonly", TT_Readonly}, {"override", TT_Override}, {"static", TT_Static}, {"public", TT_Public}, {"private", TT_Private},
     {"protected", TT_Protected}, {"namespace", TT_Namespace}, {"enum", TT_Enum}, {"with", TT_With}, {"extends", TT_Extends},
-    {"switch", TT_Switch}, {"case", TT_Case}, {"default", TT_Default}, {"break", TT_Break}, {"continue", TT_Continue}, {"where", TT_Where},
+    {"switch", TT_Switch}, {"case", TT_Case}, {"default", TT_Default}, {"break", TT_Break}, {"continue", TT_Continue},
     {"fire", TT_Fire}, {"taking", TT_Taking}, {"handover", TT_Handover}, {"operator", TT_Operator}, {"sync", TT_Sync}, {"flat", TT_Flat},
     {"copy", TT_Copy}, {"take", TT_Take}, {"replace", TT_Replace}, {"leave", TT_Leave}, {"terminate", TT_Terminate}, {"actor", TT_Actor},
     {"process", TT_Process}, {"true", TT_True}, {"false", TT_False}, {"undefined", TT_Undefined}, {"bool", TT_KwBool}, {"int", TT_KwInt},
@@ -470,6 +471,9 @@ static FcToken lxReadOperatorOrPunctuation(FcLexer* l, int line, int col, bool n
         case '?':
             if (lxPeek(l) == '.' && !fcIsDigit(lxPeekNext(l))) { lxAdvance(l); TOK(QuestionDot, "?."); }
             if (lxPeek(l) == '?' && lxPeekNext(l) == '.') { lxAdvance(l); lxAdvance(l); TOK(QuestionQuestionDot, "??."); }
+            /* `a ?? b` and its assignment form (`?\?=`) */
+            if (lxPeek(l) == '?' && lxPeekNext(l) == '=') { lxAdvance(l); lxAdvance(l); TOK(QuestionQuestionAssign, "?\?="); }
+            if (lxMatch(l, '?')) TOK(QuestionQuestion, "??");
             TOK(Question, "?");
         case ':': TOK(Colon, ":");
         case '!': if (lxMatch(l, '=')) TOK(NotEq, "!="); TOK(Bang, "!");

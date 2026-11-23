@@ -229,7 +229,7 @@ static FcPkgImport* fcStoreFindKey(FcCtx* c, FcStore* store, const char* key) {
 static const char* const fcStandardBridges[] = { "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net",
     "process", "hash", "compression", "ai", "ai.agent", "ai.models", "assistant", "mcp", "tls", "http", "http.rpc", "http.pages", "data", "data.sqlite", "data.memory", "data.mysql",
     "data.sqlserver", "data.postgres", "http.data", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics",
-    "ui.docking", "json", "net.channel", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86" };
+    "ui.docking", "json", "net.channel", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86", "regex" };
 
 /* ---- the linker ---- */
 typedef struct FcLinker {

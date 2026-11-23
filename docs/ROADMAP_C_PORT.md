@@ -688,6 +688,28 @@ Was der Härtetest an der Sprache und den Packages gefunden hat (nichts davon ge
 * `Process.Run` nimmt die Argumente nur als `string[]`, eine `List<string>` ist eine `ArgumentException` zur Laufzeit.
 * `Environment.ProgramPath` ist unter `forge run` der Pfad von `fire`, nicht die Quelldatei (anders als in 19-standard-library.md beschrieben).
 
+**Geschlossen** (23.11.2026, alles in beiden Frontends, VM und nativ; ember benutzt es, `tests/compare-ember.sh` weiter 139 von 139 gleich):
+
+* `a ?? b` und `a ??= b` (docs/language/03-operators.md; Vorrang und Typ wie in C#) - ember schreibt `??` statt `Ci.Or`.
+* `is`, `of`, `from`, `under`, `where` sind kontextuelle Wörter: Namen von Variablen, Parametern, Feldern (docs/language/01-basics.md). Schlüsselwörter
+  bleiben `in` (`foreach (in in xs)`, `foreach (Dog d in dogs)` - nicht von einer Deklaration zu unterscheiden), `on` (`Dog on` am Anfang einer
+  Anweisung: Deklaration oder Umbinden), `word` und die anderen Typnamen (`word * p`, `word[n]`) und `and`/`or`.
+* Besitz: die Warnung **TC036**, wenn ein neuer Wert eines Blocks (`var x = new ...`) ohne `take` in einem Feld landet, das den Block überlebt (nicht
+  bei `take x`, `x.TakeTo(...)`, `return x`, x als Argument eines Aufrufs, einer Property, einem Halter aus demselben Block, auf oberster Ebene des
+  Programms). Sie fand einen echten Fehler in `packages/net.channel` (der vergrößerte Puffer von `Feed`).
+* Lambdas fangen Kopien: das ist die dokumentierte Regel (12-lambdas.md); dazu jetzt die Redewendung für eine Sortierung nach einer Liste
+  (`func (int a, int b) on orders => this[a] - this[b]`, keine Kopie) und was die Kopie kostet.
+* `json`: `JsonNode` (strikt, oder mit `JsonReadOptions(true)` Kommentare und Komma am Ende, auch für `Json.Parse`/`Json.Deserialize`), Schreiben
+  kompakt oder eingerückt mit den beiden Escapern von System.Text.Json - ember liest und schreibt damit (sein Leser/Schreiber ist weg).
+* `compression`: `Tar.Archive` (ustar, pax, GNU-Langnamen, gzip) - ember entpackt die Tarballs damit.
+* `http`: `Client.Send` liefert den Körper als Strom (`Http.BodyStream`, `SaveTo`, `ReadBody`), `GetFile`; `HttpException.length` nennt die
+  angekündigte Länge; `Url.Resolve` nach RFC 3986 (`../`, `./`). ember lädt Pakete und GitHub-Dateien jetzt in die Datei statt in den Speicher und
+  meldet ein zu großes `Content-Length` wie der C#-ember ("has N bytes - more than ember takes").
+* Neues Standard-Package `regex` (Backtracking in fire, dokumentierte Teilmenge von .NET), `Guid` in `random` (ember nimmt es für seine
+  Zufallsnamen), `string.EqualsIgnoreCase`/`CompareIgnoreCase` (ordinal ohne Groß-/Kleinschreibung; `Ci` von ember benutzt sie).
+* `Process.Run`/`Start` nehmen `string[]` oder `List<string>` (jedes `IEnumerable`).
+* 19-standard-library.md: `Environment.ProgramPath` ist unter `forge run` der Pfad von `fire`.
+
 Offen: die Meldungen eines kaputten JSON sind eigene Texte im Stil von System.Text.Json (Zeile/Byte können abweichen); der Quellbau eines
 Bibliotheksprojekts (`forge build` als Prozess) und echtes https gegen api.github.com sind nicht im Vergleich; Windows ungeprüft. Danach: ember in
 spark (das Fenster des Package Managers ruft heute die C#-Bibliothek) und das Entfernen von `src/fire.Ember`.
