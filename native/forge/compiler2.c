@@ -1053,8 +1053,14 @@ static void CompileAssign(FcComp* cm, FcAssignExpr* a) {
         FcMemberExpr* me = (FcMemberExpr*)a->target;
         FcResolvedRef* staticTargetRef = (FcResolvedRef*)fcDictGet(cm->sh->refs, me);
         if (staticTargetRef && staticTargetRef->kind == RR_StaticMember) {
-            CompileExpr(cm, a->value);
-            EmitClaimToScope(cm, 0xFFFF, MayBeUnclaimed(a->value), false);
+            /* (`C.f = take x`: x goes to the program, as the field - not to the scope of the running call, Compiler.CompileAssign) */
+            if (a->value->kind == EK_UnaryExpr && (((FcUnaryExpr*)a->value)->op == UOP_Take || ((FcUnaryExpr*)a->value)->op == UOP_TryTake)) {
+                CompileExpr(cm, ((FcUnaryExpr*)a->value)->operand);
+                EmitTakeToScope(cm, 0xFFFF, ((FcUnaryExpr*)a->value)->op == UOP_TryTake);
+            } else {
+                CompileExpr(cm, a->value);
+                EmitClaimToScope(cm, 0xFFFF, MayBeUnclaimed(a->value), false);
+            }
             EmitWidthIfNeeded(cm, fcRpFieldWidth(cm, me->name), fcRpFieldUnit(cm, me->name));
             E_op(cm, OP_SetStaticField);
             E_u16(cm, E_str(cm, staticTargetRef->className));
@@ -1120,6 +1126,7 @@ static void CompileAssign(FcComp* cm, FcAssignExpr* a) {
         case RR_Native: fcCompNotSupported(cm, "Cannot assign to '%s' - it is a native function.", r->name);
         case RR_Extern: fcCompNotSupported(cm, "Cannot assign to '%s' - it is a function declared extern.", r->name);
         case RR_StaticMember:
+            EmitClaimToScope(cm, 0xFFFF, MayBeUnclaimed(a->value), false);   /* (a static field belongs to the program, as `C.f = ...`) */
             EmitWidthIfNeeded(cm, fcRpFieldWidth(cm, id->name), fcRpFieldUnit(cm, id->name));
             E_op(cm, OP_SetStaticField);
             E_u16(cm, E_str(cm, r->className));
@@ -1224,6 +1231,13 @@ static void CompileTakeAssign(FcComp* cm, FcIdentifierExpr* id, FcUnaryExpr* tak
             EmitTakeToScope(cm, 0xFFFF, take->op == UOP_TryTake);
             E_op(cm, OP_StoreGlobal);
             E_u16(cm, r->slot);
+            break;
+        case RR_StaticMember:
+            EmitTakeToScope(cm, 0xFFFF, take->op == UOP_TryTake);
+            EmitWidthIfNeeded(cm, fcRpFieldWidth(cm, id->name), fcRpFieldUnit(cm, id->name));
+            E_op(cm, OP_SetStaticField);
+            E_u16(cm, E_str(cm, r->className));
+            E_u16(cm, E_str(cm, id->name));
             break;
         case RR_ImplicitThisMember:
             E_op(cm, OP_LoadThis);
