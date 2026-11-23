@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "name": "fire-script",
+  "type": "library",
+  "import": "script",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The library 'script' of fire: fire scripts compiled and run in this process - their output, exit code and exceptions as data (libfirevm, fire_embed.h)."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_script.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__ScriptAvailable",
+        "returns": "bool",
+        "arguments": 0,
+        "c": "fire_script_Available"
+      },
+      {
+        "name": "__ScriptLoadError",
+        "returns": "string",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_script_LoadError"
+      },
+      {
+        "name": "__ScriptRun",
+        "returns": "int",
+        "arguments": 4,
+        "c": "fire_script_Run"
+      },
+      {
+        "name": "__ScriptStatus",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_script_Status"
+      },
+      {
+        "name": "__ScriptExitCode",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_script_ExitCode"
+      },
+      {
+        "name": "__ScriptText",
+        "returns": "string",
+        "arguments": 2,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_script_Text"
+      },
+      {
+        "name": "__ScriptFree",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_script_Free"
+      }
+    ],
+    "reset": "fire_script_reset",
+    "language": "c",
+    "platforms": [
+      "posix",
+      "windows"
+    ],
+    "linkLibraries": {
+      "posix": [
+        "dl"
+      ]
+    }
+  }
+}

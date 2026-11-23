@@ -854,6 +854,7 @@ static void vmUnhandledFn(void* ctx, uint32_t ci, Value e) {
     Vm* vm = (Vm*)ctx;
     (void)ci;
     if (FIRE_UNLIKELY(g_dbgArmed) && vmDbgUnhandled(e)) return;   /* (the debugger: stopped at the throw site; `resume` - the throw gives undefined) */
+    vmEmbedUnhandled(e);   /* (the exception as data for the host of libfirevm, vm_embed.c) */
     reportUnhandled(e);
     vm->failed = 1;
     if (!vm->quiet) { vm->quiet = 1; g_zombies.quiet++; }

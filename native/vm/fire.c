@@ -27,6 +27,22 @@
 #endif
 #define FIRE_RT_IMPLEMENTATION 1
 #define FIRE_ARGS_UTF8 1           /* (Windows: main hands the runtime UTF-8 arguments it split from the wide command line - fire_platform_win32.h) */
+#ifdef FIRE_VM_LIBRARY
+/* libfirevm (fire_embed.h, vm_embed.c): this file without main. What the program writes to stdout and stderr goes to the streams of the run (g_vmOut,
+ * g_vmErr - the host's callback or a buffer), so every `stdout`/`stderr` of the VM and the runtime names them (NULL: the process's). */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1              /* (fopencookie: a stream that calls the host) */
+#endif
+#include <stdio.h>
+static FILE* g_vmOut = NULL;
+static FILE* g_vmErr = NULL;
+static FILE* vmProcessStdout(void) { return stdout; }
+static FILE* vmProcessStderr(void) { return stderr; }
+#undef stdout
+#undef stderr
+#define stdout (g_vmOut ? g_vmOut : vmProcessStdout())
+#define stderr (g_vmErr ? g_vmErr : vmProcessStderr())
+#endif
 /* (the platform layer of this machine, from the repository: a native build copies it next to the runtime) */
 #if defined(_WIN32)
 #define FIRE_PLATFORM_HEADER "../platform/windows/fire_platform.h"
@@ -62,6 +78,7 @@ static const char* vmGetenv(const char* name, char* buf, size_t cap) { (void)buf
 void fbOutOfMemory(void) { outOfMemory(); }
 
 #include "vm.h"
+static void vmEmbedUnhandled(Value e);   /* (vm_embed.c: an exception nothing caught, as data for the host of libfirevm) */
 #include "vm_load.c"
 #include "vm_core.c"
 #include "vm_pkg.c"
@@ -188,6 +205,8 @@ static void vmExecVariant(const char* variant) {
 }
 
 static bool g_vmTime = false;   /* --time */
+/* how the last vmRunProgram ended (for vm_embed.c): loaded, `terminate`, failed (1 an exception nothing caught, 2 an error of the runtime) */
+static struct { bool loaded, terminated; int failed; } g_vmOutcome;
 
 /* Runs one program (`bytes`, malloc'd - freed here; `path` names it in the messages; the libraries of its packages are looked up next to `pkgPath`); 0 when it
  * ended normally, 1 with an exception nothing caught or an error of the runtime (or the code of `terminate`), 2 when it could not be loaded. */
@@ -200,6 +219,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     int result;
     ResEntry* res = NULL;
     int64_t t0 = fire_plat_unixMicros(), t1, t2;
+    memset(&g_vmOutcome, 0, sizeof g_vmOutcome);
     p = vmLoad(bytes, len, error, sizeof error);
     if (!p) { free(bytes); fprintf(stderr, "fire: %s: %s\n", path, error); return 2; }
     if (p->intWidth != VM_INT_WIDTH || p->floatWidth != VM_FLOAT_WIDTH) {
@@ -304,6 +324,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
     vmJsonEnd();
     while (vm->freeScopes) { VmScope* s = vm->freeScopes; vm->freeScopes = s->nextFree; free(s->slots); free(s->names); free(s); }
     result = vm->terminated ? vm->exitCode : vm->failed ? 1 : 0;
+    g_vmOutcome.loaded = true; g_vmOutcome.terminated = vm->terminated != 0; g_vmOutcome.failed = vm->failed;
     vmDbgEnd(vm, result);   /* (the debugger: profile, exited) */
     free(vm->stack);
     free(vm->frames);
@@ -336,6 +357,10 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
 }
 
 
+/* libfirevm: the interface of fire_embed.h (docs/spec/EMBED.md) */
+#include "vm_embed.c"
+
+#ifndef FIRE_VM_LIBRARY
 /* ---- the payload of a packed program (`forge build --engine vm`, written by src/fire.Compiler/CVmPacker.cs) ----
  *
  *   [this executable] [entry 0] [entry 1] ... [index] [footer]
@@ -704,3 +729,4 @@ int main(int argc, char** argv) {
     if (!files) { vmUsage(stderr); return 2; }
     return code;
 }
+#endif

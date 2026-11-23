@@ -359,8 +359,10 @@ static bool vmPkgFindIn(const char* dir, const char* file, char* out, size_t cap
     return vmPkgScan(dir, "", vmPkgRid(), file, out, cap);         /* (... or a Prebuilt folder) */
 }
 
+/* (libfirevm, vm_embed.c: the folders a host gives a run - searched before FIRE_PKG_PATH; NULL: none) */
+static const char* g_vmPkgPathFirst = NULL;
 static bool vmPkgFind(const char* file, char* out, size_t cap) {
-    char given[8192];
+    char given[8192], joined[16384];
     const char* path = vmGetenv("FIRE_PKG_PATH", given, sizeof given);
 #if defined(_WIN32)
     const char sep = ';';
@@ -371,6 +373,10 @@ static bool vmPkgFind(const char* file, char* out, size_t cap) {
 #endif
     /* (a full path: the library of a fire plugin next to its bytecode, a driver plugin's package library - vm_plugin.c) */
     if (absolute) { snprintf(out, cap, "%s", file); return vmPkgExists(out); }
+    if (g_vmPkgPathFirst && *g_vmPkgPathFirst) {
+        snprintf(joined, sizeof joined, "%s%c%s", g_vmPkgPathFirst, sep, path ? path : "");
+        path = joined;
+    }
     while (path && *path) {
         char dir[1024];
         const char* end = strchr(path, sep);

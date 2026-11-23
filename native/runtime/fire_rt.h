@@ -165,6 +165,7 @@ FIRE_RT_FN void fire_dbgExited(int code);   /* the debugger hears that the progr
 /* The VM in C (native/vm, docs/spec/VM_SPIKE.md): what would end the process ends the running script only - the VM goes back to the code that started it
  * (ROADMAP_C_PORT L6: no exit, no fatal for the host). */
 FIRE_NORETURN void fire_vmExit(int code);
+void fire_vmNoteError(const char* message);   /* (an error of the runtime as data for the host of libfirevm, fire_embed.h; before it is printed) */
 #endif
 /* Ends the process. With threads the other threads must not run static destructors under their feet: no cleanup, only the streams are flushed. */
 FIRE_NORETURN FIRE_FN void exitNow(int code) {
@@ -690,6 +691,9 @@ FIRE_FN void gilRelease(void) { fire_pkgUnlock(); }
 #endif
 #else
 FIRE_NORETURN FIRE_COLD FIRE_FN void fatal(const char* message) {
+#ifdef FIRE_VM
+    fire_vmNoteError(message);
+#endif
     fflush(stdout);
     fprintf(stderr, "fire runtime error: %s\n", message);
     exitNow(1);

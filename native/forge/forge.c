@@ -113,6 +113,7 @@ static bool fcStrictTag(const char* path);
 #include "build/tools.c"
 #include "build/cvm.c"   /* the engine vm (Phase D 3) */
 #include "build/plugin.c"   /* linkage plugin (after pkglib.c and cvm.c) */
+#include "build/embedlib.c"   /* libforge and libfirevm as shared libraries: `build-embed`, the packages forge and script (Phase D 7) */
 
 /* the markup generators (Phase C 5) */
 #include "markupmodel.c"
@@ -409,6 +410,10 @@ static const char* fcFindStore(const char* exe, char* buf, size_t n) {
 
 static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strcmp(s, "ast") == 0 || strcmp(s, "diagnostics") == 0 || strncmp(s, "fbc:", 4) == 0 || strncmp(s, "cgen:", 5) == 0 || strncmp(s, "buildplan:", 10) == 0; }
 
+static int fcCliMain(int argc, char** argv, const char* prelude, const char* store);
+
+/* forge.c as a library (FIRE_FORGE_LIBRARY: libforge, docs/spec/EMBED.md) has no main: fire_embed.h is its interface (embed.c, at the end). */
+#ifndef FIRE_FORGE_LIBRARY
 int main(int argc, char** argv) {
     char preludeBuf[4096], storeBuf[4096];
 #ifdef _WIN32
@@ -421,7 +426,6 @@ int main(int argc, char** argv) {
     const char* prelude = fcFindPrelude(argv[0], preludeBuf, sizeof preludeBuf);
     const char* store = fcFindStore(argv[0], storeBuf, sizeof storeBuf);
 #endif
-    char fbcCommand[256];
 #ifdef _WIN32
     fwSlashes(preludeBuf);
     fwSlashes(storeBuf);
@@ -442,6 +446,13 @@ int main(int argc, char** argv) {
             if (realpath(tablesBuf, exeBuf)) nbNativeRoot = strdup(exeBuf);
         }
     }
+    return fcCliMain(argc, argv, prelude, store);
+}
+#endif
+
+/* The command line (fire_forge_main of the library, native/forge/embed.c): the prelude and the store found, the folders of the builder set. */
+static int fcCliMain(int argc, char** argv, const char* prelude, const char* store) {
+    char fbcCommand[256];
     nbProjectBuildPlan = pjProjectBuildPlanHook;   /* (buildplan of a project, Phase D 3) */
     { int r = tcMain(argc, argv, prelude, store); if (r >= 0) return r; }   /* Phase D 4: the rest of the command line, the report (tools/) */
     /* (Program.cs: the standard packages of Source/ next to the program packed and installed when they are missing or changed - project/standard.c) */
@@ -454,6 +465,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "publish") == 0) return pjPublishCommand(argc, argv, prelude, store);   /* Phase D 3 */
     if (argc >= 2 && strcmp(argv[1], "build-vm") == 0) return nvBuildVmMain(argc, argv, store);
+    if (argc >= 2 && strcmp(argv[1], "build-embed") == 0) return neBuildEmbedMain(argc, argv);   /* Phase D 7: libforge and libfirevm (build/embedlib.c) */
     if (argc >= 2 && strcmp(argv[1], "toolchain-setup") == 0) return tsMain(argc, argv);   /* Phase D 5: a portable toolchain downloaded (tools/setup.c) */   /* Phase D 3: the VM in C into a folder (build/cvm.c) */
     if (argc == 3 && strcmp(argv[1], "projectplan") == 0) return pjProjectPlanDump(argv[2], stdout);
     if (argc == 3 && strcmp(argv[1], "fpk") == 0) return pjPackageDump(argv[2], stdout);
@@ -581,3 +593,6 @@ int main(int argc, char** argv) {
     fprintf(stderr, "usage: forge-c tokens|ast|diagnostics <file.fire> | forge-c tokens|ast|diagnostics --list <files.txt> --out <folder>\n");
     return 2;
 }
+
+/* libforge: the interface of native/abi/fire_embed.h (docs/spec/EMBED.md) */
+#include "embed.c"

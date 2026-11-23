@@ -1,0 +1,84 @@
+// The tests of script: `forge test packages/script/script.fireproj` (in the VM) and `--engine native`. The scripts are translated by forge (libforge) and run
+// in this process (libfirevm, a runtime of their own).
+#import "testing"
+
+class ScriptTests {
+    [Test "A program translates and starts a script"]
+    undefined Runs() {
+        var s = Scripting.Script.FromSource("print(\"hello \" + Environment.Args[0] + \" \" + Environment.Args.Length)\n", "hello.fire")
+        var r = s.Run(["world", "two"])
+        Testing.Assert.AreEqual(Scripting.Status.Ended, r.Status)
+        Testing.Assert.AreEqual(0, r.ExitCode)
+        Testing.Assert.AreEqual("hello world 2\n", r.Output)
+        Testing.Assert.AreEqual("", r.Errors)
+        Testing.Assert.IsTrue(r.Succeeded())
+    }
+
+    [Test "Two scripts run side by side"]
+    undefined SideBySide() {
+        var counter = "class Counter { static int n = 0 }\nfor (var i = 0; i < 3; i++) { Counter.n = Counter.n + 1 }\nprint(\"A \" + Counter.n + \" \" + Environment.Args[0])\n"
+        var other = "class Counter { static string n = \"b\" }\nprint(\"B \" + Counter.n + \" \" + Environment.Args.Length)\n"
+        var a = Scripting.Script.FromSource(counter, "a.fire")
+        var b = Scripting.Script.FromSource(other, "b.fire")
+        Testing.Assert.AreEqual("A 3 first\n", a.Run(["first"]).Output)
+        Testing.Assert.AreEqual("B b 0\n", b.Run().Output)
+        // (the first one again: nothing of its last run and nothing of the other one is left)
+        Testing.Assert.AreEqual("A 3 again\n", a.Run(["again"]).Output)
+        Testing.Assert.AreEqual("B b 2\n", b.Run(["x", "y"]).Output)
+    }
+
+    [Test "A compile error comes back as data"]
+    undefined CompileError() {
+        var thrown = false
+        try {
+            Scripting.Script.FromSource("print(\"ok\")\nprint(missing)\n", "broken.fire")
+        } catch (Scripting.CompileException e) {
+            thrown = true
+            var errors = e.Compilation.Errors
+            Testing.Assert.AreEqual(1, errors.Count)
+            Testing.Assert.AreEqual("E4022", errors[0].Code)
+            Testing.Assert.AreEqual(2, errors[0].Line)
+            Testing.Assert.Contains("missing", errors[0].Message)
+        }
+        Testing.Assert.IsTrue(thrown, "a CompileException")
+    }
+
+    [Test "An exception in the script is caught by the host"]
+    undefined ExceptionCaught() {
+        var s = Scripting.Script.FromSource("class W { static undefined Go() { throw new ArgumentException(\"bad input\") } }\nprint(\"before\")\nW.Go()\nprint(\"after\")\n", "throws.fire")
+        var caught = false
+        try {
+            s.Run()
+        } catch (Scripting.ScriptException e) {
+            caught = true
+            Testing.Assert.AreEqual("ArgumentException", e.Type)
+            Testing.Assert.AreEqual("bad input", e.ScriptMessage)
+            Testing.Assert.Contains("W.Go", e.ScriptStackTrace)
+            Testing.Assert.AreEqual("before\n", e.Result.Output)
+            Testing.Assert.AreEqual(1, e.Result.ExitCode)
+        }
+        Testing.Assert.IsTrue(caught, "a ScriptException")
+        // (Execute: the same as data, nothing thrown; the host goes on)
+        var r = s.Execute()
+        Testing.Assert.AreEqual(Scripting.Status.Exception, r.Status)
+        Testing.Assert.AreEqual("ArgumentException", r.ExceptionType)
+        Testing.Assert.Contains("Unhandled exception of type 'ArgumentException': bad input", r.Errors)
+    }
+
+    [Test "terminate and an error of the runtime end only the script"]
+    undefined Ends() {
+        var t = Scripting.Script.FromSource("print(1)\nterminate(7)\nprint(2)\n", "t.fire").Execute()
+        Testing.Assert.AreEqual(Scripting.Status.Terminated, t.Status)
+        Testing.Assert.AreEqual(7, t.ExitCode)
+        Testing.Assert.AreEqual("1\n", t.Output)
+        var caught = false
+        try { Scripting.Script.FromSource("var a = [1, 2]\nprint(a[5])\n", "index.fire").Run() } catch (Scripting.ScriptException e) { caught = true }
+        Testing.Assert.IsTrue(caught)
+    }
+
+    [Test "A script uses packages"]
+    undefined Packages() {
+        var r = Scripting.Script.FromSource("#import \"io\"\nIO.Stdio.WriteLine(\"through io\")\n", "io.fire").Run()
+        Testing.Assert.AreEqual("through io\n", r.Output.Replace("\r\n", "\n"))
+    }
+}

@@ -1,5 +1,11 @@
 using fire.Compiler;
 
+// The packages forge and script load libforge and libfirevm (native/abi/fire_embed.h, `forge-c build-embed <folder>`): when they are next to forge, the programs
+// forge starts find them there (FIRE_EMBED_PATH, docs/spec/EMBED.md). forge-c builds them itself; this forge only passes the folder on.
+if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FIRE_EMBED_PATH"))
+    && (File.Exists(Path.Combine(AppContext.BaseDirectory, "libfireforge.so")) || File.Exists(Path.Combine(AppContext.BaseDirectory, "fireforge.dll")) || File.Exists(Path.Combine(AppContext.BaseDirectory, "libfireforge.dylib"))))
+    Environment.SetEnvironmentVariable("FIRE_EMBED_PATH", AppContext.BaseDirectory);
+
 // Command line of the compiler, see CommandLineParser (run / build / native / test).
 // `prebuild-standard <Source> <Prebuilt>`: for the build of the solution - builds the libraries of the standard packages for this machine (docs/packages/README.md).
 if (args.Length >= 3 && args[0] == "prebuild-standard")
