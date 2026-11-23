@@ -262,6 +262,28 @@ static class ServeTests
             d => Errs(d, x => x.Line == 1 && x.Message.Contains("Core")));
         Compare("eine Bibliothek selbst (ihr eigener Import)", ws, "Util", Path.Combine(root, "Util/text.fire"), expected: d => d.Count(x => x.IsError) == 1 && d.Any(x => x.Line == 1 && x.Message.Contains("core.lib")));   // (Util does not reference Core)
 
+        // the C++ natives of a library project (its `native` part, read by the server from `projectFile`): in the library itself and in a program that imports it
+        Write("Nat/Nat.fireproj", """{ "name": "Nat", "type": "library", "import": "natlib", "native": { "language": "c", "sources": [ "native/fire_bridge_natlib.h" ], "discover": false, "functions": [ { "name": "__NatTwice", "arguments": 1, "c": "fire_natlib_Twice", "returns": "int" } ] } }""");
+        Write("Nat/native/fire_bridge_natlib.h", "static Value fire_natlib_Twice(Value n) { return n; }\n");
+        string natLib = Write("Nat/nat.fire", "class NatLib {\n    static int Twice(int n) { return __NatTwice(n) }\n}\n");
+        Write("NatApp/NatApp.fireproj", """{ "name": "NatApp", "references": [ { "project": "../Nat/Nat.fireproj" } ] }""");
+        string natMain = Write("NatApp/main.fire", "#import \"natlib\"\nprint(natlib.NatLib.Twice(2))\nprint(__NatTwice(3))\nprint(__NatNothing(4))\n");
+        var natWs = fire.Projects.Workspace.Open(Write("Nat.firesln", """{ "name": "Nat", "projects": ["Nat/Nat.fireproj", "NatApp/NatApp.fireproj"] }"""));
+        Compare("die Natives einer Bibliothek (ihr Teil native) in ihr selbst", natWs, "Nat", natLib, expected: d => d.Count(x => x.IsError) == 0);
+        Compare("die Natives einer Bibliothek in einem Programm, das sie importiert", natWs, "NatApp", natMain,
+            expected: d => d.Count(x => x.IsError) == 1 && Errs(d, x => x.Line == 4 && x.Message.Contains("__NatNothing")));
+
+        // the standard libraries (packages/Packages.firesln): the bridge natives of graphics (its own built-in import) and the C natives of hash
+        string packagesSln = Path.Combine(StandardSources.DefaultFolder, "Packages.firesln");
+        if (File.Exists(packagesSln))
+        {
+            var pkgWs = fire.Projects.Workspace.Open(packagesSln);
+            foreach (var (name, file) in new[] { ("fire-graphics", "graphics/graphics.fire"), ("fire-hash", "hash/hash.fire"), ("fire-time", "time/time.fire") })
+                Compare($"Packages.firesln: {file} kennt die Natives seines Projekts", pkgWs, name, Path.Combine(StandardSources.DefaultFolder, file),
+                    expected: d => !d.Any(x => x.IsError && x.Message.Contains("Unknown identifier '__")));
+        }
+        else Check("Packages.firesln neben dem Programm", false, packagesSln);
+
         // a big solution of this machine (read only)
         string? solution = Environment.GetEnvironmentVariable("FIRE_SERVE_SOLUTION");
         if (solution == null && File.Exists("/home/user/what3var/ruhrpott-raser/RuhrpottRaser.firesln")) solution = "/home/user/what3var/ruhrpott-raser/RuhrpottRaser.firesln";

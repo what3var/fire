@@ -766,9 +766,10 @@ Fensterprogramm gebaut und gestartet, Vervollständigung und Diagnosen beim Tipp
 gelaufen), der Package Manager (Liste, Suche, Installieren aus einem lokalen `PackageSource/`); `forge conformance` 1176 von 1176 Fällen (mit `Prebuilt/`);
 `fire.Testing` 1168 Prüfungen, offen danach 2 (unten); ember in fire allein mit seinen Hauptbefehlen.
 
-**Offen:** zwei Lücken von forge-c, die die Prüfungen von spark zeigen: die Meldung einer falschen Bau-Reihenfolge der Natives im nativen Build ist noch
-`unported: PackageException` ohne die Zeile des `#include` (`gen/packages.c`), und `forge serve` kennt die Natives von Bibliotheksprojekten nicht (in
-`Packages.firesln` zeigt die Analyse `Unknown identifier '__GRPH...'` - der Weg im eigenen Prozess konnte das); die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
+**Offen:** eine Lücke von forge-c, die die Prüfungen von spark zeigen: die Meldung einer falschen Bau-Reihenfolge der Natives im nativen Build ist noch
+`unported: PackageException` ohne die Zeile des `#include` (`gen/packages.c`). (Behoben: `forge serve` kannte die Natives von Bibliotheksprojekten nicht -
+in `Packages.firesln` zeigte die Analyse `Unknown identifier '__GRPH...'`; jetzt liest der Server sie aus `projectFile` wie `build`, mit den Brücken
+einer Standardbibliothek, [FORGE_SERVE.md](spec/FORGE_SERVE.md#dokumente-und-kontext).) Die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
 `conformance`, die Fälle mit Servern, die Linkages und Debug-Protokolle als Daten); `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
 fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows mit `ForgeDist.targets` (gcc von w64devkit) und der Installer sind nicht geprüft; spark ohne forge (kein
 C-Compiler) hat keine Sprachdienste mehr.

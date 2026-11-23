@@ -62932,36 +62932,38 @@ static void pjLinkDirective(FcCtx* c, void* state, const char* name, FcList* arg
     }
     fcLinkerDirective(c, &P->L, name, args, line, importNamespaces);
 }
+/* ProjectNativeOverlay.Register for one native part: the package it stands for (also `forge serve`, serve_diag.c) */
+static FcPkgImport* pjOverlayImport(FcCtx* c, const PjNativePart* part, const char* version) {
+    FcPkgImport* pi = (FcPkgImport*)fcAlloc(c, sizeof *pi);
+    int k;
+    pi->name = part->importName;
+    pi->requires = fcListNew(c);
+    pi->hasNative = true;
+    pi->functions = fcListNew(c);
+    pi->returns = fcListNew(c);
+    pi->hosts = fcListNew(c);
+    for (k = 0; k < part->native->m.functions->count; k++) {
+        const FgPkgFn* fn = (const FgPkgFn*)part->native->m.functions->items[k];
+        fcListAdd(c, pi->functions, (void*)fn->name);
+        fcListAdd(c, pi->returns, (void*)fn->returns);
+        fcListAdd(c, pi->hosts, FC_IVAL(fn->host));
+    }
+    pi->dir = part->directory;
+    pi->packageName = fcFmt(c, "project:%s", part->projectName);
+    pi->packageVersion = version;
+    pi->overlay = true;
+    pi->overlayNative = &part->native->m;
+    pi->overlayBuildDir = nbCombine(c, nbCombine(c, part->directory, "obj"), "native");
+    pi->overlayFile = part->projectFile;
+    return pi;
+}
 /* ProjectNativeOverlay.Register: the native parts of the plan stand for packages that are not installed (before the installed ones) */
 static void pjOverlayRegister(FcCtx* c, FcStore* store, const PjPlan* plan) {
     FcList* parts = pjNativeParts(c, plan);
     FcList* merged = fcListNew(c);
-    int i, k;
+    int i;
     if (!store->loaded) fcStoreLoad(c, store);
-    for (i = 0; i < parts->count; i++) {
-        const PjNativePart* part = (const PjNativePart*)parts->items[i];
-        FcPkgImport* pi = (FcPkgImport*)fcAlloc(c, sizeof *pi);
-        pi->name = part->importName;
-        pi->requires = fcListNew(c);
-        pi->hasNative = true;
-        pi->functions = fcListNew(c);
-        pi->returns = fcListNew(c);
-        pi->hosts = fcListNew(c);
-        for (k = 0; k < part->native->m.functions->count; k++) {
-            const FgPkgFn* fn = (const FgPkgFn*)part->native->m.functions->items[k];
-            fcListAdd(c, pi->functions, (void*)fn->name);
-            fcListAdd(c, pi->returns, (void*)fn->returns);
-            fcListAdd(c, pi->hosts, FC_IVAL(fn->host));
-        }
-        pi->dir = part->directory;
-        pi->packageName = fcFmt(c, "project:%s", part->projectName);
-        pi->packageVersion = pjPackageVersion(c, plan->settings->version);
-        pi->overlay = true;
-        pi->overlayNative = &part->native->m;
-        pi->overlayBuildDir = nbCombine(c, nbCombine(c, part->directory, "obj"), "native");
-        pi->overlayFile = part->projectFile;
-        fcListAdd(c, merged, pi);
-    }
+    for (i = 0; i < parts->count; i++) fcListAdd(c, merged, pjOverlayImport(c, (const PjNativePart*)parts->items[i], pjPackageVersion(c, plan->settings->version)));
     for (i = 0; i < store->imports->count; i++) fcListAdd(c, merged, store->imports->items[i]);
     store->imports = merged;
 }
@@ -76295,9 +76297,11 @@ static FcList* svGetSuggestions(SvLang* S, SvIndex* x, int offset, int* replaceS
  * NamespaceOf; BuildPlan.LibraryOrder), on the frontend in C (linker.c). The prelude, the other files of the project (each a source of its own,
  * before the document), the libraries the program imports, the preludes of the `#import`s, the document as the last source; parser (the first error),
  * resolver and compiler (all their errors), the type check (warnings lax, errors strict). Only what lies in the document is reported (and the warnings
- * of the libraries, with their path). Not ported: the C++ natives of a library project (ProjectNativeOverlay), a standard library project's own
- * built-in natives (Linker.BuiltInKey), the check of all the files of a project at once (AnalyzeProjectFiles). Runs on the analysis thread: everything
- * in the context of the analysis, nothing shared with the requests. */
+ * of the libraries, with their path). The natives of the projects as the build has them (project/linkplan.c): the C++ natives of the project and of
+ * its libraries from their project files (`projectFile`: ProjectNativeOverlay - the project's own always, a library's when it is imported), a standard
+ * library project's own built-in natives (the bridge lists of graphics, windows, reflection: Linker.BuiltInKey). Not ported: the check of all the
+ * files of a project at once (AnalyzeProjectFiles). Runs on the analysis thread: everything in the context of the analysis, nothing shared with the
+ * requests. */
 
 typedef struct SvLib {
     FcList* names;        /* the names `#import` finds it by (plan.Libraries) */
@@ -76307,6 +76311,7 @@ typedef struct SvLib {
     FcList* requires;     /* names */
     SvFile* files;
     int nfiles;
+    const char* projectFile;   /* its .fireproj (its C++ natives), NULL: not known */
 } SvLib;
 
 typedef struct SvAnalysisIn {
@@ -76320,6 +76325,7 @@ typedef struct SvAnalysisIn {
     bool hasPlan;             /* a project (with or without libraries) */
     bool strict;
     const char* ownImport;    /* the import name of a library project itself, NULL: none */
+    const char* projectFile;  /* the project's .fireproj (its C++ natives), NULL: not known */
 } SvAnalysisIn;
 
 typedef struct SvAnalyzer {
@@ -76328,6 +76334,7 @@ typedef struct SvAnalyzer {
     const SvAnalysisIn* in;
     FcList* projectImports;   /* the imported libraries' import names */
     const char* preludePath;
+    FcDict* nativeLibs;       /* the lower import names of the libraries with C++ natives */
 } SvAnalyzer;
 
 static const SvLib* svLibFind(const SvAnalysisIn* in, const char* name) {
@@ -76346,7 +76353,57 @@ static bool svTryImportLibrary(SvAnalyzer* A, const char* name) {
     if (!lib) return false;
     for (i = 0; i < A->projectImports->count; i++) if (svEqIC((const char*)A->projectImports->items[i], lib->import)) known = true;
     if (!known) fcListAdd(A->c, A->projectImports, (void*)lib->import);
+    /* (the C++ of the library comes with it, as in pjLinkDirective) */
+    if (A->nativeLibs && fcDictHas(A->nativeLibs, svLowerAscii(A->c, lib->import))) fcSetAdd(&A->L->nativeImports, pjOverlayKey(A->c, lib->import));
     return true;
+}
+
+/* the native part of a project file (ProjectNatives.Resolve), NULL: none or it cannot be read */
+static PjNativePart* svNativePartOf(FcCtx* c, const char* projectFile) {
+    PjNativePart* volatile part = NULL;
+    if (!projectFile || !*projectFile) return NULL;
+    FC_TRY(c) {
+        PjLoaded* l = (PjLoaded*)fcAlloc(c, sizeof *l);
+        l->project = pjProjectLoad(c, projectFile);
+        part = pjNativesResolve(c, l, NULL);
+    } FC_CATCH(c) {
+        part = NULL;
+    } FC_END_TRY;
+    return part;
+}
+
+/* the natives of the projects as project/linkplan.c has them: ProjectNativeOverlay.Register (the project's and the libraries' C++ natives before
+ * the installed packages; the project's own import at once, a library's when it is imported) and a standard library's own built-in natives */
+static void svProjectNatives(SvAnalyzer* A) {
+    FcCtx* c = A->c;
+    FcLinker* L = A->L;
+    const SvAnalysisIn* in = A->in;
+    FcList* parts = fcListNew(c);
+    PjNativePart* own = svNativePartOf(c, in->projectFile);
+    int i;
+    if (own) fcListAdd(c, parts, own);
+    A->nativeLibs = fcDictNew(c, FC_KEY_STR);
+    for (i = 0; in->hasPlan && i < in->nlibs; i++) {
+        PjNativePart* part = svNativePartOf(c, in->libs[i].projectFile);
+        if (!part) continue;
+        fcListAdd(c, parts, part);
+        fcSetAdd(A->nativeLibs, svLowerAscii(c, in->libs[i].import));
+    }
+    if (parts->count > 0) {
+        FcList* merged = fcListNew(c);
+        if (!L->store.loaded) fcStoreLoad(c, &L->store);
+        for (i = 0; i < parts->count; i++) fcListAdd(c, merged, pjOverlayImport(c, (const PjNativePart*)parts->items[i], ""));
+        for (i = 0; i < L->store.imports->count; i++) fcListAdd(c, merged, L->store.imports->items[i]);
+        L->store.imports = merged;
+    }
+    if (own) fcSetAdd(&L->nativeImports, pjOverlayKey(c, own->importName));
+    /* Linker.BuiltInKey: the natives of the VM that a standard library of an import the compiler knows has (its prelude is the project's own files) */
+    if (in->ownImport) {
+        const char* lower = svLowerAscii(c, in->ownImport);
+        if (streq0(lower, "graphics")) fcRegisterBridge(L, FC_BRIDGE_graphics);
+        else if (streq0(lower, "windows")) fcRegisterBridge(L, FC_BRIDGE_windows);
+        else if (streq0(lower, "reflection")) fcRegisterBridge(L, FC_BRIDGE_reflection);
+    }
 }
 
 /* ProjectLibraries.UnknownHint */
@@ -76546,6 +76603,7 @@ FIRE_NATIVE(37, "__SbCall", 0)
         c->resourceNames = NULL;
         c->directiveHook = svAnalysisDirective;
         c->directiveState = &A;
+        svProjectNatives(&A);
         if (extraImports)
             for (i = 0; i < extraImports->count; i++) {
                 const char* name = (const char*)extraImports->items[i];
@@ -76811,8 +76869,8 @@ static char* svDup(const char* s) { size_t n; char* r; if (!s) return NULL; n = 
 
 /* ---- documents and projects ---- */
 typedef struct SvPFile { char* path; SvText* text; } SvPFile;
-typedef struct SvPLib { char** names; int nnames; char* import; char* name; char* ns; char** requires; int nrequires; SvPFile* files; int nfiles; } SvPLib;
-typedef struct SvProject { char* key; SvPFile* files; int nfiles; SvPLib* libs; int nlibs; bool strict; char* ownImport; int stamp; } SvProject;
+typedef struct SvPLib { char** names; int nnames; char* import; char* name; char* ns; char** requires; int nrequires; SvPFile* files; int nfiles; char* projectFile; } SvPLib;
+typedef struct SvProject { char* key; SvPFile* files; int nfiles; SvPLib* libs; int nlibs; bool strict; char* ownImport; char* projectFile; int stamp; } SvProject;
 
 #define SV_REMEMBERED 4
 
@@ -76988,7 +77046,7 @@ typedef struct SvJob {
     SvText* text;
     SvText** others; char** otherPaths; int nothers;
     SvProject* project;          /* (only the scalar settings are read) */
-    bool strict; char* ownImport;
+    bool strict; char* ownImport; char* projectFile;
     int nlibs;
     SvLib* libs;                 /* built in the job's context */
     SvText** libTexts; int nlibTexts;
@@ -77012,6 +77070,7 @@ static SvJob* svTakeJob(SvServer* S, SvDoc* d) {
     if (p) {
         j->strict = p->strict;
         j->ownImport = svDup(p->ownImport);
+        j->projectFile = svDup(p->projectFile);
         j->others = (SvText**)calloc((size_t)p->nfiles + 1, sizeof(SvText*));
         j->otherPaths = (char**)calloc((size_t)p->nfiles + 1, sizeof(char*));
         for (i = 0; i < p->nfiles; i++) {
@@ -77037,6 +77096,7 @@ static SvJob* svTakeJob(SvServer* S, SvDoc* d) {
             l->ns = fcStr(j->c, pl->ns);
             l->requires = fcListNew(j->c);
             for (k = 0; k < pl->nrequires; k++) fcListAdd(j->c, l->requires, (void*)fcStr(j->c, pl->requires[k]));
+            l->projectFile = fcStr(j->c, pl->projectFile);
             l->nfiles = pl->nfiles;
             l->files = (SvFile*)fcAlloc(j->c, sizeof(SvFile) * (size_t)(pl->nfiles + 1));
             for (k = 0; k < pl->nfiles; k++) {
@@ -77060,7 +77120,7 @@ static void svFreeJob(SvJob* j) {
     for (i = 0; i < j->nothers; i++) { svTextUnref(j->others[i]); free(j->otherPaths[i]); }
     for (i = 0; i < j->nlibTexts; i++) svTextUnref(j->libTexts[i]);
     free(j->others); free(j->otherPaths); free(j->libTexts);
-    free(j->path); free(j->base); free(j->ownImport);
+    free(j->path); free(j->base); free(j->ownImport); free(j->projectFile);
     svFreeCtx(j->c);
     free(j);
 }
@@ -77103,6 +77163,7 @@ static char* svRunJob(SvServer* S, SvLang* lang, SvJob* j) {
     in.hasPlan = j->libs != NULL;
     in.strict = j->strict;
     in.ownImport = j->ownImport;
+    in.projectFile = j->projectFile;
     lang->tmp = svNewCtx();
     diags = svAnalyzeInProject(j->c, lang, S->preludePath, S->storeRoot, &in);
     svFreeCtx(lang->tmp);
@@ -77294,10 +77355,10 @@ static void svProjectFree(SvProject* p) {
         SvPLib* l = &p->libs[i];
         for (k = 0; k < l->nnames; k++) free(l->names[k]);
         for (k = 0; k < l->nrequires; k++) free(l->requires[k]);
-        free(l->names); free(l->requires); free(l->import); free(l->name); free(l->ns);
+        free(l->names); free(l->requires); free(l->import); free(l->name); free(l->ns); free(l->projectFile);
         svFreeFiles(l->files, l->nfiles);
     }
-    free(p->libs); free(p->key); free(p->ownImport);
+    free(p->libs); free(p->key); free(p->ownImport); free(p->projectFile);
     free(p);
 }
 
@@ -77643,6 +77704,7 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
                 p->stamp = (int)++S->clock;
                 p->strict = tc && svEqIC(tc, "strict");
                 p->ownImport = svJBool(params, "library") ? svDup(svJStr(params, "projectImport")) : NULL;
+                p->projectFile = svDup(svJStr(params, "projectFile"));
                 svUnlock(&S->mu);   /* (reading the files from the disk without the lock) */
                 svFileList(&mc, fcJsonGet(params, "files"), &p->files, &p->nfiles);
                 if (libs && libs->kind == FJ_ARR) {
@@ -77654,6 +77716,7 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
                         pl->import = svDup(svJStr(l, "import"));
                         pl->name = svDup(svJStr(l, "name") ? svJStr(l, "name") : pl->import);
                         pl->ns = svDup(svJStr(l, "namespace"));
+                        pl->projectFile = svDup(svJStr(l, "projectFile"));
                         pl->names = svStrArray(fcJsonGet(l, "names"), &pl->nnames);
                         if (pl->nnames == 0) { free(pl->names); pl->names = (char**)calloc(2, sizeof(char*)); pl->names[0] = svDup(pl->import); pl->nnames = 1; }
                         pl->requires = svStrArray(fcJsonGet(l, "requires"), &pl->nrequires);
