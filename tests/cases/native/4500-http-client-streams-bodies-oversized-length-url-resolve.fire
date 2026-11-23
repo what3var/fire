@@ -1,0 +1,78 @@
+#import "http"
+#import "time"
+#import "filesystem"
+class Site : Http.IRouter {
+    Http.Response Handle(Http.Context ctx, Http.Next next) {
+        string p = ctx.Request.path
+        if (p == "/big") {
+            var data = new byte[300000]
+            for (int i = 0; i < data.length; i++) { data[i] = i % 251 }
+            return new Http.Response(200, data)
+        }
+        if (p == "/chunked") {
+            var ms = new IO.MemoryStream()
+            ms.Write(new byte[5000], 0, 5000)
+            ms.Position = 0
+            return Http.Response.FromStream(ms, "application/octet-stream")
+        }
+        if (p == "/a/b/hop") { return Http.Response.Redirect("../../big") }
+        if (p == "/missing") { return Http.Response.Error(404, "no such file") }
+        return next.Invoke(ctx)
+    }
+}
+var server = new Http.AppServer("127.0.0.1", 0)
+server.PushTo(new Site())
+int port = server.Port
+bool done = false
+string log = ""
+fire taking port {
+    string root = "http://127.0.0.1:" + port
+    var lines = new List<string>()
+    var client = new Http.Client()
+    // a body read piece by piece
+    var r = client.Send("GET", root + "/a/b/hop")
+    var buffer = new byte[7000]
+    int total = 0
+    int sum = 0
+    int pieces = 0
+    while (true) {
+        int n = r.stream.Read(buffer, 0, buffer.length)
+        if (n <= 0) { break }
+        pieces++
+        for (int i = 0; i < n; i++) { sum = (sum + buffer[i]) % 1000003 }
+        total += n
+    }
+    r.Close()
+    lines.Add("send " + r.status + " " + total + " " + sum + " " + (pieces > 1) + " " + r.url.EndsWith("/big"))
+    // into a file
+    string file = IO.Path.Combine(IO.Path.GetTempPath(), "fire-case-4500.bin")
+    var f = client.GetFile(root + "/big", file)
+    lines.Add("file " + f.status + " " + IO.File.Size(file) + " " + f.Length)
+    IO.File.Delete(file)
+    var m = client.GetFile(root + "/missing", file)
+    lines.Add("missing " + m.status + " " + m.Text() + " " + IO.File.Exists(file))
+    // a chunked body
+    var c = client.Send("GET", root + "/chunked")
+    c.ReadBody()
+    lines.Add("chunked " + c.Length + " " + c.trailers.Count)
+    // too large: the announced length
+    client.maxBodyBytes = 1000
+    try { client.Get(root + "/big") } catch (Http.HttpException e) { lines.Add("get " + e.code + " " + e.length + " " + e.message) }
+    try { client.Send("GET", root + "/big") } catch (Http.HttpException e) { lines.Add("send " + e.code + " " + e.length) }
+    var big = client.Send("GET", root + "/chunked")
+    try { big.SaveTo(file) } catch (Http.HttpException e) { lines.Add("chunked " + e.code + " " + e.length + " " + e.message + " " + IO.File.Exists(file)) }
+    sync global {
+        log = "|".Join(lines)
+        done = true
+    }
+}
+while (!done) { server.AcceptOne(20ms); sync globals }
+foreach (part in log.Split("|")) { print(part) }
+server.Close()
+// RFC 3986 5.4: the reference resolution examples
+var u = Http.Url.Parse("http://a/b/c/d;p?q")
+string refs[] = ["g", "./g", "g/", "/g", "//g", "?y", "g?y", "#s", "g#s", "g?y#s", ";x", "g;x", "", ".", "./", "..", "../", "../g", "../..", "../../", "../../g",
+    "../../../g", "../../../../g", "/./g", "/../g", "g.", ".g", "g..", "..g", "./../g", "./g/.", "g/./h", "g/../h", "g;x=1/./y", "g;x=1/../y", "g?y/./x", "g#s/../x",
+    "https://other/x/../y", "mailto:ada@example.com"]
+foreach (r in refs) { print("\"" + r + "\" -> " + u.Resolve(r)) }
+//# name: http: Client.Send streams a body (read piece by piece, SaveTo, ReadBody; redirects followed, a relative Location with ../), GetFile, a Content-Length above maxBodyBytes says its length (HttpException.length), a chunked body too large while it is read; Url.Resolve per RFC 3986 5.4
