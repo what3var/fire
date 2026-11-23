@@ -14,6 +14,9 @@
  *   forge-c build|publish <project|solution> ...    projects and solutions, the package file .fpk (Phase D 3, project/; -lpthread)
  *   forge-c projectplan <project|solution>          the model of a project or solution, as `forge projectplan` (docs/spec/FORGE_C.md)
  *   forge-c fpk <file.fpk>                          a package as it is read, as `forge fpk`
+ *   forge-c build-embed <folder>                    libforge and libfirevm as shared libraries (Phase D 7, build/embedlib.c)
+ *
+ * With FIRE_FORGE_LIBRARY this file is libforge (no main): native/abi/fire_embed.h, implemented in embed.c (docs/spec/EMBED.md).
  *
  * The output is byte for byte what `forge tokens` / `forge ast` / `forge diagnostics` of the C# compiler prints (src/fire.Compiler/FrontendDump.cs);
  * tests/compare-frontend.sh compares the two over the corpus. */

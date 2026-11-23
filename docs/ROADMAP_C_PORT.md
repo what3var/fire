@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); **M1 erreicht** (23.11.2026: die C#-VM ist entfernt); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard` (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); **M1 erreicht** (23.11.2026: die C#-VM ist entfernt); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard` (siehe dort), Schritt 7 (`fire_embed.h`, Packages `forge`/`script`). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -624,6 +624,17 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    geladenen Compiler, w64devkit (ein falsches 7z) und die Prüfung des SHA-256 von TinyCC mit `--archive`. Offen: ein echter Download (https) - nicht geprüft.
 6. `forge conformance` ersetzt den Kern von `fire.Testing`; Installer (`setup.iss`) und Paketierung ohne .NET-Werkzeuge.
 7. `fire_embed.h` und die Packages `forge`/`script` (L6), mit Tests in fire (ein Programm übersetzt und startet ein Skript, VM und nativ).
+   **Umgesetzt** ([EMBED.md](spec/EMBED.md), 23.11.2026): `native/abi/fire_embed.h` - Übersetzen (Datei, Projekt oder Text) mit den Diagnosen als Daten,
+   die Befehlszeile von forge im Prozess (`fire_forge_main`), ein Programm in der VM im Prozess mit Argumenten, Ausgabe an einen Rückruf oder gesammelt,
+   Exitcode und der Ausnahme, die niemand fing (Klasse, Meldung, Trace), als Daten. libforge ist `forge.c` mit `FIRE_FORGE_LIBRARY` (`embed.c`), libfirevm
+   `fire.c` mit `FIRE_VM_LIBRARY` (`vm_embed.c`); `forge-c` und `fire` sind dünne Programme darüber, `forge-c build-embed <ordner>` baut beide als Shared
+   Libraries (eigene Runtime, verborgene Symbole), für ein Programm, das `forge` oder `script` importiert, von selbst (`FIRE_EMBED_PATH`). Die Packages
+   `forge` (`Forge.Compiler`) und `script` (`Scripting.Script`: im eigenen Prozess, nicht als Kind `fire` - Begründung in EMBED.md) sind Standard-Packages,
+   ihre Natives laden die Bibliotheken; Tests in fire (`packages/forge/testing`, `packages/script/testing`: übersetzen und starten, zwei Skripte
+   nebeneinander, ein Übersetzungsfehler als Daten, eine Ausnahme des Skripts vom Wirt gefangen) in der VM und nativ richtig. Globaler Zustand: das Frontend
+   hing schon am Kontext; was der Builder und die Befehlszeile für den Prozess halten, ist in EMBED.md aufgelistet (die Ordner setzt die Bibliothek je
+   Übersetzung unter einer Sperre); die Runtime der VM bleibt die des Prozesses (L1) - ein Skript zur Zeit. Offen (für Schritt 8): die Quellen von forge
+   als Natives eines Packages (der Mechanismus legt Header flach nach Dateinamen ab), `fire_forge_main` mit eigenen Strömen; Abbruch und Zeitlimit eines Skripts.
 8. **forge mit einem Frontend in fire** (Wunsch vom 19.11.2026): ein kleines fire-Programm (`tools/forge.fire`: `#import "forge"`, die
    Befehlszeile unverändert an `Forge.Main(args)` durchgereicht, Ausgabe und Exitcode zurück), das mit forge selbst für jedes Ziel gebaut
    wird - fire baut sich damit selbst für andere Plattformen (`forge build tools/forge.fire --engine native -t <ziel>`; libforge und die VM sind C

@@ -4,6 +4,7 @@
  *   fire run [--stats] [--debug <spec>] <program.fbc> [--] [<arguments>]   runs a program (written by `forge bytecode`); what follows it is the program's
  *   fire [--stats] [--debug <spec>] a.fbc [b.fbc ...] [-- <arguments>]      runs the programs one after the other in this process
  *   fire help | fire version
+ *   (with FIRE_VM_LIBRARY: libfirevm, no main - native/abi/fire_embed.h, implemented in vm_embed.c, docs/spec/EMBED.md)
  *
  * Every program is loaded, its classes are registered with the runtime, it runs, and then everything it had is gone again - its objects, strings, scopes,
  * classes - before the next one starts; one that ends with an exception nothing catches (or with an error of the runtime) ends only itself (L6). --stats
