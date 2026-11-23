@@ -87,8 +87,11 @@
   <Target Name="PublishTools" AfterTargets="Publish" Condition="'$(PublishTools)' == 'true'">
     <PropertyGroup>
       <_ToolsPublishDir>$([System.IO.Path]::GetFullPath('$(PublishDir)'))</_ToolsPublishDir>
+      <!-- PublishForge=false: only ember - forge and the VM come from `forge-c package-dist` (setup.iss /DForgeDist, docs/ROADMAP_C_PORT.md Phase D 6) -->
+      <_ToolsProjects>..\fire.Compiler\fire.Compiler.csproj;..\fire.Ember\fire.Ember.csproj</_ToolsProjects>
+      <_ToolsProjects Condition="'$(PublishForge)' == 'false'">..\fire.Ember\fire.Ember.csproj</_ToolsProjects>
     </PropertyGroup>
-    <MSBuild Projects="..\fire.Compiler\fire.Compiler.csproj;..\fire.Ember\fire.Ember.csproj" Targets="Restore;Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishSingleFile=$(PublishSingleFile);PublishDir=$(_ToolsPublishDir);StandardSourcesPublish=false;PrebuildStandard=false" />
+    <MSBuild Projects="$(_ToolsProjects)" Targets="Restore;Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishSingleFile=$(PublishSingleFile);PublishDir=$(_ToolsPublishDir);StandardSourcesPublish=false;PrebuildStandard=false" />
   </Target>
 
 </Project>

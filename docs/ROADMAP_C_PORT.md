@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); **M1 erreicht** (23.11.2026: die C#-VM ist entfernt); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard` (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); **M1 erreicht** (23.11.2026: die C#-VM ist entfernt); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard`, Schritt 6 bis auf den Bau des Installers (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -623,6 +623,18 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    Gemessen mit einem lokalen Server als Proxy (hier kein Netz): Open Watcom unter Linux und unter Wine, die Frage eines nativen Builds für `dos32` bis zum Build mit dem
    geladenen Compiler, w64devkit (ein falsches 7z) und die Prüfung des SHA-256 von TinyCC mit `--archive`. Offen: ein echter Download (https) - nicht geprüft.
 6. `forge conformance` ersetzt den Kern von `fire.Testing`; Installer (`setup.iss`) und Paketierung ohne .NET-Werkzeuge.
+   **Umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net), 23.11.2026; den Installer selbst baut hier
+   niemand - kein Windows, kein Inno Setup): `forge-c conformance` (`native/forge/tools/conformance.c`) führt die Fälle von `tests/cases` ohne .NET aus - jeder Fall
+   in eigenen Prozessen (`forge-c bytecode`, dann `fire`; mit `--engine native` die Gruppe native als native Programme), nach den Regeln von `run-cases.sh`,
+   `run-cases-vm.sh`, `TestCasesVm` und `NatVerdict`; Filter nach Gruppe, Fall und Titel, `-j` (Vorgabe: die Hälfte der Kerne, höchstens 4), ein falscher Fall noch
+   einmal allein, Zusammenfassung je Gruppe, Exitcode. Maß: **1173 von 1173** Fällen in der VM, dieselben Urteile wie `tests/run-cases-vm.sh` mit forge-c (auch an
+   drei absichtlich verdorbenen Fällen); nativ (tcc) 515 von 517 - `native/1370` ist tcc (mit gcc richtig), `native/4440` erwartet die Meldung der VM, wo ein natives
+   Programm keine fire-Plugins laden kann (gemeldet). `forge-c package-dist <ordner>` (`tools/dist.c`, `native/forge/package-dist.sh`): forge-c als `forge`, die
+   VM mit ihren fünf Varianten, `native/`, `Source/` und `Prebuilt/` - nur mit einem C-Compiler und forge-c; `setup.iss` nimmt den Ordner mit `/DForgeDist=<ordner>`
+   (spark und ember dann mit `-p:PublishForge=false`, ohne das C#-forge). Was in `fire.Testing` C# bleibt und was Daten werden kann: die Tabelle in FORGE_C.md.
+   **Offen:** der Installer mit `/DForgeDist` unter Windows gebaut und installiert; eine Distribution für Windows (unter Windows mit w64devkit zu bauen - hier nur
+   der Aufbau als Probelauf); der native Teil des Testprogramms, den `conformance` nicht hat (Sanitizer, Warnungen als Fehler, die Sonderläufe); ein Timeout der
+   Prozesse unter Windows; `fire.Testing` liest die Fälle weiter selbst (`TestCasesVm` kann gehen, sobald M3 die C#-VM-Seite nicht mehr braucht).
 7. `fire_embed.h` und die Packages `forge`/`script` (L6), mit Tests in fire (ein Programm übersetzt und startet ein Skript, VM und nativ).
 8. **forge mit einem Frontend in fire** (Wunsch vom 19.11.2026): ein kleines fire-Programm (`tools/forge.fire`: `#import "forge"`, die
    Befehlszeile unverändert an `Forge.Main(args)` durchgereicht, Ausgabe und Exitcode zurück), das mit forge selbst für jedes Ziel gebaut

@@ -30,6 +30,16 @@
 and there is none, both offer to download one on the command line (w64devkit on Windows, Open Watcom for its targets; `Toolchain/` next to forge);
 `forge-c toolchain-setup w64devkit|watcom|tcc` does it directly, as spark's setup does.
 
+Two commands only forge-c has (phase D step 6 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md): fire without .NET):
+
+| Command | What it does |
+| --- | --- |
+| `forge-c conformance [<group>\|<group>/<case>...] [--filter t] [-j n] [--engine vm\|native\|all]` | runs the cases of `tests/cases` - in the VM in C, and the group native as native programs - and compares them with what they expect: the core of the test program `fire.Testing` without .NET ([testing](testing.md#the-cases-as-files-testscases)); exit code 0 when all are right |
+| `forge-c package-dist <folder> [--dry-run]` | the forge/VM part of an installation without .NET: forge-c (as `forge`), the VM `fire` with its variants, `native/` (tables, runtime, the sources of the VM), `Source/` (the standard packages) and `Prebuilt/` (their libraries for this machine) - what `setup.iss` installs next to spark with `/DForgeDist=<folder>`; `native/forge/package-dist.sh <folder>` builds forge-c with `cc` first |
+
+forge-c finds its tables (the prelude) in `FIRE_TABLES`, else in `../tables` or `native/tables` next to it (the layout of `package-dist`), else in
+`native/tables` of the working folder; the store of packages is `FIRE_PACKAGES`, else `Packages/` next to it.
+
 ```bash
 forge run hello.fire
 forge run greet.fire -- Ada

@@ -111,7 +111,15 @@ Name: "{app}\Toolchain"; Permissions: users-modify
 
 [Files]
 Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+#ifdef ForgeDist
+; forge and the VM without .NET (docs/ROADMAP_C_PORT.md, Phase D 6): iscc /DForgeDist=<folder> setup.iss, the folder made by `forge-c package-dist <folder>`
+; (native/forge/package-dist.sh) - forge (forge-c), fire and its variants, native\, Source\ and Prebuilt\ come from there; spark and ember from the publish
+; folder (published with -p:PublishForge=false: without the C# forge), which may still hold what the build of spark put there of forge and the VM
+Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\*"; DestDir: "{app}"; Excludes: "\forge.exe,\fire.exe,\fire.exe.key,\fire-*,\Source\*,\Prebuilt\*,\native\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#ForgeDist}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#else
 Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Registry]
