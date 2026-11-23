@@ -10,7 +10,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
-using fire.Terminal;
+using fire.Imaging;
 using Pen = Avalonia.Media.Pen;
 
 namespace fire.Editor

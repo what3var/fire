@@ -63,5 +63,5 @@ var line = input.ReadLine()                        // what the user types (undef
 
 ## The host decides
 
-In spark and `forge` a program may read and write everything. A host that embeds fire can restrict it (`IoPolicy`: nothing, read only, some
-folders) - a denied access is a `PermissionException` ([embedding](../../src/fire.Editor/Help/Embedding.md)).
+In spark and `forge` a program may read and write everything. A host of the library can restrict it (`fire_host` asks it before every access,
+`native/abi/fire_pkg_abi.h`) - a denied access is a `PermissionException`. (`fire`, the VM in C, allows everything; the C# VM's `IoPolicy` went with it at M1.)

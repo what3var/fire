@@ -1,9 +1,7 @@
 using fire.Debugging;
-using fire.Runtime;
 
-/// <summary>Debugging a fire plugin in the VM (docs/spec/NATIVE_BACKEND.md "Plugins"): the plugin's bytecode carries its line tables, its sources get the next indexes of
-/// the program when it is loaded (VM.PluginSourcesLinked), VmDebugTarget grows SourceFiles, a breakpoint by file in the plugin applies at once, a step goes into its
-/// methods. Part of `FIRE_TESTS_ONLY=debugger`.</summary>
+/// <summary>The plugin of the debug checks: LinkageTests "plugindebug" debugs it in `fire`, the VM in C (docs/spec/NATIVE_BACKEND.md "Plugins"): its sources, a breakpoint
+/// by file in the plugin, a step into its methods.</summary>
 static partial class DebuggerTests
 {
     internal const string PluginKitText = PluginKitSource;
@@ -21,56 +19,8 @@ static partial class DebuggerTests
         }
         """;
 
-    public static void PluginRun()
-    {
-        Console.WriteLine();
-        Console.WriteLine("=== Debugger: Plugins in der VM ===");
-        int failures = 0;
-        void Check(bool ok, string title, string? detail = null)
-        {
-            if (!ok) failures++;
-            Console.WriteLine(ok ? $"OK: Plugin-Debug (VM): {title}" : $"FEHLER: Plugin-Debug (VM): {title}{(detail != null ? "\n  " + detail : "")}");
-        }
-
-        string dir = Path.Combine(Path.GetTempPath(), "fire-dbgplugin-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        try
-        {
-            string kitFile = Path.Combine(dir, "kit.fire");
-            File.WriteAllText(kitFile, PluginKitSource);
-            string plugin = Path.Combine(dir, "kit.fireplugin");
-            var compiled = fire.Compiler.NativeBuilder.WriteVmPlugin(plugin, "Kit", new[] { PluginKitSource }, new string?[] { kitFile }, VmExecutionMode.Debug);
-            var read = PluginBytecode.Read(plugin);
-            var work = read?.Program?.Program.Classes["Kit.Worker"].Methods["Work"][0].Chunk;
-            Check(work != null && work.GetLocation(work.Code.Count - 1).Line == 8 && read!.Sources.Count == 1 && read.Sources[0][1] == kitFile,
-                "die .fireplugin-Datei traegt die Zeilentabellen und die eigenen Quellen", $"{work?.GetLocation(work.Code.Count - 1)} {compiled.Program.Classes["Kit.Worker"].Methods["Work"][0].Chunk.GetLocation(0)} / {string.Join(",", read?.Sources.Select(s => string.Join(":", s)) ?? Array.Empty<string>())}");
-            string host = "#import \"reflection\"\nvar lib = Library.Load(\"" + plugin.Replace('\\', '/') + "\")\nany w = Reflect.New(\"Kit.Worker\", [])\nvar r = w.Work(5)\nprint(\"result \" + r)\n";
-            // (the same class in the program itself: where Step Into lands there - the plugin's method must land on the same line of its own source)
-            (int, int) reference;
-            using (var plain = VmDebugTarget.Build(new[] { PluginKitSource + "\nany w = new Kit.Worker()\nvar r = w.Work(5)\n" }, VmExecutionMode.Debug))
-            {
-                int u = plain.FirstUserSourceIndex;
-                plain.MainThread.RunUntilBreakpoint(new HashSet<(int, int)> { (u, 13) }, () => false);
-                plain.MainThread.StepInto();
-                reference = plain.MainThread.CurrentLocation;
-                plain.MainThread.RunUntilEnd(() => false);
-            }
-            VM.ResetTerminateForTests();
-            using var target = VmDebugTarget.Build(new[] { host }, VmExecutionMode.Debug);
-            var output = new List<string>();
-            target.Output += (_, text) => { lock (output) output.Add(text); };
-            int user = target.FirstUserSourceIndex;
-            PluginPlan(target, kitFile, user, reference, Check);
-            target.MainThread.RunUntilEnd(() => false);
-            lock (output) Check(output.Contains("result 16"), "das Programm endet mit dem Ergebnis", string.Join(" | ", output));
-        }
-        catch (Exception ex) { Check(false, "ohne Ausnahme", ex.ToString()); }
-        finally { VM.ResetTerminateForTests(); try { Directory.Delete(dir, true); } catch (IOException) { } }
-        Console.WriteLine(failures == 0 ? "Alle Plugin-Debug-Pruefungen (VM) bestanden." : $"FEHLER: {failures} Plugin-Debug-Pruefung(en) (VM) fehlgeschlagen.");
-    }
-
     /// <summary>The plan for a debug target whose program loads the plugin Kit (PluginKitSource in `kitFile`) at line 2 of its own source and calls Work(5) at line 4:
-    /// the sources event, Step Into, scopes, `this`, a breakpoint by file in the plugin, Step Out (the VM and a native debug build, LinkageTests).</summary>
+    /// the sources event, Step Into, scopes, `this`, a breakpoint by file in the plugin, Step Out (a native debug build and `fire`, LinkageTests).</summary>
     internal static void PluginPlan(fire.Debugging.IDebugTarget target, string kitFile, int user, (int, int)? reference, Action<bool, string, string?> Check)
     {
         int added = 0;

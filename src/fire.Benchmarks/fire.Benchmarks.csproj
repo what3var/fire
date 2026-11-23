@@ -14,7 +14,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
-    <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
   </ItemGroup>
 
+  <!-- the benchmarks run in fire, the VM in C: it is built next to them like next to forge -->
+  <Import Project="..\FireVm.targets" />
 </Project>

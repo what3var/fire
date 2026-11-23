@@ -12,16 +12,6 @@ namespace fire.Compiler
     /// </summary>
     public static partial class GraphicsLibrary
     {
-        /// <summary>Does the VM take the C implementation? FIRE_VM_GRAPHICS=cs keeps the C# one (fire.Terminal), =c asks for C; the default is C - except where the host
-        /// renders the windows itself (the editor's previews: `hostRenders`), which still needs the C# one.</summary>
-        public static bool Wanted(bool hostRenders)
-        {
-            string? choice = Environment.GetEnvironmentVariable("FIRE_VM_GRAPHICS");
-            if (choice == "cs") return false;
-            if (choice == "c") return true;
-            return !hostRenders;
-        }
-
         private static string? _path;
         private static string? _failure;
 
@@ -46,10 +36,6 @@ namespace fire.Compiler
         /// <summary>Why the library cannot be had (null: it can).</summary>
         public static string? Failure => _failure;
     }
-
-    /// <summary>The host drives the windows of the program (RuntimeSession.Build): <see cref="Display"/> gets their pictures and gives their events; null: windows
-    /// without a screen (the design view: the pictures stay in the framebuffers).</summary>
-    public sealed record HostWindows(IHostDisplay? Display);
 
     /// <summary>One event a host hands to a program's window (<see cref="IHostDisplay.NextEvent"/>): <see cref="Type"/> as EventType (mouse, keys, text, resize, close);
     /// positions in pixels of the window. MouseDown/Up: Button, X, Y; MouseMove: X, Y (the buttons the window keeps itself); MouseScroll: Dx, Dy (notches, Dy &gt; 0: up), X, Y;

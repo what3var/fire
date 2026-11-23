@@ -23,6 +23,9 @@ der Paket-Natives sucht die VM im Ordner von forge (der Runner setzt `FIRE_PKG_P
 
 ## Dateien
 
+Die Spalte "Gegenstück in C#" nennt, woher der Port kam: die C#-VM (`src/fire.Runtime`) mit ihrer Grafik (`src/fire.Terminal*`, den Bridges) ist seit
+dem 23.11.2026 entfernt ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md), M1); was davon noch lebt, steht im Kern (`src/fire`) oder in forge.
+
 | Datei | Inhalt | Gegenstück in C# |
 |---|---|---|
 | `native/base/fire_base.h` | Arena, internierte Namen, geordnete Map (Einfügereihenfolge), Datei lesen - ohne globalen Zustand, für VM und später forge | - |
@@ -40,7 +43,7 @@ der Paket-Natives sucht die VM im Ordner von forge (der Runner setzt `FIRE_PKG_P
 | `vm_plugin.c` | fire-Plugins: `Library.Load` einer `.fireplugin` (oder einer Bibliothek mit einer daneben), das Verlinken ihrer Klassen in das laufende Programm (siehe [Plugins](#plugins)) | `VM.Plugins.cs`, `PluginBytecode` |
 | `vm_debug.c` | der Debugger: das Protokoll nativer Programme über den Agenten der Runtime (`fire_debug.h`), die Halte vor jeder Instruktion, die Frames für den Agenten | `VM.StepLine`/`StepInto`/`StepOut`/`RunUntilBreakpoint`, `DebugScopeChain`, `DebugGlobals`, `PauseOnUnhandled` |
 | `fire.c` | das Programm `fire`: Befehlszeile, Programme nacheinander in einem Prozess, Abbau nach jedem (L6), die Varianten der Breiten, das Payload eines gepackten Programms | `fire.Runtime/Program.cs`, `Runtime.cs`, `PayloadLoader` |
-| `src/fire.Compiler/CVm.cs`, `src/fire.Runtime/CVmPayload.cs` | `forge build --engine vm`: `fire` finden oder bauen, das Programm dahinter packen; das Format des Payloads in C# | `Packer`, `PayloadFile` |
+| `src/fire.Compiler/CVm.cs`, `src/fire/Runtime/CVmPayload.cs` | `forge build --engine vm`: `fire` finden oder bauen, das Programm dahinter packen; das Format des Payloads in C# | `Packer`, `PayloadFile` |
 | `src/fire.Compiler/Debugging/CVmLaunch.cs`, `src/fire.Editor/MainWindow/MainWindow.CVm.cs` | spark: Ausführen/Debuggen eines Programms der VM als Kindprozess `fire run x.fbc` | `RuntimeSession`, `VmDebugTarget` in spark |
 | `src/fire.Compiler/HostDisplayFile.cs`, `native/abi/fire_gfx_host.h` (`FIRE_DISPLAY_SHM`) | die Fenster eines Programms in `fire` als Bilder in der IDE: eine Datei, die beide abbilden | `GraphicsLibrary.Instance` (Host-Display im Prozess) |
 
@@ -75,7 +78,8 @@ fire help | fire version
 
 ### Benchmarks gegen die C#-VM
 
-Die 9 Programme aus `tests/bench` (die von `fire.Benchmarks`), Modus Performance, Linux x64, gcc -O2, 4 Kerne unter Last (load ~8, andere Builds
+Gemessen vor M1; seit M1 misst `fire.Benchmarks` nur noch `fire` (übersetzt mit dem C#-forge, gemessen `fire run --time`: "ran in", Minimum aus 5 nach
+einem Aufwärmlauf, mit `--save`/`--check` der Ergebnisse wie bisher). Die 9 Programme aus `tests/bench` (die von `fire.Benchmarks`), Modus Performance, Linux x64, gcc -O2, 4 Kerne unter Last (load ~8, andere Builds
 liefen mit): **C-VM** `fire --time x.fbc` - der Lauf (ohne Laden und Abbau; das Minimum aus 5 nach einem Aufwärmlauf), der ganze Prozess, max RSS;
 **C#-VM** `fire.Benchmarks --filter x --runs 5` - `VM.Run()` (Minimum aus 5 nach dem Aufwärmen des JIT), max RSS des Prozesses (darin auch der
 Compiler und der JIT: die C#-VM allein hat keinen eigenen Prozess). Die Ausgaben sind gleich.
@@ -127,7 +131,7 @@ liest `fire` den Fuß seiner eigenen Datei (`fire_plat_programPath`): ist ein Pa
 * **Tests**: `FIRE_TESTS_ONLY=packer` (Abschnitt "die VM in C"): das Format (Rundlauf, beschädigter Eintrag, fremde Namen), hello world allein in einem
   anderen Ordner, die Argumente und `terminate`, eine unbehandelte Ausnahme, io/time aus den Bibliotheken der Datei, der Cache (zweiter Start schreibt
   nichts, eine beschädigte Bibliothek wird ersetzt), `#intwidth 32` mit `fire-i32`, `fire run`/`help`/`version`/Exitcodes der Befehlszeile; die Prüfungen
-  der .NET-Einzeldatei (`Packer` direkt) nur noch mit `FIRE_TESTS_DOTNET_VM=1`.
+  der .NET-Einzeldatei (`Packer` direkt) sind mit M1 weg.
 
 ## forge run, test und data in der C-VM (M1)
 
@@ -154,8 +158,8 @@ Ordnern der Bibliotheken; der Ordner geht, wenn das Programm endet.
 * **Tests**: `tests/compare-commands.sh` gegen forge-c 100 von 103 gleich (die drei: Dateien nativer Builds und die gepackte Datei von `-m debug`, die
   schon vorher abwichen - das C#-forge vor dieser Änderung schreibt dieselben, die gepackte Datei ist von Lauf zu Lauf verschieden); im Testprogramm
   laufen die Programme der Prüfungen in `fire` (`CVmTest`: übersetzt im Testprogramm, `fire run` mit `FIRE_PRINT_RECORDS`; `CVmTest.Debug` unter dem
-  Debugger wie in spark; `TestCasesVm`: smoke und die Familien vm-* nach den Regeln von `tests/run-cases.sh`); was nur die C#-VM prüft, läuft nur mit
-  `FIRE_TESTS_DOTNET_VM=1` ([testing.md](../tools/testing.md)).
+  Debugger wie in spark; `TestCasesVm`: smoke und die Familien vm-* nach den Regeln von `tests/run-cases.sh`); was nur die C#-VM prüfte, ist seit dem 23.11.2026 mit
+  ihr entfernt ([testing.md](../tools/testing.md), [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md) M1).
 
 ## Windows (M1 (7))
 
@@ -204,7 +208,8 @@ geprüft: `NativeDebugTests`), die Fenster des Desktops (nur ohne Prüfung des B
 spark führt Programme der Engine `vm` nicht mehr in seinem Prozess aus (L4), sondern als Kindprozess `fire`. Den Schalter `FIRE_SPARK_VM=dotnet` (die C#-VM in
 spark: `DebugSession.CompileAsync`, `VmDebugTarget`, `LiveSession` und die Vorschauen im Prozess, `FIRE_DRIVER_AGENT=dotnet`) gibt es seit M1 nicht mehr
 (22.11.2026): `CVmLaunch.UseDotnet`, `CVmScript.EngineOverride`, `LiveSession.InProcessOnly`, `UiPreview.RenderHere` und der Rückweg der Blockvorschau sind
-entfernt, `DebugSession.Compile`/`CompileAsync` (über `VmDebugTarget`) leben nur noch im Testprogramm (`DebugSessionVm.cs`); das Werkzeug `check` des
+entfernt, `DebugSession.Compile`/`CompileAsync` (über `VmDebugTarget`) lebten danach nur noch im Testprogramm und sind seit dem 23.11.2026 mit der C#-VM weg;
+das Werkzeug `check` des
 MCP-Servers übersetzt mit forge (`forge bytecode`, wie Start), nicht mehr mit der C#-VM in spark; der Profiler zählt nur noch native Läufe
 (`fire.Runtime.LineProfile` war der C#-VM).
 
@@ -422,8 +427,8 @@ an die Indizes von `natives.def` gebunden; dieselben Funktionen der Runtime wie 
 Threads, Tasks, Kanäle und Completions kommen mit Schritt 3 in dieselbe Tabelle.
 
 **Natives der Importe**: hinter `natives.def` in der Reihenfolge, in der der Compiler sie registriert (`ImportedPreludes.Insert`): die von `graphics`,
-dann `windows`, dann `reflection` (die Datei nennt sie nicht - ein Aufruf adressiert sie über den Index: `native/tables/bridges.def`, geschrieben von
-`forge tables` aus `GraphicsBridge.RegisterStubs`, `WindowsBridge.RegisterStubs` und `ReflectionNatives.Register`), dann die Natives der Pakete, die die
+dann `windows`, dann `reflection` (die Datei nennt sie nicht - ein Aufruf adressiert sie über den Index: `native/tables/bridges.def`, bis M1
+von `forge tables` aus den C#-Bridges geschrieben, seitdem selbst die Quelle), dann die Natives der Pakete, die die
 Datei mit ihren Bibliotheken nennt (`packageNatives`, `packageNativeLibraries`). Jeder wird beim Laden nach Namen gebunden: an eine Funktion der VM
 (`g_vmHostNatives`: die Reflection und was ein Paket seinem Host lässt, `"host": true` - `Sleep`, `__time_unit_ticks`, `__DEVWaitFor`,
 `__DEVWaitForString`) oder an seine Bibliothek, die beim ersten Aufruf geladen wird.

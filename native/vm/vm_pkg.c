@@ -1,5 +1,5 @@
 /* fire VM in C: the natives of packages (phase B step 4) - shared libraries over the C ABI v1 (native/abi/fire_pkg_abi.h), as the C# VM loads them
- * (src/fire.Runtime/PackageNativeBinding.cs), and the host the libraries ask (`fire_host`, src/fire.Runtime/Host/PackageHost.cs).
+ * (PackageNativeBinding.cs of the C# VM, gone since M1), and the host the libraries ask (`fire_host`, its PackageHost.cs).
  *
  * A library is found by its file name (the program file names it per native: `packageNativeLibraries`) in the folders of FIRE_PKG_PATH (`:`-separated, `;` on
  * Windows), then next to the program file: in a folder itself, in `Packages/<package>/lib/<rid>/` (the package store of a forge, where `forge run` builds

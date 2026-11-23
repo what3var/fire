@@ -1,5 +1,5 @@
-/* The built-in 8x14 and 8x8 bitmap font (code page 437): one byte per row, the highest bit is the leftmost pixel. Generated from fire.Terminal/IntegratedGlyphFont.cs
- * (the tables of the PC face font of Susam Pal, MIT license, see src/fire.Terminal/LICENSE-pcface.md). The tables are `const`: they stay in flash on a microcontroller. */
+/* The built-in 8x14 and 8x8 bitmap font (code page 437): one byte per row, the highest bit is the leftmost pixel. Generated from the font of the C# VM's graphics
+ * (the tables of the PC face font of Susam Pal, MIT license, see LICENSE-pcface.md next to this file). The tables are `const`: they stay in flash on a microcontroller. */
 #ifndef FIRE_GFX_FONT_H
 #define FIRE_GFX_FONT_H
 

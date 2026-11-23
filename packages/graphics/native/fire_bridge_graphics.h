@@ -1,6 +1,6 @@
 /* fire native bridge "graphics" (C): the natives behind `#import "graphics"` (docs/spec/GRAPHICS_LAYER.md) - framebuffers, the palette, images (PNG, BMP, GIF), the renderer (text and
  * drawing with brushes and pens) and the slicer. The fire side (Framebuffer, Renderer, Brush, Pen, Slicer, ToolPath - fire source) is the same as in the VM; this file is what its
- * `__GRPH...` functions do (the generator calls `__GRPHName` as fire_gfx_Name). The drawing itself is in fire_gfx*.h (a port of src/fire.Terminal that needs no operating system).
+ * `__GRPH...` functions do (the generator calls `__GRPHName` as fire_gfx_Name). The drawing itself is in fire_gfx*.h (it needs no operating system).
  * A window that shows a framebuffer is the `windows` bridge.
  *
  * C99, part of the generated program (after the runtime) when the program imports "graphics"; in the virtual machine these natives are C#. Image files are read through the file

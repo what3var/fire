@@ -4,8 +4,8 @@
 
 - one of the two **built-in bitmap fonts**: `"8x14"` (also written `"14x8"`) and `"8x8"` - fixed size, the size argument is ignored,
 - a **TrueType font** (`.ttf`, outlines in the `glyf` format; OpenType fonts with PostScript outlines are not read): any size in pixels, anti-aliased, with kerning. The rasteriser is
-  [libschrift](https://github.com/tomolt/libschrift) 0.10.2 (ISC license, `src/fire.Terminal/TrueType/LICENSE-libschrift.md`), ported to C# for the virtual machine and to C++ for the native build -
-  the tests compare both with the original: the glyph images are equal, and so are the pixels of a text in the VM and in a native program.
+  [libschrift](https://github.com/tomolt/libschrift) 0.10.2 (ISC license, `packages/graphics/native/LICENSE-libschrift.md`), ported to C (`fire_gfx_ttf.h`) for the VM and the native build -
+  the glyph images are those of the original (until M1 the C# port of the C# VM was checked against them), and the pixels of a text are the same in the VM and in a native program.
 
 ```
 #import "graphics"

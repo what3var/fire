@@ -5,7 +5,7 @@ namespace fire.Standard
     /// <summary>
     /// The reflection library (`#import "reflection"`): query and use classes and members at runtime. The source here is
     /// the fire side (`Type`, `Member`, `Reflect`, `Selector`); the actual work is done by native functions of the runtime
-    /// (`fire.Runtime.ReflectionNatives`), so that access checks, units and locking apply as in normal code.
+    /// (native/vm/vm_reflect.c in the VM in C), so that access checks, units and locking apply as in normal code.
     /// See docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md and SPEC 8.13.
     /// </summary>
     public static class ReflectionPrelude

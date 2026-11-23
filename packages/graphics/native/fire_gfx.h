@@ -1,5 +1,5 @@
 /* fire native graphics: framebuffers (RGBA or palette), the palette, drawing (lines, rectangles, circles, ellipses, triangles, polygons, flood fill, text), blitting.
- * A port of src/fire.Terminal (Framebuffer, Palette, Paint, Surface, Shapes, Brush, Pen, Blitter, Renderer) - the same pixels come out. No operating system, no exceptions: it runs on
+ * Ported from the graphics of the C# VM (Framebuffer, Palette, Paint, Surface, Shapes, Brush, Pen, Blitter, Renderer; gone since M1) - the same pixels came out. No operating system, no exceptions: it runs on
  * a microcontroller; a platform package only has to put the pixels on a screen (see ../../windows/native/fire_bridge_windows.h).
  *
  * A color is a "paint": a number 0..255 is an index into the palette of the framebuffer, anything else is a direct value r + g*256 + b*65536 + a*16777216.

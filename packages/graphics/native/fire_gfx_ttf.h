@@ -3,8 +3,8 @@
  *
  * This is a port to C of libschrift 0.10.2 (https://github.com/tomolt/libschrift, (c) 2019-2022 Thomas Oltmann and contributors, ISC license, see LICENSE-libschrift.md), written
  * to be read like the original and to give the same pixels. Differences: it works on a block of memory only (no file mapping), every read of the font is bounds checked (a damaged font
- * gives a "no glyph" result and no stray memory access), the buffers grow with realloc and the code points are UTF-16 aware at the call sites. The same algorithm exists in C#
- * (fire.Terminal/TrueType/TrueTypeFont.cs) for the virtual machine, and the tests compare both with the original: glyph images must be equal.
+ * gives a "no glyph" result and no stray memory access), the buffers grow with realloc and the code points are UTF-16 aware at the call sites. Until M1 the same algorithm existed in
+ * C# for the C# VM, and the tests compared both with the original: the glyph images were equal.
  *
  *
  * The license of libschrift (the original), which applies to this port:

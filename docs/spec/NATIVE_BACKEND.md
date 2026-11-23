@@ -1649,13 +1649,14 @@ einmal laufen; ein zweites `Load`, während ein anderer Thread `init` laufen lä
   Plugins melden ihre Quelle über `fire_dbgsrc_<p>`, das jetzt nicht mehr konstant ist - `fireRegisterPlugin` ruft `fire_dbgPlugin` (fire_debug.h), das seinen
   Quellen die nächsten Indizes nach denen des Programms gibt (`FirePlugin.nsources`/`srcFiles`/`srcHashes`/`srcMap`, `FIRE_PLUGIN_FORMAT` 5), dem Debugger das
   Ereignis `sources` schickt und auf seine Haltepunkte wartet ([Debug-Protokoll nativer Programme](NATIVE_DEBUG_PROTOCOL.md)). Die Tabellen der Funktionen und Scopes braucht die Runtime nicht zu
-  kennen: jeder Rahmen zeigt auf die seiner Funktion (`DbgFrame.fn`); die Namen der Felder seiner Klassen gibt das Plugin über `FirePlugin.dbgClass`. In der **VM**
+  kennen: jeder Rahmen zeigt auf die seiner Funktion (`DbgFrame.fn`); die Namen der Felder seiner Klassen gibt das Plugin über `FirePlugin.dbgClass`. In der **VM** (hier die C#-VM, bis M1; die VM in C
+  tut dasselbe, `vm_plugin.c`, [VM_C.md](VM_C.md#plugins))
   trägt die `.fireplugin`-Datei die Zeilentabellen ihres Codes (`Chunk.KeepLineTable`, in `DebugLocalNames` - die Form eines Chunks bleibt) und ihre eigenen
   Quellen (`PluginBytecode.Sources`); `LinkPlugin` schreibt die Quellindizes ihrer Zeilen auf die nächsten des Programms um (die Quellen ihrer Libraries auf 0) und
   meldet sie (`VM.PluginSourcesLinked`); `VmDebugTarget` hängt sie an `SourceFiles` an (`IDebugTarget.SourcesAdded`) und nimmt die Haltepunkte nach Datei in ihnen
   sofort in den laufenden `RunUntilBreakpoint` auf. spark gibt seine Haltepunkte auch nach Datei (`SetFileBreakpoints`), die Sitzung übernimmt die neuen Quellen.
   Getestet: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugindebug` (nativ: Haltepunkt im Programm, `sources`, Step Into in die Methode des Plugins, Scopes,
-  `this` mit dem Feld des Plugins, Haltepunkt nach Datei im Plugin, Step Out) und derselbe Plan in der VM (`FIRE_TESTS_ONLY=debugger`, "Plugins in der VM").
+  `this` mit dem Feld des Plugins, Haltepunkt nach Datei im Plugin, Step Out) und derselbe Plan in `fire`, der VM in C ("Plugin-Debug (C-VM)"; der Plan in der C#-VM, `FIRE_TESTS_ONLY=debugger`, ist mit ihr weg).
   Nicht geprüft: das Fenster von spark (die Haltepunkte im Editor in einer Datei des Plugins), Windows.
 * **Statische Felder** (22.11.2026, `FIRE_PLUGIN_FORMAT` 7): die statischen Initialisierer eines Plugins laufen in der Reihenfolge ihrer Abhängigkeiten, wie der
   Top-Level eines Programms sie hat (`CompiledProgram.StaticInitSequence` des ganzen Programms - vorher die Sicht des Moduls, die keinen Top-Level hat: es lief die
@@ -1753,6 +1754,6 @@ Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emsc
 Die C++-Natives eines Packages ([Packages and ember](../packages/README.md), [Writing the natives of a package (C or C++) and connecting them to the prelude](../packages/natives.md)) laufen in der VM nicht als Fehler-Stub, sondern über eine **Shared Library**: `PackageLibrary` (fire.Compiler) erzeugt einen
 Wrapper (`native/abi/fire_pkg_wrapper.hpp` + je Funktion ein Thunk), kompiliert ihn zusammen mit `fire_rt.h` (als C++, über `fire_rt_cpp.hpp`) in dem Modus `FIRE_LIBRARY` (`fatal`/`unsupported` werfen eine `FireFatalError`, statt das
 Programm zu beenden; `runDestructors` ist leer) und den Quellen des Packages für die Plattform dieses Rechners (`platformSources`) mit dem Toolchain-Aufruf von `NativeBuilder.CompilerCommand(sharedLibrary: true)`.
-Die Bibliothek exportiert die C-Schnittstelle aus `native/abi/fire_pkg_abi.h` (`fire_pkg_call` mit `fire_val`: Zahlen, Text als UTF-16, Arrays und Puffer werden kopiert). `PackageNativeBinding` (fire.Runtime) lädt sie
-(`NativeLibrary`, im gepackten Programm über den Payload) und übersetzt `Value` <-> `fire_val`. Ein Package kann fertige Bibliotheken je Runtime-Identifier mitbringen (`native.libraries`).
+Die Bibliothek exportiert die C-Schnittstelle aus `native/abi/fire_pkg_abi.h` (`fire_pkg_call` mit `fire_val`: Zahlen, Text als UTF-16, Arrays und Puffer werden kopiert). `fire`, die VM in C, lädt sie
+(`native/vm/vm_pkg.c`, im gepackten Programm aus dem Payload; bis M1 `PackageNativeBinding` der C#-VM) und übersetzt `Value` <-> `fire_val`. Ein Package kann fertige Bibliotheken je Runtime-Identifier mitbringen (`native.libraries`).
 Aufrufe in eine Bibliothek laufen unter einem Mutex (die Runtime darin ist nicht threadsicher). Nicht geprüft ist der Aufbau mit MSVC und auf macOS.

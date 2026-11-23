@@ -317,7 +317,7 @@ Dynamisches Laden:
 
 ## 10. Clipboard, Drag & Drop
 
-Stand: **umgesetzt** ([fire.Terminal – Framebuffer, Zeichnen und Fenster](spec/GRAPHICS_LAYER.md) "Drag & Drop aus anderen Programmen, Zwischenablage", [User interfaces](ui/README.md) "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Die eigene Anzeige"):
+Stand: **umgesetzt** ([Grafik – Framebuffer, Zeichnen und Fenster](spec/GRAPHICS_LAYER.md) "Drag & Drop aus anderen Programmen, Zwischenablage", [User interfaces](ui/README.md) "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Die eigene Anzeige"):
 `Clipboard.GetText`/`SetText`/`HasText`, `GetImage`/`SetImage`/`HasImage` (PNG über `Framebuffer.ToPng`, unter Windows auch `CF_DIB`) und `GetFiles`/`SetFiles`/`HasFiles` (`text/uri-list`, unter
 Windows `CF_HDROP`, nativ und in der VM) - VM und nativ über fire's eigene Anzeige, ohne Desktop eine eigene Zwischenablage des Programms, unter X11 auch mit dem, was vor dem Start kopiert wurde; die Ereignisse `DropFiles`/`DropText` mit Position
 und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt; im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,

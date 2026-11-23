@@ -85,7 +85,7 @@ namespace fire.Compiler
         /// but provided by the CALLER and thus
         /// SHAREABLE between several Process() calls: if a
         /// host processes several root files together (e.g. prelude + user
-        /// script, see Runtime.RuntimeSession.Build/Parser.ParseMultiple),
+        /// script, see Linker.CompileAndLink/Parser.ParseMultiple),
         /// a COMMON
         /// instance ensures that a file (transitively) included from BOTH
         /// sides ends up only ONCE in total in the

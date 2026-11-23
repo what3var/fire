@@ -5,7 +5,7 @@
  * the loader registers at run time, its scopes own through the runtime's `OwnList`s, its exceptions go through the runtime's handler stack (`Handler`,
  * `throwValue`, `resumeThrow`). What only the VM needs lives here, in side tables of the VM - nothing is added to the runtime's structures (L1).
  *
- * The names follow the C# VM (src/fire.Runtime/VM.cs) and the program model (src/fire/Bytecode: RuntimeClass, FunctionProto, Chunk), L3. */
+ * The names follow the C# VM (src/fire.Runtime/VM.cs, gone since M1) and the program model (src/fire/Bytecode: RuntimeClass, FunctionProto, Chunk), L3. */
 #ifndef FIRE_VM_H
 #define FIRE_VM_H
 

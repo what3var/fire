@@ -111,8 +111,6 @@ namespace fire.Editor
             UpdateStatus($"Sample {dialog.Sample.Title} copied to {dialog.Location}.");
         }
 
-        private void HelpEmbedding_Click(object? sender, RoutedEventArgs e) => OpenHelp("Embedding.md");
-
         /// <summary>The folder of the language reference below Help (docs/language of the repository, copied there by the build).</summary>
         private const string LanguageHelpFolder = "Language";
 

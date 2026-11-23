@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The images of spark (docs/ROADMAP_C_PORT.md, M1): the codecs (PNG, BMP, GIF read; PNG, BMP written), the drawing area of the pixel editor
+    (PixelCanvas) and the palette of fire. They came from the graphics of the C# VM, which went away with it; a program draws
+    with the C library of graphics/windows (packages/graphics/native).
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>fire.Imaging</RootNamespace>
+    <AssemblyName>fire.Imaging</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+</Project>

@@ -5,7 +5,7 @@
     forge build with the engine vm packs programs with it. A machine without a C compiler still builds (the step only warns); forge then builds the VM when it first packs
     a program (into the user's cache). A publish for another machine (with a RuntimeIdentifier of another) builds nothing here: forge builds
     its VM there on demand. BuildFireVm=false leaves the step out.
-    Imported by fire.Compiler, fire.Editor and fire.Testing (their output folders hold the compiler).
+    Imported by fire.Compiler, fire.Editor, fire.Testing and fire.Benchmarks (their output folders hold the compiler).
   -->
   <Target Name="BuildFireVm" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('$(TargetDir)forge.dll') And '$(BuildFireVm)' != 'false'">
     <Exec Command="dotnet &quot;$(TargetDir)forge.dll&quot; build-vm &quot;$(TargetDir).&quot; --rid &quot;$(RuntimeIdentifier)&quot;" ContinueOnError="true" StandardOutputImportance="low" />
