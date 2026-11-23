@@ -31,7 +31,7 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | Import | Contents |
 |---|---|
 | `"time"` | `Sleep(duration)`, `DateTime` (`Now`, `UtcNow`, `Today`, `Parse`, arithmetic), `TimeSpan` |
-| `"random"` | `PseudoRandom`: `Next()`, `Next(max)`, `Next(min, max)`, `NextFloat()`, `NextBool()`, `Pick(list)`, `Shuffle(list)` (a `List` or an array) |
+| `"random"` | `PseudoRandom`: `Next()`, `Next(max)`, `Next(min, max)`, `NextFloat()`, `NextBool()`, `Pick(list)`, `Shuffle(list)` (a `List` or an array); `Guid`: `NewGuid()`, `Parse`, `TryParse`, `ToString("D"/"N"/"B"/"P")` - see Random numbers (`docs/stdlib/more.md`) |
 | `"json"` | `Json.Serialize(value)`, `Json.Deserialize<T>(text)`, `Json.Parse(text)` (`JsonObject`), `[NonSerialized]`/`[JsonName "x"]` on fields, `JsonNode` (read strictly or with comments and trailing commas, written compact or indented) - see JSON (`docs/stdlib/json.md`) |
 | `"regex"` | regular expressions: `new Regex(pattern, options)`, `IsMatch`, `Match` (groups, named groups), `Matches`, `Replace` (`$1`, `${name}`), `Split`, `Regex.Escape` - a backtracking subset of .NET's syntax, see Regular expressions (`docs/stdlib/regex.md`) |
 | `"circuits"` | circuit simulation after Falstad: `Circuits.Circuit`, parts (`Resistor`, `Capacitor`, `Inductor`, sources, `Switch`) with ports, nested circuits, `Scope`, `Multimeter`, `Fft`; the units `V`, `A`, `Ohm`, `F`, `H`, `Hz` - see Circuits (`docs/circuits/README.md`) |
