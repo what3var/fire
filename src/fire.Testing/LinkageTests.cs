@@ -304,23 +304,21 @@ static class LinkageTests
             hp.Dispose();
         }
 
-        // without a display the program hears it: `new Window` throws why (FIRE_VM_GRAPHICS=cs: the C# implementation, which has no windows of the desktop) - never a window
-        // that silently counts as closed while the program runs on
-        string? before = Environment.GetEnvironmentVariable("FIRE_VM_GRAPHICS");
-        Environment.SetEnvironmentVariable("FIRE_VM_GRAPHICS", "cs");
-        try
+        // without a display the program hears it: the VM in C says on stderr why the window could not be opened, and the window counts as closed - never a window
+        // that silently counts as closed while the program runs on (the C# VM threw "No display ..." with FIRE_VM_GRAPHICS=cs)
         {
-            string said = Vm(new[] { """
+            var r = CVmTest.Run(new[] { """
                 #import "windows"
                 var fb = new Framebuffer(64, 48)
                 try { var win = new Window(fb, "nothing to show it on")
                     print("opened " + win.Tick()) }
                 catch (e) { print("caught: " + e.message) }
                 print("end")
-                """ });
-            Check("VM: ein Fenster ohne Anzeige - new Window wirft mit dem Grund (No display ...), nichts bleibt stumm", said.StartsWith("caught: No display", StringComparison.Ordinal) && said.Contains("FIRE_VM_GRAPHICS=cs") && said.EndsWith("end\n", StringComparison.Ordinal), said);
+                """ }, environment: new Dictionary<string, string> { ["DISPLAY"] = "", ["WAYLAND_DISPLAY"] = "" });
+            string said = r.Text;
+            Check("VM: ein Fenster ohne Anzeige - fire sagt auf stderr, warum es nicht aufgeht, das Fenster gilt als geschlossen, nichts bleibt stumm",
+                said == "opened False\nend\n" && r.Errors.Contains("could not be opened - there is no display", StringComparison.Ordinal), said + r.Errors);
         }
-        finally { Environment.SetEnvironmentVariable("FIRE_VM_GRAPHICS", before); }
 
         // the VM of Windows under Wine (FIRE_TEST_WIN_FORGE: a folder with forge.exe for win-x64, e.g. `dotnet build -c Release -r win-x64` of fire.Compiler): with the library
         // built above a window opens (Tick: True); without it and without a C compiler `new Window` says why
