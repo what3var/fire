@@ -29674,6 +29674,19 @@ static FcList* fgClassListCopy(FgGen* g) { return fcListCopy(g->c, g->classList)
 
 /* Pulls in what dispatching needs: the method of every class for every called name, destructors, ToString, the index methods, and the enumerator
  * class that `foreach` over an array creates. */
+/* The constructor makeClassError makes a class of `fireError("Class", "text")` with (as the VM in C, vm_core.c): the one of one parameter, else the one of
+ * the fewest parameters (2..16: the message first, undefined for the rest - IndexOutOfBoundsException, UnitMismatchException); NULL: none */
+static FcProto* fgErrorConstructor(const FcRtClass* rc) {
+    FcProto* one = fgFindConstructor(rc, 1);
+    FcProto* best = NULL;
+    int i;
+    if (one && one->paramCount == 1) return one;
+    for (i = 0; i < rc->ctorProtos->count; i++) {
+        FcProto* p = (FcProto*)rc->ctorProtos->items[i];
+        if (p->paramCount > 1 && p->paramCount <= 16 && (!best || p->paramCount < best->paramCount)) best = p;
+    }
+    return best;
+}
 static void RegisterTargets(FgGen* g) {
     FcList* classes;
     int i, k;
@@ -29723,7 +29736,7 @@ static void RegisterTargets(FgGen* g) {
             const char* name = (const char*)g->errorClasses->items[i];
             if (!fcDictHas(g->program->program->classes, name)) continue;
             c = RegisterClass(g, name);
-            if ((ctor = fgFindConstructor(c->rc, 1)) && ctor->paramCount == 1) GetFunc(g, ctor, FK_Ctor, 0);
+            if ((ctor = fgErrorConstructor(c->rc)) != NULL) GetFunc(g, ctor, FK_Ctor, 0);
         }
     }
     {
@@ -30727,16 +30740,42 @@ static const char* RuntimeHooks(FgGen* g) {
         if (!(unitClass = (FgClassInfo*)fcDictGet(g->classes, "UnitMismatchException"))) FG_NOTSUP("exceptions need the prelude class UnitMismatchException");
         fcBufStr(&sb, fgMakeError(g, "Value makeUnitError(Value message, Value expected, Value actual)", unitClass, 3, "message, expected, actual"));
         fcBufStr(&sb, fgMakeError(g, "Value makeIndexError(Value message, int64_t index, int64_t length)", indexClass, 3, "message, Int(index), Int(length)"));
+        /* (`fireError("Class", "text")` of a package native or of the runtime: a class without a constructor of one parameter gets the message first and
+         * undefined for the rest, with its constructor of the fewest parameters; the index and the length of an IndexOutOfBoundsException that indexError
+         * wrote into the text - "Array index 7 out of range (length 3)." - are read back from it: as makeClassError of the VM in C) */
         fcBufStr(&sb, "Value makeClassError(const char* cls, Value message) {\n");
         fcBufStr(&sb, "    (void)cls; (void)message;\n");
+        if (fcListHasStr(g->errorClasses, "IndexOutOfBoundsException")) {
+            fcBufStr(&sb, "    if (strcmp(cls, \"IndexOutOfBoundsException\") == 0) {\n");
+            fcBufStr(&sb, "        char t_[200]; const char* p_; int64_t n_[2]; int k_;\n");
+            fcBufStr(&sb, "        strToUtf8(message, t_, sizeof t_);\n");
+            fcBufStr(&sb, "        p_ = strstr(t_, \" out of range (length \");\n");
+            fcBufStr(&sb, "        if (p_) {\n");
+            fcBufStr(&sb, "            while (p_ > t_ && p_[-1] != ' ') p_--;\n");
+            fcBufStr(&sb, "            for (k_ = 0; k_ < 2; k_++) {\n");
+            fcBufStr(&sb, "                bool neg_ = *p_ == '-', any_ = false;\n");
+            fcBufStr(&sb, "                if (neg_) p_++;\n");
+            fcBufStr(&sb, "                for (n_[k_] = 0; *p_ >= '0' && *p_ <= '9'; p_++) { n_[k_] = n_[k_] * 10 + (*p_ - '0'); any_ = true; }\n");
+            fcBufStr(&sb, "                if (!any_) break;\n");
+            fcBufStr(&sb, "                if (neg_) n_[k_] = -n_[k_];\n");
+            fcBufStr(&sb, "                if (k_ == 0) { if (strncmp(p_, \" out of range (length \", 22) != 0) break; p_ += 22; }\n");
+            fcBufStr(&sb, "                else if (strcmp(p_, \").\") == 0) return makeIndexError(message, n_[0], n_[1]);\n");
+            fcBufStr(&sb, "            }\n");
+            fcBufStr(&sb, "        }\n");
+            fcBufStr(&sb, "    }\n");
+        }
         for (i = 0; i < g->errorClasses->count; i++) {
             const char* name = (const char*)g->errorClasses->items[i];
             FgClassInfo* errorClass = (FgClassInfo*)fcDictGet(g->classes, name);
             FcProto* ctor;
-            if (!errorClass || !(ctor = fgFindConstructor(errorClass->rc, 1)) || ctor->paramCount != 1) continue;
+            FcBuf args = {0};
+            int a;
+            if (!errorClass || !(ctor = fgErrorConstructor(errorClass->rc))) continue;
+            fcBufStr(&args, "o, message");
+            for (a = 1; a < ctor->paramCount; a++) fcBufStr(&args, ", Undef()");
             fcBufFmt(&sb, "    if (strcmp(cls, %s) == 0) {\n", CString(g, name));
             fcBufFmt(&sb, "        Value o = %s;\n", NewObjectCall(g, errorClass, "g_globalOwn"));
-            fcBufFmt(&sb, "        %s\n", Nested(g, fcFmt(g->c, "%s(o, message);", ((FgFunc*)fcDictGet(g->funcByProto, ctor))->name)));
+            fcBufFmt(&sb, "        %s\n", Nested(g, fcFmt(g->c, "%s(%s);", ((FgFunc*)fcDictGet(g->funcByProto, ctor))->name, fcBufDone(g->c, &args))));
             fcBufStr(&sb, "        return o;\n");
             fcBufStr(&sb, "    }\n");
         }

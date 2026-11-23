@@ -445,8 +445,10 @@ wird mit `fireError` geworfen (die Klasse des Programms, sonst das Ende mit ihre
 `UnitMismatchException`) mit dem Konstruktor der wenigsten Parameter, der Text zuerst, der Rest `undefined` - wie die C#-VM (`NativeFail`). Index und Länge,
 die `indexError` der Runtime in den Text schreibt (`Array index 7 out of range (length 3).`), werden daraus zurückgelesen, wie sie der native Build hat
 (`makeIndexError`). Vorher bekam eine solche Klasse gar keinen Konstruktor, ihr `message` blieb `undefined` (`caught: undefined`). Prüfung: `tests/package-native-errors.sh <forge>` - ein Paket
-im eigenen Speicher, dessen Natives scheitern, in der VM und nativ. Nativ gilt der Konstruktor eines Arguments weiter (der Generator von `makeClassError`):
-`IndexOutOfBoundsException` kommt dort über `makeIndexError` der Runtime, ein `fireError` mit einer Klasse ohne einen solchen Konstruktor beendet das Programm.
+im eigenen Speicher, dessen Natives scheitern (`indexError`, `fireError` mit `UnitMismatchException` und mit `IndexOutOfBoundsException`), in der VM und
+nativ - beide drucken dasselbe. Der native Build erzeugt `makeClassError` nach derselben Regel (`gen/cppgenerator2.c`, `fgErrorConstructor`: der Konstruktor
+eines Parameters, sonst der mit den wenigsten, 2 bis 16; Index und Länge aus dem Text); bis zum 23.11.2026 ließ er eine Klasse ohne Konstruktor eines
+Parameters aus, ein `fireError("UnitMismatchException", ...)` einer Native beendete das native Programm, statt eine fangbare Ausnahme zu werfen.
 
 **Der Host** (`fire_host`): Konsole = die des Prozesses (`std_write` geht durch `stdout` der Runtime: die Reihenfolge mit `print` bleibt), Pfade und
 Hosts sind alle erlaubt (wie die gepackte Runtime der C#-VM: sie hat keinen anderen Host), Geräte des Hosts keine (das devices-Paket nimmt seine
