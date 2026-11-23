@@ -219,6 +219,9 @@ and a VM in C will be measured with, and a quick one for the ones in C# (all 630
 program says so: `//# skip: forge run - <why>`. `tests/reference.sh <forge> <folder>` writes what the compiler makes of every case (the program as
 text, the program file, the C) to compare two compilers.
 
+**Exceptions of package natives:** `tests/package-native-errors.sh <forge> [--vm-only]` installs a package of its own whose natives fail into a
+temporary store and checks that the VM in C and the native build throw the same catchable exception (class, message, index and length; [VM_C.md](../spec/VM_C.md)).
+
 **With the VM in C:** `tests/run-cases-vm.sh <forge> [<group>...] [--cache <dir>] [--fire <fire>]` compiles every case with the forge to a program file
 (`forge bytecode`, in each mode of the case) and runs it with the VM in C (`native/vm`, built with `cc` unless `--fire` names one), by the same rules -
 the measure of phase B of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md); `--cache` keeps the program files between runs ([VM_C.md](../spec/VM_C.md)). The

@@ -805,7 +805,42 @@ Value makeAccessError(Value message) { return vmMakeException("AccessDeniedExcep
 Value makeReflectError(Value message) { return vmMakeException("ReflectionException", 1, &message); }
 Value makeUnitError(Value message, Value expected, Value actual) { Value a[3]; a[0] = message; a[1] = expected; a[2] = actual; return vmMakeException("UnitMismatchException", 3, a); }
 Value makeIndexError(Value message, int64_t index, int64_t length) { Value a[3]; a[0] = message; a[1] = Int(index); a[2] = Int(length); return vmMakeException("IndexOutOfBoundsException", 3, a); }
-Value makeClassError(const char* cls, Value message) { return vmMakeException(cls, 1, &message); }
+/* `fireError("Class", "text")` (a native of a package - over the C ABI only the class and the text come - or of the runtime): the exception of that class
+ * with the message. A class without a constructor of one argument (IndexOutOfBoundsException: message, index, length; UnitMismatchException) gets the
+ * message first and undefined for the rest, with its constructor of the fewest parameters - as the VM in C# did (NativeFail); made with one argument it
+ * had no constructor at all, and its message stayed undefined (`caught: undefined`). The index and the length of an IndexOutOfBoundsException that the
+ * runtime's indexError wrote into the text ("Array index 7 out of range (length 3).") are read back from it: the native build has them (makeIndexError). */
+Value makeClassError(const char* cls, Value message) {
+    Vm* vm = g_vmCur;
+    VmClass* c = vm ? vmClassNamed(vm->prog, vmName(vm->prog, cls)) : NULL;
+    if (c && !vmFindCtor(vm, c, 1, &message)) {
+        Value args[16];
+        int32_t arity = 0, i;
+        uint32_t k;
+        if (strcmp(cls, "IndexOutOfBoundsException") == 0) {
+            char text[200];
+            const char* at;
+            long long index, length;
+            strToUtf8(message, text, sizeof text);
+            at = strstr(text, " out of range (length ");
+            if (at) {
+                while (at > text && at[-1] != ' ') at--;
+                if (sscanf(at, "%lld out of range (length %lld).", &index, &length) == 2) return makeIndexError(message, (int64_t)index, (int64_t)length);
+            }
+        }
+        for (k = 0; k < c->nctors; k++) if (c->ctors[k].arity > 1 && c->ctors[k].arity <= 16 && (arity == 0 || c->ctors[k].arity < arity)) arity = c->ctors[k].arity;
+        for (k = 0; k < c->nxctors; k++) {
+            int32_t n = (int32_t)c->xctors[k]->nparams;
+            if (n > 1 && n <= 16 && (arity == 0 || n < arity)) arity = n;
+        }
+        if (arity > 1) {
+            args[0] = message;
+            for (i = 1; i < arity; i++) args[i] = Undef();
+            return vmMakeException(cls, arity, args);
+        }
+    }
+    return vmMakeException(cls, 1, &message);
+}
 const char* g_dimNames[FIRE_NDIMS] = {""};
 
 /* The catch block of a handler of the VM: runs on top of the throw site (the runtime's throwValue calls it), on a pseudo frame of the function that owns
