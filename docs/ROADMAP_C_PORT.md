@@ -761,7 +761,14 @@ Modell), `fire.Git`, `fire.Imaging`, `fire.Device.Manager` (die Geräte von spar
 (misst `fire`, übersetzt mit forge). Damit gilt M3: wer nur forge und die VM braucht, braucht kein .NET, und der Bau von fire selbst (forge, `fire`, die
 Pakete) braucht nur einen C-Compiler.
 
-**Offen:** die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
+**Geprüft** (23.11.2026, Linux): spark gebaut (mit `ForgeDist.targets`) und unter Xvfb bedient - eine Solution geöffnet, ein Konsolen- und ein
+Fensterprogramm gebaut und gestartet, Vervollständigung und Diagnosen beim Tippen, ein Haltepunkt mit Fortsetzen, der Test-Explorer (2 Tests gefunden und
+gelaufen), der Package Manager (Liste, Suche, Installieren aus einem lokalen `PackageSource/`); `forge conformance` 1176 von 1176 Fällen (mit `Prebuilt/`);
+`fire.Testing` 1168 Prüfungen, offen danach 2 (unten); ember in fire allein mit seinen Hauptbefehlen.
+
+**Offen:** zwei Lücken von forge-c, die die Prüfungen von spark zeigen: die Meldung einer falschen Bau-Reihenfolge der Natives im nativen Build ist noch
+`unported: PackageException` ohne die Zeile des `#include` (`gen/packages.c`), und `forge serve` kennt die Natives von Bibliotheksprojekten nicht (in
+`Packages.firesln` zeigt die Analyse `Unknown identifier '__GRPH...'` - der Weg im eigenen Prozess konnte das); die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
 `conformance`, die Fälle mit Servern, die Linkages und Debug-Protokolle als Daten); `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
 fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows mit `ForgeDist.targets` (gcc von w64devkit) und der Installer sind nicht geprüft; spark ohne forge (kein
 C-Compiler) hat keine Sprachdienste mehr.
