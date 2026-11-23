@@ -16625,6 +16625,79 @@ static const char* fcSLRoot(FcExpr* e) {
     if (e->kind == EK_IndexExpr) return fcSLRoot(((FcIndexExpr*)e)->target);
     return NULL;
 }
+/* TC036 of `var x = M(...)`: does the caller own what the call hands back, for sure? Stricter than ReturnsFresh (the measure of TC031): a local of the
+ * method counts only when nothing but its own members and `return` use it - a local the method gives away (`p.TakeTo(this)`, `take p`, an argument of a
+ * call such as `this.ports.Add(p)`, stored anywhere, captured) comes back as a reference, its owner stays (`Circuit.AddPort`). */
+static bool CallReturnsOwned(FcTC* t, FcExpr* e, int depth);
+static bool LocalStaysOwn(FcTC* t, FcNodes* nodes, const char* name) {
+    int i, uses = 0, allowed = 0;
+    for (i = 0; i < nodes->nodes->count; i++) {
+        FcNodeTag tag = (FcNodeTag)FC_VALI(nodes->tags->items[i]);
+        void* node = nodes->nodes->items[i];
+        FcExpr* x;
+        if (Moves(tag, node, name)) return false;
+        if (tag == FN_STMT && ((FcStmt*)node)->kind == SK_ReturnStmt && ((FcReturnStmt*)node)->value && fcIsName(((FcReturnStmt*)node)->value, name)) allowed++;
+        if (tag != FN_EXPR) continue;
+        x = (FcExpr*)node;
+        if (fcIsName(x, name)) uses++;
+        else if (x->kind == EK_MemberExpr && fcIsName(((FcMemberExpr*)x)->target, name)) allowed++;
+        else if (x->kind == EK_IndexExpr && fcIsName(((FcIndexExpr*)x)->target, name)) allowed++;
+    }
+    return uses <= allowed;
+}
+static bool ReturnsOwnValue(FcTC* t, FcMethodDecl* m, FcNodes* nodes, FcExpr* value, int depth) {
+    int i, k;
+    if (!value) return false;
+    switch (value->kind) {
+        case EK_NewExpr: case EK_NewArrayExpr: case EK_NewBufferExpr: case EK_ArrayLiteralExpr: return true;
+        case EK_CallExpr: return CallReturnsOwned(t, value, depth + 1);
+        case EK_ConditionalExpr: return ReturnsOwnValue(t, m, nodes, ((FcConditionalExpr*)value)->then, depth) && ReturnsOwnValue(t, m, nodes, ((FcConditionalExpr*)value)->otherwise, depth);
+        case EK_IdentifierExpr: {
+            const char* n = ((FcIdentifierExpr*)value)->name;
+            int made = 0;
+            for (k = 0; k < m->params->count; k++) if (streq0(((FcLambdaParam*)m->params->items[k])->name, n)) return false;
+            for (i = 0; i < nodes->nodes->count; i++)
+                if (FC_VALI(nodes->tags->items[i]) == FN_STMT && ((FcStmt*)nodes->nodes->items[i])->kind == SK_VarDeclStmt && streq0(((FcVarDeclStmt*)nodes->nodes->items[i])->name, n)) {
+                    FcExpr* init = ((FcVarDeclStmt*)nodes->nodes->items[i])->initializer;
+                    if (!init || !(init->kind == EK_NewExpr || init->kind == EK_NewArrayExpr || init->kind == EK_NewBufferExpr || init->kind == EK_ArrayLiteralExpr)) return false;
+                    made++;
+                }
+            return made == 1 && LocalStaysOwn(t, nodes, n);
+        }
+        default: return false;
+    }
+}
+static bool MethodReturnsOwned(FcTC* t, FcMethodDecl* m, int depth) {
+    FcNodes nodes;
+    int i, returns = 0;
+    if (!m->body || depth > 8) return false;
+    nodes = AllNodes(t, FN_STMT, m->body, true, true);
+    for (i = 0; i < nodes.nodes->count; i++)
+        if (NODE_IS_S(nodes, i, SK_ReturnStmt)) {
+            returns++;
+            if (!ReturnsOwnValue(t, m, &nodes, ((FcReturnStmt*)nodes.nodes->items[i])->value, depth)) return false;
+        }
+    return returns > 0;
+}
+/* the method resolved for the call hands back a value of its own at every `return` - and, unless it is static, so does every method of a derived class
+ * that may override it (the call may land there); an interface's method has no body: no */
+static bool CallReturnsOwned(FcTC* t, FcExpr* e, int depth) {
+    FcMethodDecl* m;
+    const char* cls;
+    int k;
+    if (e->kind != EK_CallExpr || (m = (FcMethodDecl*)fcDictGet(&t->callTargets, e)) == NULL || !MethodReturnsOwned(t, m, depth)) return false;
+    if (m->isStatic) return true;
+    if ((cls = MethodClass(t, m)) == NULL) return false;
+    FC_DICT_EACH(t->classes, ce) {
+        FcClassDecl* decl = (FcClassDecl*)ce->value;
+        if (streq0((const char*)ce->key, cls) || !DerivesFrom(t, (const char*)ce->key, cls)) continue;
+        for (k = 0; k < decl->members->count; k++) {
+            FcMethodDecl* o = (FcMethodDecl*)decl->members->items[k];
+            if (((FcStmt*)o)->kind == SK_MethodDecl && !o->isStatic && streq0(o->name, m->name) && o->params->count == m->params->count && !MethodReturnsOwned(t, o, depth)) return false;
+        }
+    }
+    return true;
+}
 static void CheckStoredLocal(FcTC* t, const char* name, FcTLFrame* frame) {
     FcDict* inner = fcDictNew(TC_, FC_KEY_STR);
     FcList* restT = fcListNew(TC_);
@@ -16717,7 +16790,8 @@ static void TakeLocalWalk(FcTC* t, FcList* statements, FcTLFrame* outer, FcList*
         if (outer != NULL && (name = TakeLocalTarget(stmt)) != NULL) CheckBlockTakeLocal(t, name, here, stmt->line);
         if (stmt->kind == SK_VarDeclStmt && ((FcVarDeclStmt*)stmt)->initializer && !(outer == NULL && statements == t->tlProgramTop)) {
             FcExprKind ik = ((FcVarDeclStmt*)stmt)->initializer->kind;
-            if (ik == EK_NewExpr || ik == EK_NewArrayExpr || ik == EK_NewBufferExpr || ik == EK_ArrayLiteralExpr) CheckStoredLocal(t, ((FcVarDeclStmt*)stmt)->name, here);
+            if (ik == EK_NewExpr || ik == EK_NewArrayExpr || ik == EK_NewBufferExpr || ik == EK_ArrayLiteralExpr || CallReturnsOwned(t, ((FcVarDeclStmt*)stmt)->initializer, 0))
+                CheckStoredLocal(t, ((FcVarDeclStmt*)stmt)->name, here);
         }
         fcDirectExprs(t, stmt, direct);
         for (k = 0; k < direct->count; k++) TakeLocalLambdas(t, (FcExpr*)direct->items[k]);
