@@ -1,0 +1,23 @@
+int total = 0
+int done = 0
+// (a call with a loop inside a section: safe points, where a task gives its worker away at the end of its time slice - the others wait parked for
+// their sections, not at the lock of the globals with their system threads: NATIVE_BACKEND.md, Sektionen ohne die GIL)
+class W {
+    static int Work(int n) {
+        int s = 0
+        for (var k = 0; k < n; k++) { s = s + k % 3 }
+        return s
+    }
+}
+for (var i = 0; i < 40; i++) {
+    fire {
+        for (var j = 0; j < 100; j++) {
+            sync global { total = total + 1 + W.Work(500) - W.Work(500) }
+        }
+        sync global { done = done + 1 }
+    }
+}
+int rounds = 0
+while (done < 40) { rounds = rounds + W.Work(100) - W.Work(100) + 1 }
+print("total " + total + " done " + done)
+//# name: Threads: 40 Threads in Sektionen mit sicheren Punkten (Aufrufe mit Schleifen), das Hauptprogramm rechnet - keine Verklemmung, eine Sektion nach der anderen

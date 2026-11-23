@@ -773,6 +773,18 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   1,9 s; die C-VM (mit GIL) brauchte nie lange. Dabei behoben: `drainQueue` löschte `ATTN_SECT` nach dem letzten Blick in die Warteschlange - eine Anfrage
   dazwischen wartete auf eine Erteilung, nach der niemand sah (jetzt wird das Bit danach wieder gesetzt). Ein Spinnen vor dem Schlafen (gemessen: 4000 `pause`)
   machte es auf der belasteten Maschine 5-8mal langsamer - verworfen.
+  **Eine Sektion nach der anderen** (seit 23.11.2026, `g_sectHeld`, `sectClaim`): erteilt wird eine Sektion nur, solange keine andere läuft - ob das
+  Hauptprogramm sie erteilt (`fire_sectionGrantMain` in `drainQueue`) oder ein Thread sie sich selbst nimmt (`fire_sectionGrantedAway`); die anderen warten
+  geparkt in `blockUntil` wie jeder wartende Task, nicht an der Sperre der Globals. `sectionRelease` gibt das Zeichen zurück (`sectFree`) und weckt die älteste
+  wartende Anfrage, wenn sie sich ihre Sektion selbst nehmen darf - nur wenn ein Thread wartet (`g_sectWaiters`; die Warteschlange hält auch die erledigten
+  Anfragen, die das Hauptprogramm noch nicht herausgenommen hat, beim Schreiben in einer Schleife Tausende). Vorher nahm jeder Thread, der fragte, während das
+  Hauptprogramm bediente, seine Sektion sofort und wartete dann in `domWriterEnter` - an der Bedingungsvariablen der Sperre, mit seinem System-Thread: ein
+  Worker des Pools (oder der Thread des Hauptprogramms), der so lange keinen Task ausführt und nicht als blockiert zählt. Gab der Task in der Sektion seinen
+  Worker ab (das Ende seiner Zeitscheibe an einem sicheren Punkt in der Sektion - ein Aufruf, eine Schleife -, das Hauptprogramm, das seinen Thread
+  zurückwill), warteten alle Worker in `domWriterEnter` auf ihn, und keiner war mehr da, ihn weiterlaufen zu lassen: eine Verklemmung (native/3510, 30
+  Threads eines `Http.AppServer`, unter ASan und ohne; gdb: alle Threads in `sectionAcquire`, `g_dom.writer` gesetzt, der Task mit der Sektion in der
+  Warteschlange der bereiten). native/3545 (40 Threads, Sektionen mit Aufrufen mit Schleifen) blieb so jedes Mal hängen. Das Schreiben in einer Schleife
+  bleibt schnell (300000 Schreibungen: 0,15-0,23 s wie vorher).
   Abweichungen von der VM: Actor-Referenzen und Objekt-Argumente von Nachrichten gelten als Referenzen (ein Actor muss die Threads überleben, die ihn benutzen); `try sync`
   liefert nie `false` (es gibt nur einen Strang zur Zeit); ein `leave`/`terminate` in einem Destruktor/einer Property wirkt nativ erst an deren Ende; nach einem `leave` in
   einem Thread zerstört dieser auch das, was er in `taking`-Kopien angelegt hat (die VM ließ es liegen). Hosts brauchen `-pthread`

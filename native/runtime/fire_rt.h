@@ -4078,6 +4078,7 @@ extern FIRE_RT_DATA int32_t g_awayDepth;
 extern FIRE_RT_DATA int32_t g_mainOut;   /* (the main program's: it serves sections out of the globals - drainQueue) */
 extern FIRE_RT_DATA fire_atomic32 g_sectServing;   /* (... and meanwhile a thread that asks for a section takes it itself - fire_sectionGrantedAway) */
 extern FIRE_RT_DATA int64_t g_drainRest;   /* (the main program's: until when its loops serve no sections - it served FIRE_DRAIN_MS long, now it is its turn) */
+extern FIRE_RT_DATA fire_atomic32 g_sectHeld, g_sectWaiters;   /* (a section of the globals is granted and has not ended: one at a time - sectClaim; the threads that wait for one) */
 FIRE_FN int32_t fire_awayPause(void);
 FIRE_FN void fire_awayResume(int32_t depth);
 #endif
@@ -12262,12 +12263,53 @@ FIRE_FN bool fire_sectionGranted(void* ctx) { return fire_atomic_loadAcquire(&((
  * its section itself, one at a time - native/vm/vm_pkg.c) */
 FIRE_FN bool fire_vmGrantAway(SectionReq* r);
 #endif
+#ifdef FIRE_NO_GIL
+/* Without the GIL a section of the globals is granted only while no other one runs (g_sectHeld, given back by sectionRelease) - whether the main program
+ * grants it (drainQueue) or a thread takes it itself (fire_sectionGrantedAway): the others wait parked in blockUntil, like a task that waits for anything,
+ * not at the lock of the globals. Without it every thread that asked while the main program served took its section at once and waited in domWriterEnter
+ * - on the condition variable of the lock, with its system thread: a worker of the pool (or the main program's thread) that runs no task meanwhile and is
+ * not counted as blocked. When the task in the section gave its worker away (the end of a time slice at a safe point inside the section, the main program
+ * wanting its thread back), the workers were all waiting for it in domWriterEnter, none was left to run it: a deadlock (native/3510, 30 threads). */
+FIRE_FN bool sectClaim(SectionReq* r) {
+    if (fire_atomic_loadAcquire(&r->granted)) return true;
+    if (lentLoadSC(&g_sectHeld) || !fire_domCas(&g_sectHeld, 0, 1)) return false;
+    fire_atomic_storeRelease(&r->granted, 1);
+    return true;
+}
+/* (the main program grants a request of the queue - unless its thread took it already) */
+FIRE_FN bool fire_sectionGrantMain(void* ctx) {
+    if (fire_atomic_loadAcquire(&((SectionReq*)ctx)->granted)) return true;
+    if (!sectClaim((SectionReq*)ctx)) return false;
+    notifyKey(ctx);
+    return true;
+}
+/* (the section has ended: the next one may be granted - the oldest request that waits is woken when it may take it itself; else the main program grants
+ * it at its next safe point, or a wait of the main program for the token looks again - notifyKey wakes the system threads. Only when a thread waits: the
+ * queue holds the requests that the main program has not taken out yet - done ones too, thousands when a thread writes in a loop. Sequentially
+ * consistent, both sides - the store here before the look at the waiters, a waiter's count before its look at the token (sectClaim): a thread that
+ * counts itself after the look here finds the section free) */
+FIRE_FN void sectFree(void) {
+    SectionReq* next = NULL;
+    uint32_t i;
+    lentStoreSC(&g_sectHeld, 0);
+    if (!lentLoadSC(&g_sectWaiters)) return;
+    if (!fire_mainAway() && !fire_atomic_loadAcquire(&g_sectServing)) return;
+    fire_mutex_lock(&g_reqM);
+    for (i = 0; i < g_reqs.count && !next; i++) {
+        SectionReq* q = g_reqs.items[(g_reqs.head + i) % g_reqs.cap].sec;
+        if (q && !fire_atomic_loadAcquire(&q->granted)) next = q;
+    }
+    fire_mutex_unlock(&g_reqM);
+    if (next) notifyKey(next);   /* (only the address as the key: the request may be gone by now - then nobody waits for it) */
+}
+#endif
 FIRE_FN bool fire_sectionGrantedAway(void* ctx) {
     if (fire_sectionGranted(ctx)) return true;
 #if defined(FIRE_VM) && !defined(FIRE_NO_GIL)
     if (!fire_vmGrantAway((SectionReq*)ctx)) return false;
 #elif defined(FIRE_NO_GIL)
     if (!fire_mainAway() && !fire_atomic_loadAcquire(&g_sectServing)) return false;
+    return sectClaim((SectionReq*)ctx);
 #else
     if (!fire_mainAway()) return false;
 #endif
@@ -12286,9 +12328,13 @@ FIRE_FN void sectionAcquire(void) {
     reqPush(q);
     fire_atomic_or(&g_attn, ATTN_SECT);
     notifyEvent();
-    blockUntil(fire_sectionGrantedAway, r, false, 0);
 #ifdef FIRE_NO_GIL
+    lentAddSC(&g_sectWaiters, 1);
+    blockUntil(fire_sectionGrantedAway, r, false, 0);
+    fire_atomic_add(&g_sectWaiters, (uint32_t)-1);
     domWriterEnter();
+#else
+    blockUntil(fire_sectionGrantedAway, r, false, 0);
 #endif
     g_curSection = r;
 }
@@ -12298,8 +12344,11 @@ FIRE_FN void sectionRelease(void) {
     if (!r) return;
 #ifdef FIRE_NO_GIL
     domWriterLeave();
-#endif
     fire_atomic_storeRelease(&r->done, 1);
+    sectFree();   /* (before the notification: the main program that waits for the end grants the next one at once) */
+#else
+    fire_atomic_storeRelease(&r->done, 1);
+#endif
     notifyKey(r);
     sectionReqDrop(r);
 }
@@ -12902,8 +12951,12 @@ FIRE_FN int drainQueue(void) {
             /* (out of the globals for the sections: the main program only waits here - unless it is away in a native already, or serves for a thread) */
             if (!out && !g_isThread && g_awayDepth == 0) { strandRelease(); g_mainOut = 1; sectServingSet(1); out = true; until = steadyMs() + FIRE_DRAIN_MS; }
 #endif
+#ifdef FIRE_NO_GIL
+            blockUntil(fire_sectionGrantMain, sec, false, 0);   /* (one at a time: after the one that runs - sectClaim) */
+#else
             fire_atomic_storeRelease(&sec->granted, 1);
             notifyKey(sec);
+#endif
             blockUntil(fire_sectionDone, sec, false, 0);
             sectionReqDrop(sec);
 #ifdef FIRE_NO_GIL
@@ -14350,6 +14403,7 @@ int32_t g_awayDepth;
 int32_t g_mainOut;
 fire_atomic32 g_sectServing;
 int64_t g_drainRest;
+fire_atomic32 g_sectHeld, g_sectWaiters;
 fire_atomic32 g_lentEpoch = {1}, g_lentGraveN, g_lentReaderN, g_domChanges;
 LentReader* g_lentReaders = NULL;
 LentGrave* g_lentGraves = NULL;
