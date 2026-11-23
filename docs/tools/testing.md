@@ -140,8 +140,10 @@ not run at the same time - stop the program first.
 Since milestone M3 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md) forge and the VM are C programs and their tests are **data**: the cases of `tests/cases`
 (below), run by **`forge conformance`** without .NET. The checks in C# that tested the C# forge - the native backend against the VM with its sanitizer runs,
 windows, FreeRTOS and Wine, the linkages, the C# frontend (`DiagnosticTests`, `TypeTests`, `SyntaxTests`), the program file, the stack traces, the packer,
-the registry of the C# ember, BIOS under QEMU, scene3d, the AI programs - went with it; what of them is not a case yet is listed in
-[FORGE_C.md](../spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) ("Was in fire.Testing bleibt").
+the registry of the C# ember, BIOS under QEMU, scene3d, the AI programs - went with it; most of what they checked is data again: the sanitizer runs,
+`-Werror`, the patterns in the generated C, Wine and the cases whose source the test program made are options and cases of `conformance`, the linkages,
+plugins and programs for Windows are its suites (`tests/linkage`, `tests/wine`, below), debugging across modules is part of the group `debugger`. What is
+still missing is listed in [FORGE_C.md](../spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) ("Was in fire.Testing blieb").
 
 ### The test program of spark (`src/fire.Testing`)
 
@@ -161,7 +163,7 @@ of its own for the run (`forge install-standard`, `FIRE_PACKAGES`) and runs its 
 | `projects` | projects, solutions, templates, samples, packing a library and installing it (forge and ember), the analysis of a project's documents (forge serve) |
 | `serve`, `completion` | the language services over `forge serve`: diagnostics of cases and of projects (what each must say), the completion (visibility, the type of `x.`, the order) |
 | `notes`, `git`, `circuiteditor`, `blocks`, `mesh`, `setupwizard`, `mcpserver`, `aimodels`, `image` | the notes, git and the git panel, the circuit editor (its view in `fire`), the block and mesh models, the setup wizard (its downloads are `forge toolchain-setup`), the MCP server, the model catalog, the image codecs |
-| `debugger` | spark's `DebugSession` against a fake agent and on programs in `fire` (and natively built by forge, when there is a C compiler) |
+| `debugger` | spark's `DebugSession` against a fake agent and on programs in `fire` (and natively built by forge, when there is a C compiler); across modules: a plugin debugged natively and in `fire` (its sources, a breakpoint by file in it, Step Into/Out), a breakpoint in a static library, `profile`, `pause` and `terminate` of the agent |
 | `drivers` | the device drivers of the installed packages in spark's driver agent (compiled by forge) |
 
 `FIRE_TESTS_RESUME`, `FIRE_TESTS_SHARD`, `FIRE_TESTS_FILTER` (where a group reads it) and the progress lines are as they were (below).
@@ -247,6 +249,87 @@ the cores, at most 4 (`-j`). A case that is wrong runs once more alone at the en
 that differs (`--list`: every case), then the counts per group and engine; the exit code is 0 when every case that ran is right. forge-c finds the cases in
 `--cases`, `FIRE_CASES` or the nearest `tests/cases` above the working folder, the VM with `--fire` or `FIRE_VM_EXE` (its variants next to it), otherwise it
 builds the VM of its own sources (`forge-c build-vm`). On 23.11.2026: 1173 of 1173 cases right, the same verdicts as `tests/run-cases-vm.sh` with forge-c.
+
+**More lines about a case, for `conformance`:** `//# needs: <need>...` - what the machine must have, else the case is not run and the list says why:
+`linux`, `windows`, `macos`, `posix` (the system), `mingw` (x86_64-w64-mingw32-gcc and -g++), `wine`, `asan`/`tsan` (gcc builds and runs a program with
+the sanitizer), `env:NAME` (a variable is set - a database server of the machine: `FIRE_TEST_MYSQL`, `FIRE_TEST_SQLSERVER`, `FIRE_TEST_POSTGRES`), `file:PATH`,
+any other word a program on the PATH. `//# windows: <why>` - the output differs on Windows by the nature of the system (`--wine` counts the case apart when
+it differs); `//# windows: not run - <why>`: it cannot end there (it waits for `/bin/sh`), `--wine` leaves it out. The files a case reads with
+`new Resource("resources/...")` (and the fonts of "the system", `FIRE_FONT_DIRS`) are in `tests/cases/native/resources/`.
+
+**The generated C of a case:** `<case>.cgen-contains` next to a case of the group native holds patterns the C that `forge native` writes for it must hold
+(the checks of the generator that were code in `Program.cs`): a line is a text the C contains (`*` is any text within a line, `\b` at the start: the match
+starts a word), `!<text>` one it does not, `=<n> <text>` one it contains exactly n times; `@<text>` makes the lines that follow look only at the function
+whose definition starts there (to its `}`), `/<text>` leaves the lines with that text out of what they look at (the rare paths a function keeps), `@` alone
+goes back to the whole C. The check runs with the case (`[cgen]` in the list):
+
+```
+# the call through the interface: its own dispatcher over the implementing classes
+= icall_IShape_Area_1(s*, s*);
+@static Value icall_IShape_Area_1(Value self, Value a0)
+!accessDenied
+=2 return f
+```
+
+**The native quality runs** (`--engine native` with another build; the cases of the group native):
+
+```
+forge-c conformance native --sanitize address -j 2   the builds with AddressSanitizer, UBSan and LeakSanitizer (gcc -O1 -g): a report on stderr is wrong
+forge-c conformance native --sanitize thread -j 2    the cases "Threads:" with ThreadSanitizer: a data race is wrong (their output is not compared)
+forge-c conformance native --werror -j 2             the builds with gcc -Wall -Wextra -Werror: a warning in the generated C or the runtime is wrong
+forge-c conformance native --engine native --toolchain tcc --filter "Threads:"   the cases of threads with TinyCC (tasks without the GIL)
+```
+
+A sanitizer build costs memory: two jobs at a time on a machine of 15 GB is safe, four were not (the OOM killer).
+
+**Windows under Wine:** `forge-c conformance native --wine` runs the cases in the VM for Windows: `fire.exe` and its five variants are built with MinGW
+(`x86_64-w64-mingw32-gcc`) from `native/vm`, the libraries of the packages for Windows (`fire_pkg_*.dll`, `fire_gfx.dll`) from the wrappers forge generates
+for the target windows, then every program file runs as `wine fire.exe Z:\...\x.fbc` (120 s each) in a Wine prefix of the run's own (`WINEPREFIX`, else in the
+cache). `--fire <fire.exe>` takes a VM for Windows that is there; `--engine native` builds the cases for Windows (MinGW) and runs them under Wine. The Wine
+of Ubuntu (9.0) aborts every program with "free(): invalid pointer" while `TMPDIR` is set: `conformance` starts wine without it (and so should anyone by hand:
+`env -u TMPDIR WINEPREFIX=... wine ...`).
+
+**The suites** - checks that are more than one program and its output: projects and solutions built with a linkage, plugins loaded by programs, C libraries,
+programs for Windows. A suite is a folder next to `tests/cases` (`tests/linkage`, `tests/wine`), a case a folder in it with its sources and a file `steps`;
+a suite runs only when it is named:
+
+```
+forge-c conformance linkage -j 2            every case of tests/linkage
+forge-c conformance linkage/plugins wine    one case, and the suite wine
+```
+
+`steps` is a list of steps, one per line (`#` a comment): the processes - `forge <arguments>` (this forge-c), `run <program> <arguments>`,
+`vm <arguments>` (the VM), `wine <program.exe> <arguments>` (the prefix of the run, the libraries of the packages for Windows), `sh <command line>` (copying,
+editing a copy of a source, building a C library) - each must end with 0 (`forge!`: with anything else, `run=70`: with that code); the checks of the last
+process - `expect <file>`, `expect-text "<text>"`, `contains "<text>"`, `lacks "<text>"`, `err-contains "<text>"`, `count "<text>" >=5`, `under <seconds>`,
+`save <name>`/`same <name>`; `env NAME=VALUE`, `winenv NAME=VALUE` (only for the programs under Wine), `unenv NAME`, `cd <folder>`, `input "<text>"` (the
+standard input of the next process), `timeout <seconds>`, `pack <out.exe> <vm> <program.fbc> <library>...` (a packed program with its DLLs), `when <need>...`
+... `end` (steps only for a machine that meets the needs). `title:` and `needs:` lines say what the case is and needs. The variables: `$CASE`, `$OUT` (a fresh
+folder of the case in the cache), `$FORGE`, `$FIRE`, `$WINFIRE`, `$WINLIBS`, `$WINEPREFIX`, `$MINGW`, `$EXE`, `$SO` and the environment; `win:<path>` is a path as
+Wine sees it (`Z:\...`). A step that ends otherwise than it should ends the case, a check that does not hold is noted and the steps go on; the folder of a
+case that is wrong stays in the cache (`--cache` keeps it). For example (`tests/linkage/cli/steps`):
+
+```
+title: Linkage: das CLI-Programm ... mit source, static (der zweite Bau aus dem Cache ...) und shared wie die VM
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/static1 $OUT/static2
+forge build cli.fire --engine native --toolchain gcc --linkage static -o $OUT/static1/cli
+count ": built in " >=5
+run $OUT/static1/cli
+expect cli.expected
+forge build cli.fire --engine native --toolchain gcc --linkage static -o $OUT/static2/cli
+count ": built in " =0
+```
+
+`tests/linkage`: the CLI program with source, static (the cache, the interfaces) and shared, the classes of program and libraries meeting, stripping with
+static, values across modules (arrays of classes, JSON into a class of the program, `FIRE_MODULES=1`), channel ends in libraries, modules without the GIL
+(threads in natives, 400 sleeping threads under 10 s, 300000 global writes under 5 s; gcc static/shared, TinyCC), a project whose library changes (code,
+interface) and its shared libraries (another interface: exit code 70), the fallback to source, TinyCC (static, shared falls back), `Library.Load`/`Get` with
+`release:` (also under ASan), the plugins (interface hashes, units, natives in C++ and C, JSON, the errors; in threads, `Unload`, packed objects; twice in one
+VM process under ASan), `Tls.Engine` on OpenSSL and mbedTLS. `tests/wine`: the command line of `fire.exe` (Unicode arguments and paths, two programs, the
+variant of 32-bit ints, the input), packed programs (with their DLLs in the cache of the user), forge-c.exe (MinGW) under Wine (bytecode byte for byte the one
+of Linux, dump, run, build, test), the linkages, `Library.Load`, the plugins and `Tls.Engine` (SChannel) for Windows.
 
 **Cases that master adds.** As long as master holds these cases as text in `Program.cs`, `tests/tools/merge-master.sh` merges it: the cases master added
 or changed go into the files (`tests/tools/cases.py`: a new case gets a number between its neighbours, a changed one loses its expected output, a case

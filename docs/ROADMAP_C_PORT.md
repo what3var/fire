@@ -768,10 +768,22 @@ gelaufen), der Package Manager (Liste, Suche, Installieren aus einem lokalen `Pa
 
 **Offen:** zwei Lücken von forge-c, die die Prüfungen von spark zeigen: die Meldung einer falschen Bau-Reihenfolge der Natives im nativen Build ist noch
 `unported: PackageException` ohne die Zeile des `#include` (`gen/packages.c`), und `forge serve` kennt die Natives von Bibliotheksprojekten nicht (in
-`Packages.firesln` zeigt die Analyse `Unknown identifier '__GRPH...'` - der Weg im eigenen Prozess konnte das); die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
-`conformance`, die Fälle mit Servern, die Linkages und Debug-Protokolle als Daten); `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
+`Packages.firesln` zeigt die Analyse `Unknown identifier '__GRPH...'` - der Weg im eigenen Prozess konnte das); von den Lücken der Tests (unten, M3 Schritt 6)
+die Sonderläufe FreeRTOS, ESP32 und Fenster, Scene3D und AI, BIOS/QEMU und DOS; `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
 fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows mit `ForgeDist.targets` (gcc von w64devkit) und der Installer sind nicht geprüft; spark ohne forge (kein
 C-Compiler) hat keine Sprachdienste mehr.
+
+#### M3 Schritt 6: die Lücken der Tests geschlossen (23.11.2026)
+
+Was mit dem C#-forge aus `fire.Testing` ging, ist größtenteils wieder da, als Daten ([FORGE_C.md](spec/FORGE_C.md#die-lücken-von-firetesting-geschlossen-23112026-nach-m3),
+[testing.md](tools/testing.md#the-tests-of-fire-itself)): `forge conformance` hat `//# needs:` (ein Fall läuft nur, wo die Maschine hat, was er braucht, sonst
+mit dem Grund), `.cgen-contains` (Muster im erzeugten C), `--sanitize address|thread`, `--werror`, `--wine` (der Korpus in fire.exe unter Wine, mit den Bibliotheken
+der Pakete für Windows aus MinGW) und die Suiten `tests/linkage` (die Linkages static/shared/plugin, Module ohne GIL, Plugins mit ihren Hashes, eigenem Scope,
+Threads und Reflection, `Library.Load`, `Tls.Engine`) und `tests/wine` (die Befehlszeile von fire.exe, gepackte Programme, forge-c.exe unter Wine, die Linkages
+und Plugins für Windows) - ein Ordner je Fall mit seinen Quellen und einer Datei `steps`. Die Fälle, deren Quelle das Testprogramm zur Laufzeit machte, sind
+`native/4750`-`4830`; das Debuggen über Module (Plugin nativ und in `fire`, statische Bibliothek, `profile`, `pause`) prüft die Gruppe `debugger` von
+`fire.Testing`. Offen: FreeRTOS, ESP32, die Fenster, Scene3D, AI, BIOS/QEMU und DOS (hier ohne QEMU, DOSBox und Open Watcom), die Anzeige des Hosts und der
+Geräte-Host unter Wine.
 
 Danach: der **.NET-Wrapper** über `fire_embed.h` (NuGet-Paket mit P/Invoke, ersetzt `RuntimeSession` für Einbetter) und ABI v2 der Paket-Natives.
 

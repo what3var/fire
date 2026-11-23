@@ -1140,8 +1140,9 @@ Gemessen mit forge-c (gebaut neben dem C#-forge, Stand 5ed7c1c7 von `clippy`): `
 `.expected`, eine `.diagnostics`, eine `.error`) melden beide dieselben drei. Nativ (`--engine native`, die Toolchain, die forge wählt: hier tcc) **515 von 517**:
 `native/1370` (inline c: `bool` aus C - mit tcc `2` statt `1`; mit `--toolchain gcc` richtig) und `native/4440` (Library.Load einer `.fireplugin`-Datei: das native
 Programm mit linkage `source` meldet "cannot load fire plugins", der Fall erwartet die Meldung der VM - der Fall ist seit dem 23.11.2026 `vm-rf/0190`;
-gemeldet, nicht geändert). Nicht portiert vom nativen Teil des Testprogramms: die Sanitizer (ASan/UBSan, ThreadSanitizer), `-Wall -Wextra` mit einer Warnung als
-Fehler, die Sonderläufe nach Titel (FreeRTOS, ESP32, Fenster, Wine, Debugger). Unter Windows hat `cfSpawn` noch keinen Timeout (`fwRun`).
+gemeldet, nicht geändert). Seit dem 23.11.2026 auch die Sanitizer (`--sanitize address|thread`), `-Wall -Wextra` mit einer Warnung als Fehler (`--werror`),
+die Muster im erzeugten C (`.cgen-contains`), Windows unter Wine (`--wine`) und die Suiten der Linkages und Plugins ([unten](#die-lücken-von-firetesting-geschlossen-23112026-nach-m3));
+offen sind die übrigen Sonderläufe nach Titel (FreeRTOS, ESP32, Fenster). Unter Windows hat `cfSpawn` noch keinen Timeout (`fwRun`).
 
 **`forge-c package-dist <ordner> [--dry-run]`** (`tools/dist.c`) und `native/forge/package-dist.sh <ordner>` (baut forge-c mit `cc`, dann `package-dist`): der Teil
 forge/VM einer Installation ohne .NET-Werkzeuge - was die Veröffentlichung von `fire.Compiler` mit `FireVm.targets` und `StandardSources.targets` neben spark legt:
@@ -1187,22 +1188,95 @@ would make /tmp/dist (for linux-x64)
 ```
 
 Für Windows ist der Aufbau derselbe (mit `.exe`, `win-x64`); `forge-c.exe` baut mit MinGW, die neuen Dateien ohne Warnung. Gebaut und installiert ist er hier nicht:
-kein Inno Setup, kein Compiler unter Windows, und Wine startet in dieser Umgebung nicht (`free(): invalid pointer` schon bei `wine forge-c.exe help`).
+kein Inno Setup, kein Compiler unter Windows. (Wine startet hier nur ohne `TMPDIR`: Ubuntus Wine 9 gibt `getenv("TMPDIR")` frei und bricht mit
+`free(): invalid pointer` ab - mit `env -u TMPDIR` laufen forge-c.exe und fire.exe, `tests/wine`.)
 
 **Was in `fire.Testing` blieb** (M3, 23.11.2026: das C#-forge ist entfernt; was es prüfte, ist Daten oder ging mit ihm):
 
 | Teil | Stand nach M3 |
 | --- | --- |
 | `TestCasesVm`, `TraceTests`, die VM-Seite von "nativ == VM" | entfernt - `forge conformance` |
-| die native Seite von "nativ == VM" (Sanitizer, Warnungen als Fehler, Resume/Shards), die Prüfungen des erzeugten C, ThreadSanitizer, FreeRTOS, ESP32, tcc, Fenster/Xvfb/Wayland, Wine | entfernt; die Läufe sind `conformance --engine native`. **Lücke:** die Sanitizer, `-Wall -Wextra` als Fehler, die Sonderläufe nach Titel und die Muster im erzeugten C (`.cgen-contains`) hat `conformance` noch nicht |
-| die rund 12 Fälle aus `Program.cs`, deren Quelle zur Laufzeit entsteht (libc-`extern`, ohne IPv6, MySQL/SQL Server/Postgres, `Data/Model`, Ressourcen, Schriften, Scene3D, AI) | entfernt. **Lücke:** als Fälle mit `//# needs:` zu schreiben |
+| die native Seite von "nativ == VM" (Sanitizer, Warnungen als Fehler, Resume/Shards), die Prüfungen des erzeugten C, ThreadSanitizer, FreeRTOS, ESP32, tcc, Fenster/Xvfb/Wayland, Wine | die Läufe sind `conformance --engine native`; **geschlossen** (23.11.2026): `--sanitize address` (ASan, UBSan, LeakSanitizer), `--sanitize thread` (die Fälle `Threads:`), `--werror`, tcc (`--toolchain tcc`), die Muster im erzeugten C (`.cgen-contains`, die vier Prüfungen des Generators als `native/4710`-`4740`), Wine (`--wine`, der Korpus in fire.exe). **Offen:** FreeRTOS, ESP32, Fenster/Xvfb/Wayland, Teilen, Weglassen mit der Größe des ui-Programms, `word` in der Breite des Ziels |
+| die rund 12 Fälle aus `Program.cs`, deren Quelle zur Laufzeit entsteht (libc-`extern`, ohne IPv6, MySQL/SQL Server/Postgres, `Data/Model`, Ressourcen, Schriften, Scene3D, AI) | **geschlossen** (23.11.2026): `native/4750`-`4830` mit `//# needs:` (libc und IPv6 `linux`, die Server `env:FIRE_TEST_MYSQL` ..., die Dateien in `tests/cases/native/resources/`), MCP als `4800`. **Offen:** Scene3D und AI (ihre Modelle erzeugte C#-Code) |
 | `DiagnosticTests`, `TypeTests`, `SyntaxTests`, `ProgramFileTests`, `TablesTests`, `TestingTests` | entfernt - die Aufnahmen (`.diagnostics`, `.expected`) laufen mit `conformance`; die Absicht in C# (welcher Code, welche Zeile) als `//# expect:` ist offen |
-| `LinkageTests`, `DebuggerPluginTests`, `BiosTests` (QEMU), `CVmWindowsTests`, `CVmSanitized`, `NativeDebugTests` | entfernt. **Lücke:** die Läufe als Projekte mit `.expected`, die Debug-Protokolle als Mitschnitte |
+| `LinkageTests`, `DebuggerPluginTests`, `BiosTests` (QEMU), `CVmWindowsTests`, `CVmSanitized`, `NativeDebugTests` | **geschlossen** (23.11.2026): die Suiten `tests/linkage` und `tests/wine` (Projekte mit `steps` und `.expected`, auch die VM mit ASan zweimal in einem Prozess), Debuggen über Module in der Gruppe `debugger`. **Offen:** BIOS/QEMU und DOS (keine Werkzeuge hier), die Anzeige des Hosts und der Geräte-Host unter Wine, Teile von `NativeDebugTests` (unten) |
 | `PublishTests`, `RegistryTests` (C#-ember), `Scene3DTests`, `AiTests` | entfernt (prüften das C#-forge bzw. den C#-ember) |
 | `ServeTests`, `CompletionTests` | bleiben, über das Protokoll; die Diagnosen gegen das, was der Fall sagen muss (der eigene Prozess zum Vergleichen ist weg) |
 | `ProjectTests`, `StartProjectTests`, `BlockModelTests`, `MeshModelTests`, `CircuitEditorTests`, `ExplorerTests` | bleiben; was in C# übersetzte, packte, installierte, geht über forge (`bytecode`, `build`) und ember (`forge`, `install`, `remove`); die Phasen des C#-Linkers beim Bauen der Natives, `--global-jobs` im Prozess, `ExtractAssemblyInfo`, die Overlays der Natives eines Projekts im C#-Store sind entfallen |
 | spark: `BackgroundCheck`, `Explorer*`, `Git*`, `Notes`, `Preview`, `SetupWizard`, `ForgeReport`, `CVmRun`, `Debugger`, `DriverAgent`, `McpServer`, `AiModels`, `Image` | bleiben (Gruppen in [testing.md](../tools/testing.md#the-test-program-of-spark-srcfiretesting)); die Plugins des Treiber-Agenten (Bytecode-Plugins des C#-forge) sind entfallen |
 | `TestResume`, `TestTempFolders`, `TestUtils` | bleiben |
+
+### Die Lücken von `fire.Testing` geschlossen (23.11.2026, nach M3)
+
+Was M3 mit dem C#-forge aus `fire.Testing` nahm, ist größtenteils wieder da - als Daten in `forge-c conformance` (`tools/conformance.c`, neu
+`tools/conformance-steps.c`) und als Fälle, das, was spark-seitige Werkzeuge braucht, in C#:
+
+* **`//# needs: <need>...`** an einem Fall: was die Maschine haben muss (`linux`, `windows`, `mingw`, `wine`, `asan`, `tsan`, `env:NAME`, `file:PFAD`, ein
+  Programm auf dem PATH); sonst läuft der Fall nicht, und die Liste sagt warum (`SKIP native/4810-...: needs FIRE_TEST_MYSQL (not set)`).
+  **`//# windows: <warum>`**: die Ausgabe ist unter Windows von Natur aus eine andere (`--wine` zählt den Fall gesondert, `WIN ... other on Windows`);
+  `//# windows: not run - <warum>`: er kann dort nicht enden (`native/4540` startet `/bin/sh`).
+* **`<fall>.cgen-contains`**: Muster im C, das `forge native` für den Fall schreibt (eine Zeile ein Text, `*` beliebig innerhalb einer Zeile, `\b` ein
+  Wortanfang, `!` nicht, `=<n>` genau n-mal, `@<text>` nur die Funktion, deren Definition dort beginnt, `/<text>` ohne die Zeilen mit dem Text). Die vier
+  Prüfungen des Generators aus `Program.cs` sind Fälle: `native/4710` (Interface-Aufrufe: eigener Verteiler ohne Aufruferklasse und Zugriffsprüfung),
+  `4720` (`Word.Bits` als C-Zahl), `4730` (Rechnen auf `defined` Zahlen ohne Value-Funktion), `4740` (Elemente typisierter Arrays direkt).
+* **`--sanitize address`**: die nativen Builds mit `-fsanitize=address,undefined -fno-sanitize-recover=undefined -O1 -g` (eine Toolchain `conformance` in einer
+  eigenen `fire.native.json` des Laufs, `--config`), der Lauf mit LeakSanitizer; ein Bericht auf stderr ist falsch (mit seinen ersten Zeilen in der Liste).
+  **`--sanitize thread`**: die Fälle `Threads:` mit ThreadSanitizer, ein Data Race ist falsch (ihre Ausgabe wird, wie im Testprogramm, nicht verglichen).
+  **`--werror`**: `-Wall -Wextra -Werror` für das erzeugte C und die Runtime. TinyCC über die Thread-Fälle ist `--engine native --toolchain tcc --filter "Threads:"`.
+* **`--wine`**: die VM für Windows unter Wine - `fire.exe` und seine fünf Varianten mit MinGW aus `native/vm` gebaut, die Bibliotheken der Pakete für Windows
+  (`fire_pkg_*.dll`, `fire_gfx.dll`; `build/pkglib.c` erzeugt die Wrapper dafür für das Ziel `windows`, `nlTargetOverride`), jedes Programm als
+  `wine fire.exe Z:\...\x.fbc` in einem eigenen Prefix des Laufs; `--engine native`: die Fälle für Windows (MinGW) unter Wine. Wine startet ohne `TMPDIR`:
+  der Wine 9 von Ubuntu gibt `getenv("TMPDIR")` frei und bricht dann jedes Programm mit `free(): invalid pointer` ab - mit `env -u TMPDIR` laufen fire.exe
+  und forge-c.exe hier (die Bemerkung oben, Wine starte in dieser Umgebung nicht, war dieser Fehler).
+* **Die Suiten** (`tests/linkage`, `tests/wine`): ein Fall ist ein Ordner mit seinen Quellen und einer Datei `steps` - Prozesse (`forge`, `run`, `vm`, `wine`,
+  `sh`) mit dem Exitcode, den sie haben müssen, und Prüfungen ihrer Ausgabe (`expect`, `contains`, `count`, `under`, ...), `env`, `cd`, `input`, `pack`,
+  `when <need>` ... `end` ([testing.md](../tools/testing.md#the-tests-of-fire-itself)). Sie laufen nur, wenn sie genannt sind: `forge-c conformance linkage wine`.
+* **C#** (`fire.Testing`, Gruppe `debugger`, `DebuggerTests.Plugin.cs`): Debuggen über Module - ein Plugin nativ und in `fire` (seine Quelle bekommt den
+  nächsten Index, ein Haltepunkt nach Datei darin, Step Into/Out, Scopes, `this`), ein Haltepunkt in einer statischen Bibliothek, `profile`, `pause`, `terminate`.
+
+**Gemessen** (Linux, gcc 13, MinGW 13, Wine 9.0, `-j 2`):
+
+| Lauf | Fälle | richtig | falsch | nicht gelaufen |
+| --- | --- | --- | --- | --- |
+| `conformance linkage` (die Linkages, Plugins, `Library.Load`, TLS) | 18 | 18 | 0 | 0 |
+| `conformance wine` (fire.exe, gepackt, forge-c.exe, Linkages, Plugins, `Library.Load`, SChannel) | 8 | 8 | 0 | 0 |
+| `conformance native --wine` (der Korpus in fire.exe) | @WINE@ |
+| `conformance native --sanitize address` | @ASAN@ |
+| `conformance native --sanitize thread` (die Fälle `Threads:`) | @TSAN@ |
+| `conformance native --werror` | @WERROR@ |
+| `conformance native --engine native --toolchain tcc --filter "Threads:"` | @TCC@ |
+| `conformance` (alle Gruppen in der VM, mit den neuen Fällen) | @VM@ |
+| `fire.Testing` Gruppe `debugger` | 60 | 60 | 0 | 0 |
+
+Beim Portieren gefunden:
+
+* `native/4540` hing unter Wine bis zum Timeout: Wine startet zu `CreateProcess("/bin/sh")` das `/bin/sh` von Linux, dessen Ausgabe nie in den Pipes von
+  Windows ankommt und dessen Handle nie endet - `Process.Run` wartete in `WaitForExit`. Unter echtem Windows gibt es `/bin/sh` nicht; der Fall ist dort
+  `not run`. Dazu (vorsorglich) der Zweig für Windows von `packages/process/native/fire_bridge_process.h`: ein Lesen ohne Warten, das nichts bringt, ist das
+  Ende, wenn der Prozess geendet hat und seine Pipe leer ist (vorher meldete es "noch nichts" für immer, wenn ein anderes Ende der Pipe offen blieb).
+* Die Fälle mit Datenbankservern indizierten Zeilen mit `row[0]`: der Indexer von `Data.Row` nimmt einen `string`, die Zahl kommt als Text an - die Spalte
+  `"0"` (`The row has no column '0'`), in der VM wie nativ. Die Fälle nehmen jetzt `row.Get(0)`; gegen MariaDB 10.11 (mit TLS) läuft `native/4810` nativ wie
+  in der VM. Ob ein Indexer mit `string` eine Zahl annehmen soll, ist eine Frage der Sprache, nicht geändert.
+* Der Rückfall auf linkage source (`tests/linkage/fallback`) greift nur, wenn die Bibliothek von `core` schon im Cache liegt (die Prüfung der Schnittstelle,
+  wie in C#); mit einem leeren Cache wird `core` für das Programm gebaut, und das ist auch richtig.
+* `forge bytecode` baut die Bibliothek der Natives eines Projekts nur mit `--report json` (wie spark es aufruft): ohne findet die VM sie nicht.
+* `fire_rt.h` `halfBits` gibt mit gcc 13 `-O2 -Wall -Wextra` im Modul `core` (linkage static) `'d' may be used uninitialized [-Wmaybe-uninitialized]`
+  (über `memcpy` aus `bitsCall`).
+
+**Nicht wiederhergestellt, und warum:**
+
+* BIOS unter QEMU und DOS mit Open Watcom/DOSBox: kein `qemu-system-i386`, kein `dosbox`/`dosbox-x`, kein Open Watcom auf dieser Maschine
+  (`toolchain-setup watcom` lädt ihn, aber die Läufe brauchen dazu QEMU bzw. DOSBox) - übersprungen.
+* Scene3D und AI: ihre Modelle (glTF, Block- und Netzmodell, GGUF) erzeugte C#-Code der Prüfungen; die Erzeuger der GGUF-Dateien gingen mit `AiTests`.
+  MCP (ein reines Skript) ist `native/4800`.
+* Die Sonderläufe nach Titel, die keine Muster und keine Builds mit anderen Schaltern sind: FreeRTOS (Simulator), ESP32 (QEMU), die Fenster unter
+  Xvfb/Wayland, das Teilen in Einheiten (`NATIVE_SPLIT`, byte-gleich bei `auto`), das Weglassen in den Stufen 0-3 mit der Größe des ui-Programms, `word` in
+  der Breite des Ziels, die grünen Threads.
+* Unter Wine die Anzeige des Hosts (`FIRE_DISPLAY_SHM`, `HostDisplayFile`) und der Geräte-Host (`FIRE_DEVICE_HOST`, `DeviceHostServer`): sie brauchen spark's
+  Klassen als Gegenstelle; ein Fenster der VM unter Wine (`VmGraphicsForWindows`: `fire_gfx.dll` baut, das Fenster selbst nicht geprüft).
+* `ProgressAndCancel` (Abbrechen eines Baus mit linkage static, während gcc die Module übersetzt): die Gruppe `forgereport` prüft spark's Läufer.
+* Aus `NativeDebugTests`: die Threads unter dem Debugger, der Transport über stdio mit Rahmen, gdb an `#line`, der Agent unter Windows, `expand`/`set` gepackter
+  Felder.
 
 ## Nachziehen
 
