@@ -108,6 +108,7 @@ static long long nlNewestSource(FcCtx* c, const FgInstImport* imp) {
     int i;
     for (i = 0; i < sources->count; i++) { long long t = nlWriteTicks(nlFullPath(c, imp, (const char*)sources->items[i])); if (t > newest) newest = t; }
     for (i = 0; i < imp->native->headers->count; i++) { long long t = nlWriteTicks(nlFullPath(c, imp, (const char*)imp->native->headers->items[i])); if (t > newest) newest = t; }
+    for (i = 0; imp->native->units && i < imp->native->units->count; i++) { long long t = nlWriteTicks(nlFullPath(c, imp, (const char*)imp->native->units->items[i])); if (t > newest) newest = t; }
     /* (the project file of a project's natives: the build order of the sources is written there) */
     if (imp->descriptionFile && nbFileExists(imp->descriptionFile)) { long long t = nlWriteTicks(imp->descriptionFile); if (t > newest) newest = t; }
     return newest == LLONG_MIN ? 0 : newest;   /* (DefaultIfEmpty(DateTime.MinValue)) */
@@ -228,6 +229,14 @@ static const char* nlNativeHashOf(FcCtx* c, FcDict* cache, FcStore* store, const
         fcShaUpdate(&h, (const uint8_t*)"\n", 1);
     }
     nlHashFc8(&h, nlFunctionsJson(c, imp->native));
+    /* (the units of the import, `native.units` - forge-c, D8: their bytes; nothing for an import without) */
+    for (i = 0; imp->native->units && i < imp->native->units->count; i++) {
+        size_t n = 0;
+        uint8_t* data = fbReadFile(nlFullPath(c, imp, (const char*)imp->native->units->items[i]), &n);
+        nlHashFc8(&h, fcFmt(c, "\nunit %s\n", fgFileNameOf(c, (const char*)imp->native->units->items[i])));
+        if (data && n) fcShaUpdate(&h, data, n);
+        free(data);
+    }
     return nlShaUpper(c, &h);
 }
 
@@ -538,7 +547,54 @@ static NlResult nlEnsure(FcCtx* c, FcDict* cache, FcStore* store, const FgInstIm
     cpp = nbCombine(c, work, isC ? "wrapper.c" : "wrapper.cpp");
     nbWriteText(c, cpp, wrapper);
     outFile = nbCombine(c, work, nlFileNameFor(c, imp));
-    k = nbCompilerCommand(c, toolchain, target, cpp, work, outFile, true, nbStrings(c, 1, nbCombine(c, work, "abi")), false, isC ? "c" : "c++", false, NULL, NULL, NULL, false);
+    {
+        /* the units of the import (`native.units`, builder.c): each compiled to an object of its own, linked into the library - position-independent, and
+         * with hidden symbols where the compiler has them (only the entry points of the wrapper leave the library) */
+        FcList* units = fcListNew(c);
+        FcList* objects = NULL;
+        for (i = 0; imp->native->units && i < imp->native->units->count; i++) {
+            NbPkgUnit* u = (NbPkgUnit*)fcAlloc(c, sizeof *u);
+            u->import = imp->name;
+            u->file = nlFullPath(c, imp, (const char*)imp->native->units->items[i]);
+            u->name = fcFmt(c, "fire_unit_%s.c", nbUnitName(c, imp->name, i, false));
+            fcListAdd(c, units, u);
+        }
+        if (units->count > 0) {
+            NbToolchain* ut = (NbToolchain*)fcAlloc(c, sizeof *ut);
+            *ut = *toolchain;
+            ut->args = toolchain->args ? fcListCopy(c, toolchain->args) : fcListNew(c);
+            fcListAdd(c, ut->args, (void*)(streq0(nbKind(ut), "msvc") ? "/w" : "-w"));   /* (the package's code: without its warnings) */
+            if (!streq0(nbKind(ut), "msvc")) fcListAdd(c, ut->args, (void*)"-fPIC");
+            if (!streq0(nbKind(ut), "msvc") && !streq0(nbKind(ut), "tcc")) fcListAdd(c, ut->args, (void*)"-fvisibility=hidden");
+            objects = fcListNew(c);
+            for (i = 0; i < units->count; i++) {
+                const NbPkgUnit* u = (const NbPkgUnit*)units->items[i];
+                const char* file = nbCombine(c, work, u->name);
+                const char* obj = nbChangeExtension(c, file, streq0(nbKind(ut), "msvc") ? ".obj" : ".o");
+                NbRunResult ur;
+                NbCommand* uk;
+                if (log) fcBufFmt(log, "Compiling %s of the package '%s'...\n", fgFileNameOf(c, u->file), imp->pkgName);
+                if (!nbCopyFile(c, u->file, file)) { r.error = fcFmt(c, "The unit '%s' of the package '%s' cannot be read.", u->file, imp->pkgName); nlEndWork(c, work, "the package", log); return r; }
+                uk = nbCompilerCommand(c, ut, target, file, work, obj, false, NULL, false, "c", true, NULL, NULL, NULL, false);
+                ur = nbRun(uk->exe, uk->args, work);
+                if (!ur.ok || !nbFileExists(obj)) {
+                    FcBuf text = {0};
+                    const char* message;
+                    fcBufStr(&text, "");
+                    nbAppendRun(&text, &ur);
+                    message = fcFmt(c, "Building the native part of the package '%s' failed:\n%s %s\n%s", imp->pkgName, uk->exe, uk->args, fcBufDone(c, &text));
+                    nlRememberFailure(c, imp, message);
+                    nlEndWork(c, work, "the package", log);
+                    r.error = message;
+                    return r;
+                }
+                free(ur.text);
+                fcListAdd(c, objects, (void*)obj);
+            }
+            toolchain = nbWithUnitDefines(c, toolchain, units);
+        }
+        k = nbCompilerCommand(c, toolchain, target, cpp, work, outFile, true, nbStrings(c, 1, nbCombine(c, work, "abi")), false, isC ? "c" : "c++", false, objects, NULL, NULL, false);
+    }
     run = nbRun(k->exe, k->args, work);
     if (!run.ok || !nbFileExists(outFile)) {
         const char* message;

@@ -30,12 +30,28 @@
 and there is none, both offer to download one on the command line (w64devkit on Windows, Open Watcom for its targets; `Toolchain/` next to forge);
 `forge-c toolchain-setup w64devkit|watcom|tcc` does it directly, as spark's setup does.
 
-Two commands only forge-c has (phase D step 6 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md): fire without .NET):
+Commands only forge-c has (phase D steps 6 to 8 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md): fire without .NET, fire embedded):
 
 | Command | What it does |
 | --- | --- |
 | `forge-c conformance [<group>\|<group>/<case>...] [--filter t] [-j n] [--engine vm\|native\|all]` | runs the cases of `tests/cases` - in the VM in C, and the group native as native programs - and compares them with what they expect: the core of the test program `fire.Testing` without .NET ([testing](testing.md#the-cases-as-files-testscases)); exit code 0 when all are right |
-| `forge-c package-dist <folder> [--dry-run]` | the forge/VM part of an installation without .NET: forge-c (as `forge`), the VM `fire` with its variants, `native/` (tables, runtime, the sources of the VM), `Source/` (the standard packages) and `Prebuilt/` (their libraries for this machine) - what `setup.iss` installs next to spark with `/DForgeDist=<folder>`; `native/forge/package-dist.sh <folder>` builds forge-c with `cc` first |
+| `forge-c package-dist <folder> [--dry-run] [--no-embed]` | the forge/VM part of an installation without .NET: forge-c (as `forge`), the VM `fire` with its variants, `native/` (tables, runtime, the sources of the VM), `Source/` (the standard packages), `Prebuilt/` (their libraries for this machine) and libforge/libfirevm as shared libraries (`build-embed`) - what `setup.iss` installs next to spark with `/DForgeDist=<folder>`; `native/forge/package-dist.sh <folder>` builds forge-c with `cc` first |
+| `forge-c build-embed <folder>` | libforge and libfirevm as shared libraries ([EMBED.md](../spec/EMBED.md)): for a C host, and libfirevm for the package `script` |
+| `forge-c amalgamate <file.c> [--check]` | libforge as one C file - `native/forge/forge.c` with everything it includes. `packages/forge/native/libforge.c` is this file: the package [forge](../packages/forge.md) carries it and forge links it into a program that imports forge. `--check` says whether the file is current (exit 1 when not); run it after a change below `native/forge` |
+
+**forge in fire** (`tools/forge.fire`, phase D step 8): a small fire program that passes its command line to the package forge (`Forge.Compiler.Main`), which
+runs the compiler in the program. forge builds it like any program - natively for any target it builds for, or for the VM - so fire builds itself for other
+platforms:
+
+```bash
+forge build tools/forge.fire --engine native -o forge                                          # this machine
+forge build tools/forge.fire --engine native -t windows --toolchain mingw -o forge.exe           # Windows from Linux: "mingw" a toolchain of fire.native.json
+                                                                                               #   { "kind": "gcc", "compiler": "x86_64-w64-mingw32-g++", "cCompiler": "x86_64-w64-mingw32-gcc" }
+forge build tools/forge.fire --engine vm -o forge                                              # the VM with the program behind it
+```
+
+The program built so is a forge: the same commands, the same output, byte for byte. It finds its folders as forge-c does (`FIRE_TABLES`, `FIRE_PACKAGES`,
+`FIRE_NATIVE_ROOT`, else a distribution of `package-dist` around it).
 
 forge-c finds its tables (the prelude) in `FIRE_TABLES`, else in `../tables` or `native/tables` next to it (the layout of `package-dist`), else in
 `native/tables` of the working folder; the store of packages is `FIRE_PACKAGES`, else `Packages/` next to it.

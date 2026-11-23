@@ -6,7 +6,8 @@
  *              collected, its exit code, an exception nothing caught as data.
  *
  *   forge build-embed <folder>     builds both as shared libraries (libfireforge.so / fireforge.dll, libfirevm.so / firevm.dll) into a folder;
- *                                  the packages `forge` and `script` load them from there (packages/forge, packages/script).
+ *                                  the package `script` loads libfirevm from there (packages/script).
+ *   forge amalgamate <file.c>      libforge as one C file (packages/forge/native/libforge.c): the package `forge` links it into the program.
  *
  * The interface is plain C with opaque handles and getters (no structs to keep in step): a host may link the libraries or load them with dlopen/LoadLibrary and
  * look the functions up by name. Texts are UTF-8 and NUL-terminated; a text a getter returns belongs to the handle and lives until the handle is freed.
@@ -34,6 +35,9 @@ extern "C" {
 #endif
 
 #define FIRE_EMBED_VERSION 1
+
+/* what a program or the command line of forge writes: stream 1 stdout, 2 stderr; `length` bytes of UTF-8 (not NUL-terminated) */
+typedef void (*FireWriteFn)(void* user, int stream, const char* data, size_t length);
 
 /* ---- forge (libforge) ---- */
 typedef struct FireForge FireForge;
@@ -65,16 +69,17 @@ FIRE_EMBED_API int fire_compilation_diagnostic_line(const FireCompilation* c, in
 FIRE_EMBED_API int fire_compilation_diagnostic_column(const FireCompilation* c, int index);
 FIRE_EMBED_API void fire_compilation_free(FireCompilation* c);
 
-/* The command line of forge in this process (`forge-c <argv[1]> ...`; argv[0] is the program): what it writes goes to this process's stdout and stderr, the
- * result is its exit code. One command line at a time per process (the options of the command line are the process's, as in forge); `serve` is refused. */
+/* The command line of forge in this process (`forge-c <argv[1]> ...`; argv[0] is the program): what it writes goes to the output of the FireForge
+ * (fire_forge_set_output), the result is its exit code. One command line at a time per process (the options of the command line are the process's, as in
+ * forge); `serve` is refused. */
 FIRE_EMBED_API int fire_forge_main(FireForge* forge, int argc, char** argv);
+/* Where fire_forge_main writes: `write` gets it as it comes (also what the programs `forge run` starts write); NULL (the default) - this process's stdout and
+ * stderr. */
+FIRE_EMBED_API void fire_forge_set_output(FireForge* forge, FireWriteFn write, void* user);
 
 /* ---- the VM (libfirevm) ---- */
 typedef struct FireVm FireVm;
 typedef struct FireRun FireRun;
-
-/* what a program writes: stream 1 stdout, 2 stderr; `length` bytes of UTF-8 (not NUL-terminated) */
-typedef void (*FireWriteFn)(void* user, int stream, const char* data, size_t length);
 
 /* how a run ended */
 enum { FIRE_RUN_ENDED = 0, FIRE_RUN_EXCEPTION = 1, FIRE_RUN_ERROR = 2, FIRE_RUN_TERMINATED = 3, FIRE_RUN_NOT_LOADED = 4 };

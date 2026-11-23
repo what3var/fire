@@ -147,8 +147,10 @@ static const char* neLocate(FcCtx* c, FcBuf* log, const char** error) {
     return cached;
 }
 
-/* A program that imports forge or script: FIRE_EMBED_PATH names the folder of the libraries for the programs forge starts (when it is not set already). */
-static void neEnsureFor(FcCtx* c, const FcLinked* linked) {
+/* A program that imports script: FIRE_EMBED_PATH names the folder of the libraries for the programs forge starts (when it is not set already). The package
+ * forge has libforge as a unit of its own (`native.units`, Phase D 8) - only a forge package installed without it (by a forge that does not know units)
+ * loads the library. */
+static void neEnsureFor(FcCtx* c, const FcLinked* linked, FcStore* store) {
     const char* error = NULL;
     const char* folder;
     const char* given = getenv("FIRE_EMBED_PATH");
@@ -156,7 +158,12 @@ static void neEnsureFor(FcCtx* c, const FcLinked* linked) {
     if (given && *given) return;
     FC_DICT_EACH(linked->nativeImports, e) {
         const char* key = (const char*)e->key;
-        if (fcAsciiIEq(key, "pkg:forge") || fcAsciiIEq(key, "pkg:script")) wanted = true;
+        if (fcAsciiIEq(key, "pkg:script")) wanted = true;
+        else if (fcAsciiIEq(key, "pkg:forge")) {
+            FcPkgImport* pi = fcStoreFindKey(c, store, key);
+            FgInstImport* x = pi ? fgInstalledImport(c, fcDictNew(c, FC_KEY_PTR), pi) : NULL;
+            if (!x || !x->native || !x->native->units || x->native->units->count == 0) wanted = true;
+        }
     }
     if (!wanted) return;
     folder = neLocate(c, NULL, &error);
@@ -190,6 +197,119 @@ static int neBuildEmbedMain(int argc, char** argv) {
         result = 1;
     }
     fcBufFree(&log);
+    fcCtxFree(&ctx);
+    return result;
+}
+
+/* ---- `forge-c amalgamate <file> [--check]`: libforge as one C file (Phase D 8) ----
+ * native/forge/forge.c with every file it includes by a local `#include "..."` put in where the include stands - recursively and every time, as the
+ * preprocessor does (the X-macro tables of native/tables are included several times; headers keep their guards) -, each path relative to the file that
+ * includes it (forge has two command.c, json.c and stats.c in different folders). `#include <...>` stays. The result is the native unit of the package
+ * forge (packages/forge/native/libforge.c, `native.units`): compiled on its own and linked into a program that imports forge - natively for any target
+ * forge builds for, and into the library of the package for the VM. The text depends only on the files (no dates, no absolute paths): the same on every
+ * machine. --check only says whether the file is current (exit 1 when not). */
+
+/* a path relative to the repository (the folder above native/) without "." and ".." (NULL: it leaves it) */
+static const char* neNormalize(FcCtx* c, const char* path) {
+    FcList* parts = fcListNew(c);
+    const char* p = path;
+    FcBuf b = {0};
+    int i;
+    while (*p) {
+        const char* e = p;
+        while (*e && *e != '/' && *e != '\\') e++;
+        if (e - p == 2 && p[0] == '.' && p[1] == '.') { if (parts->count == 0) return NULL; parts->count--; }
+        else if (e > p && !(e - p == 1 && p[0] == '.')) fcListAdd(c, parts, (void*)fcStrN(c, p, (size_t)(e - p)));
+        p = *e ? e + 1 : e;
+    }
+    fcBufStr(&b, "");
+    for (i = 0; i < parts->count; i++) { if (i) fcBufChar(&b, '/'); fcBufStr(&b, (const char*)parts->items[i]); }
+    return fcBufDone(c, &b);
+}
+/* the file of a line `#include "name"` (blanks around `#`, a comment after it), else NULL */
+static const char* neLocalInclude(FcCtx* c, const char* line, size_t n) {
+    size_t i = 0, start;
+    while (i < n && (line[i] == ' ' || line[i] == '\t')) i++;
+    if (i >= n || line[i] != '#') return NULL;
+    i++;
+    while (i < n && (line[i] == ' ' || line[i] == '\t')) i++;
+    if (n - i < 7 || memcmp(line + i, "include", 7) != 0) return NULL;
+    i += 7;
+    while (i < n && (line[i] == ' ' || line[i] == '\t')) i++;
+    if (i >= n || line[i] != '"') return NULL;
+    start = ++i;
+    while (i < n && line[i] != '"') i++;
+    if (i >= n || i == start) return NULL;
+    return fcStrN(c, line + start, i - start);
+}
+/* puts the file `rel` (relative to the repository: forge includes the deflater of packages/compression) into out, with what it includes; false: *error */
+static bool neInline(FcCtx* c, FcBuf* out, const char* rel, int depth, const char** error) {
+    size_t n = 0, i = 0;
+    uint8_t* text;
+    const char* dir;
+    const char* slash = strrchr(rel, '/');
+    if (depth > 32) { *error = fcFmt(c, "%s: the includes go deeper than 32 files", rel); return false; }
+    text = fbReadFile(nbCombine(c, fcDirectoryName(c, nbNativeRoot), rel), &n);
+    if (!text) { *error = fcFmt(c, "%s cannot be read (below %s)", rel, fcDirectoryName(c, nbNativeRoot)); return false; }
+    dir = slash ? fcStrN(c, rel, (size_t)(slash - rel)) : "";
+    while (i < n) {
+        size_t e = i;
+        const char* name;
+        while (e < n && text[e] != '\n') e++;
+        name = neLocalInclude(c, (const char*)text + i, e - i);
+        if (name) {
+            const char* inner = neNormalize(c, *dir ? fcFmt(c, "%s/%s", dir, name) : name);
+            if (!inner) { free(text); *error = fcFmt(c, "%s: #include \"%s\" leaves the repository", rel, name); return false; }
+            fcBufFmt(out, "/* ---- %s ---- */\n", inner);
+            if (!neInline(c, out, inner, depth + 1, error)) { free(text); return false; }
+            if (out->len > 0 && out->p[out->len - 1] != '\n') fcBufChar(out, '\n');
+            fcBufFmt(out, "/* ---- (%s ends: %s) ---- */\n", inner, rel);
+        } else fcBufPut(out, (const char*)text + i, e < n ? e - i + 1 : e - i);
+        i = e < n ? e + 1 : e;
+    }
+    free(text);
+    return true;
+}
+/* the text of libforge as one file; NULL: *error */
+static const char* neAmalgamation(FcCtx* c, size_t* length, const char** error) {
+    FcBuf out = {0};
+    fcBufStr(&out,
+        "/* libforge as one C file: native/forge/forge.c with FIRE_FORGE_LIBRARY and every file it includes (native/forge, native/base, native/abi,\n"
+        " * native/tables, the deflater of packages/compression), put together by `forge amalgamate` (native/forge/build/embedlib.c, docs/spec/EMBED.md). Generated - do not edit: change the\n"
+        " * files below native/ and run `forge amalgamate packages/forge/native/libforge.c` (`--check` says whether this file is current).\n"
+        " *\n"
+        " * The native unit of the package forge (`native.units`, docs/packages/natives.md): compiled on its own and linked into a program that imports\n"
+        " * forge, and into the library of the package for the VM. Its interface is native/abi/fire_embed.h; its other symbols begin with fc and fb. */\n"
+        "#ifndef FIRE_FORGE_LIBRARY\n#define FIRE_FORGE_LIBRARY 1\n#endif\n"
+        "#if !defined(_WIN32) && !defined(_DEFAULT_SOURCE)\n#define _DEFAULT_SOURCE 1   /* (POSIX besides C11 - realpath, setenv, ... -, also under -std=c11) */\n#endif\n");
+    if (!neInline(c, &out, "native/forge/forge.c", 0, error)) { fcBufFree(&out); return NULL; }
+    *length = out.len;
+    return fcBufDone(c, &out);
+}
+static int neAmalgamateMain(int argc, char** argv) {
+    FcCtx ctx;
+    const char* file = NULL;
+    const char* text;
+    const char* error = NULL;
+    bool check = false, bad = false;
+    size_t n = 0, had = 0;
+    uint8_t* old;
+    int i, result = 0;
+    for (i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--check") == 0) check = true;
+        else if (!file && argv[i][0] != '-') file = argv[i];
+        else bad = true;
+    }
+    if (!file || bad) { fprintf(stderr, "amalgamate <file.c> [--check]   libforge as one C file (native/forge/forge.c with what it includes)\n"); return 2; }
+    fcCtxInit(&ctx);
+    text = neAmalgamation(&ctx, &n, &error);
+    if (!text) { fprintf(stderr, "amalgamate: %s\n", error); fcCtxFree(&ctx); return 1; }
+    old = fbReadFile(file, &had);
+    if (old && had == n && memcmp(old, text, n) == 0) printf("%s (up to date)\n", file);
+    else if (check) { fprintf(stderr, "%s is not current: run `forge amalgamate %s`\n", file, file); result = 1; }
+    else if (!nbWriteBytes(&ctx, file, text, n)) { fprintf(stderr, "amalgamate: cannot write %s\n", file); result = 1; }
+    else printf("%s (%zu bytes)\n", file, n);
+    free(old);
     fcCtxFree(&ctx);
     return result;
 }

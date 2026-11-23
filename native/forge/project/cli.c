@@ -197,6 +197,7 @@ static void pjDumpNative(PjDump* d, const char* indent, const PjNativePart* part
         pjDumpLine(d, indent, "uses", fcFmt(c, "%s %s", u->import, fgJoin(c, u->platforms, ",")));
     }
     for (i = 0; i < n->m.headers->count; i++) pjDumpLine(d, indent, "header", pjDumpPath(d, (const char*)n->m.headers->items[i]));
+    for (i = 0; i < n->m.units->count; i++) pjDumpLine(d, indent, "unit", pjDumpPath(d, (const char*)n->m.units->items[i]));
 }
 static void pjDumpSources(PjDump* d, const char* indent, const FcList* sources) {
     int i;

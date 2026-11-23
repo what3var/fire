@@ -25,6 +25,7 @@ typedef struct FgPkgNativeM {
     bool threadSafe;
     FcList* uses;              /* FgNativeUse* */
     FcList* headers;
+    FcList* units;             /* C files compiled on their own and linked in (`native.units`, D8: libforge in the package forge) - forge-c only */
 } FgPkgNativeM;
 /* InstalledImport (with its package) */
 typedef struct FgInstImport {
@@ -115,6 +116,7 @@ static FgPkgNativeM* fgJsonNative(FcCtx* c, const FcJson* v) {
             fcListAdd(c, n->uses, u);
         }
     n->headers = fgJsonStrings(c, fcJsonGet(v, "headers"));
+    n->units = fgJsonStrings(c, fcJsonGet(v, "units"));
     return n;
 }
 static FcJson* fgReadJsonFile(FcCtx* c, const char* path) {
