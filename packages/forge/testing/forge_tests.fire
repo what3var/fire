@@ -1,0 +1,57 @@
+// The tests of forge: `forge test packages/forge/forge.fireproj` (in the VM) and `--engine native`. The compiler runs in this process (libforge).
+#import "testing"
+
+class ForgeTests {
+    [Test "A source translates to a program file"]
+    undefined Compiles() {
+        var c = Forge.Compiler.CompileSource("print(\"hello\")\n", "hello.fire")
+        Testing.Assert.IsTrue(c.Succeeded, c.Report())
+        Testing.Assert.AreEqual(0, c.Errors.Count)
+        Testing.Assert.IsTrue(c.Program.Length > 1000)
+        Testing.Assert.AreEqual("hello.fire", c.Name)
+    }
+
+    [Test "A compile error comes back as data"]
+    undefined CompileError() {
+        var c = Forge.Compiler.CompileSource("var x = 1\nprint(y)\n", "broken.fire")
+        Testing.Assert.IsFalse(c.Succeeded)
+        Testing.Assert.IsUndefined(c.Program)
+        var errors = c.Errors
+        Testing.Assert.AreEqual(1, errors.Count)
+        Testing.Assert.AreEqual("error", errors[0].Severity)
+        Testing.Assert.AreEqual("E4022", errors[0].Code)
+        Testing.Assert.AreEqual(2, errors[0].Line)
+        Testing.Assert.Contains("Unknown identifier 'y'", errors[0].Message)
+        Testing.Assert.Contains("error E4022", errors[0].Text)
+    }
+
+    [Test "A syntax error names its file, line and column"]
+    undefined SyntaxError() {
+        var c = Forge.Compiler.CompileSource("print(1)\nprint(2 3)\n", "syntax.fire")
+        Testing.Assert.IsFalse(c.Succeeded)
+        var e = c.Errors[0]
+        Testing.Assert.AreEqual("syntax.fire", e.File)
+        Testing.Assert.AreEqual(2, e.Line)
+        Testing.Assert.IsTrue(e.Column > 0)
+        Testing.Assert.IsTrue(e.Code.StartsWith("E"))
+    }
+
+    [Test "Two translations are independent of each other"]
+    undefined Independent() {
+        var a = Forge.Compiler.CompileSource("class A { static int F() { return 1 } }\nprint(A.F())\n", "a.fire")
+        var b = Forge.Compiler.CompileSource("class A { static string G() { return \"x\" } }\nprint(A.G())\n", "b.fire")
+        Testing.Assert.IsTrue(a.Succeeded, a.Report())
+        Testing.Assert.IsTrue(b.Succeeded, b.Report())
+        var c = Forge.Compiler.CompileSource("print(A.F())\n", "c.fire")
+        Testing.Assert.IsFalse(c.Succeeded)
+    }
+
+    [Test "A mode is a translation of its own"]
+    undefined Modes() {
+        var debug = Forge.Compiler.CompileSource("print(1)\n", "m.fire", Forge.Mode.Debug)
+        var release = Forge.Compiler.CompileSource("print(1)\n", "m.fire", Forge.Mode.Release)
+        Testing.Assert.IsTrue(debug.Succeeded)
+        Testing.Assert.IsTrue(release.Succeeded)
+        Testing.Assert.AreNotEqual(debug.Program.Length, release.Program.Length)
+    }
+}

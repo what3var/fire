@@ -41,6 +41,9 @@ sie neben sich hat; `forge install-standard` legt sie an). Für den Vergleich ze
 ```
 ```
 
+Als Bibliothek (Phase D 7, [EMBED.md](EMBED.md)): `forge.c` mit `FIRE_FORGE_LIBRARY` hat kein `main`, `embed.c` gibt `fire_embed.h` (Übersetzen mit den
+Diagnosen als Daten, `fire_forge_main`); `forge-c build-embed <ordner>` baut libforge und libfirevm als Shared Libraries (`build/embedlib.c`).
+
 `libm` braucht es für `Math.Pow` (eine Umrechnung `coerce ... => value ^ 2` wird beim Übersetzen gerechnet) - wie bei der VM.
 
 ## Das Maß: `forge tokens` / `forge ast`

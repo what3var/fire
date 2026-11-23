@@ -1,0 +1,120 @@
+#import "forge"
+
+// script (docs/packages/script.md): fire as a scripting language in a fire program. A script is translated by the package forge and runs to its end in this
+// process, in the VM of fire as a library (libfirevm, native/abi/fire_embed.h) with a runtime of its own: what it writes, its exit code and an exception that
+// nothing in it caught come back as data. The same in the VM and in a native build.
+//
+//     var script = Scripting.Script.FromSource("print(\"hello \" + Environment.Args[0])")
+//     var result = script.Run(["world"])   // result.Output: "hello world\n"
+namespace Scripting {
+    // How a run ended.
+    enum Status { Ended = 0, Exception = 1, Error = 2, Terminated = 3, NotLoaded = 4 }
+
+    // A script that does not translate: its diagnostics are in Compilation.
+    class CompileException : Exception {
+        Forge.Compilation Compilation
+        construct(Forge.Compilation compilation) {
+            this.message = "The script '" + compilation.Name + "' has errors:\n" + compilation.Report()
+            this.Compilation = compilation
+        }
+    }
+
+    // A script that ended with an exception nothing in it caught (Type, ScriptMessage and ScriptStackTrace are the script's), or with an error of the runtime.
+    class ScriptException : Exception {
+        // the class of the script's exception ("" for an error of the runtime)
+        string Type
+        string ScriptMessage
+        string ScriptStackTrace
+        Scripting.ScriptResult Result
+        construct(Scripting.ScriptResult result) {
+            this.Result = result
+            this.Type = result.ExceptionType
+            this.ScriptMessage = result.ExceptionMessage
+            this.ScriptStackTrace = result.StackTrace
+            if (result.Status == Scripting.Status.Exception) { this.message = "The script ended with an exception of type '" + result.ExceptionType + "': " + result.ExceptionMessage }
+            else { this.message = "The script ended with an error: " + result.ExceptionMessage }
+        }
+    }
+
+    // The script libfirevm cannot be used, or a script that could not be loaded.
+    class ScriptHostException : Exception {
+        construct(string message) { this.message = message }
+    }
+
+    // What a run gives.
+    class ScriptResult {
+        Scripting.Status Status
+        // as the program fire: 0, 1 (an exception, an error), the code of terminate(code), 2 not loaded
+        int ExitCode
+        // what the script wrote to its standard output and its error output
+        string Output
+        string Errors
+        // an exception nothing caught: its class, its message (an error of the runtime: its text), its stack trace
+        string ExceptionType
+        string ExceptionMessage
+        string StackTrace
+        construct() { }
+        bool Succeeded() { return this.Status == Scripting.Status.Ended || (this.Status == Scripting.Status.Terminated && this.ExitCode == 0) }
+    }
+
+    class Script {
+        Forge.Compilation Compilation
+        string Name
+
+        construct(Forge.Compilation compilation) {
+            this.Name = compilation.Name
+            this.Compilation = compilation
+        }
+
+        // libfirevm can be used (else LoadError says why)
+        static bool Available() { return __ScriptAvailable() }
+        static string LoadError() { return __ScriptLoadError() }
+
+        // A script from its text (translated now; a CompileException with the diagnostics when it has errors).
+        static Scripting.Script FromSource(string source, string name = "script.fire", Forge.Mode mode = Forge.Mode.Default) {
+            return Scripting.Script.Of(Forge.Compiler.CompileSource(source, name, mode))
+        }
+        // A script from a file or a project.
+        static Scripting.Script FromFile(string path, Forge.Mode mode = Forge.Mode.Default) {
+            return Scripting.Script.Of(Forge.Compiler.CompileFile(path, mode))
+        }
+        static Scripting.Script Of(Forge.Compilation compilation) {
+            if (!compilation.Succeeded) { throw new Scripting.CompileException(compilation) }
+            return new Scripting.Script(compilation)
+        }
+
+        static Scripting.Status StatusOf(int n) {
+            if (n == 0) { return Scripting.Status.Ended }
+            if (n == 1) { return Scripting.Status.Exception }
+            if (n == 2) { return Scripting.Status.Error }
+            if (n == 3) { return Scripting.Status.Terminated }
+            return Scripting.Status.NotLoaded
+        }
+
+        // Runs the script to its end with `args` as its Environment.Args; the result says how it ended - nothing is thrown for what the script did.
+        Scripting.ScriptResult Execute(string args[] = undefined) {
+            if (args == undefined) { args = new string[0] }
+            var h = __ScriptRun(this.Compilation.Program, this.Compilation.PackagePath, this.Name, args)
+            if (h == 0) { throw new Scripting.ScriptHostException(__ScriptLoadError()) }
+            var r = new Scripting.ScriptResult()
+            r.Status = Scripting.Script.StatusOf(__ScriptStatus(h))
+            r.ExitCode = __ScriptExitCode(h)
+            r.Output = __ScriptText(h, 0)
+            r.Errors = __ScriptText(h, 1)
+            r.ExceptionType = __ScriptText(h, 2)
+            r.ExceptionMessage = __ScriptText(h, 3)
+            r.StackTrace = __ScriptText(h, 4)
+            var notLoaded = __ScriptText(h, 5)
+            __ScriptFree(h)
+            if (r.Status == Scripting.Status.NotLoaded) { throw new Scripting.ScriptHostException(notLoaded) }
+            return r
+        }
+
+        // Runs the script like Execute; an exception nothing in the script caught (or an error of its runtime) is thrown here as a ScriptException.
+        Scripting.ScriptResult Run(string args[] = undefined) {
+            var r = this.Execute(args)
+            if (r.Status == Scripting.Status.Exception || r.Status == Scripting.Status.Error) { throw new Scripting.ScriptException(r) }
+            return r
+        }
+    }
+}

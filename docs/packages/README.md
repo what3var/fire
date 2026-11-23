@@ -5,6 +5,7 @@
 | **This page** | using packages: `ember`, sources, the standard libraries, the cache |
 | [Building a package](building.md) | a package in fire only - from a library project or from a description |
 | [Packages with natives](natives.md) | C or C++ code in a package: how to write it and connect it to fire |
+| [forge](forge.md) and [script](script.md) | the compiler in your program, and fire scripts run in your program |
 
 fire can import more than the libraries that come with the compiler (`graphics`, `io`, `time`, ...): a **package** brings one or more imports of its own, for example the
 interface to a sensor, a protocol or an operating system API. `#import "name"` finds the imports of the installed packages like the built-in ones.

@@ -55,6 +55,8 @@
     "machine/machine.fireproj",
     "dos/dos.fireproj",
     "xms/xms.fireproj",
-    "x86/x86.fireproj"
+    "x86/x86.fireproj",
+    "forge/forge.fireproj",
+    "script/script.fireproj"
   ]
 }

@@ -1,0 +1,112 @@
+{
+  "format": 1,
+  "name": "fire-forge",
+  "type": "library",
+  "import": "forge",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The library 'forge' of fire: the compiler in the program - fire source or a project to a program file, its diagnostics as data (libforge, fire_embed.h)."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_forge.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__ForgeAvailable",
+        "returns": "bool",
+        "arguments": 0,
+        "c": "fire_forge_Available"
+      },
+      {
+        "name": "__ForgeLoadError",
+        "returns": "string",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_forge_LoadError"
+      },
+      {
+        "name": "__ForgeCompile",
+        "returns": "int",
+        "arguments": 3,
+        "c": "fire_forge_Compile"
+      },
+      {
+        "name": "__ForgeOk",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_forge_Ok"
+      },
+      {
+        "name": "__ForgeProgram",
+        "returns": "byte[]",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_forge_Program"
+      },
+      {
+        "name": "__ForgePackagePath",
+        "returns": "string",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_forge_PackagePath"
+      },
+      {
+        "name": "__ForgeDiagCount",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_forge_DiagCount"
+      },
+      {
+        "name": "__ForgeDiagText",
+        "returns": "string",
+        "arguments": 3,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_forge_DiagText"
+      },
+      {
+        "name": "__ForgeDiagLine",
+        "returns": "int",
+        "arguments": 2,
+        "c": "fire_forge_DiagLine"
+      },
+      {
+        "name": "__ForgeDiagColumn",
+        "returns": "int",
+        "arguments": 2,
+        "c": "fire_forge_DiagColumn"
+      },
+      {
+        "name": "__ForgeFree",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_forge_Free"
+      },
+      {
+        "name": "__ForgeMain",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_forge_Main"
+      }
+    ],
+    "reset": "fire_forge_reset",
+    "language": "c",
+    "platforms": [
+      "posix",
+      "windows"
+    ],
+    "linkLibraries": {
+      "posix": [
+        "dl"
+      ]
+    }
+  }
+}

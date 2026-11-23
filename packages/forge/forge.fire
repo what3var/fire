@@ -1,0 +1,108 @@
+// forge (docs/packages/forge.md): the compiler of fire in the program - fire source or a project to a program file (the bytes `forge bytecode` writes), its
+// warnings and errors as data. The natives load libforge (the compiler in C as a library, native/abi/fire_embed.h) in this process; the package `script` runs
+// what it translated. The same in the VM and in a native build.
+namespace Forge {
+    // How a program is translated (`forge bytecode -m`): Default lets the program decide (#debug, #performance).
+    enum Mode { Default = -1, Debug = 0, Release = 1, Performance = 2 }
+
+    // The compiler cannot be used: libforge was not found or could not be loaded.
+    class ForgeException : Exception {
+        construct(string message) { this.message = message }
+    }
+
+    // A warning or an error of a translation.
+    class Diagnostic {
+        // "error" or "warning"
+        string Severity
+        // the code of the catalogue ("TC005", "E4022"; "" for an error without one)
+        string Code
+        // the file it is in ("" when forge names none)
+        string File
+        int Line
+        int Column
+        string Message
+        // the line as forge prints it: `file(line): error CODE: message`
+        string Text
+        construct() { }
+        bool IsError() { return this.Severity == "error" }
+        string ToString() { return this.Text }
+    }
+
+    // What a translation gives: the program file, or the errors.
+    class Compilation {
+        // the name of the translated file (a script's own name)
+        string Name
+        bool Succeeded
+        // the program file (undefined after errors)
+        byte Program[]
+        // the folders of the libraries of its packages (for the VM; `script` hands them over)
+        string PackagePath
+        // the warnings as they came, then the errors
+        List<Forge.Diagnostic> Diagnostics
+        // the errors alone
+        List<Forge.Diagnostic> Errors
+        construct() {
+            this.Diagnostics = new List<Forge.Diagnostic>()
+            this.Errors = new List<Forge.Diagnostic>()
+        }
+
+        // every diagnostic as forge prints it, one per line
+        string Report() {
+            var lines = new List<string>()
+            foreach (d in this.Diagnostics) { lines.Add(d.Text) }
+            return "\n".Join(lines)
+        }
+    }
+
+    class Compiler {
+        // libforge can be used (else LoadError says why)
+        static bool Available() { return __ForgeAvailable() }
+        static string LoadError() { return __ForgeLoadError() }
+
+        // Translates `source` as the text of a file named `name` (its folder for #include and resources: the working folder, or the folder in the name).
+        static Forge.Compilation CompileSource(string source, string name = "script.fire", Forge.Mode mode = Forge.Mode.Default) {
+            return Forge.Compiler.Take(__ForgeCompile(name, source, mode), name)
+        }
+        // Translates a file - a .fire file or a project (.fireproj, .firesln: the project to run).
+        static Forge.Compilation CompileFile(string path, Forge.Mode mode = Forge.Mode.Default) {
+            return Forge.Compiler.Take(__ForgeCompile(path, undefined, mode), path)
+        }
+
+        // The command line of forge in this process (`forge <args>`): it writes to the output of this program; the result is its exit code.
+        static int Main(string args[]) {
+            var code = __ForgeMain(args)
+            if (code < 0) { throw new Forge.ForgeException(__ForgeLoadError()) }
+            return code
+        }
+
+        static Forge.Diagnostic DiagnosticOf(int handle, int i) {
+            var d = new Forge.Diagnostic()
+            d.Severity = __ForgeDiagText(handle, i, 0)
+            d.Code = __ForgeDiagText(handle, i, 1)
+            d.File = __ForgeDiagText(handle, i, 2)
+            d.Message = __ForgeDiagText(handle, i, 3)
+            d.Text = __ForgeDiagText(handle, i, 4)
+            d.Line = __ForgeDiagLine(handle, i)
+            d.Column = __ForgeDiagColumn(handle, i)
+            return d
+        }
+
+        // the result of a translation as objects (the handle is freed)
+        static Forge.Compilation Take(int handle, string name) {
+            if (handle == 0) { throw new Forge.ForgeException(__ForgeLoadError()) }
+            var c = new Forge.Compilation()
+            c.Name = name
+            c.Succeeded = __ForgeOk(handle)
+            if (c.Succeeded) { c.Program = __ForgeProgram(handle) }
+            c.PackagePath = __ForgePackagePath(handle)
+            var n = __ForgeDiagCount(handle)
+            for (var i = 0; i < n; i++) {
+                var d = Forge.Compiler.DiagnosticOf(handle, i)
+                if (d.IsError()) { c.Errors.Add(Forge.Compiler.DiagnosticOf(handle, i)) }
+                c.Diagnostics.Add(take d)
+            }
+            __ForgeFree(handle)
+            return c
+        }
+    }
+}
