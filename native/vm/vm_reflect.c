@@ -1,6 +1,6 @@
 /* fire VM in C: reflection and probes (`#import "reflection"`, SPEC 8.13/8.14, docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md; phase B step 5).
  *
- * The natives behind the reflection library (native/tables/bridges.def, src/fire.Runtime/ReflectionNatives.cs and VM.Reflection.cs): the descriptions come
+ * The natives behind the reflection library (native/tables/bridges.def; ported from the C# VM's ReflectionNatives.cs and VM.Reflection.cs, gone since M1): the descriptions come
  * from what the compiler wrote per class (ClassMeta, kept by the loader: VmMeta), reading, writing and calling by name go the ways of the interpreter - the
  * fields with their checks (access, unit, kind, type), the accessors and methods as nested calls - with the code that called the library as the caller of
  * the access checks (a class of the library, VC_REFLHELPER, does not count: VM.ReflectionCallerClass).

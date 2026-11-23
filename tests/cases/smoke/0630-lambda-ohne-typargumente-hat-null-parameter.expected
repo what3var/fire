@@ -1,0 +1,2 @@
+hi
+UNBEHANDELT: Unhandled exception of type 'ArgumentException': The lambda has 1 parameter(s), its declaration says 0.

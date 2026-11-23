@@ -79,7 +79,7 @@ static const char* svUnknownHint(SvAnalyzer* A, const char* name) {
     return fcBufDone(A->c, &b);
 }
 
-/* the registry of RuntimeSession.CreateProjectDirectiveRegistry: a library of the project (or the project itself) before the extensions */
+/* the registry of ProjectDirectives.CreateRegistry: a library of the project (or the project itself) before the extensions */
 static void svAnalysisDirective(FcCtx* c, void* state, const char* name, FcList* args, int line, FcList* importNamespaces) {
     SvAnalyzer* A = (SvAnalyzer*)state;
     FcToken* arg = args->count > 0 ? (FcToken*)args->items[0] : NULL;

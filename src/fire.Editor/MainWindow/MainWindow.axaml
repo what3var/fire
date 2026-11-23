@@ -363,7 +363,6 @@
                               ToolTip.Tip="Toolchains, the model of the assistant and the first build of the standard packages - the wizard of the first start"/>
 					<Separator/>
 					<MenuItem Header="_First Steps" Click="HelpFirstSteps_Click" InputGesture="F1"/>
-					<MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
 					<!-- the language reference (docs/language, copied to Help\Language): filled from its contents page, see BuildLanguageHelpMenu -->
 					<MenuItem Header="The fire _Language" x:Name="mnuLanguage"/>
 					<Separator/>

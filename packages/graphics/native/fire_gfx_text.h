@@ -1,5 +1,5 @@
 /* fire native graphics: fonts for text at pixel positions (TextFont: the two built-in bitmap fonts or a TrueType font), the layout and drawing of text, the table of the fonts of a program with
- * the lookup by name, and the fonts installed on the system. A port of src/fire.Terminal/TextFont.cs - the same pixels come out (the layout is described there). */
+ * the lookup by name, and the fonts installed on the system. Ported from the text fonts of the C# VM's graphics (gone since M1) - the same pixels came out. */
 #ifndef FIRE_GFX_TEXT_H
 #define FIRE_GFX_TEXT_H
 

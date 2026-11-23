@@ -1691,7 +1691,7 @@ Registers several related native functions at once, all
 under the same name prefix - the name actually registered for each
 entry is `prefix + suffix`. A pure convenience/naming scheme for
 self-contained API groups (e.g. a graphics/console bridge, see
-`fire.Terminal.Bridge`, [fire.Terminal – Framebuffer, Zeichnen und Fenster](GRAPHICS_LAYER.md)) - equivalent to several
+[Grafik – Framebuffer, Zeichnen und Fenster](GRAPHICS_LAYER.md)) - equivalent to several
 individual `Register(...)` calls, and additionally returns the list of the
 names created.
 
@@ -1845,7 +1845,7 @@ as the same 32-bit float (`0.1 + 0.2` is `0.3`, `1.0 / 3` is `0.33333334`). The 
 with `float` instead of `double`.
 
 The build can override the directive: `fire.Compiler run|build|native ... -f 32|64` (and `floatWidth:` / `floatWidthOverride:` for
-hosts that call `RuntimeSession.Build` / `Linker.CompileAndLink`). Any other value is an error. The precision is process-wide while a
+hosts that call `Linker.CompileAndLink`). Any other value is an error. The precision is process-wide while a
 program runs (`Value.SingleFloats`); explicit widths (`float[16]`, `float[64]`) keep their meaning.
 
 #### 8.2.2 Program-wide int width (`#intwidth`)
@@ -2704,8 +2704,8 @@ host policy), otherwise `IO.IOException` (1 invalid argument, 8 not supported,
 access modifiers.
 
 **Security: the HOST decides.** The script cannot restrict or relax anything:
-`RuntimeSession.Build(..., ioPolicy)` receives an `IoPolicy` (`AllowAll` = default, `DenyAll`,
-`Rooted(directory, readOnly)` or a derivation of your own). Every path is fully normalized before opening
+the host of the library is asked before every access (`fire_host`, `native/abi/fire_pkg_abi.h`; until M1 the C# VM took an `IoPolicy`: `AllowAll` = default, `DenyAll`,
+`Rooted(directory, readOnly)` or a derivation of your own; `fire`, the VM in C, allows everything). Every path is fully normalized before opening
 (`Path.GetFullPath`, i.e. without `..`) and checked; a rejected access
 becomes `IO.PermissionException`. Symbolic links are not resolved (a link inside
 a permitted directory that points outward leads out). `MemoryStream` is not affected by the
@@ -2773,7 +2773,7 @@ suggests them, and the types of the results (`Trim()` → string, `Split()` → 
 ### 8.13 Reflection (`#import "reflection"`)
 
 Classes and their members can be described at run time and used via their **name**. The library is pure fire source text over a few native functions
-(`fire.Standard.ReflectionPrelude`, `fire.Runtime.ReflectionNatives`); programs without the import incur no overhead, and the compiler only writes the type metadata (`ClassMeta`)
+(`fire.Standard.ReflectionPrelude`; the natives in the VM in C: `native/vm/vm_reflect.c`); programs without the import incur no overhead, and the compiler only writes the type metadata (`ClassMeta`)
 when it needs it.
 
 ```
@@ -2870,7 +2870,7 @@ silence cfg.*            // all probes of the object (likewise: silence cfg)
 
 ### 8.15 `DateTime`, `TimeSpan` and `Sleep` (`#import "time"`)
 
-Time is counted in **ticks** of 100 ns (as in .NET); `DateTime` counts from 0001-01-01. The classes are written in fire (`fire.Standard.TimePrelude`) over a few native functions (`fire.Runtime.TimeNatives`); errors are catchable **`TimeException`**s.
+Time is counted in **ticks** of 100 ns (as in .NET); `DateTime` counts from 0001-01-01. The classes are written in fire (`fire.Standard.TimePrelude`) over a few native functions (the package `time`); errors are catchable **`TimeException`**s.
 
 ```
 #import "time"

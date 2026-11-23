@@ -693,7 +693,7 @@ namespace fire.Editor
                 name = dialog.FileName;
                 var pixels = new uint[dialog.ImageWidth * dialog.ImageHeight];
                 if (dialog.Background != 0) Array.Fill(pixels, dialog.Background);
-                bytes = fire.Terminal.ImageEncoder.Encode(fire.Terminal.ImageData.CreateTruecolor(dialog.ImageWidth, dialog.ImageHeight, pixels, "PNG"), Path.GetExtension(name).TrimStart('.'));
+                bytes = fire.Imaging.ImageEncoder.Encode(fire.Imaging.ImageData.CreateTruecolor(dialog.ImageWidth, dialog.ImageHeight, pixels, "PNG"), Path.GetExtension(name).TrimStart('.'));
             }
             else
             {
@@ -714,7 +714,7 @@ namespace fire.Editor
                 // a new picture opens in the pixel editor, the rest in its editor
                 OpenFile(full, forceKind: bytes != null ? DocumentKind.Pixel : null);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException or fire.Terminal.ImageFormatException) { await Dialogs.Message(this, ex.Message, title); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException or fire.Imaging.ImageFormatException) { await Dialogs.Message(this, ex.Message, title); }
         }
 
 

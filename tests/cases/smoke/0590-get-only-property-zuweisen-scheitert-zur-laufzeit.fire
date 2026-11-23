@@ -1,0 +1,12 @@
+class Circle {
+    float radius
+    construct(float radius) { this.radius = radius }
+    float Area {
+        get { return this.radius * this.radius * 3 }
+    }
+}
+var c = new Circle(5.0)
+c.Area = 100.0
+print("nicht erreicht")
+//# note: from the C# VM's checks (Program.cs "Bytecode-Test: ... muss zur Laufzeit fehlschlagen", gone with it at M1) - the VM fails at run time
+//# name: get-only Property zuweisen scheitert zur Laufzeit

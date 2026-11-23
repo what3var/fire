@@ -887,7 +887,7 @@ Projekten, `-p`, `BuildPlan` mit `testing/`). Die Tests laufen in der VM in C (`
 C#-forge nimmt seine VM im Prozess - die VM in C gibt dasselbe aus, eine unbehandelte Ausnahme als dieselbe Zeile "Unhandled exception of type ..."), mit
 `--engine native` als natives Programm für diese Maschine (`nbBuild` mit dem Treiber, dann gestartet). Die Bibliotheken der Pakete des Programms und der eigenen
 Natives eines Projekts (die Überlagerung des Stores) baut `forge-c test` wie die Engine `vm` und gibt ihre Ordner der VM in FIRE_PKG_PATH; im nativen Build kommen
-die C++-Natives eines Projekts über die Überlagerung in den Store des Generators. Dateien werden wie bei `forge build <datei>` als Dateien übersetzt (`RuntimeSession.Build`
+die C++-Natives eines Projekts über die Überlagerung in den Store des Generators. Dateien werden wie bei `forge build <datei>` als Dateien übersetzt (der Linker
 und `NativeBuilder.Build` mit ihren Pfaden, `tcTestFilesPlan`): `#include` vom Ordner der Datei, eine Meldung nennt die Datei.
 
 **Die Befehlszeile.** `CommandLineParser.Parse` (`tools/commands.c`) liest die Befehlszeile von `build`, `publish`, `test`, `run`, `native`, `bytecode`, `dump` wie
@@ -1025,7 +1025,7 @@ Projekte, Solutions, Pakete (Phase D Schritt 3, `native/forge/project/`): `src/f
 `ProjectOutput.cs`, `ProjectFiles.cs`, `ProjectFolders.cs`, `Workspace.cs`, `BuildPlan.cs`, `ProjectNatives.cs`, `Notes.cs` (`Folder`), von `src/fire.Package.Manager`
 `Fpk.cs`, `Manifest.cs`, `NativeSources.cs` (`NativeSourceOrder`), von `src/fire.Compiler` `ProjectBuilder.cs`, `ProjectLibraries.cs`, `ProjectNativeOverlay.cs`,
 `ProjectPublisher.cs`, `CommandLine.cs`/`CommandLine.Report.cs` (die Projektteile) und wieder `Linker.cs` (mit `Plan`) - Stand de45e7e4; das Maß ist
-`tests/compare-frontend.sh ... project` (mit `PROJECT_EXTRA`) und `... projectbuild` (mit `PROJECT_COPY`). Dazu `src/fire.Compiler/CVm.cs`, `src/fire.Runtime/CVmPayload.cs`,
+`tests/compare-frontend.sh ... project` (mit `PROJECT_EXTRA`) und `... projectbuild` (mit `PROJECT_COPY`). Dazu `src/fire.Compiler/CVm.cs`, `src/fire/Runtime/CVmPayload.cs`,
 `GraphicsLibrary.cs` (`Locate`), `StandardSources.cs`, von `src/fire.Package.Manager` `PackageLock.cs`, `GitHubSource.cs` (`GitHubSpec`), `PackageStore.cs` (`FindBySpec`,
 `Install`) - Stand de45e7e4; das Maß ist `... vmbuild`, `install-standard` auf beiden Seiten.
 Der Rest der Befehlszeile (Phase D Schritt 4): der Modellwandler (`native/forge/model/`) `src/fire.Compiler/ModelConverter.cs`, `BlockModel.cs`, `MeshModel.cs`,

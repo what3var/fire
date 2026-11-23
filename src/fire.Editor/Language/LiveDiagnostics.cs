@@ -27,7 +27,7 @@ namespace fire.Editor
     /// a second reported error would thus only be a follow-up error of the
     /// first.
     ///
-    /// Uses - like DebugSession/RuntimeSession.Build - ParseMultiple
+    /// Uses - like the Linker of forge - ParseMultiple
     /// (prelude + user code as ONE combined program), so that
     /// List/IEnumerable/IndexOutOfBoundsException are known, AND the
     /// preludes of the extensions switched on via `#import` (see

@@ -1,6 +1,6 @@
 /* The natives of the imports the compiler knows, behind those of natives.def in this order when a program imports them (ImportedPreludes.Insert): graphics,
- * windows, reflection - FIRE_BRIDGE_NATIVE(import, index, name), the index within the import. Written by `forge tables` from GraphicsBridge.RegisterStubs,
- * WindowsBridge.RegisterStubs and ReflectionNatives.Register; do not edit. */
+ * windows, reflection - FIRE_BRIDGE_NATIVE(import, index, name), the index within the import. This file is the source (since M1; `forge tables` wrote it
+ * from the C# bridges before): a new native goes at the end of its import, with the C library of graphics/windows and the VM (vm_natives.c, vm_reflect.c). */
 FIRE_BRIDGE_NATIVE(graphics, 0, "__GRPHFbCreate")
 FIRE_BRIDGE_NATIVE(graphics, 1, "__GRPHFbDestroy")
 FIRE_BRIDGE_NATIVE(graphics, 2, "__GRPHFbWidth")

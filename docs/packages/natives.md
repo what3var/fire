@@ -210,7 +210,7 @@ class SensorKit {
   `fire_strandAttach()` before and `fire_strandDetach()` at its end (a native build without the GIL keeps the state of a strand in a structure the thread
   has to have, docs/ROADMAP_TASKS.md step 2). A thread that only computes, waits or talks to the system needs neither.
 * `host: true` (per function): in the virtual machine the host runs the function itself instead of the library. It is for what the C ABI cannot carry or what must not run inside a library:
-  a wait that has to be abortable (`Sleep`), or a function that needs the unit of a value. The VM looks the function up by name in its own table (`fire.Runtime.HostNatives`), so this is for the
+  a wait that has to be abortable (`Sleep`), or a function that needs the unit of a value. The VM looks the function up by name in its own table (`native/vm/vm_natives.c`), so this is for the
   standard packages; in a native build the `cpp` function is used as always.
 * Then: `ember forge sensorkit.json`, `ember install build\sensorkit-1.0.0.fpk`, and in a script `#import "sensorkit"`.
 

@@ -1,38 +1,40 @@
-# fire.Terminal – Framebuffer, Zeichnen und Fenster
+# Grafik – Framebuffer, Zeichnen und Fenster
 
-Die Grafikschicht von fire in eigenen Projekten, unabhängig vom Editor (`fire.Editor` referenziert sie nicht und wird nicht von ihnen
-referenziert). Der native Build hat dieselbe Schicht pixelgleich in C (`packages/graphics/native/fire_bridge_graphics.h`, `packages/windows/native/fire_bridge_windows.h`).
+Die Grafikschicht von fire: `#import "graphics"` und `#import "windows"`. Sie ist **eine C-Bibliothek** für die VM und den nativen Build
+(`packages/graphics/native/fire_gfx*.h`, `fire_bridge_graphics.h`; `packages/windows/native/fire_bridge_windows.h` mit den Anzeigen `fire_display_*.h`) -
+die VM in C bindet sie als Bibliothek des Pakets (`libfire_gfx`), der native Build übersetzt sie mit.
 
-## Projekt-Aufteilung
+**Stand M1** (23.11.2026): die C#-Fassung dieser Schicht (`fire.Terminal`, `fire.Terminal.Windows`, `fire.Terminal.Bridge`, `fire.Windows.Bridge`) ist mit
+der C#-VM entfernt ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md), M1). Die C-Bibliothek war ihr pixelgleicher Port; die Namen der C#-Klassen unten
+(`Framebuffer`, `Renderer`, `Brush`, `ConsoleWindow`, `WindowManager`, ...) beschreiben die Begriffe, die beide Fassungen teilten. Die Bilder von spark
+(Pixel-Editor, Symbole der Projekte) sind `src/fire.Imaging` - nicht diese Schicht.
+
+## Aufteilung (bis M1 in C#)
 
 ```
-fire.Terminal                  (net10.0, plattformunabhängig)
+fire.Terminal                  (net10.0, plattformunabhängig) - in C: fire_gfx.h, fire_gfx_images.h, fire_gfx_text.h, fire_gfx_ttf.h, fire_gfx_slicer.h
   PixelColor, Palette, Framebuffer, Renderer, Surface (Blending), Brush, Pen, Shapes (sink-basiert),
-  Blitter, Bilder (PNG/BMP/GIF), Schriften (IntegratedGlyphFont, TrueType), Slicer,
-  IGlyphFont, IFramebufferRenderer, IdManager, FramebufferManager, RendererManager
+  Blitter, Bilder (PNG/BMP/GIF), Schriften (IntegratedGlyphFont, TrueType), Slicer
 
-(Die Fenster des Desktops zeigt die VM über die C-Bibliothek von graphics und windows - fire's eigene Anzeige, dieselbe wie im nativen Build,
-docs/spec/UI_PLATFORM.md "Stand Teil 2"; die C#-Fenster brauchen einen Renderer des Hosts.)
-
-fire.Terminal.Windows          (net10.0, referenziert .Terminal)
+fire.Terminal.Windows          (referenziert .Terminal) - in C: die Anzeigen fire_display_*.h
   ConsoleWindow                   – zeigt EINEN Framebuffer in einem Fenster an
   WindowManager                   – verwaltet ConsoleWindow-Instanzen über IDs
 
-fire.Terminal.Bridge           (referenziert fire + .Terminal - KEIN Fenster)
+fire.Terminal.Bridge           (KEIN Fenster) - in C: fire_bridge_graphics.h
   GraphicsBridge.cs                – Framebuffer, Renderer, Brush, Pen, Slicer: native Funktionen + fire-Prelude (`#import "graphics"`)
 
-fire.Windows.Bridge            (referenziert fire + .Terminal + .Windows)
+fire.Windows.Bridge            - in C: fire_bridge_windows.h
   WindowsBridge.cs                 – `Window`, `EventType` und der WindowManager als native Funktionen (`#import "windows"`)
 ```
 
-**Warum diese Trennung**: `fire.Terminal` selbst enthält keine Fenster-Abhängigkeit. Ein Programm, das nur `graphics` importiert,
+**Warum diese Trennung**: die Grafik selbst enthält keine Fenster-Abhängigkeit. Ein Programm, das nur `graphics` importiert,
 läuft auch dort, wo es kein Fenster gibt (ein Display auf einem Board, eine Datei als Ausgabe).
 
-## Die Brücke zur Skriptsprache (`fire.Terminal.Bridge`)
+## Die Brücke zur Skriptsprache
 
 **Grafik und Fenster sind getrennt** (`#import "graphics"` und `#import "windows"`): `graphics` bringt `Framebuffer`, `Renderer`, `Brush`, `Pen` und `Slicer` und braucht
 kein Fenster - auf einer Plattform ohne Fenster (Embedded) importiert ein Programm nur `graphics` und bindet statt `Window` ein Display ein.
-`#import "windows"` bringt `Window` und `EventType` (eigene Assembly `fire.Windows.Bridge`) und schaltet `graphics` mit zu; `#import "ui"` schaltet beide zu.
+`#import "windows"` bringt `Window` und `EventType` (eigene Bridge) und schaltet `graphics` mit zu; `#import "ui"` schaltet beide zu.
 `GraphicsBridge.RegisterAll(natives, framebuffers, consoles, readFile)` und `WindowsBridge.RegisterAll(natives, windows)`
 registrieren die Manager als native Funktionen - über
 `NativeRegistry.RegisterGroup(prefix, functions)` (SPEC 8.1.6): jede
@@ -251,7 +253,7 @@ Aus fire (`#import "graphics"`):
 
 ## Slicer: Bild -> Maske -> Werkzeugbahnen
 
-Zerlegt ein Bild in Linien fester Stärke (Fräs-/Plotterbahnen). `ImageSlicer` (C#, `fire.Terminal`, Algorithmus aus `ImageToToolpath`) arbeitet auf einer Maske: Euklidische Distanztransformation (Felzenszwalb/Huttenlocher), die Werkzeugmitte darf nur dort liegen, wo der Abstand zum Rand
+Zerlegt ein Bild in Linien fester Stärke (Fräs-/Plotterbahnen). `ImageSlicer` (bis M1 in C#, jetzt `fire_gfx_slicer.h`; Algorithmus aus `ImageToToolpath`) arbeitet auf einer Maske: Euklidische Distanztransformation (Felzenszwalb/Huttenlocher), die Werkzeugmitte darf nur dort liegen, wo der Abstand zum Rand
 mindestens der Linienradius ist; die Isolinie auf diesem Niveau ist die Randkontur (subpixelgenau per Marching Squares, Douglas-Peucker-Reduktion), das Innere wird mit Bahnen im Abstand `StepOver = Linienstärke * (1 - Overlap)` gefüllt. Alle Koordinaten sind Millimeter und beschreiben die Werkzeugmitte.
 
 Aus fire (`#import "graphics"`):

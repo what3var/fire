@@ -4,7 +4,7 @@ using fire.Compiler;
 using fire.Runtime;
 
 /// <summary>
-/// A fire program of a check run in the VM in C (`fire`, docs/ROADMAP_C_PORT.md M1): what the checks did with `RuntimeSession.Build(...).Run()` in the C# VM - the
+/// A fire program of a check run in the VM in C (`fire`, docs/ROADMAP_C_PORT.md M1): the
 /// sources linked here (the Linker with the libraries of their packages, compile errors are thrown as before), written as a program file and run as
 /// `fire run x.fbc` with FIRE_PRINT_RECORDS (one entry per `print`, also one of several lines). The output of the program is what it printed; an exception
 /// nobody caught is its report on stderr (the line `Unhandled exception of type ...` and the stack trace) and exit code 1.
@@ -97,6 +97,10 @@ static class CVmTest
         }
     }
 
+    /// <summary>What a program linked for a target prints in `fire` (each print ended by a line feed): the VM of the target's int and float widths. (The C# VM also
+    /// took the target's word width; `fire` has words of 64 bits - FIRE_WORD_BITS of the runtime -, so a program that prints a word of a 16- or 32-bit target differs.)</summary>
+    public static string TargetOutput(LinkedProgram linked) => Run(linked).Text;
+
     /// <summary>The printed lines of a run in `fire` joined by line feeds (what the checks' `Vm(source)` helpers returned); <paramref name="ended"/>: with a line feed after the last.</summary>
     public static string Output(string source, VmExecutionMode? mode = VmExecutionMode.Release, bool ended = false)
     {
@@ -116,26 +120,5 @@ static class CVmTest
         string vm = CVm.Locate(linked.IntWidth, linked.FloatWidth);
         return fire.Debugging.CVmLaunch.LaunchDebug(vm, file, Array.Empty<string>(), workingDirectory ?? folder, TimeSpan.FromSeconds(30),
             fire.Debugging.CVmLaunch.Environment(linked.PackageLibraryFiles ?? new List<string>()));
-    }
-}
-
-/// <summary>
-/// The checks of the C# VM itself (fire.Runtime: its VM, its natives, its threads, the bridges to fire.Terminal, VmDebugTarget, the .NET packer) - they go away with
-/// fire.Runtime (docs/ROADMAP_C_PORT.md, M1). The default run does not run them (it does not need the C# VM); FIRE_TESTS_DOTNET_VM=1 runs them as before,
-/// as long as the project is there.
-/// </summary>
-static class DotnetVm
-{
-    public const string Variable = "FIRE_TESTS_DOTNET_VM";
-
-    /// <summary>FIRE_TESTS_DOTNET_VM=1: the checks of the C# VM run too.</summary>
-    public static bool Enabled => Environment.GetEnvironmentVariable(Variable) == "1";
-
-    /// <summary>true when the checks of the C# VM named <paramref name="what"/> are left out (the default): says so in one line.</summary>
-    public static bool Skip(string what)
-    {
-        if (Enabled) return false;
-        Console.WriteLine($"(C#-VM: {what} - goes away with fire.Runtime, not in the default run; {Variable}=1 runs it)");
-        return true;
     }
 }

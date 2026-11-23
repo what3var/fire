@@ -78,7 +78,7 @@ namespace fire.Values
         // Program-wide float precision (SPEC 8.2.1): with `#floatwidth 32` every float is a 32-bit IEEE float.
         // The memory stays a double - each float result is rounded to the nearest float, which is exactly what a
         // float32 CPU (or a native build with `float`) computes for + - * / (a double has more than 2p+2 bits).
-        // Set by the host before a program runs (RuntimeSession/Session.Build) from LinkedProgram.FloatWidth.
+        // Set by the host before a program runs (the Linker of forge) from LinkedProgram.FloatWidth.
         // ---------------------------------------------------------------
         public static bool SingleFloats;
 

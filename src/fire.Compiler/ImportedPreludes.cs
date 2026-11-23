@@ -116,7 +116,7 @@ namespace fire.Compiler
         /// BEHIND the standard prelude (index 0) in `processedSources` and
         /// registers their native functions (as placeholders without
         /// effect - only the NAMES count for compiling, the real
-        /// implementations are attached only by RuntimeSession.Build, see there)
+        /// implementations are bound by the VM when it loads the program)
         /// in `natives`. Returns the number of inserted preludes.</summary>
         /// <param name="own">Imports whose fire code is the program itself (the project of a standard library, e.g. `graphics`): their natives, but not their prelude.</param>
         public static int Insert(

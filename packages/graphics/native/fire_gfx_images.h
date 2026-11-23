@@ -1,5 +1,5 @@
 /* fire native graphics: image decoders - PNG (all color types and depths, interlaced, with its own inflate), BMP (1-32 bits, RLE, bit masks) and GIF (the first image).
- * A port of src/fire.Terminal/Images; the error messages are the same. No exceptions: a decoder returns 0 and says why (`err`, FIRE_GFX_ERR_SIZE bytes). */
+ * The decoders of spark (src/fire.Imaging) in C; the error messages are the same. No exceptions: a decoder returns 0 and says why (`err`, FIRE_GFX_ERR_SIZE bytes). */
 #ifndef FIRE_GFX_IMAGES_H
 #define FIRE_GFX_IMAGES_H
 

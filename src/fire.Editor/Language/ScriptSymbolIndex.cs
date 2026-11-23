@@ -420,7 +420,7 @@ namespace fire.Editor
         /// standard library") into THIS index, marked with
         /// <see cref="ClassInfo.IsFromPrelude"/> - every real script is after all
         /// actually compiled TOGETHER WITH this library (see
-        /// Runtime.RuntimeSession.Build/Parser.ParseMultiple), completion/
+        /// Linker.CompileAndLink/Parser.ParseMultiple), completion/
         /// member search should therefore know `List`/`IEnumerable`/etc. just as well
         /// as classes defined in the document itself.
         ///

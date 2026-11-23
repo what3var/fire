@@ -43,7 +43,7 @@
     <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
     <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
     <ProjectReference Include="..\fire.Git\fire.Git.csproj" />
-    <ProjectReference Include="..\fire.Terminal\fire.Terminal.csproj" />   <!-- the images of the pixel editor and of the project icons (PixelCanvas, ImageDecoder/Encoder); not the C# VM, which spark does not use any more (M1) -->
+    <ProjectReference Include="..\fire.Imaging\fire.Imaging.csproj" />   <!-- the images of the pixel editor and of the project icons (PixelCanvas, ImageDecoder/Encoder) -->
     <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
   </ItemGroup>
 
@@ -67,8 +67,8 @@
     <!-- the license texts the About window shows (the ones of the repository linked in) -->
     <AvaloniaResource Include="Assets\Licenses\*.txt" />
     <AvaloniaResource Include="..\..\LICENSE" Link="Assets\Licenses\LICENSE-fire.txt" />
-    <AvaloniaResource Include="..\fire.Terminal\LICENSE-pcface.md" Link="Assets\Licenses\LICENSE-pcface.txt" />
-    <AvaloniaResource Include="..\fire.Terminal\TrueType\LICENSE-libschrift.md" Link="Assets\Licenses\LICENSE-libschrift.txt" />
+    <AvaloniaResource Include="..\..\packages\graphics\native\LICENSE-pcface.md" Link="Assets\Licenses\LICENSE-pcface.txt" />
+    <AvaloniaResource Include="..\..\packages\graphics\native\LICENSE-libschrift.md" Link="Assets\Licenses\LICENSE-libschrift.txt" />
     <AvaloniaResource Include="Assets\logo2_64.png" />
     <AvaloniaResource Include="Assets\splash.png" />
   </ItemGroup>

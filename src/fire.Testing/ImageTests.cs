@@ -1,4 +1,4 @@
-using fire.Terminal;
+using fire.Imaging;
 
 /// <summary>Writing pictures (the pixel editor saves with these): everything that is written reads back the same.</summary>
 static class ImageTests

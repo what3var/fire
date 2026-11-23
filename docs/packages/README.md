@@ -213,5 +213,5 @@ ember cache clean    empty it
   indexes of the native calls right.
 * The native generator (`CppGenerator.CollectPackages`) checks the platforms, puts the C++ sources of the target into the generated file and calls the functions.
 * For the virtual machine `PackageLibrary` (fire.Compiler) builds the shared library of an import (generated wrapper + `native/abi/` + the runtime in library mode, `FIRE_LIBRARY`) or
-  finds the prebuilt one; `PackageNativeBinding` (fire.Runtime) loads it and marshals the values. `LinkedProgram.PackageNativeLibraries` names the library of each native; a packed program carries
-  the libraries in its payload (`PackagePlan`).
+  finds the prebuilt one; `fire`, the VM in C, loads it and marshals the values (`native/vm/vm_pkg.c`). `LinkedProgram.PackageNativeLibraries` names the library of each native; a packed program carries
+  the libraries in its payload (`CVm.Pack`).

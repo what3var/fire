@@ -1,0 +1,11 @@
+class Runner2 {
+    Execute(lambda<int> callback) {
+        return callback(1, 2)
+    }
+}
+var r = new Runner2()
+var twoParams = func (a, b) => a + b
+r.Execute(twoParams)
+print("nicht erreicht")
+//# note: from the C# VM's checks (Program.cs "Bytecode-Test: ... muss zur Laufzeit fehlschlagen", gone with it at M1) - the VM fails at run time
+//# name: Lambda-Signatur verletzt als Parameter

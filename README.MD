@@ -33,8 +33,6 @@ Or just download it, compile it and have a look.
 
 [The fire language - reference with examples and exercises](https://github.com/what3var/fire/blob/master/docs/language/README.md)
 
-[Embedding](https://github.com/what3var/fire/blob/master/src/fire.Editor/Help/Embedding.md)
-
 ## Screenshots
 
 ![samples](https://github.com/what3var/fire/blob/master/screenshots/2.png?raw=true)

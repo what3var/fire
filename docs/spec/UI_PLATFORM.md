@@ -180,8 +180,9 @@ Die VM benutzt für `graphics` und `windows` die C-Implementierung (Standard; `F
   Bibliothek benutzt; am Programmende werden nur die Bibliotheken des Programms zurückgesetzt (`PackageHost.Begin(..., libraries)`), Lambdas laufender Programme
   bleiben gültig. **Holds gehören dem Programm** (`VM.AddHostHold` seiner Haupt-VM; die C-Bibliothek meldet sie über ihren eigenen `fire_host.hold`
   an die VM, die sie benutzt): ein Fenster der Live-Ansicht hält kein Programm daneben auf, und nach dem Ende eines Programms hält nichts mehr.
-* **Die alte C#-Fensterkette ist entfernt** (Renderer, Zwischenablage): die Fenster des Desktops zeigt in der VM nur noch die C-Bibliothek. Die
-  C#-Implementierung (`fire.Terminal`, `fire.Terminal.Windows`) bleibt als Rückfall, wo die Bibliothek nicht gebaut werden kann (kein C-Compiler) oder
+* **Die alte C#-Fensterkette ist entfernt** (Renderer, Zwischenablage): die Fenster des Desktops zeigt in der VM nur noch die C-Bibliothek. (Seit M1,
+  23.11.2026, ist auch die C#-Implementierung selbst mit der C#-VM entfernt - der Rest dieses Punkts ist Geschichte.) Die
+  C#-Implementierung (`fire.Terminal`, `fire.Terminal.Windows`) blieb als Rückfall, wo die Bibliothek nicht gebaut werden kann (kein C-Compiler) oder
   `FIRE_VM_GRAPHICS=cs` sie wählt: Grafik geht, Fenster nur mit einem Renderer des Hosts (die Tests, der Editor über `HostRenderer`); sonst wirft `new Window`
   eine Ausnahme mit dem Grund (`No display: ...`, bei einem gescheiterten Bau der Bibliothek mit der Ausgabe des Compilers) - nie ein Fenster, das stumm als
   geschlossen gilt. Der Bau der Bibliothek steht mit jeder Zeile im Build-Protokoll (spark: Build log). Kann die Anzeige der C-Bibliothek ein Fenster nicht

@@ -1,5 +1,5 @@
 /* fire native graphics: the image slicer - turns a mask into tool paths of a fixed line width (Euclidean distance transform, marching squares, simplification).
- * A port of src/fire.Terminal/Slicing/ImageSlicer.cs; the same paths come out (the order of the contours too: a contour starts at the first edge that was linked). */
+ * Ported from the slicer of the C# VM's graphics (gone since M1); the same paths came out (the order of the contours too: a contour starts at the first edge that was linked). */
 #ifndef FIRE_GFX_SLICER_H
 #define FIRE_GFX_SLICER_H
 

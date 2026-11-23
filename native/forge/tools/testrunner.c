@@ -6,7 +6,7 @@
  * Where the VM is: FIRE_VM_EXE, else `fire` (`fire-i32`, ...) next to forge-c - as CVm.Locate finds it; building it into the cache when there is none
  * is CVm's (the engine vm of Phase D 3) and not here. The libraries of the program's packages and of a project's own natives (the overlay of the store) are
  * built as for the engine vm and found by the VM through FIRE_PKG_PATH (PackageImports.RegisterForRun). The command line is CommandLineParser.Parse
- * (tools/commands.c): several files (as files: RuntimeSession.Build with their paths), -D, -f, -i, --types. Not ported: the spinner of a console (`[\\] ...`
+ * (tools/commands.c): several files (as files: the Linker with their paths), -D, -f, -i, --types. Not ported: the spinner of a console (`[\\] ...`
  * while a test runs, only in a terminal - the output of the VM is read when it has ended); cancelling is TestRunner.Cancel, spark's, not the command
  * line's. */
 

@@ -18,7 +18,6 @@ namespace fire.Compiler
             ["opcodes.def"] = Opcodes(),
             ["errors.def"] = Errors(),
             ["natives.def"] = Natives(),
-            ["bridges.def"] = Bridges(),
             ["prelude.fire"] = fire.Standard.Prelude.Source.Replace("\r\n", "\n"),
         };
 

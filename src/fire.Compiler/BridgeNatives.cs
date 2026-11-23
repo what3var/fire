@@ -6,8 +6,7 @@ namespace fire.Compiler
     /// <summary>
     /// The natives of the imports the compiler knows (graphics, windows, reflection) as names, in their order - from native/tables/bridges.def (carried by forge as
     /// the resource cvm/tables/bridges.def), as forge-c takes them. Compiling needs only their names and indexes; what runs them is the VM in C (and the C library
-    /// of graphics and windows). Before M1 the C# forge took them from the C# bridges (GraphicsBridge.RegisterStubs, WindowsBridge.RegisterStubs,
-    /// ReflectionNatives.Register), which wrote bridges.def (`forge tables`) - the same names in the same order, checked by TablesTests.
+    /// of graphics and windows). Since M1 the file is the source of the names (it was written from the C# bridges before).
     /// </summary>
     public static class BridgeNatives
     {
