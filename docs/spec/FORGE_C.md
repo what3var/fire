@@ -1178,24 +1178,28 @@ would make /tmp/dist (for linux-x64)
 Für Windows ist der Aufbau derselbe (mit `.exe`, `win-x64`); `forge-c.exe` baut mit MinGW, die neuen Dateien ohne Warnung. Gebaut und installiert ist er hier nicht:
 kein Inno Setup, kein Compiler unter Windows, und Wine startet in dieser Umgebung nicht (`free(): invalid pointer` schon bei `wine forge-c.exe help`).
 
-**Was in `fire.Testing` bleibt** (C#, nicht als Daten):
+**Was in `fire.Testing` blieb** (M3, 23.11.2026: das C#-forge ist entfernt; was es prüfte, ist Daten oder ging mit ihm):
 
-| Teil | warum C# | später Daten? |
-| --- | --- | --- |
-| `TestCasesVm`, `TraceTests`, die VM-Seite von "nativ == VM" | - | ersetzt durch `conformance` |
-| die native Seite von "nativ == VM" | Sanitizer, Warnungen als Fehler, Resume/Shards | die Läufe ja (`--engine native`); Sanitizer als Option von `conformance` |
-| die rund 12 Fälle aus `Program.cs`, deren Quelle zur Laufzeit entsteht (libc-`extern`, ohne IPv6, MySQL/SQL Server/Postgres, `Data/Model`, Ressourcen, Schriften, Scene3D, AI) | brauchen Zertifikate, Server, Ordner des Laufs | zum Teil: mit `//# needs: <server>` und Platzhaltern |
-| die Prüfungen des erzeugten C (`readonly static`, `defined`-Rechnen, `inline c`, Teilen, Weglassen) und ThreadSanitizer, FreeRTOS, ESP32, tcc, Fenster/Xvfb/Wayland, Wine | sehen in den Text des Generators oder brauchen Werkzeuge | die C-Muster als Daten (`.cgen-contains`) |
-| `DiagnosticTests`, `TypeTests`, `SyntaxTests` | die Absicht (Code, Zeile) in C#; die Aufnahmen `.diagnostics` sind schon Daten | ja: die erwarteten Codes als `//# expect: W7 E2001` |
-| `LinkageTests` (static/shared/plugin, Caches, Wine), `DebuggerPluginTests` | mehrere Builds nacheinander, Dateien dazwischen | die Läufe ja (Projekt + `.expected`), die Cache-Prüfungen nein |
-| `NativeDebugTests`, `DebuggerTests`, `CVmRunTests`, `CVmWindowsTests`, `CVmSanitized`, `BiosTests` (QEMU) | treiben Prozesse über Protokolle | als Mitschnitte von Anfrage/Antwort |
-| `ServeTests` | das Protokoll von `forge serve` | ja: Mitschnitte |
-| `TestingTests` (`forge test`), `ProgramFileTests` (`dump` hin und zurück), `TablesTests` | C#-Seite | ja (`forge test`-Ausgabe als `.expected`); `TablesTests` entfällt mit dem C#-forge |
-| `ProjectTests`, `PublishTests`, `StartProjectTests`, `BlockModelTests`, `MeshModelTests`, `CircuitEditorTests` | das C#-Modell (spark) | die Seite von forge ist schon gemessen (`compare-frontend.sh project`, `model`) |
-| spark, ember und ihre Bibliotheken: `Completion`, `BackgroundCheck`, `Explorer*`, `Git*`, `Notes`, `Preview`, `SetupWizard`, `ForgeReport`, `DriverAgent`, `McpServer`, `Registry*`, `Image`, `AiModels` | gehören zu spark/ember (C#) oder brauchen einen Server in C# | nein, bleiben bei spark |
-| `TestResume`, `TestTempFolders`, `TestUtils` | die Maschine des Testprogramms | - |
+| Teil | Stand nach M3 |
+| --- | --- |
+| `TestCasesVm`, `TraceTests`, die VM-Seite von "nativ == VM" | entfernt - `forge conformance` |
+| die native Seite von "nativ == VM" (Sanitizer, Warnungen als Fehler, Resume/Shards), die Prüfungen des erzeugten C, ThreadSanitizer, FreeRTOS, ESP32, tcc, Fenster/Xvfb/Wayland, Wine | entfernt; die Läufe sind `conformance --engine native`. **Lücke:** die Sanitizer, `-Wall -Wextra` als Fehler, die Sonderläufe nach Titel und die Muster im erzeugten C (`.cgen-contains`) hat `conformance` noch nicht |
+| die rund 12 Fälle aus `Program.cs`, deren Quelle zur Laufzeit entsteht (libc-`extern`, ohne IPv6, MySQL/SQL Server/Postgres, `Data/Model`, Ressourcen, Schriften, Scene3D, AI) | entfernt. **Lücke:** als Fälle mit `//# needs:` zu schreiben |
+| `DiagnosticTests`, `TypeTests`, `SyntaxTests`, `ProgramFileTests`, `TablesTests`, `TestingTests` | entfernt - die Aufnahmen (`.diagnostics`, `.expected`) laufen mit `conformance`; die Absicht in C# (welcher Code, welche Zeile) als `//# expect:` ist offen |
+| `LinkageTests`, `DebuggerPluginTests`, `BiosTests` (QEMU), `CVmWindowsTests`, `CVmSanitized`, `NativeDebugTests` | entfernt. **Lücke:** die Läufe als Projekte mit `.expected`, die Debug-Protokolle als Mitschnitte |
+| `PublishTests`, `RegistryTests` (C#-ember), `Scene3DTests`, `AiTests` | entfernt (prüften das C#-forge bzw. den C#-ember) |
+| `ServeTests`, `CompletionTests` | bleiben, über das Protokoll; die Diagnosen gegen das, was der Fall sagen muss (der eigene Prozess zum Vergleichen ist weg) |
+| `ProjectTests`, `StartProjectTests`, `BlockModelTests`, `MeshModelTests`, `CircuitEditorTests`, `ExplorerTests` | bleiben; was in C# übersetzte, packte, installierte, geht über forge (`bytecode`, `build`) und ember (`forge`, `install`, `remove`); die Phasen des C#-Linkers beim Bauen der Natives, `--global-jobs` im Prozess, `ExtractAssemblyInfo`, die Overlays der Natives eines Projekts im C#-Store sind entfallen |
+| spark: `BackgroundCheck`, `Explorer*`, `Git*`, `Notes`, `Preview`, `SetupWizard`, `ForgeReport`, `CVmRun`, `Debugger`, `DriverAgent`, `McpServer`, `AiModels`, `Image` | bleiben (Gruppen in [testing.md](../tools/testing.md#the-test-program-of-spark-srcfiretesting)); die Plugins des Treiber-Agenten (Bytecode-Plugins des C#-forge) sind entfallen |
+| `TestResume`, `TestTempFolders`, `TestUtils` | bleiben |
 
 ## Nachziehen
+
+**Seit M3 (23.11.2026) gibt es die C#-Quellen nicht mehr** (`src/fire.Compiler`, `src/fire.Native`, `src/fire`, `src/fire.Package.Manager`, `src/fire.Ember`
+sind entfernt): die C-Dateien sind das Original, das Nachziehen unten gilt nur noch für einen Zweig, der vor M3 abzweigte. Die Vergleichsskripte gegen das
+C#-forge (`tests/compare-frontend.sh`, `tests/compare-commands.sh`) und gegen den C#-ember (`tests/compare-ember.sh`) mit ihren Helfern
+(`extract-markup.py`, `model-corpus.py`, `fpk-compare.py`, `ember-fake-github.py`) sind mit ihnen gegangen; was bleibt, ist `forge conformance` über
+`tests/cases`, `tests/run-cases-vm.sh`, `tests/reference.sh` und `tests/native-baseline.py`.
 
 Ändert sich auf `master` eine der portierten C#-Dateien (`git log <commit>..master -- src/fire.Compiler/Lexer.cs` usw.; Schritt 3:
 `Resolver*.cs`, `TypeChecker*.cs`, `SetterClaims.cs`, `Linker.cs`, `ImportedPreludes.cs`, `Values/Unit.cs` - Stand c7f13d97; Schritt 4: `Compiler.cs`,

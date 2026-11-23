@@ -55,8 +55,8 @@ forge-c serve [--tables <ordner>] [--packages <ordner>] [--debounce <ms>] [--log
 | `invalidate` | Mitteilung | - | die installierten Pakete haben sich geändert: die Indizes der Preludes, die Importe und die gemerkten Analysen werden verworfen (`ForgetImports`, `LiveDiagnostics.Invalidate`), alle offenen Dokumente neu geprüft |
 | `cancel` | Mitteilung | `id` | eine noch wartende Anfrage wird mit `cancelled` beantwortet; eine laufende Analyse läuft zu Ende (siehe Diagnosen) |
 
-`capabilities`: `diagnostics`, `completion`, `hover`, `signature`, `definition`, `references`, `symbols`, `folding`, `preludeSource`, und
-`markupCompletion` nur, wenn forge-c das Markup-Schema enthält. Was fehlt, macht der Client im eigenen Prozess.
+`capabilities`: `diagnostics`, `completion`, `hover`, `signature`, `definition`, `references`, `symbols`, `folding`, `preludeSource`, `tests`, und
+`markupCompletion` nur, wenn forge-c das Markup-Schema enthält. Was fehlt, kann der Client nicht (seit M3 hat spark keinen eigenen Weg mehr).
 
 ## Dokumente und Kontext
 
@@ -124,6 +124,12 @@ Alle mit `path` (offenes Dokument), wo eine Stelle gemeint ist mit `offset`. `do
 | `preludeSource` | `{"title","text"}` für `name` (`standard` oder ein Import) |
 | `markupCompletion` | `{"replaceStart","items":[{"text","kind","caretBack","detail"?,"display"?}]}` für ein Dokument mit `kind` `fxml` (`MarkupCompletion.Suggest`; `kind`: `element`, `attribute`, `value`, `extension`, `namespace`) |
 
+Ohne offenes Dokument (M3, der Test-Explorer von spark):
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `tests` | `path`, `text?` (sonst liest der Server die Datei) | `{"tests":[{"class","method","title","description","line","parameters"}],"problems":["<datei>: <meldung>"]}` - die Methoden mit `[Test]` der Klassen der Datei (auch in Namespaces), nur geparst: die `#include`-Zeilen leer (die Zeilen bleiben), nichts übersetzt (`TestDiscovery.InFile` des C#-forge). Eine Datei ohne `[Test` ist sofort fertig, eine Markup-Datei hat keine Tests; eine, die nicht parst, hat keine Tests und ein Problem |
+
 Was angeboten wird und in welcher Reihenfolge, ist das von spark (die Regeln im Kopf von `serve_complete.c`): nur was der Code am Cursor
 benutzen darf (`private` in der Klasse selbst, `protected` auch in Ableitungen), statische Mitglieder nur an der Klasse, Instanzmitglieder nur an
 Objekten (an `this.` beide), der Typ des Empfängers auch aus `var`, einer globalen Variablen, einem Lambda; die eigenen Namen und genaue Präfixe
@@ -157,11 +163,14 @@ Anfang und Ende), schickt die Kontextdateien des Index (`includes`) und die Proj
 Markup-Vervollständigung (`MarkupEditorControl`, wenn der Server sie kann), die Tooltips der `///`-Kommentare (`hover`), der Tooltip eines Aufrufs
 (`signature`) und der Sprung zur Definition (`definition`; findet der Server nichts, sucht spark noch in den `#include`ten Dateien).
 
-Der Schalter: **`FIRE_SPARK_LANG=inproc`** behält den Weg im eigenen Prozess (`ScriptSymbolIndex`, `CompletionEngine`, `LiveDiagnostics`) bis M2;
-ohne ihn geht spark über `forge serve` und fällt auf den eigenen Prozess zurück, wenn der Server nicht startet oder endet.
+Seit M3 ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md)) gibt es nur noch diesen Weg: der eigene Prozess (`ScriptSymbolIndex`, `CompletionEngine`,
+`NavigationEngine`, `LiveDiagnostics` mit dem C#-Frontend, `FIRE_SPARK_LANG=inproc`) ist mit dem C#-forge entfernt. Startet der Server nicht, gibt es keine
+Vervollständigung und keine Analyse beim Tippen. Gefunden wird forge wie alles, was spark von forge braucht (`fire.Tooling.Forge`: neben spark, `FIRE_FORGE`,
+sonst aus `native/forge` des Repositorys gebaut); die Prelude ist die von forge (`native/tables` neben ihm), nicht mehr ein Ordner, den spark schreibt.
+Die Prüfung eines ganzen Projekts (die Fehler der Dateien, die nicht offen sind) ist `forge bytecode <projekt> --report json` mit den offenen Texten als
+Overlays (`LiveDiagnostics.AnalyzeProjectFiles`), der Test-Explorer fragt `tests` und lässt laufen mit `forge test --report json`.
 
 Die Prüfungen ([FORGE_C.md](FORGE_C.md#forge-serve)): `FIRE_TESTS_ONLY=serve` (ServeTests: Entprellen, latest wins, `stale`, gemerkte
-Ergebnisse, Edits, `resync`, Projekt mit Overlay, Fehler des Protokolls, die Diagnosen von zehn Fällen gleich `LiveDiagnostics`; dazu
-CompletionTests über das Protokoll, jede Liste verglichen mit dem eigenen Prozess), `FIRE_TESTS_ONLY=editorchecks` (BackgroundCheckTests und der
-Protokollteil von ServeTests), `FIRE_TESTS_ONLY=completion` (über das Protokoll; mit `FIRE_SPARK_LANG=inproc` im eigenen Prozess), die
-Markup-IntelliSense-Prüfungen von `FIRE_TESTS_ONLY=ui` (über das Protokoll, wenn der Server das Schema hat, verglichen mit dem eigenen Prozess).
+Ergebnisse, Edits, `resync`, Projekt mit Overlay, Fehler des Protokolls, die Diagnosen von zehn Fällen und von fünf Lagen eines Projekts - seit M3
+gegen das, was der Fall sagen muss, nicht mehr gegen `LiveDiagnostics` im eigenen Prozess; dazu CompletionTests über das Protokoll),
+`FIRE_TESTS_ONLY=editorchecks` (BackgroundCheckTests und der Protokollteil von ServeTests), `FIRE_TESTS_ONLY=completion`.

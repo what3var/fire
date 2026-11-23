@@ -111,11 +111,12 @@ Name: "{app}\Toolchain"; Permissions: users-modify
 
 [Files]
 Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; forge, the VM and ember are C and fire programs (docs/ROADMAP_C_PORT.md, M3): the publish of spark puts them into its folder - `forge package-dist` (forge-c,
+; fire and its variants, native\, Source\, Prebuilt\) and ember (tools/ember, built by that forge), src/ForgeDist.targets; nothing of .NET but spark.
 #ifdef ForgeDist
-; forge and the VM without .NET (docs/ROADMAP_C_PORT.md, Phase D 6): iscc /DForgeDist=<folder> setup.iss, the folder made by `forge-c package-dist <folder>`
-; (native/forge/package-dist.sh) - forge (forge-c), fire and its variants, native\, Source\ and Prebuilt\ come from there; spark and ember from the publish
-; folder (published with -p:PublishForge=false: without the C# forge), which may still hold what the build of spark put there of forge and the VM
-Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\*"; DestDir: "{app}"; Excludes: "\forge.exe,\fire.exe,\fire.exe.key,\fire-*,\Source\*,\Prebuilt\*,\native\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Or from a folder of its own: iscc /DForgeDist=<folder> setup.iss, the folder made by `native/forge/package-dist.sh <folder>` and ember built into it
+; (`<folder>\forge.exe build tools\ember\ember.fireproj -o <folder>\ember.exe`); spark published with -p:PublishForge=false (without them)
+Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\*"; DestDir: "{app}"; Excludes: "\forge.exe,\ember.exe,\fire.exe,\fire.exe.key,\fire-*,\Source\*,\Prebuilt\*,\native\*,\packages\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ForgeDist}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 #else
 Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

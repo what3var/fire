@@ -5,8 +5,8 @@ protocol stack or a fast algorithm. You write the C++ **once**; the compiler use
 
 | engine | what happens to your C++ |
 |---|---|
-| native build (`fire.Compiler build --engine native`, any target: Linux, Windows, macOS, ESP32, FreeRTOS, ...) | the program is generated as C (`fire_program.c`); the text of your source files is put into its natives, a C++ file next to it (`fire_natives.cpp`), and the program calls each of your functions through a small C function that the generator writes there; both are linked into one program |
-| virtual machine (`fire.Compiler run`, the editor, a packed standalone program) | the compiler builds your sources into a **shared library** (`.dll`, `.so`, `.dylib`) for the machine, with a generated wrapper that exports a small C interface (`native/abi/fire_pkg_abi.h`); the VM loads it and calls it |
+| native build (`forge build --engine native`, any target: Linux, Windows, macOS, ESP32, FreeRTOS, ...) | the program is generated as C (`fire_program.c`); the text of your source files is put into its natives, a C++ file next to it (`fire_natives.cpp`), and the program calls each of your functions through a small C function that the generator writes there; both are linked into one program |
+| virtual machine (`forge run`, the editor, a packed standalone program) | the compiler builds your sources into a **shared library** (`.dll`, `.so`, `.dylib`) for the machine, with a generated wrapper that exports a small C interface (`native/abi/fire_pkg_abi.h`); the VM loads it and calls it |
 
 So the C# VM never needs to know your functions: it only knows the C ABI, and the wrapper is generated for you.
 
@@ -424,7 +424,7 @@ int fire_pkg_function_arity(int index);
 int fire_pkg_call(int index, const fire_val* args, int argc, fire_val* result, char* error, int errorSize);   /* 0 = ok */
 ```
 
-A **packed standalone program** (`fire.Compiler build`, the VM inside) carries the libraries of its packages in its payload and unpacks them when it starts - on every operating system, the same way as the
+A **packed standalone program** (`forge build`, the VM inside) carries the libraries of its packages in its payload and unpacks them when it starts - on every operating system, the same way as the
 libraries of the built-in bridges (graphics and windows, serial ports). A program is packed for the machine that packs it: pack on the system you want to run it on, or build natively
 (`--engine native`), which needs no libraries at all.
 
@@ -472,4 +472,4 @@ On Linux and macOS the toolchain has to come from the package manager (`g++`/`cl
 2b. Byte arguments go through `bytesArg` (read) or `bufferArg` (filled) - never `bufOf` unchecked (section 2, "Bytes as arguments").
 3. The prelude wraps the natives; the natives are called by their package names.
 4. Code for one system lives in `platformSources` or behind `FIRE_TARGET_*` / `FIRE_HAL_*`.
-5. Try both engines: `fire.Compiler run script.fire` (VM, library) and `fire.Compiler build script.fire --engine native -t linux`.
+5. Try both engines: `forge run script.fire` (VM, library) and `forge build script.fire --engine native -t linux`.

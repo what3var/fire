@@ -1,6 +1,7 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); **M1 erreicht** (23.11.2026: die C#-VM ist entfernt); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard`, Schritt 6 bis auf den Bau des Installers (siehe dort), Schritt 7 (`fire_embed.h`, Packages `forge`/`script`). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); **M1 erreicht** (23.11.2026: die C#-VM ist entfernt); **M3 erreicht**
+(23.11.2026: das C#-forge, `src/fire`, `fire.Native` und der C#-ember sind entfernt, spark hat keinen Compiler mehr - [M3](#m3-schritt-1-bestandsaufnahme-23112026-vor-dem-entfernen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard`, Schritt 6 bis auf den Bau des Installers (siehe dort), Schritt 7 (`fire_embed.h`, Packages `forge`/`script`). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -679,7 +680,7 @@ Natives der Pakete, Store, Versionen); `fire.Compiler` zieht `fire.Device.Manage
 | Standardpakete installieren (Start, Einrichtung) | `StandardSources.EnsureInstalled` | `forge install-standard` |
 | TinyCC/Open Watcom laden (Einrichtung) | `TinyccSetup`, `WatcomSetup` | `forge toolchain-setup tcc|watcom` (D5) |
 | eine Toolchain prüfen (Dialog der nativen Builds) | `NativeBuilder.TestToolchain` | `forge toolchaintest <name>` |
-| ein `.fpk` lesen (Projekte, Package Manager) | `Fpk.ReadManifest` | `forge fpk <datei>` |
+| ein `.fpk` lesen (Projekte, Package Manager) | `Fpk.ReadManifest` | blieb C# (c): ein Zip und ein JSON, `fire.Project/PackageModel/Fpk.cs` |
 
 **(b) forge-c (oder ember in fire) braucht einen neuen Befehl oder Teil des Protokolls:**
 
@@ -705,6 +706,53 @@ Natives der Pakete, Store, Versionen); `fire.Compiler` zieht `fire.Device.Manage
 `fire.Ember`; in spark `LiveDiagnostics`, `ScriptSymbolIndex*`, `CompletionEngine`, `NavigationEngine`, `BuiltinMembers` (die Logik lebt in
 `serve_*.c`). In `fire.Testing` alles, was das C#-forge prüft oder `forge-c conformance` abdeckt (Tabelle in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net)).
 `fire.Benchmarks` übersetzt mit forge-c statt mit dem Linker.
+
+#### M3 Schritte 2 bis 5: umgesetzt (23.11.2026)
+
+**forge-c und ember (b):** `forge serve` beantwortet `tests` (die `[Test]`-Methoden einer Datei, nur geparst; [FORGE_SERVE.md](spec/FORGE_SERVE.md)),
+`forge test --report json [--overlay ...]` meldet einen Lauf live (`run`, `start`, `result`, `problem`, `error`, `done`, `end`; `tools/testrunner.c`), ember
+in fire kann `find --json` und `list --json` und nimmt den Store aus `FIRE_PACKAGES`. Beim Umstellen gefunden und behoben: forge-c mit `--report json`
+endete nie, solange seine Eingabe offen blieb (der Leser von `cancel` hielt in `fgets` die Sperre von stdin, `exit()` wartete darauf - spark hält die Eingabe
+offen); `package-dist` legte `native/forge/` und den Deflater von `packages/compression` nicht in den Ordner, ohne die forge einer Distribution die Pakete
+`forge` und `script` (libforge) nicht installieren konnte.
+
+**Was spark jetzt benutzt:**
+
+| Funktion | Weg |
+| --- | --- |
+| Bauen, Build Solution, Publish, Pack Library, nativer Lauf | `forge build|publish --report json` (wie zuvor, jetzt forge-c) |
+| Run/Debug in der VM | `forge bytecode --report json`, dann `fire` (Debugger: das Protokoll, `NativeDebugTarget`) |
+| Vervollständigung, Diagnosen, Hover, Signatur, Definition, Markup, Prelude-Ansicht | nur `forge serve` (der eigene Prozess ist entfernt) |
+| Prüfung eines ganzen Projekts (Fehlerliste) | `forge bytecode <projekt> --report json` mit den offenen Texten als Overlays |
+| Test-Explorer | `tests` von `forge serve`, `forge test --report json` |
+| Entwurfsansicht, Blockvorschau, Schaltplan-Editor, Gerätetreiber | `forge bytecode --report json`, dann `fire` (der Treiber-Agent ohne Bytecode-Plugins: `#import`) |
+| Datenmodell (DDL, Datenbank anlegen, Import, Migration) | `forge run` eines Skripts, `forge data import|diff` |
+| Standardpakete, Toolchains laden, Toolchain prüfen | `forge install-standard`, `forge toolchain-setup`, `forge toolchaintest` (mit einer fire.native.json in einem eigenen Ordner) |
+| Package Manager, eine Bibliothek installieren | `ember find|list --json`, `ember install|remove` |
+| Syntaxfarben, Build-Einstellungen eines Skripts | C# in `fire.Tooling`: der Lexer; die Direktiven aus dem Text (`AssemblyInfo.FromSource`) |
+
+forge, `fire`, `native/`, `Source/`, `Prebuilt/` und ember liegen neben spark: der Build und das Publish von spark (und von `fire.Testing`) übersetzen
+forge-c mit dem C-Compiler (`obj/forge-c`, nur wenn sich seine Quellen ändern) und rufen `forge package-dist` und `forge build tools/ember/ember.fireproj`
+(`src/ForgeDist.targets`, statt `FireVm.targets`/`StandardSources.targets`); `setup.iss` packt den Ordner des Publish, `/DForgeDist` bleibt als zweiter Weg.
+Ohne forge daneben (ein Build mit `-p:BuildForgeDist=false`) baut spark forge-c aus `native/forge` des Repositorys in einen Cache (`fire.Tooling.Forge`).
+
+**Entfernt:** `src/fire.Compiler`, `src/fire.Native`, `src/fire`, `src/fire.Package.Manager`, `src/fire.Ember`, `src/FireVm.targets`,
+`src/StandardSources.targets`; in spark `LiveDiagnostics` (bis auf Tor und Cache), `ScriptSymbolIndex*`, `CompletionEngine`, `NavigationEngine`,
+`BuiltinMembers`; in `fire.Testing` die Prüfungen des C#-forge (Tabelle in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net));
+die Vergleichsskripte `tests/compare-frontend.sh`, `compare-commands.sh`, `compare-ember.sh` mit `extract-markup.py`, `model-corpus.py`, `fpk-compare.py`,
+`ember-fake-github.py` (sie verglichen mit dem C#-forge bzw. -ember, den es nicht mehr gibt; neu ausrichten lohnte nicht: forge-c ist jetzt das Maß).
+
+**Was in C# bleibt und warum:** spark (`fire.Editor`, Avalonia - bis Phase F), `fire.Tooling` (die Liste (c) oben: Wege, Berichte, Debugger-Clients,
+Kindprozesse, Modelle der Editoren, Daten der Toolchains, Lexer), `fire.Project` (das Projektmodell, das spark bearbeitet, mit dem Paketmodell, das es liest),
+`fire.UI.Markup` (das Modell der Markup-Editoren und `GeneratePreview` der Entwurfsansicht - der Generator selbst ist in C, die Editoren brauchen das
+Modell), `fire.Git`, `fire.Imaging`, `fire.Device.Manager` (die Geräte von spark), `fire.Testing` (die Prüfungen von spark) und `fire.Benchmarks`
+(misst `fire`, übersetzt mit forge). Damit gilt M3: wer nur forge und die VM braucht, braucht kein .NET, und der Bau von fire selbst (forge, `fire`, die
+Pakete) braucht nur einen C-Compiler.
+
+**Offen:** die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
+`conformance`, die Fälle mit Servern, die Linkages und Debug-Protokolle als Daten); `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
+nimmt `forge bytecode`); ein Build unter Windows mit `ForgeDist.targets` (gcc von w64devkit) und der Installer sind nicht geprüft; spark ohne forge (kein
+C-Compiler) hat keine Sprachdienste mehr.
 
 Danach: der **.NET-Wrapper** über `fire_embed.h` (NuGet-Paket mit P/Invoke, ersetzt `RuntimeSession` für Einbetter) und ABI v2 der Paket-Natives.
 

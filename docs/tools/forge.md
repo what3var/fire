@@ -1,7 +1,10 @@
 # forge on the command line
 
-`forge` (the compiler, `src/fire.Compiler`) runs, builds and tests fire programs. spark uses the same code; everything spark does can be done with
-`forge` and `ember` (the [package manager](../packages/README.md), [its command line](ember.md)).
+`forge` (the compiler, a C program: `native/forge`, [FORGE_C.md](../spec/FORGE_C.md)) runs, builds and tests fire programs. spark runs it as a
+process for everything it compiles - builds, runs, tests, its language services (`forge serve`); everything spark does can be done with `forge` and
+`ember` (the [package manager](../packages/README.md), [its command line](ember.md)). Since milestone M3 of
+[ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md) there is no forge in C# any more: `forge-c` (what the repository's build calls it before it is put next to
+spark as `forge`) is the forge.
 
 ## Commands
 
@@ -18,7 +21,7 @@
 | `forge prebuild-standard <Source> <Prebuilt>` | for the build of the solution: builds the libraries of the standard packages for this machine into `Prebuilt/<package>/<rid>/` (with the fingerprints of their C and of the runtime), so that a VM program needs no C compiler for them |
 | `forge tokens <file>` / `forge ast <file>` | the tokens / the syntax tree of a source as text, with the diagnostics (`--list <files> --out <folder>` for many) - the measure of the frontend in C, [FORGE_C.md](../spec/FORGE_C.md) |
 | `forge diagnostics <file>` | what `forge run` writes to the error output while it compiles the source, up to the type check (warnings, then the errors of the resolver and the type checker; `//# types: strict` at the end of the file: strict mode) - the measure of the frontend in C, [FORGE_C.md](../spec/FORGE_C.md) |
-| `forge test [file \| project \| solution] [--filter A.B]` | runs the `[Test]` methods ([testing](testing.md)); exit code 0 when all passed |
+| `forge test [file \| project \| solution] [--filter A.B] [--report json] [--overlay src=file]` | runs the `[Test]` methods ([testing](testing.md)); exit code 0 when all passed. `--report json`: one JSON object per line as the run goes (`run`, `start`, `result` with status, message and output, `problem`, `error`, `done`, `end`) - what spark's test explorer reads |
 | `forge ui <file.fxml> [-o file]` | the script generated from a [markup](../ui/markup.md) file (to look at it; `#include` does it on the fly) |
 | `forge biscuit <file.biscuit> [-o file]` | the script generated from a [schematic](../circuits/README.md) |
 | `forge fdata <file.fdata> [-o file]` | the code generated from a [data model](../data/designer.md) |
@@ -26,16 +29,17 @@
 | `forge falstad <circuit.txt> [-o file.biscuit]` | converts a circuit of Paul Falstad's simulator into a schematic |
 | `forge data status\|migrate\|diff\|import [program] --url <url>` | the migrations of a program on a database and its schema ([Data: migrations](../data/README.md#migrations)): which ran, run them (`--to N`), the missing one as fire code, the tables as classes |
 
-`forge-c` (the forge in C, `native/forge`, [FORGE_C.md](../spec/FORGE_C.md)) takes the same commands, on Linux, macOS and Windows. When a build needs a C compiler
-and there is none, both offer to download one on the command line (w64devkit on Windows, Open Watcom for its targets; `Toolchain/` next to forge);
-`forge-c toolchain-setup w64devkit|watcom|tcc` does it directly, as spark's setup does.
+forge runs on Linux, macOS and Windows. When a build needs a C compiler and there is none, it offers to download one on the command line (w64devkit on
+Windows, Open Watcom for its targets; `Toolchain/` next to forge); `forge toolchain-setup w64devkit|watcom|tcc` does it directly - spark's setup runs that.
+`forge serve` is the protocol of the language services ([FORGE_SERVE.md](../spec/FORGE_SERVE.md)); `forge toolchaintest <name>` compiles and runs a
+small program with a toolchain of fire.native.json (spark's "Test" of a toolchain).
 
-Two commands only forge-c has (phase D step 6 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md): fire without .NET):
+Two commands for fire itself (phase D step 6 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md): fire without .NET):
 
 | Command | What it does |
 | --- | --- |
 | `forge-c conformance [<group>\|<group>/<case>...] [--filter t] [-j n] [--engine vm\|native\|all]` | runs the cases of `tests/cases` - in the VM in C, and the group native as native programs - and compares them with what they expect: the core of the test program `fire.Testing` without .NET ([testing](testing.md#the-cases-as-files-testscases)); exit code 0 when all are right |
-| `forge-c package-dist <folder> [--dry-run]` | the forge/VM part of an installation without .NET: forge-c (as `forge`), the VM `fire` with its variants, `native/` (tables, runtime, the sources of the VM), `Source/` (the standard packages) and `Prebuilt/` (their libraries for this machine) - what `setup.iss` installs next to spark with `/DForgeDist=<folder>`; `native/forge/package-dist.sh <folder>` builds forge-c with `cc` first |
+| `forge-c package-dist <folder> [--dry-run]` | the forge/VM part of an installation without .NET: forge-c (as `forge`), the VM `fire` with its variants, `native/` (tables, runtime, the sources of the VM and of forge), `Source/` (the standard packages) and `Prebuilt/` (their libraries for this machine) - what the build and the publish of spark put next to it (`src/ForgeDist.targets`, with ember) and `setup.iss` installs; `native/forge/package-dist.sh <folder>` builds forge-c with `cc` first |
 
 forge-c finds its tables (the prelude) in `FIRE_TABLES`, else in `../tables` or `native/tables` next to it (the layout of `package-dist`), else in
 `native/tables` of the working folder; the store of packages is `FIRE_PACKAGES`, else `Packages/` next to it.
