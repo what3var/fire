@@ -231,6 +231,35 @@ namespace fire.Tooling
             };
         }
 
+        /// <summary>Compiles a project as a build does, without writing a program: a program with `forge bytecode` (into <paramref name="folder"/>), a library with
+        /// `forge build --check` (only compiled, not packed). <paramref name="more"/>: more options (`--overlay`). The diagnostics and whether it compiled.</summary>
+        public static CompiledScript CheckProject(string projectFile, string folder, IEnumerable<string>? more = null, CancellationToken cancel = default)
+        {
+            bool library;
+            try { library = fire.Projects.FireProject.Load(projectFile).Type == fire.Projects.OutputType.Library; }
+            catch (Exception ex) when (ex is fire.Projects.ProjectException or IOException) { library = false; }
+            if (!library) return CompileFiles(new[] { projectFile }, Path.Combine(folder, "check.fbc"), more: more, cancel: cancel);
+            var clock = Stopwatch.StartNew();
+            var args = new List<string> { "build", projectFile, "--check", "-o", folder, "--report", "json" };
+            if (more != null) args.AddRange(more);
+            var (code, output, errors) = Run(args, Path.GetDirectoryName(Path.GetFullPath(projectFile)), cancel: cancel);
+            var diagnostics = new List<Diagnostic>();
+            bool ok = false;
+            var text = new StringBuilder();
+            foreach (string l in output.Split('\n'))
+            {
+                if (l.Length == 0) continue;
+                if (!ForgeReport.TryParse(l, out var ev)) { text.Append(l).Append('\n'); continue; }
+                if (ev.Type == "diagnostic" && ev.Diagnostic is { } d) diagnostics.Add(d);
+                else if (ev.Type == "log" && ev.Text != null) text.Append(ev.Text).Append('\n');
+                else if (ev.Type == "end") { ok = ev.Ok; if (ev.Error is { Length: > 0 } e && !ev.Ok) text.Append(e).Append('\n'); }
+            }
+            var errorText = new StringBuilder();
+            foreach (var d in diagnostics.Where(d => d.IsError)) errorText.Append(d.ToLogLine()).Append('\n');
+            if (errorText.Length == 0 && !(ok && code == 0)) errorText.Append(text).Append(errors);
+            return new CompiledScript { Ok = ok && code == 0, Diagnostics = diagnostics, Errors = errorText.ToString().TrimEnd('\n'), Milliseconds = clock.Elapsed.TotalMilliseconds };
+        }
+
         /// <summary>Compiles a script with forge into a program file in <paramref name="folder"/>: `forge bytecode &lt;script&gt; -o &lt;folder&gt;/script.fbc --report json`
         /// (the report names the program, the libraries of its packages - built now - and the VM of its widths). The script is written next to its includes
         /// (<paramref name="basePath"/>) when there is one, else into the folder.</summary>

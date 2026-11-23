@@ -234,7 +234,7 @@ namespace fire.Editor
                     var plan = BuildPlan.Create(workspace, project, path => open.TryGetValue(Path.GetFullPath(path), out var text) ? text : FileTexts.Read(path));
                     var files = plan.Sources.Where(f => !FireProject.IsMarkupFile(f.Path)).Select(f => (Path.GetFullPath(f.Path), f.Text)).ToList();
                     var (libraries, settings) = LiveDiagnostics.PlanInputs(plan);
-                    var found = LiveDiagnostics.Remembered("project:" + key, "", files.Concat(libraries).ToList(), settings, () => LiveDiagnostics.AnalyzeProjectFiles(project.FilePath, files, cancel) ?? new List<Diagnostic>());
+                    var found = LiveDiagnostics.Remembered("project:" + key, "", files.Concat(libraries).ToList(), settings, () => LiveDiagnostics.AnalyzeProjectFiles(plan, files, cancel) ?? new List<Diagnostic>());
                     return ((IReadOnlyCollection<string>)files.Select(f => f.Item1).ToHashSet(ProjectFiles.PathComparer), found);
                 };
             }, delay);

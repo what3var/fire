@@ -8,8 +8,8 @@ using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>
-    /// How spark checks its documents in the background (M3: the analyses are forge's - `forge serve`, `diagnose`, and for a whole project `forge bytecode
-    /// --report json`; the logic of the analysis is native/forge/serve_diag.c): the gate of the analyses (one at a time, the document typed in first), and the results
+    /// How spark checks its documents in the background (M3: the analyses are forge serve's - `diagnose`, also for every file of a whole project
+    /// in the context of its plan; the logic of the analysis is native/forge/serve_diag.c): the gate of the analyses (one at a time, the document typed in first), and the results
     /// remembered by their inputs.
     /// </summary>
     public static class LiveDiagnostics
@@ -71,38 +71,26 @@ namespace fire.Editor
             return (libraries, settings);
         }
 
-        /// <summary>The errors of all the files of a project at once (each with its file): one compile of the project by forge, as in a build (`forge bytecode &lt;project&gt;
-        /// --report json`, the open documents' texts as overlays) - the files that are not open in the editor show their errors in the error list, too.
-        /// Null: forge could not be asked.</summary>
-        public static List<Diagnostic>? AnalyzeProjectFiles(string projectFile, IReadOnlyList<(string Path, string Text)> files, CancellationToken cancel = default)
+        /// <summary>The errors of all the files of a project (each with its file), so that the files that are not open in the editor show their errors in the error list
+        /// too: every file analysed by forge serve in the context of the plan (`AnalyzeInProject` - what the editor does for an open document), its errors with its
+        /// path, the warnings of the libraries once. Null: forge serve could not be asked.</summary>
+        public static List<Diagnostic>? AnalyzeProjectFiles(fire.Projects.BuildPlan plan, IReadOnlyList<(string Path, string Text)> files, CancellationToken cancel = default)
         {
-            string folder = Path.Combine(Path.GetTempPath(), $"fire-check-{Environment.ProcessId}-{Guid.NewGuid():N}");
-            var temps = new List<string>();
-            try
+            var found = new List<Diagnostic>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (path, text) in files)
             {
-                Directory.CreateDirectory(folder);
-                var args = new List<string> { "bytecode", projectFile, "-o", Path.Combine(folder, "check.fbc"), "--report", "json" };
-                int n = 0;
-                foreach (var (path, text) in files)
+                if (cancel.IsCancellationRequested) break;
+                var others = files.Where(f => !string.Equals(f.Path, path, StringComparison.Ordinal)).ToList();
+                var items = ServeDocuments.AnalyzeInProject(path, text, Path.GetDirectoryName(path), plan, others);
+                if (items == null) return null;
+                foreach (var d in items)
                 {
-                    if (!Path.IsPathRooted(path) || !File.Exists(path)) continue;
-                    string onDisk;
-                    try { onDisk = File.ReadAllText(path); } catch (IOException) { continue; }
-                    if (string.Equals(onDisk, text, StringComparison.Ordinal)) continue;
-                    string overlay = Path.Combine(folder, $"overlay{n++}.fire");
-                    File.WriteAllText(overlay, text);
-                    temps.Add(overlay);
-                    args.Add("--overlay");
-                    args.Add(path + "=" + overlay);
+                    var withFile = d.File == null ? d with { File = path } : d;
+                    if (seen.Add($"{withFile.File}|{withFile.Line}|{withFile.Column}|{withFile.Code}|{withFile.Message}")) found.Add(withFile);
                 }
-                var (_, output, _) = Forge.Run(args, Path.GetDirectoryName(projectFile), timeoutMs: 120000, cancel: cancel);
-                var found = new List<Diagnostic>();
-                foreach (string line in output.Split('\n'))
-                    if (line.Length > 0 && ForgeReport.TryParse(line, out var ev) && ev.Type == "diagnostic" && ev.Diagnostic is { } d) found.Add(d);
-                return found.OrderBy(d => d.File ?? "", StringComparer.Ordinal).ThenBy(d => d.Line).ToList();
             }
-            catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { return null; }
-            finally { try { Directory.Delete(folder, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
+            return found.OrderBy(d => d.File ?? "", StringComparer.Ordinal).ThenBy(d => d.Line).ToList();
         }
     }
 }

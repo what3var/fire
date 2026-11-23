@@ -723,7 +723,8 @@ offen); `package-dist` legte `native/forge/` und den Deflater von `packages/comp
 | Bauen, Build Solution, Publish, Pack Library, nativer Lauf | `forge build|publish --report json` (wie zuvor, jetzt forge-c) |
 | Run/Debug in der VM | `forge bytecode --report json`, dann `fire` (Debugger: das Protokoll, `NativeDebugTarget`) |
 | Vervollständigung, Diagnosen, Hover, Signatur, Definition, Markup, Prelude-Ansicht | nur `forge serve` (der eigene Prozess ist entfernt) |
-| Prüfung eines ganzen Projekts (Fehlerliste) | `forge bytecode <projekt> --report json` mit den offenen Texten als Overlays |
+| Prüfung eines ganzen Projekts (Fehlerliste) | `diagnose` von `forge serve` für jede Datei im Kontext des Plans (die Fehler des Resolvers in einem Projekt kennen im Bericht von `forge bytecode` ihre Datei nicht) |
+| eine Bibliothek prüfen, ein Programm übersetzen ohne Lauf | `forge build --check` bzw. `forge bytecode` (`Forge.CheckProject`) |
 | Test-Explorer | `tests` von `forge serve`, `forge test --report json` |
 | Entwurfsansicht, Blockvorschau, Schaltplan-Editor, Gerätetreiber | `forge bytecode --report json`, dann `fire` (der Treiber-Agent ohne Bytecode-Plugins: `#import`) |
 | Datenmodell (DDL, Datenbank anlegen, Import, Migration) | `forge run` eines Skripts, `forge data import|diff` |
@@ -751,7 +752,7 @@ Pakete) braucht nur einen C-Compiler.
 
 **Offen:** die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
 `conformance`, die Fälle mit Servern, die Linkages und Debug-Protokolle als Daten); `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
-nimmt `forge bytecode`); ein Build unter Windows mit `ForgeDist.targets` (gcc von w64devkit) und der Installer sind nicht geprüft; spark ohne forge (kein
+fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows mit `ForgeDist.targets` (gcc von w64devkit) und der Installer sind nicht geprüft; spark ohne forge (kein
 C-Compiler) hat keine Sprachdienste mehr.
 
 Danach: der **.NET-Wrapper** über `fire_embed.h` (NuGet-Paket mit P/Invoke, ersetzt `RuntimeSession` für Einbetter) und ABI v2 der Paket-Natives.

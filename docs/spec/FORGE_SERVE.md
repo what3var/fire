@@ -167,8 +167,8 @@ Seit M3 ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md)) gibt es nur noch diesen Weg:
 `NavigationEngine`, `LiveDiagnostics` mit dem C#-Frontend, `FIRE_SPARK_LANG=inproc`) ist mit dem C#-forge entfernt. Startet der Server nicht, gibt es keine
 Vervollständigung und keine Analyse beim Tippen. Gefunden wird forge wie alles, was spark von forge braucht (`fire.Tooling.Forge`: neben spark, `FIRE_FORGE`,
 sonst aus `native/forge` des Repositorys gebaut); die Prelude ist die von forge (`native/tables` neben ihm), nicht mehr ein Ordner, den spark schreibt.
-Die Prüfung eines ganzen Projekts (die Fehler der Dateien, die nicht offen sind) ist `forge bytecode <projekt> --report json` mit den offenen Texten als
-Overlays (`LiveDiagnostics.AnalyzeProjectFiles`), der Test-Explorer fragt `tests` und lässt laufen mit `forge test --report json`.
+Die Prüfung eines ganzen Projekts (die Fehler der Dateien, die nicht offen sind) ist `diagnose` für jede Datei im Kontext des Plans
+(`LiveDiagnostics.AnalyzeProjectFiles`: die Fehler mit ihrer Datei), der Test-Explorer fragt `tests` und lässt laufen mit `forge test --report json`.
 
 Die Prüfungen ([FORGE_C.md](FORGE_C.md#forge-serve)): `FIRE_TESTS_ONLY=serve` (ServeTests: Entprellen, latest wins, `stale`, gemerkte
 Ergebnisse, Edits, `resync`, Projekt mit Overlay, Fehler des Protokolls, die Diagnosen von zehn Fällen und von fünf Lagen eines Projekts - seit M3

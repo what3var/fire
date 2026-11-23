@@ -979,8 +979,8 @@ static class ForgeCheck
                 File.WriteAllText(overlay, f.Text);
                 more.Add("--overlay"); more.Add(Path.GetFullPath(f.Path) + "=" + overlay);
             }
-            var compiled = Forge.CompileFiles(new[] { plan.Project.FilePath }, Path.Combine(folder, "check.fbc"), more: more);
-            if (!compiled.Ok) throw new InvalidOperationException(compiled.Diagnostics.Any(d => d.IsError) ? string.Join(Environment.NewLine, compiled.Diagnostics.Where(d => d.IsError).Select(d => d.Message)) : compiled.Errors);
+            var compiled = Forge.CheckProject(plan.Project.FilePath, folder, more);
+            if (!compiled.Ok) throw new InvalidOperationException(compiled.Errors);
         }
         finally { try { Directory.Delete(folder, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
     }

@@ -109,7 +109,7 @@ static partial class ExplorerTests
         Check("Ordner/Build: eine Quelle im ausgeschlossenen Ordner wird nicht kompiliert", project.Files.Contains(main) && !project.Files.Contains(broken), string.Join(",", project.Files));
         var plan = BuildPlan.Create(ws, project);
         bool compiles;
-        var check = Forge.CompileFiles(new[] { project.FilePath }, Path.Combine(dir, "bin", "check.fbc"));   // (forge compiles it)
+        var check = Forge.CheckProject(project.FilePath, Path.Combine(dir, "bin"));   // (forge compiles it)
         compiles = check.Ok;
         if (!compiles) Console.WriteLine(check.Errors);
         Check("Ordner/Build: das Projekt kompiliert ohne den ausgeschlossenen (kaputten) Ordner", plan.IsValid && compiles, string.Join("\n", plan.Errors));

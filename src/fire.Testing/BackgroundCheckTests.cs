@@ -402,7 +402,7 @@ static class BackgroundCheckTests
             // the check of the whole project: an error in a file that is not open, with its file
             var helperBroken = BuildPlan.Create(ws, app, path => ProjectFiles.PathComparer.Equals(Path.GetFullPath(path), helper) ? "class Helper {\n    static int Twice(int x) { return x * notThere }\n}\n" : null);
             var files = helperBroken.Sources.Select(f => (Path.GetFullPath(f.Path), f.Text)).ToList();
-            var all = LiveDiagnostics.AnalyzeProjectFiles(app.FilePath, files) ?? new List<Diagnostic>();   // (forge bytecode of the project, the open texts as overlays)
+            var all = LiveDiagnostics.AnalyzeProjectFiles(helperBroken, files) ?? new List<Diagnostic>();   // (forge serve: every file in the context of the plan)
             Check("project: the check of a project finds the error in a file that is not open, with its file and line",
                 all.Any(d => d.IsError && d.File != null && ProjectFiles.PathComparer.Equals(d.File, helper) && d.Line == 2 && d.Message.Contains("notThere")),
                 string.Join("; ", all.Select(d => $"{d.File}:{d.Line} {d.Message}")));
