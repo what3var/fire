@@ -195,6 +195,7 @@ static void pkMapNative(FcCtx* c, PkNative* n, const char* (*map)(void* state, c
     for (i = 0; i < n->m.platformSources->count; i++) ((FgKeyed*)n->m.platformSources->items[i])->value = pkSrcMap(c, (FgSrcList*)((FgKeyed*)n->m.platformSources->items[i])->value, map, state);
     for (i = 0; i < n->libraries->count; i++) ((FgKeyed*)n->libraries->items[i])->value = (void*)map(state, (const char*)((FgKeyed*)n->libraries->items[i])->value);
     for (k = 0; k < n->m.headers->count; k++) n->m.headers->items[k] = (void*)map(state, (const char*)n->m.headers->items[k]);
+    for (k = 0; k < n->m.units->count; k++) n->m.units->items[k] = (void*)map(state, (const char*)n->m.units->items[k]);
 }
 static int pkCmpOrdinalQ(const void* a, const void* b) { return strcmp(*(const char* const*)a, *(const char* const*)b); }
 /* the files below a folder (full paths, all levels) */

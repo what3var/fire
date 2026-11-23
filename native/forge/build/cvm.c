@@ -331,6 +331,8 @@ static bool nvAppend(FcCtx* c, const char* path, FcList* items, const char** err
 }
 
 /* ---- what the linker does for a program with a file of its own (Linker.CompileAndLink with outname, the engine vm) ---- */
+static const char* neLocate(FcCtx* c, FcBuf* log, const char** error);   /* (build/embedlib.c) */
+static const char* neLibName(FcCtx* c, int which);
 /* PackageImports.EnsureLibraries and GraphicsLibrary.Locate: the libraries of the program's packages (the imports with natives in a library, in the ordinal order of
  * their keys) and of graphics/windows; the natives of graphics then go to that library (linked->graphicsNatives, in the order of the registry). A library of a
  * package that cannot be had is a PackageException (FC_ERR_PACKAGE); one of graphics is a line on the log and the program goes without it. */
@@ -354,6 +356,14 @@ static FcList* nvEnsureLibraries(FcCtx* c, FcLinked* linked, FcStore* store, con
         r = nlEnsure(c, cache, store, imp, NULL);
         if (!r.path) fcThrow(c, FC_ERR_PACKAGE, 0, 0, NULL, r.error);
         fcListAdd(c, files, (void*)r.path);
+    }
+    /* (the package script loads libfirevm, a library of its own (build/embedlib.c): it goes with the libraries - a packed program carries it, its natives find
+     * it next to the library of the package. Phase D 8) */
+    if (fcDictHas(linked->nativeImports, "pkg:script")) {
+        const char* error = NULL;
+        const char* folder = neLocate(c, log, &error);
+        if (!folder) fcThrow(c, FC_ERR_PACKAGE, 0, 0, NULL, error);
+        fcListAdd(c, files, (void*)nbCombine(c, folder, neLibName(c, 1)));
     }
     /* (the VM in C has graphics and windows only in C: its packed program always carries the library) */
     if (fcDictHas(linked->nativeImports, "graphics")) {

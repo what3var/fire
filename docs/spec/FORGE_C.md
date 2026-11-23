@@ -42,7 +42,12 @@ sie neben sich hat; `forge install-standard` legt sie an). Für den Vergleich ze
 ```
 
 Als Bibliothek (Phase D 7, [EMBED.md](EMBED.md)): `forge.c` mit `FIRE_FORGE_LIBRARY` hat kein `main`, `embed.c` gibt `fire_embed.h` (Übersetzen mit den
-Diagnosen als Daten, `fire_forge_main`); `forge-c build-embed <ordner>` baut libforge und libfirevm als Shared Libraries (`build/embedlib.c`).
+Diagnosen als Daten, `fire_forge_main`, seit D8 mit `fire_forge_set_output`); `forge-c build-embed <ordner>` baut libforge und libfirevm als Shared Libraries
+(`build/embedlib.c`). Phase D 8: `forge-c amalgamate <datei.c> [--check]` schreibt libforge als **eine** C-Datei (`forge.c` mit allem, was es einbindet,
+jedes `#include "..."` relativ zur einbindenden Datei und jedes Mal eingesetzt) - `packages/forge/native/libforge.c`, die Einheit (`native.units`) des
+Packages `forge`, die forge für sich übersetzt und in das Programm bzw. die Bibliothek des Pakets linkt (`build/builder.c` `nbPackageUnits`, `build/pkglib.c`).
+**Nach jeder Änderung unter `native/forge` neu schreiben** (`forge-c amalgamate packages/forge/native/libforge.c`; `--check` prüft). `tools/forge.fire`
+ist forge mit einem Frontend in fire (EMBED.md, Schritt 8).
 
 `libm` braucht es für `Math.Pow` (eine Umrechnung `coerce ... => value ^ 2` wird beim Übersetzen gerechnet) - wie bei der VM.
 
@@ -1147,7 +1152,13 @@ forge/VM einer Installation ohne .NET-Werkzeuge - was die Veröffentlichung von 
 <ordner>/native/                    tables/, runtime/, abi/, platform/ (.h .hpp .asm), vm/ (.c .h), base/ - was forge-c zur Laufzeit liest
 <ordner>/Source/                    die Standardpakete (packages/ ohne bin/obj - dieselben 323 Dateien wie Source/ des C#-forge)
 <ordner>/Prebuilt/<paket>/<rid>/    ihre Bibliotheken für diese Maschine (prebuild-standard)
+<ordner>/libfireforge.so, libfirevm.so (+ .key)   libforge und libfirevm (build-embed, Phase D 8; --no-embed: nicht)
 ```
+
+Seit Phase D 8 baut `package-dist` libforge und libfirevm in den Ordner - mit den Quellen des forge-c, das ihn macht (`native/forge` kommt nicht mit: `forge.c`
+bindet den Deflater aus `packages/compression` ein, eine Distribution könnte libforge daraus nicht bauen), gestempelt mit dem Schlüssel, den das forge des
+Ordners über seine `native/` rechnet (`neKey` ohne `native/forge`): es nimmt sie, wie sie sind. Das Package `forge` braucht libforge nicht daneben (es trägt
+es als `native/libforge.c` in `Source/` und `Prebuilt/`); libfirevm ist für `script` und einen Wirt in C.
 
 Die VM und `Prebuilt/` baut das forge des Ordners selbst (ohne `FIRE_TABLES`/`FIRE_PACKAGES`/`FIRE_NATIVE_ROOT`) und prüft damit den Aufbau; dafür sucht forge-c die
 Tabellen jetzt auch in `native/tables` neben sich (`fcFindPrelude`, nach `../tables`). Gebaut wird für die Maschine, auf der es läuft - eine Distribution für Windows

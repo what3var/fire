@@ -265,6 +265,7 @@ static PjNativePart* pjNativesResolve(FcCtx* c, const PjLoaded* project, FcList*
     if (n->bridge) for (i = 0; i < n->bridge->count; i++) fcListAdd(c, native->m.bridge, n->bridge->items[i]);
     if (n->uses) for (i = 0; i < n->uses->count; i++) fcListAdd(c, native->m.uses, n->uses->items[i]);
     if (n->headers) { FgSrcList* h = pjExpandOrdered(c, dir, n->headers, found, NULL); for (i = 0; i < h->files->count; i++) fcListAdd(c, native->m.headers, h->files->items[i]); }
+    if (n->units) { FgSrcList* u = pjExpandOrdered(c, dir, n->units, found, NULL); for (i = 0; i < u->files->count; i++) fcListAdd(c, native->m.units, u->files->items[i]); }
     for (i = 0; i < found->count; i++) if (problems) fcListAdd(c, problems, (void*)fcFmt(c, "%s: native: %s", project->project->name, (const char*)found->items[i]));
     if (native->m.sources->files->count == 0 && native->m.platformSources->count == 0 && problems)
         fcListAdd(c, problems, (void*)fcFmt(c, "%s: the project has a native part but no C++ files (put them into the folder 'native').", project->project->name));

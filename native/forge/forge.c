@@ -28,6 +28,24 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #endif
+#ifdef FIRE_FORGE_LIBRARY
+/* libforge: what the command line (fire_forge_main) writes to stdout and stderr goes to the streams of the call (g_feOut, g_feErr - the host's callback,
+ * fire_forge_set_output; NULL: the process's), so every stdout/stderr below names them and printf/puts/putchar write to stdout (embed.c). */
+static FILE* g_feOut = NULL;
+static FILE* g_feErr = NULL;
+static FILE* feProcessStdout(void) { return stdout; }
+static FILE* feProcessStderr(void) { return stderr; }
+#undef stdout
+#undef stderr
+#define stdout (g_feOut ? g_feOut : feProcessStdout())
+#define stderr (g_feErr ? g_feErr : feProcessStderr())
+#undef printf
+#undef puts
+#undef putchar
+#define printf(...) fprintf(stdout, __VA_ARGS__)
+#define puts(s) (fputs((s), stdout) < 0 ? EOF : fputc('\n', stdout))
+#define putchar(ch) fputc((ch), stdout)
+#endif
 
 #include "util.c"
 #include "diag.c"
@@ -474,6 +492,7 @@ static int fcCliMain(int argc, char** argv, const char* prelude, const char* sto
     if (argc >= 2 && strcmp(argv[1], "publish") == 0) return pjPublishCommand(argc, argv, prelude, store);   /* Phase D 3 */
     if (argc >= 2 && strcmp(argv[1], "build-vm") == 0) return nvBuildVmMain(argc, argv, store);
     if (argc >= 2 && strcmp(argv[1], "build-embed") == 0) return neBuildEmbedMain(argc, argv);   /* Phase D 7: libforge and libfirevm (build/embedlib.c) */
+    if (argc >= 2 && strcmp(argv[1], "amalgamate") == 0) return neAmalgamateMain(argc, argv);   /* Phase D 8: libforge as one C file (build/embedlib.c) */
     if (argc >= 2 && strcmp(argv[1], "toolchain-setup") == 0) return tsMain(argc, argv);   /* Phase D 5: a portable toolchain downloaded (tools/setup.c) */   /* Phase D 3: the VM in C into a folder (build/cvm.c) */
     if (argc == 3 && strcmp(argv[1], "projectplan") == 0) return pjProjectPlanDump(argv[2], stdout);
     if (argc == 3 && strcmp(argv[1], "fpk") == 0) return pjPackageDump(argv[2], stdout);

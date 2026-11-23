@@ -77,7 +77,37 @@ static int fire_embed_selfFolder(char* out, size_t cap) {
     *slash = 0;
     return 1;
 }
-/* loads `<prefix><stem><ext>` from the folders of FIRE_EMBED_PATH, FIRE_PKG_PATH, then the folder of the program; NULL: `why` says where it looked */
+/* the folder of the module this bridge is in: the library of the package in the VM (in a packed program the folder its payload was written to, with the
+ * libraries it carries), the program in a native build */
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__USE_GNU) && !defined(__ANDROID__) && defined(__GLIBC__)
+/* (glibc declares dladdr only with _GNU_SOURCE: its declaration with the layout of Dl_info) */
+typedef struct FireEmbedDlInfo { const char* dli_fname; void* dli_fbase; const char* dli_sname; void* dli_saddr; } FireEmbedDlInfo;
+extern int dladdr(const void* address, FireEmbedDlInfo* info);
+#define FIRE_EMBED_DLINFO FireEmbedDlInfo
+#elif !defined(_WIN32)
+#define FIRE_EMBED_DLINFO Dl_info
+#endif
+static int fire_embed_moduleFolder(char* out, size_t cap) {
+    char* slash;
+#if defined(_WIN32)
+    HMODULE m = NULL;
+    wchar_t w[2048];
+    char* p;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)(void*)&fire_embed_moduleFolder, &m)) return 0;
+    if (!GetModuleFileNameW(m, w, 2048) || !WideCharToMultiByte(CP_UTF8, 0, w, -1, out, (int)cap, NULL, NULL)) return 0;
+    for (p = out; *p; p++) if (*p == '\\') *p = '/';
+#else
+    FIRE_EMBED_DLINFO info;
+    if (!dladdr((void*)&fire_embed_moduleFolder, &info) || !info.dli_fname || strlen(info.dli_fname) >= cap) return 0;
+    strcpy(out, info.dli_fname);
+#endif
+    slash = strrchr(out, '/');
+    if (!slash) return 0;
+    *slash = 0;
+    return 1;
+}
+/* loads `<prefix><stem><ext>` from the folders of FIRE_EMBED_PATH, FIRE_PKG_PATH, the folder of this module, then of the program; NULL: `why` says where it
+ * looked */
 static void* fire_embed_load(const char* stem, char* why, size_t cap) {
     static const char* const vars[2] = { "FIRE_EMBED_PATH", "FIRE_PKG_PATH" };
     char file[300], path[4400], self[4096];
@@ -96,12 +126,16 @@ static void* fire_embed_load(const char* stem, char* why, size_t cap) {
             list = end ? end + 1 : NULL;
         }
     }
+    if (fire_embed_moduleFolder(self, sizeof self)) {
+        snprintf(path, sizeof path, "%s/%s", self, file);
+        if ((lib = fire_embed_open(path)) != NULL) return lib;
+    }
     if (fire_embed_selfFolder(self, sizeof self)) {
         snprintf(path, sizeof path, "%s/%s", self, file);
         if ((lib = fire_embed_open(path)) != NULL) return lib;
     }
-    snprintf(why, cap, "%s was not found (FIRE_EMBED_PATH, FIRE_PKG_PATH, the folder of the program): forge builds it with `forge build-embed <folder>` - "
-        "and on its own for a program that imports forge or script", file);
+    snprintf(why, cap, "%s was not found (FIRE_EMBED_PATH, FIRE_PKG_PATH, the folder of the package library or of the program): forge builds it with "
+        "`forge build-embed <folder>` - and on its own for a program that imports script", file);
     return NULL;
 }
 #endif

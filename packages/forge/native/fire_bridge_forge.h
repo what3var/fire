@@ -1,11 +1,13 @@
 /* fire native bridge "forge" (C): the natives behind `#import "forge"` (docs/packages/forge.md) - fire source or a project to a program file, its diagnostics as
  * data, the command line of forge - in this process, through libforge (native/forge/forge.c as a library; its interface native/abi/fire_embed.h).
  *
- * libforge is a shared library (libfireforge.so, fireforge.dll, libfireforge.dylib) that forge builds (`forge build-embed <folder>`, or on its own for a program
- * that imports this package); this bridge loads it on first use from FIRE_EMBED_PATH, the folders of FIRE_PKG_PATH or the folder of the running program. It is
- * the same in the VM (a package library) and in a native build: libforge does not use the runtime of fire, so it does not matter whose runtime runs the bridge.
- * The few functions of fire_embed.h it calls are declared here as pointers (a host that loads the library looks them up by name). A translation is a handle
- * in a table of this bridge; the calls are serialised (the lock of the library in the VM, of the package in a native build). */
+ * libforge is a unit of this package (`native.units`: native/libforge.c, the whole of forge as one C file - `forge amalgamate`): forge-c compiles it on its
+ * own and links it into a native program (for any target it builds for) and into the library of the package for the VM, and defines FIRE_PKG_UNITS_FORGE -
+ * then the functions of fire_embed.h are called directly. A forge that does not know `units` (the C# forge) leaves the define out: then this bridge loads
+ * libforge as a shared library (libfireforge.so, fireforge.dll, libfireforge.dylib - `forge build-embed <folder>`) on first use from FIRE_EMBED_PATH, the
+ * folders of FIRE_PKG_PATH, the folder of this module or of the running program. It is the same in the VM (a package library) and in a native build: libforge
+ * does not use the runtime of fire, so it does not matter whose runtime runs the bridge. A translation is a handle in a table of this bridge; the calls are
+ * serialised (the lock of the library in the VM, of the package in a native build). */
 #ifndef FIRE_BRIDGE_FORGE_H
 #define FIRE_BRIDGE_FORGE_H
 
@@ -77,7 +79,37 @@ static int fire_embed_selfFolder(char* out, size_t cap) {
     *slash = 0;
     return 1;
 }
-/* loads `<prefix><stem><ext>` from the folders of FIRE_EMBED_PATH, FIRE_PKG_PATH, then the folder of the program; NULL: `why` says where it looked */
+/* the folder of the module this bridge is in: the library of the package in the VM (in a packed program the folder its payload was written to, with the
+ * libraries it carries), the program in a native build */
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__USE_GNU) && !defined(__ANDROID__) && defined(__GLIBC__)
+/* (glibc declares dladdr only with _GNU_SOURCE: its declaration with the layout of Dl_info) */
+typedef struct FireEmbedDlInfo { const char* dli_fname; void* dli_fbase; const char* dli_sname; void* dli_saddr; } FireEmbedDlInfo;
+extern int dladdr(const void* address, FireEmbedDlInfo* info);
+#define FIRE_EMBED_DLINFO FireEmbedDlInfo
+#elif !defined(_WIN32)
+#define FIRE_EMBED_DLINFO Dl_info
+#endif
+static int fire_embed_moduleFolder(char* out, size_t cap) {
+    char* slash;
+#if defined(_WIN32)
+    HMODULE m = NULL;
+    wchar_t w[2048];
+    char* p;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)(void*)&fire_embed_moduleFolder, &m)) return 0;
+    if (!GetModuleFileNameW(m, w, 2048) || !WideCharToMultiByte(CP_UTF8, 0, w, -1, out, (int)cap, NULL, NULL)) return 0;
+    for (p = out; *p; p++) if (*p == '\\') *p = '/';
+#else
+    FIRE_EMBED_DLINFO info;
+    if (!dladdr((void*)&fire_embed_moduleFolder, &info) || !info.dli_fname || strlen(info.dli_fname) >= cap) return 0;
+    strcpy(out, info.dli_fname);
+#endif
+    slash = strrchr(out, '/');
+    if (!slash) return 0;
+    *slash = 0;
+    return 1;
+}
+/* loads `<prefix><stem><ext>` from the folders of FIRE_EMBED_PATH, FIRE_PKG_PATH, the folder of this module, then of the program; NULL: `why` says where it
+ * looked */
 static void* fire_embed_load(const char* stem, char* why, size_t cap) {
     static const char* const vars[2] = { "FIRE_EMBED_PATH", "FIRE_PKG_PATH" };
     char file[300], path[4400], self[4096];
@@ -96,12 +128,16 @@ static void* fire_embed_load(const char* stem, char* why, size_t cap) {
             list = end ? end + 1 : NULL;
         }
     }
+    if (fire_embed_moduleFolder(self, sizeof self)) {
+        snprintf(path, sizeof path, "%s/%s", self, file);
+        if ((lib = fire_embed_open(path)) != NULL) return lib;
+    }
     if (fire_embed_selfFolder(self, sizeof self)) {
         snprintf(path, sizeof path, "%s/%s", self, file);
         if ((lib = fire_embed_open(path)) != NULL) return lib;
     }
-    snprintf(why, cap, "%s was not found (FIRE_EMBED_PATH, FIRE_PKG_PATH, the folder of the program): forge builds it with `forge build-embed <folder>` - "
-        "and on its own for a program that imports forge or script", file);
+    snprintf(why, cap, "%s was not found (FIRE_EMBED_PATH, FIRE_PKG_PATH, the folder of the package library or of the program): forge builds it with "
+        "`forge build-embed <folder>` - and on its own for a program that imports script", file);
     return NULL;
 }
 #endif
@@ -109,6 +145,23 @@ static void* fire_embed_load(const char* stem, char* why, size_t cap) {
 /* ---- libforge ---- */
 typedef struct FireForge FireForge;
 typedef struct FireCompilation FireCompilation;
+typedef void (*FireForgeWriteFn)(void* user, int stream, const char* data, size_t length);
+#ifdef FIRE_PKG_UNITS_FORGE
+/* (libforge is a unit of this program or library: the functions of fire_embed.h it calls) */
+extern int fire_embed_version(void);
+extern FireForge* fire_forge_new(const char* tables, const char* packages, const char* native);
+extern FireCompilation* fire_forge_compile(FireForge* forge, const char* path, const char* source, size_t length, int mode);
+extern int fire_compilation_ok(const FireCompilation* c);
+extern const uint8_t* fire_compilation_program(const FireCompilation* c, size_t* length);
+extern const char* fire_compilation_package_path(const FireCompilation* c);
+extern int fire_compilation_diagnostic_count(const FireCompilation* c);
+extern const char* fire_compilation_diagnostic(const FireCompilation* c, int index, int what);
+extern int fire_compilation_diagnostic_line(const FireCompilation* c, int index);
+extern int fire_compilation_diagnostic_column(const FireCompilation* c, int index);
+extern void fire_compilation_free(FireCompilation* c);
+extern int fire_forge_main(FireForge* forge, int argc, char** argv);
+extern void fire_forge_set_output(FireForge* forge, FireForgeWriteFn write, void* user);
+#endif
 typedef struct FireForgeApi {
     int (*version)(void);
     FireForge* (*forgeNew)(const char*, const char*, const char*);
@@ -122,6 +175,7 @@ typedef struct FireForgeApi {
     int (*diagColumn)(const FireCompilation*, int);
     void (*free)(FireCompilation*);
     int (*main)(FireForge*, int, char**);
+    void (*setOutput)(FireForge*, FireForgeWriteFn, void*);   /* (NULL: a libforge from before it: Run writes to the process's streams) */
 } FireForgeApi;
 static FireForgeApi g_forgeApi;
 static FireForge* g_forgeForge = NULL;
@@ -129,9 +183,26 @@ static int g_forgeState = 0;   /* 0 not tried, 1 loaded, -1 failed (g_forgeWhy) 
 static char g_forgeWhy[600];
 
 static int fire_forge_ready(void) {
+#ifndef FIRE_PKG_UNITS_FORGE
     void* lib;
+#endif
     if (g_forgeState) return g_forgeState > 0;
     g_forgeState = -1;
+#ifdef FIRE_PKG_UNITS_FORGE
+    g_forgeApi.version = fire_embed_version;
+    g_forgeApi.forgeNew = fire_forge_new;
+    g_forgeApi.compile = fire_forge_compile;
+    g_forgeApi.ok = fire_compilation_ok;
+    g_forgeApi.program = fire_compilation_program;
+    g_forgeApi.packagePath = fire_compilation_package_path;
+    g_forgeApi.diagCount = fire_compilation_diagnostic_count;
+    g_forgeApi.diag = fire_compilation_diagnostic;
+    g_forgeApi.diagLine = fire_compilation_diagnostic_line;
+    g_forgeApi.diagColumn = fire_compilation_diagnostic_column;
+    g_forgeApi.free = fire_compilation_free;
+    g_forgeApi.main = fire_forge_main;
+    g_forgeApi.setOutput = fire_forge_set_output;
+#else
     if (!(lib = fire_embed_load("fireforge", g_forgeWhy, sizeof g_forgeWhy))) return 0;
 #define FIRE_FORGE_SYM(field, name) if (!(*(void**)&g_forgeApi.field = fire_embed_symbol(lib, name))) { snprintf(g_forgeWhy, sizeof g_forgeWhy, "libforge has no %s", name); return 0; }
     FIRE_FORGE_SYM(version, "fire_embed_version")
@@ -147,6 +218,8 @@ static int fire_forge_ready(void) {
     FIRE_FORGE_SYM(free, "fire_compilation_free")
     FIRE_FORGE_SYM(main, "fire_forge_main")
 #undef FIRE_FORGE_SYM
+    *(void**)&g_forgeApi.setOutput = fire_embed_symbol(lib, "fire_forge_set_output");
+#endif
     if (g_forgeApi.version() != 1) { snprintf(g_forgeWhy, sizeof g_forgeWhy, "libforge has version %d of fire_embed.h, this package needs 1", g_forgeApi.version()); return 0; }
     if (!(g_forgeForge = g_forgeApi.forgeNew(NULL, NULL, NULL))) { snprintf(g_forgeWhy, sizeof g_forgeWhy, "libforge could not start"); return 0; }
     g_forgeState = 1;
@@ -225,25 +298,56 @@ static Value fire_forge_Free(Value h) {
     g_forgeTable[h.i - 1] = NULL;
     return Bool(1);
 }
-/* the command line of forge in this process (its output goes to this process's stdout and stderr) -> its exit code; -1 when libforge is missing */
-static Value fire_forge_Main(Value args) {
+/* ---- the command line of forge (fire_forge_main) ---- */
+/* what Run collected: [0] stdout, [1] stderr */
+typedef struct FireForgeText { char* p; size_t len, cap; } FireForgeText;
+static FireForgeText g_forgeRunText[2];
+static void fire_forge_collect(void* user, int stream, const char* data, size_t n) {
+    FireForgeText* t = &g_forgeRunText[stream == 2 ? 1 : 0];
+    (void)user;
+    if (t->len + n + 1 > t->cap) {
+        size_t cap = t->cap ? t->cap : 1024;
+        char* p;
+        while (cap < t->len + n + 1) cap *= 2;
+        if (!(p = (char*)realloc(t->p, cap))) return;
+        t->p = p; t->cap = cap;
+    }
+    memcpy(t->p + t->len, data, n);
+    t->len += n;
+    t->p[t->len] = 0;
+}
+/* args -> exit code: `collect` 0 - its output goes to this process's stdout and stderr, 1 - into g_forgeRunText; -1 when libforge is missing */
+static int fire_forge_command(Value args, int collect) {
     char** argv;
     uint32_t n, i;
     int code;
-    if (!fire_forge_ready()) return Int(-1);
+    if (!fire_forge_ready()) return -1;
     n = args.kind == K_Array ? arrOf(args)->length : 0;
     argv = (char**)calloc((size_t)n + 2, sizeof(char*));
-    if (!argv) return Int(-1);
+    if (!argv) return -1;
     argv[0] = (char*)"forge";
     for (i = 0; i < n; i++) {
         char* s = fire_forge_utf8(arrItems(arrOf(args))[i], NULL);
         argv[1 + i] = s ? s : (char*)calloc(1, 1);
     }
     fflush(stdout);
+    fflush(stderr);
+    g_forgeRunText[0].len = g_forgeRunText[1].len = 0;
+    if (collect && g_forgeApi.setOutput) g_forgeApi.setOutput(g_forgeForge, fire_forge_collect, NULL);
     code = g_forgeApi.main(g_forgeForge, (int)n + 1, argv);
+    if (collect && g_forgeApi.setOutput) g_forgeApi.setOutput(g_forgeForge, NULL, NULL);
     for (i = 0; i < n; i++) free(argv[1 + i]);
     free(argv);
-    return Int(code);
+    return code;
+}
+/* the command line of forge in this process (its output goes to this process's stdout and stderr) -> its exit code; -1 when libforge is missing */
+static Value fire_forge_Main(Value args) { return Int(fire_forge_command(args, 0)); }
+/* the same with its output collected (RunText) */
+static Value fire_forge_Run(Value args) { return Int(fire_forge_command(args, 1)); }
+/* what the last Run wrote: 0 stdout, 1 stderr */
+static Value fire_forge_RunText(Value which, OwnList* list) {
+    const FireForgeText* t = &g_forgeRunText[which.kind == K_Int && which.i == 1 ? 1 : 0];
+    return newStrFromUtf8((const uint8_t*)(t->p ? t->p : ""), t->len, list);
 }
 
 /* the end of a program (the VM keeps the library for the next one): its translations go; libforge stays loaded */
@@ -253,6 +357,7 @@ static void fire_forge_reset(void) {
     free(g_forgeTable);
     g_forgeTable = NULL;
     g_forgeCount = 0;
+    for (i = 0; i < 2; i++) { free(g_forgeRunText[i].p); g_forgeRunText[i].p = NULL; g_forgeRunText[i].len = g_forgeRunText[i].cap = 0; }
 }
 
 #endif

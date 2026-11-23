@@ -418,7 +418,8 @@ static const char* tcPkgPath(FcCtx* c, FcList* libraries) {
     return fgJoin(c, dirs, ":");
 #endif
 }
-/* runs the program file with the VM of its widths: its stdin, stdout and stderr are this process's; the exit code of the VM */
+/* runs the program file with the VM of its widths: its stdin, stdout and stderr are this process's (libforge with the host's streams: its output goes
+ * there); the exit code of the VM */
 static int tcRunInVm(FcCtx* c, FcLinked* linked, FcList* libraries, FcList* arguments) {
     FcBuf fbc = {0};
     const char* error = NULL;
@@ -448,16 +449,65 @@ static int tcRunInVm(FcCtx* c, FcLinked* linked, FcList* libraries, FcList* argu
         char* env[2] = { NULL, NULL };
         (void)pid;
         if (*pkgPath) env[0] = (char*)fcFmt(c, "FIRE_PKG_PATH=%s", pkgPath);
+#ifdef FIRE_FORGE_LIBRARY
+        if (g_feOut || g_feErr) {
+            /* (libforge with the host's streams, fire_forge_set_output: what the program writes goes there - here when it has ended) */
+            FcBuf o = {0}, e = {0};
+            fcBufStr(&o, "");
+            fcBufStr(&e, "");
+            status = fwRun(argv[0], fwCommandLineOf(c, argv), NULL, (const char* const*)env, &o, &e);
+            fwrite(o.p, 1, o.len, stdout);
+            fwrite(e.p, 1, e.len, stderr);
+            fcBufFree(&o);
+            fcBufFree(&e);
+        } else
+#endif
         status = fwRun(argv[0], fwCommandLineOf(c, argv), NULL, (const char* const*)env, NULL, NULL);
         trRemoveTree(dir);
         return status < 0 ? 1 : status;
     }
 #else
-    pid = fork();
-    if (pid == 0) {
-        if (*pkgPath) setenv("FIRE_PKG_PATH", pkgPath, 1);
-        execv(argv[0], argv);
-        _exit(127);
+#ifdef FIRE_FORGE_LIBRARY
+    if (g_feOut || g_feErr) {
+        /* (libforge with the host's streams, fire_forge_set_output: what the program writes goes there as it comes) */
+        int po[2], pe[2];
+        struct pollfd fds[2];
+        if (pipe(po) != 0) return 1;
+        if (pipe(pe) != 0) { close(po[0]); close(po[1]); return 1; }
+        pid = fork();
+        if (pid == 0) {
+            dup2(po[1], 1); dup2(pe[1], 2);
+            close(po[0]); close(po[1]); close(pe[0]); close(pe[1]);
+            if (*pkgPath) setenv("FIRE_PKG_PATH", pkgPath, 1);
+            execv(argv[0], argv);
+            _exit(127);
+        }
+        close(po[1]); close(pe[1]);
+        fds[0].fd = po[0]; fds[0].events = POLLIN;
+        fds[1].fd = pe[0]; fds[1].events = POLLIN;
+        while (pid > 0 && (fds[0].fd >= 0 || fds[1].fd >= 0)) {
+            int k;
+            if (poll(fds, 2, -1) < 0) { if (errno == EINTR) continue; break; }
+            for (k = 0; k < 2; k++) {
+                char buf[16384];
+                ssize_t got;
+                if (fds[k].fd < 0 || !(fds[k].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+                got = read(fds[k].fd, buf, sizeof buf);
+                if (got > 0) { FILE* to = k == 0 ? stdout : stderr; fwrite(buf, 1, (size_t)got, to); fflush(to); }
+                else { close(fds[k].fd); fds[k].fd = -1; }
+            }
+        }
+        if (fds[0].fd >= 0) close(fds[0].fd);
+        if (fds[1].fd >= 0) close(fds[1].fd);
+    } else
+#endif
+    {
+        pid = fork();
+        if (pid == 0) {
+            if (*pkgPath) setenv("FIRE_PKG_PATH", pkgPath, 1);
+            execv(argv[0], argv);
+            _exit(127);
+        }
     }
     if (pid < 0 || waitpid(pid, &status, 0) < 0) status = -1;
     trRemoveTree(dir);

@@ -1,6 +1,7 @@
 // forge (docs/packages/forge.md): the compiler of fire in the program - fire source or a project to a program file (the bytes `forge bytecode` writes), its
-// warnings and errors as data. The natives load libforge (the compiler in C as a library, native/abi/fire_embed.h) in this process; the package `script` runs
-// what it translated. The same in the VM and in a native build.
+// warnings and errors as data, and the command line of forge. The natives call libforge (the compiler in C as a library, native/abi/fire_embed.h), which the
+// package carries as one C file (native/libforge.c) and forge links into the program; the package `script` runs what it translated. The same in the VM and in
+// a native build, for every target forge builds for.
 namespace Forge {
     // How a program is translated (`forge bytecode -m`): Default lets the program decide (#debug, #performance).
     enum Mode { Default = -1, Debug = 0, Release = 1, Performance = 2 }
@@ -54,6 +55,16 @@ namespace Forge {
         }
     }
 
+    // What a command line of forge did (Compiler.Run).
+    class CommandResult {
+        int ExitCode
+        // what it wrote to stdout
+        string Output
+        // what it wrote to stderr
+        string Errors
+        construct() { }
+    }
+
     class Compiler {
         // libforge can be used (else LoadError says why)
         static bool Available() { return __ForgeAvailable() }
@@ -73,6 +84,17 @@ namespace Forge {
             var code = __ForgeMain(args)
             if (code < 0) { throw new Forge.ForgeException(__ForgeLoadError()) }
             return code
+        }
+
+        // The same with what it writes collected: its exit code, its output and its error output (also what the programs of `forge run` write).
+        static Forge.CommandResult Run(string args[]) {
+            var code = __ForgeRun(args)
+            if (code < 0) { throw new Forge.ForgeException(__ForgeLoadError()) }
+            var r = new Forge.CommandResult()
+            r.ExitCode = code
+            r.Output = __ForgeRunText(0)
+            r.Errors = __ForgeRunText(1)
+            return r
         }
 
         static Forge.Diagnostic DiagnosticOf(int handle, int i) {
