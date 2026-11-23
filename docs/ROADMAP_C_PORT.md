@@ -659,6 +659,53 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
 **M3:** forge und die VM sind C-Programme und C-Bibliotheken; wer nur sie braucht, braucht kein .NET. Der Bau von fire selbst braucht nur einen
 C-Compiler. `fire`, `fire.Compiler`, `fire.Native` und der Kern von `fire.Testing` verlassen die Solution; .NET steckt nur noch in spark und ember.
 
+#### M3 Schritt 1: Bestandsaufnahme (23.11.2026, vor dem Entfernen)
+
+Was spark (`fire.Editor`), `fire.Testing`, `fire.Benchmarks` und die übrigen Projekte von `fire.Compiler`, `src/fire`, `fire.Native`,
+`fire.Package.Manager` und `fire.Ember` benutzen (gesucht nach den Typen der fünf Projekte, dann Stelle für Stelle gelesen). `fire.Project`,
+`fire.UI.Markup`, `fire.Git`, `fire.Imaging`, `fire.Device.Manager` hängen an keinem der fünf außer `fire.Project` an `fire.Package.Manager` (Manifest,
+Natives der Pakete, Store, Versionen); `fire.Compiler` zieht `fire.Device.Manager` für `PackageDriverAgent` hinein.
+
+**(a) forge-c kann es schon** (Befehl oder Protokoll) - spark ruft künftig nur den Prozess:
+
+| spark (Stelle) | heute in C# | künftig |
+| --- | --- | --- |
+| Build, Build Solution, Build virtual, Publish, Pack Library, der Build eines nativen Laufs (`ForgeProcess`) | Prozess `forge` (C#) mit `--report json` | derselbe Prozess, `forge` ist forge-c |
+| Run/Debug in der VM (`MainWindow.CVm`) | `forge bytecode --report json`, `CVm.Locate` als Rückfall | ebenso; der Rückfall ist `fire` neben spark |
+| Sprachdienste: Vervollständigung, Diagnosen, Hover, Signatur, Definition, Markup-Vervollständigung (`ServeClient`) | `forge-c serve`, mit `FIRE_SPARK_LANG=inproc` im eigenen Prozess (`LiveDiagnostics`, `ScriptSymbolIndex`, `CompletionEngine`, `NavigationEngine`) | nur `forge serve`; der Weg im eigenen Prozess entfällt |
+| Hintergrundprüfungen (`BackgroundCheck`, `AnalyzeDocumentJob`) | `diagnose` über serve, sonst `LiveDiagnostics` | nur `diagnose` |
+| Entwurfsansicht des Markups, Vorschau der Blockmodelle, Schaltplan-Editor, Gerätetreiber (`UiPreview`, `BlockPreview`, `LiveSession`, `PackageDriverAgent`) | Linker in spark, dann `fire` als Kind | `forge bytecode --report json` (Programm, Bibliotheken der Pakete, VM), dann `fire` |
+| Werkzeuge des Datenmodells (`DataModelTools`: DDL, Import, Datenbank anlegen, Migration) | `DataCommand` in spark (Linker + VM) | `forge run` eines erzeugten Skripts, `forge data import|diff` |
+| Standardpakete installieren (Start, Einrichtung) | `StandardSources.EnsureInstalled` | `forge install-standard` |
+| TinyCC/Open Watcom laden (Einrichtung) | `TinyccSetup`, `WatcomSetup` | `forge toolchain-setup tcc|watcom` (D5) |
+| eine Toolchain prüfen (Dialog der nativen Builds) | `NativeBuilder.TestToolchain` | `forge toolchaintest <name>` |
+| ein `.fpk` lesen (Projekte, Package Manager) | `Fpk.ReadManifest` | `forge fpk <datei>` |
+
+**(b) forge-c (oder ember in fire) braucht einen neuen Befehl oder Teil des Protokolls:**
+
+| spark (Stelle) | heute in C# | neu |
+| --- | --- | --- |
+| Test-Explorer: Tests finden (`TestDiscovery`, nur Parsen) | Präprozessor und Parser in spark | `forge serve`: Anfrage `tests` (Text einer Datei -> Klassen, Methoden, Titel, Zeilen) |
+| Test-Explorer: Tests laufen lassen (`TestRunner.RunInVm`, live) | Linker + Treiber in spark, `fire` als Kind | `forge test ... --report json`: ein JSON-Objekt je Ereignis (Lauf, Test begonnen, Test fertig mit Status/Meldung/Ausgabe, Problem, Diagnose, Ende), live; `--overlay` für ungesicherte Texte |
+| Package Manager: suchen, Liste der installierten | `PackageManagerService` (C#-ember als Bibliothek) | `ember find --json`, `ember list --json` (ember in fire); Installieren/Entfernen über `ember install|remove` |
+
+**(c) reine C#-Helfer ohne Compiler** - bleiben als kleine Bibliothek `src/fire.Tooling` (ohne Parser, Typprüfer, Generator, Builder):
+
+* der Weg zu forge und `fire` (neben spark, `FIRE_FORGE`, sonst forge-c aus `native/forge` gebaut), `ChildProcesses`;
+* die Daten des Berichts (`ForgeReport`, `Diagnostic`, `BuildProgress`/`BuildPhase`, `BackgroundWork`), `OutputLocations` (klickbare Zeilen), das Lesen des Testberichts (`TestResult`, `TestFilter`);
+* die Debugger-Clients (`NativeDebugTarget`, `NativeDebugTransport`, `NativeLaunch`, `CVmLaunch`, `Esp32Launch`, `DebugJson`, `DebugTarget`) - sie sprechen das Protokoll mit einem Prozess;
+* die Kindprozesse der Ansichten (`HostDisplayFile`, `LiveSession`, `CVmScript`, `UiPreview`, `BlockPreview`, `PackageDriverAgent`) - jetzt ohne Linker;
+* die Modelle der Editoren: `BlockModel`, `MeshModel` (mit ihrem `.f3d` für die Vorschau), `AssemblyInfo` (Dialog der Build-Einstellungen; die Direktiven aus dem Text gelesen statt mit dem Präprozessor), `NativeStats` (Ansicht von `.stats.json`);
+* die Daten der Toolchains und Ziele für die Dialoge: `ToolchainDef`/`ToolchainDetector`, `MachineToolchains`, `NativeConfig` (fire.native.json), `TargetProfile`, `VmExecutionMode`, `OptimizeFor`, `NativeRuntimeFiles.AllPackages`;
+* für die Syntaxfarben: `Lexer` mit `Token` und `ConditionalSymbols` (ein Tastendruck darf nicht auf einen Prozess warten);
+* von `fire.Package.Manager`, was `fire.Project` und spark lesen: `Manifest`, `NativeSources`, `PackageStore` (der Store als Ordner), `PackageVersion` - nach `fire.Project`.
+
+**Was entfällt:** `fire.Compiler` (bis auf das Obige), `fire.Native` (bis auf die Daten oben), `src/fire` (bis auf `Token`, `TargetProfile`, `VmExecutionMode`,
+`OptimizeFor`, `ExceptionTrace.Relative` und die Typen von `PeResourceEditor`, die der Dialog zeigt), `fire.Package.Manager` (bis auf das Obige),
+`fire.Ember`; in spark `LiveDiagnostics`, `ScriptSymbolIndex*`, `CompletionEngine`, `NavigationEngine`, `BuiltinMembers` (die Logik lebt in
+`serve_*.c`). In `fire.Testing` alles, was das C#-forge prüft oder `forge-c conformance` abdeckt (Tabelle in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net)).
+`fire.Benchmarks` übersetzt mit forge-c statt mit dem Linker.
+
 Danach: der **.NET-Wrapper** über `fire_embed.h` (NuGet-Paket mit P/Invoke, ersetzt `RuntimeSession` für Einbetter) und ABI v2 der Paket-Natives.
 
 ### Phase F - die IDE und ember nach fire (Ausblick)
