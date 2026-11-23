@@ -679,6 +679,8 @@ static bool pjFileTime(const char* path, struct stat* st) { return stat(path, st
 static int64_t pjMtimeTicks(const struct stat* st) {   /* LastWriteTimeUtc in ticks (100 ns) since 0001-01-01 */
 #if defined(__APPLE__)
     return (int64_t)st->st_mtimespec.tv_sec * 10000000 + st->st_mtimespec.tv_nsec / 100 + 621355968000000000LL;
+#elif defined(_WIN32)
+    return (int64_t)st->st_mtime * 10000000 + 621355968000000000LL;
 #else
     return (int64_t)st->st_mtim.tv_sec * 10000000 + st->st_mtim.tv_nsec / 100 + 621355968000000000LL;
 #endif
@@ -692,10 +694,17 @@ static bool pjIsSameCopy(const char* source, const char* destination) {
 static bool pjCopyFile(FcCtx* c, const char* source, const char* destination, const char** problem) {
     const char* temp = fcFmt(c, "%s.%.8s.tmp", destination, nbGuid(c));
     struct stat st;
+#ifndef _WIN32
     struct timespec times[2];
+#endif
     nbMkdirs(c, fcDirectoryName(c, destination));
     if (!nbCopyFile(c, source, temp)) { *problem = fcFmt(c, "Could not copy '%s'.", source); unlink(temp); return false; }
     if (stat(source, &st) == 0) {
+#if defined(_WIN32)
+        struct _utimbuf t;   /* (the seconds: what the C runtime of Windows has) */
+        t.actime = st.st_atime; t.modtime = st.st_mtime;
+        _utime(temp, &t);
+#else
 #if defined(__APPLE__)
         times[1] = st.st_mtimespec;
 #else
@@ -706,6 +715,7 @@ static bool pjCopyFile(FcCtx* c, const char* source, const char* destination, co
         times[0].tv_nsec = UTIME_OMIT;
         utimensat(AT_FDCWD, temp, times, 0);
         chmod(temp, st.st_mode & 07777);
+#endif
     }
     if (rename(temp, destination) != 0) { *problem = fcFmt(c, "Could not move '%s'.", temp); unlink(temp); return false; }
     return true;

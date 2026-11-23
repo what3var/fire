@@ -144,8 +144,8 @@ static void fcStoreLoad(FcCtx* c, FcStore* store) {
     int i, k, f;
     store->loaded = true;
     store->imports = fcListNew(c);
-#ifndef _WIN32
     {
+        /* (Windows: opendir of win32.h) */
         DIR* d = opendir(store->root);
         struct dirent* e;
         if (!d) return;
@@ -155,7 +155,6 @@ static void fcStoreLoad(FcCtx* c, FcStore* store) {
         }
         closedir(d);
     }
-#endif
     if (dirs->count > 1) qsort(dirs->items, (size_t)dirs->count, sizeof(void*), fcCmpIgnoreCase);
     for (i = 0; i < dirs->count; i++) {
         const char* dir = (const char*)dirs->items[i];

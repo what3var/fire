@@ -10,6 +10,9 @@ typedef struct PjPublishResult {
 } PjPublishResult;
 
 static const char* pjPublishSummary;   /* the summary of the last pjPublish */
+/* PublishOptions.TextOf: the overlays of the command line (`--overlay`) put into each plan after it is made (tools/commands.c); NULL: the files */
+static void (*pjPublishPlanHook)(FcCtx* c, const void* state, PjPlan* plan);
+static const void* pjPublishHookState;
 static const char* nsDescribe(FcCtx* c);   /* (project/standard.c: CompileErrors.Describe) */
 static void pjLog(const char* line) { if (pjMonitorOut) { fcBufStr(pjMonitorOut, line); fcBufChar(pjMonitorOut, '\n'); } }
 
@@ -59,8 +62,12 @@ static const char* pjStampKey(FcCtx* c, const PjPlan* plan, const char* engine, 
     FcList* libs;
     int i;
     char self[4096];
+#ifdef _WIN32
+    if (!fwSelfPath(self, sizeof self)) self[0] = 0;
+#else
     ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
     self[n > 0 ? n : 0] = 0;
+#endif
     fcShaInit(&h);
     pjHashAdd(c, &h, "fire publish 1");
     pjHashFile(c, &h, self);
@@ -194,7 +201,7 @@ static const char* pjCleanProblem(FcCtx* c, PjWorkspace* w, const char* folder) 
     const char* home = getenv("HOME");
     const char* found;
     int i;
-    if (!*full || streq0(full, "/")) return "it is the root of a drive";
+    if (!*full || fcIsRootDir(full)) return "it is the root of a drive";
     if (home && *home && streq0(pjTrimEndSep(c, home), full)) return "it is the home folder";
     if (w->solution && pjInsideOrSame(c, w->solution->directory, full)) return "the solution is in it";
     for (i = 0; i < w->all->count; i++) { PjLoaded* p = (PjLoaded*)w->all->items[i]; if (pjInsideOrSame(c, p->project->directory, full)) return fcFmt(c, "the project %s is in it", p->project->name); }
@@ -259,6 +266,7 @@ static PjPublishResult* pjPublishOne(FcCtx* c, PjOut* po, PjWorkspace* w, PjLoad
     PjPublishResult* r;
     FC_TRY(c) {
         plan = pjPlanCreate(w, project, false);
+        if (pjPublishPlanHook) pjPublishPlanHook(c, pjPublishHookState, plan);
     } FC_CATCH(c) {
         if (c->err.kind != FC_ERR_PROJECT) fcRethrow(c);
         planError = c->err.message;
@@ -346,7 +354,7 @@ static PjPublishResult* pjPublishOne(FcCtx* c, PjOut* po, PjWorkspace* w, PjLoad
             }
         } else if (streq0(engine, "vm")) {
             /* a program that carries the VM in C (build/cvm.c) */
-            output = plan->settings->output ? plan->settings->output : pjProgramPath(c, project->project->directory, project->project->name, "vm", modeName, "");
+            output = plan->settings->output ? plan->settings->output : pjProgramPath(c, project->project->directory, project->project->name, "vm", modeName, NV_EXTENSION);
             key = pjStampKey(c, plan, engine, modeName, NULL, NULL, output, NULL, -1);
             upToDate = !options->rebuild && pjIsUpToDate(c, project, pjStampName(c, engine, "vm", modeName), key, output);
             if (!upToDate) {

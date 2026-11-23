@@ -7,7 +7,9 @@
 
 /* RuntimeInformation: the runtime identifier of this machine (linux-x64, osx-arm64, ...) */
 static const char* nlRid(void) {
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    const char* os = "win";
+#elif defined(__APPLE__)
     const char* os = "osx";
 #else
     const char* os = "linux";
@@ -29,12 +31,16 @@ static const char* nlRid(void) {
 }
 /* HostPlatformKeys: `vm` first, then the platform package and the name of this machine's target */
 static FcList* nlHostPlatformKeys(FcCtx* c) { return nbStrings(c, 3, "vm", fgHostTarget()->platform, fgHostTarget()->name); }
-#if defined(__APPLE__)
+#if defined(_WIN32)
+#define NL_EXTENSION ".dll"
+#define NL_PREFIX ""
+#elif defined(__APPLE__)
 #define NL_EXTENSION ".dylib"
+#define NL_PREFIX "lib"
 #else
 #define NL_EXTENSION ".so"
-#endif
 #define NL_PREFIX "lib"
+#endif
 /* Safe: letters and digits in lower case, everything else `_` (char.IsLetterOrDigit of a UTF-16 unit: the names of the packages are ASCII - a byte >= 0x80 is `_`) */
 static const char* nlSafe(FcCtx* c, const char* text) {
     char* r = (char*)fcStr(c, text);
@@ -439,9 +445,13 @@ static const char* nlLocate(FcCtx* c, FcDict* cache, FcStore* store, const FgIns
 #define NL_FAILURE_MINUTES 5
 static const char* nlFailureFile(FcCtx* c, const FgInstImport* imp, const char* dir) { return nbCombine(c, dir, fcFmt(c, "%s.failed", nlFileNameFor(c, imp))); }
 static long long nlNowTicks(void) {
+#ifdef _WIN32
+    return fwNowTicks();
+#else
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return ((long long)ts.tv_sec + 62135596800LL) * 10000000LL + ts.tv_nsec / 100;
+#endif
 }
 static const char* nlRecentFailure(FcCtx* c, const FgInstImport* imp) {
     FcList* dirs = nlBuiltDirectories(c, imp);
@@ -560,7 +570,17 @@ static const char* nlGraphicsSourceHash(FcCtx* c, FcDict* cache, FcStore* store,
 }
 #define NL_GRAPHICS_FILE NL_PREFIX "fire_gfx" NL_EXTENSION
 /* EnsureGraphics: the library of graphics and windows for the VM, built once per machine (again when a source of the two packages is newer), kept with graphics */
+static long nlGraphicsWork;   /* (the BackgroundWork of the build of graphics and windows: from the line of the log to the end) */
+static NlResult nlEnsureGraphicsWork(FcCtx* c, FcDict* cache, FcStore* store, const FgInstImport* graphics, const FgInstImport* windows, FcBuf* log);
 static NlResult nlEnsureGraphics(FcCtx* c, FcDict* cache, FcStore* store, const FgInstImport* graphics, const FgInstImport* windows, FcBuf* log) {
+    NlResult r;
+    nlGraphicsWork = 0;
+    r = nlEnsureGraphicsWork(c, cache, store, graphics, windows, log);
+    if (nlGraphicsWork) fcBgEnd(nlGraphicsWork);
+    nlGraphicsWork = 0;
+    return r;
+}
+static NlResult nlEnsureGraphicsWork(FcCtx* c, FcDict* cache, FcStore* store, const FgInstImport* graphics, const FgInstImport* windows, FcBuf* log) {
     NlResult r = { NULL, NULL };
     long long newest = nlNewestSource(c, graphics), w = nlNewestSource(c, windows);
     const char* key = NULL;
@@ -587,6 +607,7 @@ static NlResult nlEnsureGraphics(FcCtx* c, FcDict* cache, FcStore* store, const 
     if (nbFileExists(prebuilt) && (hash = nlReadTrimmed(c, fcFmt(c, "%s.hash", prebuilt))) != NULL && streq0(hash, nlGraphicsSourceHash(c, cache, store, graphics, windows))
         && nlSameRuntime(c, prebuilt, NL_GKEY())) { r.path = prebuilt; return r; }
     if (log) fcBufFmt(log, "Building the native part of graphics and windows for %s...\n", nlRid());
+    nlGraphicsWork = fcBgBegin("Building the windows and graphics of fire for this machine", 0, 0);
     toolchain = nbToolchainRequire(c, nbOptimizingToolchain(c, nbConfigNew(c), target), "The windows and the graphics of fire are C that has to be compiled on this machine, for the virtual machine.");
     if (!toolchain) { r.error = "The windows and the graphics of fire have to be built with a C compiler (gcc, clang, tcc or cl), and none was found on this machine."; return r; }
     work = fcFmt(c, "%sfire-pkgbuild-%s", nbTempPath(c), nbGuid(c));

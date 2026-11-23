@@ -71,19 +71,13 @@ static int pjBuildCommand(int argc, char** argv, const char* prelude, const char
     if (r >= 0) return r;
     return pjBuildMain(&a, prelude, storeRoot);
 }
-/* `forge-c publish <project|solution> [-p <project>] [--toolchain <name>] [--quick[=0|1]]` (CommandLine.Publish) */
-static int pjPublishCommand(int argc, char** argv, const char* prelude, const char* storeRoot) {
-    PjBuildArgs a;
-    FcCtx ctx;
-    FcCtx* c = &ctx;
+/* CommandLine.Publish: the projects of the solution that publish (or -p, or the one project of a .fireproj), the log on stdout, the diagnostics on stderr */
+static int pjPublishRun(FcCtx* c, const char* file, int files, const char* projectName, const char* toolchainName, int quick, const char* prelude, const char* storeRoot) {
     FcBuf out = {0}, err = {0};
     PjOut po;
     volatile int result = 0;
-    int r = pjParseArgs(argc, argv, &a, true);
-    if (r >= 0) return r;
-    if (!pjIsProjectFile(a.file)) { fprintf(stderr, "publish takes one solution (.firesln) or project (.fireproj).\n"); return 2; }
-    if (!nbFileExists(a.file)) { fprintf(stderr, "File not found: %s\n", a.file); return 2; }
-    fcCtxInit(c);
+    if (files != 1 || !pjIsProjectFile(file)) { fprintf(stderr, "publish takes one solution (.firesln) or project (.fireproj).\n"); return 2; }
+    if (!nbFileExists(file)) { fprintf(stderr, "File not found: %s\n", file); return 2; }
     fcBufStr(&out, "");
     fcBufStr(&err, "");
     po.c = c; po.seen = fcListNew(c); po.err = &err;
@@ -93,8 +87,8 @@ static int pjPublishCommand(int argc, char** argv, const char* prelude, const ch
         FcList* volatile projects = NULL;
         bool usage = false;
         FC_TRY(c) {
-            w = pjWorkspaceOpen(c, a.file);
-            if (a.projectName) { projects = fcListNew(c); fcListAdd(c, projects, pjSelectProject(w, a.projectName)); }
+            w = pjWorkspaceOpen(c, file);
+            if (projectName) { projects = fcListNew(c); fcListAdd(c, projects, pjSelectProject(w, projectName)); }
             else if (!w->solution) projects = fcListCopy(c, w->members);
         } FC_CATCH(c) {
             if (c->err.kind != FC_ERR_PROJECT) fcRethrow(c);
@@ -106,7 +100,7 @@ static int pjPublishCommand(int argc, char** argv, const char* prelude, const ch
             bool ok = true;
             FcList* results;
             int i, k;
-            options.toolchain = a.toolchainName; options.includeDisabled = projects != NULL; options.quick = a.quick; options.rebuild = false;
+            options.toolchain = toolchainName; options.includeDisabled = projects != NULL; options.quick = quick; options.rebuild = false;
             results = pjPublish(c, &po, w, projects, &options, prelude, storeRoot, &ok);
             for (i = 0; i < results->count; i++) {
                 PjPublishResult* p = (PjPublishResult*)results->items[i];
@@ -124,7 +118,18 @@ static int pjPublishCommand(int argc, char** argv, const char* prelude, const ch
     fwrite(out.p, 1, out.len, stdout);
     fcBufFree(&out);
     fcBufFree(&err);
-    fcCtxFree(c);
+    return result;
+}
+/* `forge-c publish <project|solution> [-p <project>] [--toolchain <name>] [--quick[=0|1]]` (CommandLine.Publish) */
+static int pjPublishCommand(int argc, char** argv, const char* prelude, const char* storeRoot) {
+    PjBuildArgs a;
+    FcCtx ctx;
+    int result;
+    int r = pjParseArgs(argc, argv, &a, true);
+    if (r >= 0) return r;
+    fcCtxInit(&ctx);
+    result = pjPublishRun(&ctx, a.file, 1, a.projectName, a.toolchainName, a.quick, prelude, storeRoot);
+    fcCtxFree(&ctx);
     return result;
 }
 
