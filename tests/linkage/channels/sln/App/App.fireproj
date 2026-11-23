@@ -1,0 +1,1 @@
+{ "name": "App", "references": [ { "project": "../Relay/Relay.fireproj" } ] }

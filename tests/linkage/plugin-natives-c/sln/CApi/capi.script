@@ -1,0 +1,6 @@
+namespace CApi {
+    class Tool {
+        construct() { }
+        int Up(int x) { return __capi_up(x) }
+    }
+}

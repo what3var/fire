@@ -1,0 +1,15 @@
+title: Module ohne GIL mit TinyCC static (kein thread-lokaler Speicher: die Plaetze an einem Schluessel von pthreads) - dieselben drei Programme wie tests/linkage/threads
+needs: tcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/static
+forge build ../threads/natives.fire --engine native --toolchain tcc --linkage static -o $OUT/static/natives
+run $OUT/static/natives
+expect-text "thread ran while the main program was in natives: True\nsum 138000, bumps 2000\n"
+forge build ../threads/sleepers.fire --engine native --toolchain tcc --linkage static -o $OUT/static/sleepers
+run $OUT/static/sleepers
+expect-text "done 400\n"
+under 10
+forge build ../threads/writer.fire --engine native --toolchain tcc --linkage static -o $OUT/static/writer
+run $OUT/static/writer
+expect-text "writes 300000 True\n"
+under 5

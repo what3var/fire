@@ -1,0 +1,28 @@
+title: Module ohne GIL (gcc static, gcc shared): ein fire-Thread laeuft, waehrend das Hauptprogramm im Native eines Pakets einer Bibliothek steckt; 400 Threads schlafen in time und schreiben in Sektionen (unter 10 s); 300000 Schreibzugriffe auf eine globale Variable (unter 5 s)
+# (LinkageTests.ModuleThreads: fire_rt.h FIRE_NO_GIL, die Sperren der Pakete nach Namen; mit der GIL brauchten die 400 Threads Minuten, die 300000 Schreibzugriffe 14-20 s.
+#  TinyCC: tests/linkage/threads-tcc, MinGW unter Wine: tests/wine/threads)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/static $OUT/shared
+forge build natives.fire --engine native --toolchain gcc --linkage static -o $OUT/static/natives
+run $OUT/static/natives
+expect-text "thread ran while the main program was in natives: True\nsum 138000, bumps 2000\n"
+forge build sleepers.fire --engine native --toolchain gcc --linkage static -o $OUT/static/sleepers
+run $OUT/static/sleepers
+expect-text "done 400\n"
+under 10
+forge build writer.fire --engine native --toolchain gcc --linkage static -o $OUT/static/writer
+run $OUT/static/writer
+expect-text "writes 300000 True\n"
+under 5
+forge build natives.fire --engine native --toolchain gcc --linkage shared -o $OUT/shared/natives
+run $OUT/shared/natives
+expect-text "thread ran while the main program was in natives: True\nsum 138000, bumps 2000\n"
+forge build sleepers.fire --engine native --toolchain gcc --linkage shared -o $OUT/shared/sleepers
+run $OUT/shared/sleepers
+expect-text "done 400\n"
+under 10
+forge build writer.fire --engine native --toolchain gcc --linkage shared -o $OUT/shared/writer
+run $OUT/shared/writer
+expect-text "writes 300000 True\n"
+under 5

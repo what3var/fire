@@ -1,0 +1,40 @@
+title: Plugins in Threads und ihr eigener Scope: in einem fire-Thread geladen gehoeren die statischen Felder dem Hauptprogramm, ein gleichzeitiges Load wartet auf die Initialisierer; lib.Unload() - Destruktoren, statische Felder undefined, gehaltene Referenzen zerstoert, wieder geladen - nativ und in der VM (zweimal in einem Prozess der VM mit ASan: LeakSanitizer findet nichts)
+# (LinkageTests.PluginsInThreads)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/host $OUT/kit && cp -r $CASE/sln $OUT/sln
+cd $OUT/sln
+forge build All.firesln -p THost --engine native --toolchain gcc -o $OUT/host/host
+forge build All.firesln -p TKit --engine native --toolchain gcc --host $OUT/host/host -o $OUT/kit/tkit
+forge build All.firesln -p TKit2 --engine native --toolchain gcc --host $OUT/host/host -o $OUT/kit/tkit2
+env FIRE_TEST_PLUGIN=$OUT/kit/tkit.so
+env FIRE_TEST_PLUGIN2=$OUT/kit/tkit2.so
+run $OUT/host/host
+expect $CASE/threads.expected
+forge bytecode All.firesln -p THost -o $OUT/thost.fbc
+env FIRE_TEST_PLUGIN=$OUT/kit/tkit.fireplugin
+env FIRE_TEST_PLUGIN2=$OUT/kit/tkit2.fireplugin
+vm $OUT/thost.fbc
+expect $CASE/threads.expected
+# lib.Unload(): the plugin's own scope
+forge build All.firesln -p UHost --engine native --toolchain gcc -o $OUT/host/uhost
+forge build All.firesln -p UKit --engine native --toolchain gcc --host $OUT/host/uhost -o $OUT/kit/ukit
+env FIRE_TEST_CLIB=libm.so.6
+env FIRE_TEST_PLUGIN3=$OUT/kit/ukit.so
+run $OUT/host/uhost
+expect $CASE/unload.expected
+forge bytecode All.firesln -p UHost -o $OUT/uhost.fbc
+env FIRE_TEST_PLUGIN3=$OUT/kit/ukit.fireplugin
+vm $OUT/uhost.fbc
+expect $CASE/unload.expected
+# the same programs twice in one process of the VM built with AddressSanitizer: the same output, LeakSanitizer finds nothing
+when asan
+sh gcc -g -O1 -fsanitize=address -fno-omit-frame-pointer -w $FIRE_NATIVE_ROOT/vm/fire.c -o $OUT/fire-asan -lm -lpthread -ldl -Wl,--no-as-needed -lstdc++
+env ASAN_OPTIONS=detect_leaks=1:abort_on_error=0
+run $OUT/fire-asan $OUT/thost.fbc $OUT/thost.fbc
+expect $CASE/threads-twice.expected
+lacks "Sanitizer"
+run $OUT/fire-asan $OUT/uhost.fbc $OUT/uhost.fbc
+expect $CASE/unload-twice.expected
+lacks "Sanitizer"
+end

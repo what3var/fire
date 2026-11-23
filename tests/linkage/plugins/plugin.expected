@@ -1,0 +1,15 @@
+classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Probe Kit.Settings Kit.Tuner True
+my driver 1 Fast 1
+42 -100
+driver error negative -3
+True
+my driver 2 Fast 2
+device mine 1 True
+fast x1 9 True
+x1 10 Kit.FastDevice
+again 6
+nope: Unknown class 'Kit.Nope'.
+7 kit title:string level:int marks:List<int> dev:Api.Device method
+tuner 5 True True
+tag quick 3 HI! 2 Lquick devices True | tag x1 9 HI! 2 Lx1 devices True
+tag quick 3 tag r 1 Lquick ABC! False

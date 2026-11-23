@@ -1,0 +1,1 @@
+{ "name": "All", "projects": ["TApi/TApi.fireproj", "TKit/TKit.fireproj", "TKit2/TKit2.fireproj", "THost/THost.fireproj", "UKit/UKit.fireproj", "UHost/UHost.fireproj"], "startup": "THost" }

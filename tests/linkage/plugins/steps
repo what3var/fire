@@ -1,0 +1,86 @@
+title: Plugins: ein Programm mit linkage shared laedt das Plugin Kit (Interface, Basisklasse, Reflect.New/Get/Call, Type.Of, catch, Enum, statische Felder, class extends) - nativ, in der VM (.fireplugin) und ueber Kreuz; Einheiten und Natives in C++ (Meter); die Fehler: eine andere Schnittstelle von Api, ein Feld in class extends, zwei Plugins mit derselben Methode, ein Programm ohne shared, andere Schalter; JSON von Objekten der Plugins
+# (LinkageTests.Plugins; die Hashes der Schnittstellen: "built against another interface"; zweimal in einem Prozess der VM mit ASan: tests/linkage/plugins-asan;
+#  Windows: tests/wine/plugins)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/host $OUT/kit $OUT/meter $OUT/other $OUT/field $OUT/kit2 $OUT/static $OUT/hostj $OUT/json && cp -r $CASE/sln $OUT/sln
+cd $OUT/sln
+forge build All.firesln -p Host --engine native --toolchain gcc -o $OUT/host/host
+forge build All.firesln -p Kit --engine native --toolchain gcc --host $OUT/host/host -o $OUT/kit/kit
+sh test -f $OUT/kit/kit.so && test -f $OUT/kit/kit.fireplugin
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.so
+run $OUT/host/host
+expect $CASE/plugin.expected
+# the VM: the bytecode of the plugin (.fireplugin); to Library.Load("kit.so") the bytecode next to it
+forge bytecode All.firesln -p Host -o $OUT/host.fbc
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.fireplugin
+vm $OUT/host.fbc
+expect $CASE/plugin.expected
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.so
+vm $OUT/host.fbc
+expect $CASE/plugin.expected
+# natively Library.Load("kit.fireplugin") loads the library next to it
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.fireplugin
+run $OUT/host/host
+expect $CASE/plugin.expected
+# a plugin with units (its own, a new dimension, an offset, conversion functions of its own and of a library, a text) and natives in C++
+forge build All.firesln -p Meter --engine native --toolchain gcc --host $OUT/host/host -o $OUT/meter/meter
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.so
+env FIRE_TEST_UNITS=$OUT/meter/meter.so
+run $OUT/host/host
+expect $CASE/units.expected
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.fireplugin
+env FIRE_TEST_UNITS=$OUT/meter/meter.fireplugin
+vm $OUT/host.fbc
+expect $CASE/units.expected
+unenv FIRE_TEST_UNITS
+# built against another interface of Api (a field more): a readable LibraryException instead of a crash - natively and in the VM (the program file carries
+# the interfaces of its modules)
+sh sed -i 's/^    class Device {$/    class Device {\n        int extra = 0/' Api/api.script && grep -q 'extra = 0' Api/api.script
+forge build All.firesln -p Kit --engine native --toolchain gcc --host $OUT/host/host -o $OUT/other/kit
+sh cp $CASE/sln/Api/api.script Api/api.script
+env FIRE_TEST_PLUGIN=$OUT/other/kit.so
+run=3 $OUT/host/host
+contains "The plugin 'Kit' cannot be loaded: it was built against another interface of the module 'Api'"
+env FIRE_TEST_PLUGIN=$OUT/other/kit.fireplugin
+vm=3 $OUT/host.fbc
+contains "load: The plugin 'Kit' cannot be loaded: it was built against another interface of the module 'Api'"
+# class extends of a class of a library with a field: the build says that a plugin adds only methods and properties
+sh sed -i 's/^    static string Kind()/    int age = 3\n    static string Kind()/' Kit/kit.script && grep -q 'age = 3' Kit/kit.script
+forge! build All.firesln -p Kit --engine native --toolchain gcc --host $OUT/host/host -o $OUT/field/kit
+contains "'class extends Api.Device' in a plugin"
+contains "the field 'age' cannot be added"
+sh cp $CASE/sln/Kit/kit.script Kit/kit.script
+# a second plugin adds the same method to Api.Device: a readable LibraryException
+forge build All.firesln -p Kit2 --engine native --toolchain gcc --host $OUT/host/host -o $OUT/kit2/kit2
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.so
+env FIRE_TEST_DUP=$OUT/kit2/kit2.so
+run $OUT/host/host
+contains "dup: The plugin 'Kit2' cannot be loaded: it adds the method 'Tag' (0 arguments) to 'Api.Device', which has it already"
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.fireplugin
+env FIRE_TEST_DUP=$OUT/kit2/kit2.fireplugin
+vm $OUT/host.fbc
+contains "dup: The plugin 'Kit2' cannot be loaded: it adds the method 'Tag' (0 arguments) to 'Api.Device', which has it already"
+unenv FIRE_TEST_DUP
+# a program with linkage static cannot load plugins
+forge build All.firesln -p Host --engine native --toolchain gcc --linkage static -o $OUT/static/host
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.so
+run=3 $OUT/static/host
+contains "this program cannot load fire plugins"
+# a plugin built for other switches (Kit for Host, loaded by HostJ - a program that uses JSON): the configuration of the runtime
+forge build All.firesln -p HostJ --engine native --toolchain gcc -o $OUT/hostj/host
+run=3 $OUT/hostj/host
+contains "built for another configuration of the runtime"
+# JSON of the plugins' objects: Kit and Meter built for HostJ (Serialize, Deserialize with $type and the class name, fields with units of the plugin)
+forge build All.firesln -p Kit --engine native --toolchain gcc --host $OUT/hostj/host -o $OUT/json/kit
+forge build All.firesln -p Meter --engine native --toolchain gcc --host $OUT/hostj/host -o $OUT/json/meter
+env FIRE_TEST_PLUGIN=$OUT/json/kit.so
+env FIRE_TEST_UNITS=$OUT/json/meter.so
+env FIRE_TEST_JSON=1
+run $OUT/hostj/host
+expect $CASE/json.expected
+forge bytecode All.firesln -p HostJ -o $OUT/hostj.fbc
+env FIRE_TEST_PLUGIN=$OUT/json/kit.fireplugin
+env FIRE_TEST_UNITS=$OUT/json/meter.fireplugin
+vm $OUT/hostj.fbc
+expect $CASE/json.expected

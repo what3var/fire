@@ -1,0 +1,22 @@
+title: Module: fire with im Code einer Bibliothek gibt dem Thread ein eigenes Ende der Kanaele des Programms (ihr Bereich endet vorher); Net.Channel nach Close ohne DestroyedException (native/3840) - static und shared wie die VM
+# (LinkageTests.ModuleChannelEnds: eine Bibliothek machte den Verteiler nicht und kannte keine Klasse von Kanaelen, die sie nicht selbst machte)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/static $OUT/shared && cp -r $CASE/sln $OUT/sln
+cd $OUT/sln
+forge bytecode All.firesln -p App -o $OUT/relay.fbc
+vm $OUT/relay.fbc
+expect-text "relayed 12\n"
+forge build All.firesln -p App --engine native --toolchain gcc --linkage static -o $OUT/static/relay
+run $OUT/static/relay
+expect-text "relayed 12\n"
+forge build All.firesln -p App --engine native --toolchain gcc --linkage shared -o $OUT/shared/relay
+run $OUT/shared/relay
+expect-text "relayed 12\n"
+cd
+forge build net.fire --engine native --toolchain gcc --linkage static -o $OUT/static/net
+run $OUT/static/net
+expect-text "net 15\nclosed\n"
+forge build net.fire --engine native --toolchain gcc --linkage shared -o $OUT/shared/net
+run $OUT/shared/net
+expect-text "net 15\nclosed\n"

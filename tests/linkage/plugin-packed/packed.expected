@@ -1,0 +1,6 @@
+fast 3 12
+c 12 2m False
+112 2m 3 112
+fast 15 122
+local 7 | c 8 0.5m True
+1 122 c 1 3m False

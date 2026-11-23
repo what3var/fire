@@ -1,0 +1,13 @@
+42
+-7
+10
+5
+hello from C
+True
+Q
+42
+True
+load: The library '/nonexistent/libnope.so' could not be loaded.
+symbol: The library 'LIB' has no function 'nope'.
+sig: The signature 'int(int,' is not valid: write the result type and the parameter types in C order, like "int[32](string, float)" (bool, int, int[8|16|32|64], float, float[32], char, string, pointers with *, void).
+made

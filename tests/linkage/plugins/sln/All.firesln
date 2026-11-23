@@ -1,0 +1,1 @@
+{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Kit2/Kit2.fireproj", "Meter/Meter.fireproj", "Host/Host.fireproj", "HostJ/HostJ.fireproj"], "startup": "Host" }

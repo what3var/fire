@@ -1,0 +1,6 @@
+#import "Lib"
+namespace Lib2 {
+    class Wrap {
+        static int Twice(int x) { var c = new Lib.Counter(); c.Add(x); c.Add(x); return c.Get() }
+    }
+}

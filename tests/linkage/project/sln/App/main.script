@@ -1,0 +1,6 @@
+#import "Lib2"
+#import "Lib"
+class Mine : Lib.Counter { construct() : base() { } }
+var m = new Mine()
+m.Add(5)
+print(Lib2.Wrap.Twice(21) + " " + m.Get() + " " + Lib.Counter.Version())

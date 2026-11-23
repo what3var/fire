@@ -1,0 +1,14 @@
+title: Module: Klassen des Programms und der Libraries treffen sich (OrderBy, Reflect.Get/Set/Call/New, Probe, Operator, List<T> erweitert, Ausnahme, fehlende Methode) mit static und shared wie die VM
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/static $OUT/shared
+forge bytecode meet.fire -o $OUT/meet.fbc
+vm $OUT/meet.fbc
+expect meet.expected
+forge build meet.fire --engine native --toolchain gcc --linkage static -o $OUT/static/meet
+lacks "not possible"
+run $OUT/static/meet
+expect meet.expected
+forge build meet.fire --engine native --toolchain gcc --linkage shared -o $OUT/shared/meet
+run $OUT/shared/meet
+expect meet.expected

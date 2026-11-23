@@ -1,0 +1,1 @@
+{ "name": "CPlug", "references": [ { "project": "../CApi/CApi.fireproj" } ], "settings": { "linkage": "plugin" } }

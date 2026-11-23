@@ -1,0 +1,1 @@
+{ "name": "CHost", "references": [ { "project": "../CApi/CApi.fireproj" } ], "settings": { "linkage": "shared" } }

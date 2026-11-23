@@ -1,0 +1,1 @@
+{ "name": "UKit", "references": [ { "project": "../TApi/TApi.fireproj" } ], "settings": { "linkage": "plugin" } }

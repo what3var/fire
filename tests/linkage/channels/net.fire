@@ -1,0 +1,17 @@
+#import "net.channel"
+var listener = new Net.ChannelListener<int>("127.0.0.1", 0)
+int port = listener.Port
+fire taking port {
+    var ch = new Net.Channel<int>("127.0.0.1", port)
+    for (int i = 1; i <= 5; i++) { ch.Send(i) }
+    ch.Close()
+}
+if (true) {
+    var net = listener.Accept()
+    int s = 0
+    foreach (x in net) { s = s + x }
+    print("net " + s)
+    net.Close()
+}
+listener.Close()
+print("closed")

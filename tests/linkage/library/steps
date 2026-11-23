@@ -1,0 +1,25 @@
+title: Library.Load/Get: eine C-Bibliothek, geladen waehrend das Programm laeuft - in der VM, nativ (source, static, unter ASan) - und release: (NativeHandle folgt dem Besitz, ein String wird kopiert und freigegeben)
+# (LinkageTests.LibraryLoad; Windows unter Wine: tests/wine/library)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/source $OUT/static $OUT/asan && gcc -shared -fPIC -o $OUT/libt.so t.c
+env FIRE_TEST_CLIB=$OUT/libt.so
+forge bytecode use.fire -o $OUT/use.fbc
+vm $OUT/use.fbc
+expect use-vm.expected
+# (nativ: ein Thunk je Signatur, die ein Text des Programms ist; eine zur Laufzeit gebaute Signatur sagt, dass sie fehlt)
+forge build use.fire --engine native --toolchain gcc -o $OUT/source/use
+run $OUT/source/use
+expect use-native.expected
+forge build use.fire --engine native --toolchain gcc --linkage static -o $OUT/static/use
+run $OUT/static/use
+expect use-native.expected
+forge bytecode release.fire -o $OUT/release.fbc
+vm $OUT/release.fbc
+expect release.expected
+forge build release.fire --engine native --toolchain gcc -o $OUT/source/release
+run $OUT/source/release
+expect release.expected
+forge build release.fire --engine native --toolchain gcc --linkage static -o $OUT/static/release
+run $OUT/static/release
+expect release.expected

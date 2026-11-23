@@ -1,0 +1,5 @@
+#import "json"
+class Q { int x = 4; string t = "q" }
+var q = new Q()
+print(Json.Serialize(q))
+print(q.x * 10)

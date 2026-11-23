@@ -1,0 +1,1 @@
+{ "name": "All", "projects": ["Lib/Lib.fireproj", "Lib2/Lib2.fireproj", "App/App.fireproj"], "startup": "App" }

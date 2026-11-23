@@ -1,0 +1,1 @@
+{ "name": "C", "projects": ["CApi/CApi.fireproj", "CPlug/CPlug.fireproj", "CHost/CHost.fireproj"], "startup": "CHost" }

@@ -1,0 +1,17 @@
+title: Tls.Engine (TLS ueber Puffer) auf den TLS-Bibliotheken des Pakets: OpenSSL (die Vorgabe), mbedTLS (FIRE_TLS_MBEDTLS) - Handshake ueber Puffer, Daten in mehreren Records, Zertifikat geprueft, gegen einen Tls.Server derselben Bibliothek ueber TCP; in der VM
+# (LinkageTests.TlsEngineBackends; SChannel unter Wine: tests/wine/tls. The certificate: made with openssl, as the test program made it with .NET)
+needs: gcc openssl
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh openssl req -x509 -newkey rsa:2048 -nodes -keyout $OUT/key.pem -out $OUT/cert.pem -days 3650 -subj /CN=localhost -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" -addext "basicConstraints=critical,CA:FALSE" 2>/dev/null && { printf '#import "tls"\n#import "time"\nvar certPem = "%s"\nvar keyPem = "%s"\n' "$(awk '{printf "%s\\n", $0}' $OUT/cert.pem)" "$(awk '{printf "%s\\n", $0}' $OUT/key.pem)"; cat engine.body; } > $OUT/engine.fire && mkdir -p $OUT/openssl $OUT/mbed
+forge bytecode $OUT/engine.fire -o $OUT/engine.fbc
+vm $OUT/engine.fbc
+expect engine.expected
+forge build $OUT/engine.fire --engine native --toolchain gcc -o $OUT/openssl/engine
+run $OUT/openssl/engine
+expect engine.expected
+when file:/usr/include/mbedtls/ssl.h
+sh echo '{ "toolchains": { "mbed": { "kind": "gcc", "compiler": "g++", "cCompiler": "gcc", "std": "c++17", "cStd": "c11", "optimization": "-O1", "args": ["-DFIRE_TLS_MBEDTLS"], "libs": ["-lmbedtls", "-lmbedx509", "-lmbedcrypto"] } } }' > $OUT/mbed.json
+forge build $OUT/engine.fire --engine native --config $OUT/mbed.json --toolchain mbed -o $OUT/mbed/engine
+run $OUT/mbed/engine
+expect engine.expected
+end

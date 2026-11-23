@@ -1,0 +1,15 @@
+title: Gepackte Objekte ueber Module: Basisklasse der Bibliothek, Ableitung im Plugin und im Programm - Methoden aller drei, Reflection, flat - nativ und in der VM
+# (LinkageTests.PackedPlugins: jedes Modul legt die Basis gleich an, nach der Erklaerung)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/host $OUT/kit && cp -r $CASE/sln $OUT/sln
+cd $OUT/sln
+forge build All.firesln -p Host --engine native --toolchain gcc -o $OUT/host/host
+forge build All.firesln -p Kit --engine native --toolchain gcc --host $OUT/host/host -o $OUT/kit/kit
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.so
+run $OUT/host/host
+expect $CASE/packed.expected
+forge bytecode All.firesln -p Host -o $OUT/host.fbc
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.fireplugin
+vm $OUT/host.fbc
+expect $CASE/packed.expected

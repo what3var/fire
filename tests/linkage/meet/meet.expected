@@ -1,0 +1,18 @@
+(1,5) (3,1)
+sum (3,7)
+big 3 1
+get 5 4
+set 42
+call -1
+bag 2 4 bag True True
+total 9
+caught bad
+type Parameter 'value' is a T (int), not String.
+dyn 2 4
+miss Method 'Nope' not found on 'Pt'.
+arity Method 'CompareTo' on 'Pt' has no overload with 0 argument(s) (available: 1 argument(s)).
+{"$type":"Pt","x":3,"y":1}
+Pt
+new (7,8)
+probe x 7->9
+probe x 9->10

@@ -1,0 +1,1 @@
+{ "name": "UHost", "references": [ { "project": "../TApi/TApi.fireproj" } ], "settings": { "linkage": "shared" } }

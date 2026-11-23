@@ -1,0 +1,22 @@
+var path = Environment.Get("FIRE_TEST_CLIB")
+var lib = Library.Load(path)
+var add = lib.Get("add", "int(int, int)")
+print(add(40, 2))
+var neg = lib.Get("neg32", "int[32](int[32])")
+print(neg(7))
+var scale = lib.Get("scale", "float(float, float[32])")
+print(scale(2.5, 4.0))
+print(lib.Get("len", "int(string)")("hello"))
+print(lib.Get("greet", "string()")())
+print(lib.Get("isodd", "bool(int)")(7))
+print(lib.Get("upper", "char(char)")('q'))
+int x = 21
+var twice = lib.Get("twice", "void(int*)")
+unsafe { twice(&x) }
+print(x)
+print(lib.Path == path)
+try { Library.Load("/nonexistent/libnope.so") } catch (LibraryException e) { print("load: " + e.message) }
+try { lib.Get("nope", "int()") } catch (LibraryException e) { print("symbol: " + e.message.Replace(path, "LIB")) }
+try { lib.Get("add", "int(int,") } catch (LibraryException e) { print("sig: " + e.message) }
+var s = "int(" + "int)"
+try { var f = lib.Get("add", s); print("made") } catch (LibraryException e) { print("dyn: " + e.message) }

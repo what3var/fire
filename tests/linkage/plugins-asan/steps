@@ -1,0 +1,17 @@
+title: Plugins: zwei Programme mit Kit und Meter nacheinander in einem Prozess der VM mit AddressSanitizer - dieselbe Ausgabe, LeakSanitizer findet nichts (die Programme, Einheiten, Dimensionen und Tabellen der Plugins des ersten sind weg)
+# (LinkageTests.Plugins, CVmSanitized: `fire x.fbc x.fbc`)
+needs: gcc asan
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/host $OUT/kit $OUT/meter && cp -r ../plugins/sln $OUT/sln
+sh gcc -g -O1 -fsanitize=address -fno-omit-frame-pointer -w $FIRE_NATIVE_ROOT/vm/fire.c -o $OUT/fire-asan -lm -lpthread -ldl -Wl,--no-as-needed -lstdc++
+cd $OUT/sln
+forge build All.firesln -p Host --engine native --toolchain gcc -o $OUT/host/host
+forge build All.firesln -p Kit --engine native --toolchain gcc --host $OUT/host/host -o $OUT/kit/kit
+forge build All.firesln -p Meter --engine native --toolchain gcc --host $OUT/host/host -o $OUT/meter/meter
+forge bytecode All.firesln -p Host -o $OUT/host.fbc
+env FIRE_TEST_PLUGIN=$OUT/kit/kit.fireplugin
+env FIRE_TEST_UNITS=$OUT/meter/meter.fireplugin
+env ASAN_OPTIONS=detect_leaks=1:abort_on_error=0
+run $OUT/fire-asan $OUT/host.fbc $OUT/host.fbc
+expect ../plugins/units-twice.expected
+lacks "Sanitizer"

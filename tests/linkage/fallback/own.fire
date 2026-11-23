@@ -1,0 +1,2 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+try { throw new Exception("x") } catch (e) { print("caught " + e.message) }

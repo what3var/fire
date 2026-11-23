@@ -1,0 +1,16 @@
+class Dog {
+    string name
+    construct(string n) { this.name = n }
+}
+class Cat { int lives = 7 }
+Dog dogs[] = [new Dog("rex")]
+Cat cats[] = [new Cat()]
+var parts = "a,b,c".Split(",")
+print(dogs[0].name + " " + cats[0].lives + " " + parts.length + " " + parts[2])
+var l = new List<Dog>()
+l.Add(new Dog("bello"))
+l.Add(new Dog("fido"))
+print(l[1].name + " " + l.Count)
+var words = new List<string>()
+words.Add("w")
+print(words[0] + " " + "x y".Split(" ")[1])

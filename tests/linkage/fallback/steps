@@ -1,0 +1,20 @@
+title: Rueckfall: ein Programm, das sich nicht in Module teilen laesst (es erklaert eine Klasse der Prelude neu, und die Bibliothek von core im Cache hat die ihre), wird mit linkage source gebaut und sagt es
+# (the check of the interface in the cache: the classes of the module core there are not those of this program - LinkageTests built the CLI program into the
+#  same cache before; with an empty cache core is built for this program, and that is right, too)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/first $OUT/static $OUT/fresh && printf 'print("first")\n' > $OUT/first.fire
+forge build own.fire --engine native --toolchain gcc --linkage static -o $OUT/fresh/own
+lacks "not possible"
+run $OUT/fresh/own
+expect-text "caught x\n"
+sh rm -rf $OUT/cache
+forge build $OUT/first.fire --engine native --toolchain gcc --linkage static -o $OUT/first/first
+forge bytecode own.fire -o $OUT/own.fbc
+vm $OUT/own.fbc
+expect-text "caught x\n"
+forge build own.fire --engine native --toolchain gcc --linkage static -o $OUT/static/own
+contains "not possible"
+contains "declares classes of the module anew"
+run $OUT/static/own
+expect-text "caught x\n"

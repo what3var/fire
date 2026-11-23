@@ -1,0 +1,22 @@
+#import "Api"
+#import "reflection"
+class Local : Api.Counter {
+    defined int mine = 7
+    string Extra() { this.hits = this.hits + this.mine; return "local " + this.mine }
+}
+any lib = undefined
+try { lib = Library.Load(Environment.Get("FIRE_TEST_PLUGIN")) } catch (LibraryException e) { print("load: " + e.message); terminate(3) }
+Api.Counter f = Reflect.New("Kit.Fast", [])
+f.Hit(); f.Hit()
+print(f.Extra())
+print(f.Show())
+f.hits = f.hits + 100
+print(f.hits + " " + f.dist + " " + Reflect.Get(f, "extra") + " " + Reflect.Get(f, "hits"))
+Reflect.Set(f, "extra", 5)
+print(f.Extra())
+var l = new Local()
+l.Hit()
+print(l.Extra() + " | " + l.Show())
+var c = flat f
+c.hits = 1
+print(c.hits + " " + f.hits + " " + c.Show())

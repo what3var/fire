@@ -1,0 +1,20 @@
+t1: 2 first kit7 1
+main: first kit7 2
+t2: first kit7 3 kept 1
+main: first kit7 3 kept 2
+main: 10 1
+t3: 10 1
+end
+item first destroyed
+item kept destroyed
+item kept destroyed
+t1: 2 first kit7 1
+main: first kit7 2
+t2: first kit7 3 kept 1
+main: first kit7 3 kept 2
+main: 10 1
+t3: 10 1
+end
+item first destroyed
+item kept destroyed
+item kept destroyed

@@ -1,0 +1,5 @@
+#import "CApi"
+#import "reflection"
+print(new CApi.Tool().Up(1))
+try { Library.Load(Environment.Get("FIRE_TEST_PLUGIN")) } catch (LibraryException e) { print("load: " + e.message); terminate(3) }
+print(Reflect.Call(Reflect.New("CPlug.P", []), "Ten", [4]))

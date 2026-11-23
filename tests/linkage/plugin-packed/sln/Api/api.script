@@ -1,0 +1,11 @@
+namespace Api {
+    class Counter {
+        string name = "c"
+        defined int hits
+        defined float : m dist
+        defined bool lit
+        Hit() { this.hits++; this.dist = this.dist + 50cm; this.lit = !this.lit }
+        string Show() { return this.name + " " + this.hits + " " + this.dist + " " + this.lit }
+        string Extra() { return "-" }
+    }
+}

@@ -1,0 +1,1 @@
+{ "name": "App", "references": [ { "project": "../Reader/Reader.fireproj" } ], "settings": { "linkage": "static" } }
