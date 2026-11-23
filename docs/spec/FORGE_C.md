@@ -1137,7 +1137,7 @@ Zeilen), zu jedem falschen Fall steht die erste Zeile, die abweicht.
 Gemessen mit forge-c (gebaut neben dem C#-forge, Stand 5ed7c1c7 von `clippy`): `forge-c conformance -j 2` **1173 von 1173** Fällen richtig (3 min 30 s),
 `tests/run-cases-vm.sh <forge-c> -j 2 --list` mit derselben VM ebenso - dieselben Urteile Fall für Fall; an einer Kopie mit drei verdorbenen Fällen (eine
 `.expected`, eine `.diagnostics`, eine `.error`) melden beide dieselben drei. Nativ (`--engine native`, die Toolchain, die forge wählt: hier tcc) **515 von 517**:
-`native/1370` (inline c: `bool` aus C - mit tcc `2` statt `1`; mit `--toolchain gcc` richtig) und `native/4440` (Library.Load einer `.fireplugin`-Datei: das native
+`native/1370` (inline c: mit tcc `2` statt `1` - nicht der `bool` aus C, wie zuerst vermutet - `_Bool` normalisieren tcc und gcc gleich -, sondern `Compiler()` des Falls: `#if defined(__GNUC__)`, das tcc nicht setzt; seit dem 23.11.2026 fragt der Fall `INT32_MAX` und ist mit tcc und gcc richtig) und `native/4440` (Library.Load einer `.fireplugin`-Datei: das native
 Programm mit linkage `source` meldet "cannot load fire plugins", der Fall erwartet die Meldung der VM - der Fall ist seit dem 23.11.2026 `vm-rf/0190`;
 gemeldet, nicht geändert). Nicht portiert vom nativen Teil des Testprogramms: die Sanitizer (ASan/UBSan, ThreadSanitizer), `-Wall -Wextra` mit einer Warnung als
 Fehler, die Sonderläufe nach Titel (FreeRTOS, ESP32, Fenster, Wine, Debugger). Unter Windows hat `cfSpawn` noch keinen Timeout (`fwRun`).

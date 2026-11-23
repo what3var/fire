@@ -9,7 +9,7 @@ inline c any Twice(any a) { return a.kind == K_Int ? Int(a.i * 2) : a; }
 inline c undefined Nothing() { /* } in a comment */ const char* s = "}"; (void)s; }
 inline c int[16] Narrow(int[16] x) { return (int16_t)(x + 1); }
 inline c int Compiler() {
-#if defined(__GNUC__)
+#if defined(INT32_MAX)   /* (every C compiler: stdint.h comes with the runtime - __GNUC__ is not defined by tcc) */
     return 1;   // a C comment with a } brace
 #else
     return 2;

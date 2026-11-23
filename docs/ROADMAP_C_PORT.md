@@ -631,7 +631,7 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    in eigenen Prozessen (`forge-c bytecode`, dann `fire`; mit `--engine native` die Gruppe native als native Programme), nach den Regeln von `run-cases.sh`,
    `run-cases-vm.sh`, `TestCasesVm` und `NatVerdict`; Filter nach Gruppe, Fall und Titel, `-j` (Vorgabe: die Hälfte der Kerne, höchstens 4), ein falscher Fall noch
    einmal allein, Zusammenfassung je Gruppe, Exitcode. Maß: **1173 von 1173** Fällen in der VM, dieselben Urteile wie `tests/run-cases-vm.sh` mit forge-c (auch an
-   drei absichtlich verdorbenen Fällen); nativ (tcc) 515 von 517 - `native/1370` ist tcc (mit gcc richtig), `native/4440` erwartet die Meldung der VM, wo ein natives
+   drei absichtlich verdorbenen Fällen); nativ (tcc) 515 von 517 - `native/1370` war `#if defined(__GNUC__)` im Fall, das tcc nicht setzt (seit dem 23.11.2026 behoben: `INT32_MAX`), `native/4440` erwartet die Meldung der VM, wo ein natives
    Programm keine fire-Plugins laden kann (seither `vm-rf/0190`). `forge-c package-dist <ordner>` (`tools/dist.c`, `native/forge/package-dist.sh`): forge-c als `forge`, die
    VM mit ihren fünf Varianten, `native/`, `Source/` und `Prebuilt/` - nur mit einem C-Compiler und forge-c; `setup.iss` nimmt den Ordner mit `/DForgeDist=<ordner>`
    (spark und ember dann mit `-p:PublishForge=false`, ohne das C#-forge). Was in `fire.Testing` C# bleibt und was Daten werden kann: die Tabelle in FORGE_C.md.
