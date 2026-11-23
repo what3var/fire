@@ -5893,12 +5893,14 @@ FIRE_FN void fire_traceAdd(FireTraceText* b, const char* s, size_t len) {
     b->p[b->n] = 0;
 }
 FIRE_FN void fire_traceAddS(FireTraceText* b, const char* s) { fire_traceAdd(b, s, strlen(s)); }
-/* What stands in the brackets of a frame: `main.fire:16`, `main.fire` (without lines, or line 0), `prelude`. */
+/* What stands in the brackets of a frame: `main.fire:16`, `main.fire` (without lines, or line 0), `prelude`. A negative line is a frame on entry (the code a
+ * function runs before its first line, the checks of its parameters): the first line of the function - fire_traceFormat writes `(entry)` before it. */
 FIRE_FN void fire_traceWhere(FireTraceText* b, const char* file, int32_t line, int mode) {
     char num[24];
     if (!file) { fire_traceAddS(b, "prelude"); return; }
     if (FIRE_TRACE_IS_NATIVE(file)) { fire_traceAddS(b, file + 1); return; }
     fire_traceAddS(b, file);
+    if (line < 0) line = -line;
     if (mode == FIRE_TRACE_LINES && line > 0) { snprintf(num, sizeof num, ":%ld", (long)line); fire_traceAddS(b, num); }
 }
 /* The lines of the trace, each ended by a line feed (malloc'ed; NULL: no trace, or `#stacktrace off`). */
@@ -5914,6 +5916,7 @@ FIRE_FN char* fire_traceFormat(const FireTrace* t, int mode) {
             if (s->omitted > 0 && i == FIRE_TRACE_INNER) { snprintf(num, sizeof num, "   ... %lu more frames ...\n", (unsigned long)s->omitted); fire_traceAddS(&b, num); }
             fire_traceAddS(&b, "   at ");
             fire_traceAddS(&b, s->frames[i].fn && s->frames[i].fn->name ? s->frames[i].fn->name : "?");
+            if (s->frames[i].line < 0) fire_traceAddS(&b, " (entry)");   /* (thrown on entry, before its first line: `at Runner.Execute (entry) (main.fire:3)`) */
             fire_traceAddS(&b, " (");
             fire_traceWhere(&b, s->frames[i].fn ? s->frames[i].fn->file : NULL, s->frames[i].line, mode);
             fire_traceAddS(&b, ")\n");
@@ -6062,7 +6065,7 @@ FIRE_FN Value fire_exc_frames(Value e, Value index, Value part, OwnList* list) {
     f = fire_traceFrameAt(t, (uint32_t)index.i);
     if (!f) return Undef();
     if (part.kind == K_Int && part.i == 1) return fire_traceStr(f->fn && f->fn->file ? (FIRE_TRACE_IS_NATIVE(f->fn->file) ? "(native)" : f->fn->file) : "", list);
-    if (part.kind == K_Int && part.i == 2) return Int(g_stackTrace == FIRE_TRACE_LINES && f->fn && f->fn->file && !FIRE_TRACE_IS_NATIVE(f->fn->file) ? f->line : 0);
+    if (part.kind == K_Int && part.i == 2) return Int(g_stackTrace == FIRE_TRACE_LINES && f->fn && f->fn->file && !FIRE_TRACE_IS_NATIVE(f->fn->file) ? (f->line < 0 ? -f->line : f->line) : 0);
     return fire_traceStr(f->fn && f->fn->name ? f->fn->name : "?", list);
 }
 

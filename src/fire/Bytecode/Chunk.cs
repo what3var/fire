@@ -65,6 +65,11 @@ namespace fire.Bytecode
         /// <summary>The source of the first line of the chunk (null: it has no line information) - the module its code belongs to (ROADMAP 9).</summary>
         public int? FirstSourceIndex => _lineTable.Count > 0 ? _lineTable[0].SourceIndex : null;
 
+        /// <summary>An instruction before the first line of the chunk - the code a function runs on entry, before its first line (the checks of its
+        /// parameters: the signature of a lambda, a type): the source and the line of that first line; null for any other (docs/spec/STACKTRACE.md, the frame
+        /// `(entry)`).</summary>
+        public (int SourceIndex, int Line)? EntryLocation(int ip) => _lineTable.Count > 0 && ip < _lineTable[0].Offset ? (_lineTable[0].SourceIndex, _lineTable[0].Line) : null;
+
         /// <summary>The source lines this chunk has code for (the profiler's lines that can run, LineProfile.ExecutableLines).</summary>
         public IEnumerable<(int SourceIndex, int Line)> Lines => _lineTable.Where(e => e.Line > 0).Select(e => (e.SourceIndex, e.Line));
         /// <summary>The line table as it stands (the program file writes it, ProgramFile).</summary>

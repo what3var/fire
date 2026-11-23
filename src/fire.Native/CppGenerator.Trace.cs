@@ -45,13 +45,21 @@ namespace fire.Native
         /// <summary>The file of a source as a trace shows it (null: the prelude).</summary>
         private string? TraceFileOf(int src) => _program.TraceFiles is { } files && src >= 0 && src < files.Count ? files[src] : null;
 
+        /// <summary>Where an instruction is for the trace: its source and line - before the first line of a function that is not the top level (the code it runs
+        /// on entry: the checks of its parameters) the source of that first line and the line negative (`(entry)`, fire_rt.h fire_traceFormat).</summary>
+        private static (int Src, int Line) TraceLocationOf(Func f, Chunk chunk, int addr)
+        {
+            if (f.Kind != FuncKind.Main && chunk.EntryLocation(addr) is { } entry) return (entry.SourceIndex, -entry.Line);
+            return chunk.GetLocation(addr);
+        }
+
         /// <summary>The descriptors of a function: one per file its instructions are in, in the order of the code.</summary>
-        private List<string?> TraceFilesOf(Chunk chunk, List<Instr> code)
+        private List<string?> TraceFilesOf(Func f, Chunk chunk, List<Instr> code)
         {
             var files = new List<string?>();
             foreach (var ins in code)
             {
-                string? file = TraceFileOf(chunk.GetLocation(ins.Addr).SourceIndex);
+                string? file = TraceFileOf(TraceLocationOf(f, chunk, ins.Addr).Src);
                 if (!files.Contains(file)) files.Add(file);
             }
             if (files.Count == 0) files.Add(null);
@@ -61,7 +69,8 @@ namespace fire.Native
         /// <summary>Before instruction <paramref name="i"/> (pass 2): where a line begins or a jump lands, the line (and the file, if the function has several).</summary>
         private void TraceBeforeInstruction(Func f, Chunk chunk, Instr ins, int i, Out o, bool isTarget, List<string?> files)
         {
-            var (src, line) = chunk.GetLocationRange(ins.Addr, out int start, out _);
+            chunk.GetLocationRange(ins.Addr, out int start, out _);
+            var (src, line) = TraceLocationOf(f, chunk, ins.Addr);
             if (!(i == 0 || start == ins.Addr || isTarget)) return;
             string? file = TraceFileOf(src);
             var text = new StringBuilder();

@@ -1,0 +1,18 @@
+class Runner {
+    undefined Execute(lambda<int> callback) {
+        print(callback(1))
+    }
+    static int Twice(lambda<int, int> f) { return f(2, 3) }
+}
+try {
+    Runner.Twice(func (int a) => a)
+} catch (ArgumentException e) {
+    print(e.StackTrace)
+    foreach (f in e.Frames) { print(f.function + " | " + f.file + " | " + f.line) }
+}
+var r = new Runner()
+r.Execute(func (int a) => a + 1)
+r.Execute(func (int a, int b) => a + b)
+print("never")
+//# modes: Release Debug
+//# name: Trace: eine Ausnahme beim Eintritt in eine Methode (die Signatur eines Lambda-Parameters) - der Frame (entry) mit der Datei und der ersten Zeile der Methode

@@ -39,6 +39,11 @@ static class TraceTests
         var awaited = new ExceptionTrace(new[] { new ExceptionTrace.Frame("A", "a.fire", 2) }).Append(new ExceptionTrace(new[] { new ExceptionTrace.Frame("<main>", "a.fire", 9) }));
         Check("Format: der Abschnitt des Wartenden", awaited.Format(StackTraceMode.Lines) == "   at A (a.fire:2)\n   --- awaited at ---\n   at <main> (a.fire:9)\n", awaited.Format(StackTraceMode.Lines));
         Check("Format: calls ohne Zeilen, off leer", awaited.Format(StackTraceMode.Calls) == "   at A (a.fire)\n   --- awaited at ---\n   at <main> (a.fire)\n" && awaited.Format(StackTraceMode.Off) == "");
+        // a frame on entry (a negative line: thrown before the first line of the method, fire_rt.h writes the same): `(entry)`, the first line, clickable
+        var onEntry = new ExceptionTrace(new[] { new ExceptionTrace.Frame("Runner.Execute", "main.fire", -3), new ExceptionTrace.Frame("<main>", "main.fire", 8) });
+        Check("Format: ein Frame beim Eintritt '(entry)' mit der ersten Zeile; klickbar",
+            onEntry.Format(StackTraceMode.Lines) == "   at Runner.Execute (entry) (main.fire:3)\n   at <main> (main.fire:8)\n"
+            && fire.Compiler.OutputLocations.TraceFrame("   at Runner.Execute (entry) (main.fire:3)") is ("main.fire", 3), onEntry.Format(StackTraceMode.Lines));
         var many = new ExceptionTrace(new[] { new ExceptionTrace.Frame("A", "a.fire", 1) });
         for (int i = 0; i < 6; i++) many = many.Append(new ExceptionTrace(new[] { new ExceptionTrace.Frame("W" + i, "a.fire", 1) }));
         int sections = 0; for (var t = many; t != null; t = t.Next) sections++;

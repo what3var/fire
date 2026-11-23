@@ -152,7 +152,7 @@ static const char* DebugTables(FgGen* g, FgFunc* f, FgFuncDebug* d);
 static const char* DebugWrapper(FgGen* g, FgFunc* f, const char* call);
 static const char* DebugCatchWrapper(FgGen* g, FgFunc* f, const char* catchName);
 /* (gen/trace.c) */
-static FcList* TraceFilesOf(FgGen* g, FcChunk* chunk, FgCode code);
+static FcList* TraceFilesOf(FgGen* g, FgFunc* f, FcChunk* chunk, FgCode code);
 static void TraceBeforeInstruction(FgGen* g, FgFunc* f, FcChunk* chunk, FgInstr* ins, int i, FgOut* o, bool isTarget, FcList* files);
 static const char* TraceTable(FgGen* g, FgFunc* f, FcList* files);
 static void TraceStripLines(FcBuf* code);
@@ -399,7 +399,7 @@ static void GenerateChunkCore(FgGen* g, FgFunc* f) {
 
     dbg = DebugBuild ? DebugBegin(g, f, code, entry) : NULL;
     /* (stack traces: the descriptors of the function - one per file its code is in; NULL: no frame, gen/trace.c) */
-    traceFiles = TraceOn ? TraceFilesOf(g, chunk, code) : NULL;
+    traceFiles = TraceOn ? TraceFilesOf(g, f, chunk, code) : NULL;
     for (i = 0; i < code.n; i++) {
         FgInstr* ins = &code.p[i];
         FgOut* o;

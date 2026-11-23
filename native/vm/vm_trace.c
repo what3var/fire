@@ -90,6 +90,9 @@ static const FireFnInfo* vmTraceFn(const VmChunk* c, int32_t src, bool base) {
     for (i = 0; i < c->ntraceFns; i++) if (c->traceSrcs[i] == src) return &c->traceFns[off + i];
     return &c->traceFns[off + c->ntraceFns];
 }
+/* (before the first line of the chunk - the code a function runs on entry: the checks of its parameters - the source of its first line, the line negative:
+ * the frame `(entry)`, as the native build's Chunk.EntryLocation; not for the top level) */
+static void vmTraceLocationEntry(const VmProgram* p, const VmChunk* c, uint32_t off, int32_t* src, int32_t* line);
 static void vmTraceLocation(const VmChunk* c, uint32_t off, int32_t* src, int32_t* line) {
     int32_t lo = 0, hi = (int32_t)c->nlines - 1, found = -1;
     while (lo <= hi) {
@@ -99,6 +102,10 @@ static void vmTraceLocation(const VmChunk* c, uint32_t off, int32_t* src, int32_
     }
     *src = found < 0 ? 0 : c->lines[3 * found + 1];
     *line = found < 0 ? 0 : c->lines[3 * found + 2];
+}
+static void vmTraceLocationEntry(const VmProgram* p, const VmChunk* c, uint32_t off, int32_t* src, int32_t* line) {
+    if (c != p->top && c->nlines > 0 && off < (uint32_t)c->lines[0]) { *src = c->lines[1]; *line = -c->lines[2]; return; }
+    vmTraceLocation(c, off, src, line);
 }
 /* The frame below frame `i` in the trace: a catch block stands for the function that owns its `try` (the frames of the throw site between are left out). */
 static int32_t vmTraceBelow(const Vm* vm, int32_t i) {
@@ -150,10 +157,10 @@ static FireTrace* vmTraceCapture(Vm* vm) {
         const FireFnInfo* fn;
         at = vmTraceNatAt(vm, i);
         if (slot) {
-            vmTraceLocation(f->chunk, f->ip > f->chunk->code ? (uint32_t)(f->ip - f->chunk->code) - 1 : 0, &src, &line);
+            vmTraceLocationEntry(vm->prog, f->chunk, f->ip > f->chunk->code ? (uint32_t)(f->ip - f->chunk->code) - 1 : 0, &src, &line);
             fn = vmTraceFn(f->chunk, src, k == total - 1 && !cut && vm->isStrand);   /* (the base of a thread: the body of `fire { }` - TraceNames.Fire) */
             slot->fn = fn;
-            slot->line = fn && fn->file ? line : 0;
+            slot->line = fn && fn->file && vm->prog->stackTrace == FIRE_TRACE_LINES ? line : 0;
         }
         if (at && !at->fn) break;
         if (at && (slot = fire_traceSlot(t, ++k)) != NULL) { slot->fn = at->fn; slot->line = 0; }

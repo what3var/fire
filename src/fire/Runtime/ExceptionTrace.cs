@@ -77,16 +77,16 @@ namespace fire.Runtime
                 {
                     if (t.Omitted > 0 && i == KeepInner) sb.Append("   ... ").Append(t.Omitted).Append(" more frames ...\n");
                     var f = t.Frames[i];
-                    sb.Append("   at ").Append(f.Function).Append(" (").Append(Location(f, mode)).Append(")\n");
+                    sb.Append("   at ").Append(f.Function).Append(f.Line < 0 ? " (entry)" : "").Append(" (").Append(Location(f, mode)).Append(")\n");   // (a negative line: on entry, before the first line - fire_rt.h)
                 }
                 if (t.Trailer != null) sb.Append("   ").Append(t.Trailer).Append('\n');
             }
             return sb.ToString();
         }
 
-        /// <summary>What stands in the brackets of a frame: `main.fire:16`, `main.fire` (no lines), `prelude`.</summary>
+        /// <summary>What stands in the brackets of a frame: `main.fire:16`, `main.fire` (no lines), `prelude`; a frame on entry (a negative line) the first line of its function.</summary>
         public static string Location(Frame f, StackTraceMode mode) =>
-            f.File == null ? "prelude" : IsNative(f.File) ? f.File.Substring(1) : mode == StackTraceMode.Lines && f.Line > 0 ? f.File + ":" + f.Line : f.File;
+            f.File == null ? "prelude" : IsNative(f.File) ? f.File.Substring(1) : mode == StackTraceMode.Lines && f.Line != 0 ? f.File + ":" + System.Math.Abs(f.Line) : f.File;
 
         /// <summary>The display names of the sources (by source index) for a trace: a source of the program relative to the folder of its first source (with `/`;
         /// `fire:source/N` for a source without a file), a library by the name of its module (its import) and its file name (`lib:util.fire`; without a module
