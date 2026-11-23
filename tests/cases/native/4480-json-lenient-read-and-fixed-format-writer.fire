@@ -1,0 +1,26 @@
+#import "json"
+var text = "{\n  // the name\n  \"name\": \"kit\", /* a block\n comment */ \"tags\": [ \"a\", \"b\", ],\n  \"n\": 1.50, \"ok\": true, \"none\": null,\n}"
+try { JsonNode.Parse(text) } catch (JsonException e) { print("strict: " + e.message) }
+try { JsonNode.Parse("[1, 2,]") } catch (JsonException e) { print("strict: " + e.message) }
+var node = JsonNode.Parse(text, new JsonReadOptions(true))
+print(node.Get("name").AsString() + " " + node.Get("tags").Count + " " + node.Get("n").text + " " + node.Get("ok").AsBool() + " " + node.Get("none").IsNull)
+print(node.ToJson())
+print(node.ToJson(new JsonWriteOptions(true)))
+var o = JsonNode.MakeObject()
+o.Put("q", JsonNode.MakeText("a\"b<é>"))
+o.Put("empty", JsonNode.MakeArray())
+var arr = JsonNode.MakeArray()
+arr.Push(JsonNode.MakeInt(1))
+arr.Push(JsonNode.MakeRaw("{ \"file\": \"x\", \"order\": 2 }"))
+o.Put("arr", arr)
+print(o.ToJson(new JsonWriteOptions(true, JsonEscaping.Relaxed)))
+print(o.ToJson())
+any free = Json.Parse(text, new JsonReadOptions(true))
+print(free.Get("name") + " " + free.Get("tags").length)
+try { Json.Parse(text) } catch (JsonException e) { print("runtime strict fails") }
+class Pkg { string name; string tags[]; float n }
+Pkg p = Json.Deserialize<Pkg>(text, new JsonReadOptions(true))
+print(p.name + " " + p.tags[1] + " " + p.n)
+try { JsonNode.Parse("{\"a\": 1 /* x */}") } catch (JsonException e) { print("strict: " + e.message) }
+try { JsonNode.Parse("[1, 2") } catch (JsonException e) { print(e.message) }
+//# name: json: JsonNode.Parse strict by default (comments, trailing commas are errors in the words of System.Text.Json), JsonReadOptions(true) reads them, also for Json.Parse and Json.Deserialize; ToJson compact and indented, both escapers, a raw value

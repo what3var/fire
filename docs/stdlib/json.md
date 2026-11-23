@@ -52,10 +52,54 @@ print(back.friend.friend == back)   // True: the cycle is back
 | `Json.Deserialize<T>(text)` | reads the text into a value of type `T` (`Json.Deserialize<Person>(text)`, `Json.Deserialize<List<Point>>(text)`) |
 | `Json.Deserialize(text, typeName)` | the same with the type given by its name (`"Person"`, `"Box<int>"`) |
 | `Json.Parse(text)` | JSON without classes: objects become `JsonObject`s, arrays arrays, the rest numbers, strings, `bool` and `undefined` (`null`) |
+| `Json.Parse(text, options)`, `Json.Deserialize<T>(text, options)` | with `JsonReadOptions` (below): comments and trailing commas |
+| `JsonNode` | JSON as a tree, read strictly or leniently and written in a fixed format (below) |
 | `JsonObject` | `Get(key)`, `Set(key, value)`, `Has(key)`, `Remove(key)`, `Keys()`, `Count` - members in the order of the text |
 | `JsonException` | a text that cannot be read (with line and column: `Expected ',' or ']' in an array (line 1, column 6).`) or a value that does not fit its type (`$.age: expected a whole number, found 1.5.`) |
 
 `new JsonOptions(true)` is the indented form.
+
+## JSON as a tree: `JsonNode`
+
+`Json.Serialize` and `Json.Deserialize` map JSON to objects. For JSON written by and for other programs - configuration files, the files of a package
+manager, the answers of a web API - `JsonNode` keeps the text as a tree and writes it back in a **fixed format**: the compact and the indented form of
+System.Text.Json, byte for byte (ember writes its `package.json`, lock file and index with it).
+
+```fire
+#import "json"
+
+var text = "{ // the package\n  \"name\": \"kit\", \"tags\": [\"a\", \"b\",], }"
+try { JsonNode.Parse(text) } catch (JsonException e) { print(e.message) }
+// '/' is an invalid start of a property name. Expected a '"'. LineNumber: 0 | BytePositionInLine: 2.
+var node = JsonNode.Parse(text, new JsonReadOptions(true))     // comments and trailing commas allowed
+print(node.Get("name").AsString())                              // kit
+node.Put("version", JsonNode.MakeText("1.0.0"))
+print(node.ToJson())                                            // {"name":"kit","tags":["a","b"],"version":"1.0.0"}
+print(node.ToJson(new JsonWriteOptions(true)))                  // indented: two spaces, "name": value, one member per line
+```
+
+| | |
+|---|---|
+| `JsonNode.Parse(text)` | strict JSON (RFC 8259, the default of System.Text.Json): a comment or a trailing comma is a `JsonException` |
+| `JsonNode.Parse(text, options)` | with `JsonReadOptions`: `comments` (`//` and `/* */`, System.Text.Json's `ReadCommentHandling.Skip`), `trailingCommas` (`AllowTrailingCommas`), `maxDepth` (64); `new JsonReadOptions(true)` sets both |
+| `node.ToJson()` | compact: one line, no spaces (`{"a":1,"b":[true]}`) |
+| `node.ToJson(options)` | with `JsonWriteOptions`: `indented` (System.Text.Json's `WriteIndented`: a member or element per line, `"name": value`, `[]` and `{}` for empty ones), `indent` (default two spaces), `newLine` (default `"\n"`), `escaping` |
+| `JsonEscaping.Default` | the default encoder of System.Text.Json: `"` as `\u0022`, everything outside of ASCII and `& ' + < > `` ` `` as `\uXXXX` |
+| `JsonEscaping.Relaxed` | `UnsafeRelaxedJsonEscaping`: only `"` (`\"`), `\` and the control characters are escaped |
+| `node.kind` | a `JsonKind`: `Null`, `Bool`, `Number`, `String`, `Array`, `Object`, `Raw` (`IsNull`, `IsObject`, `IsArray`, `IsString`, `IsNumber`, `IsBool`) |
+| `Get(key)`, `GetIgnoreCase(key)`, `Has(key)` | a member of an object (the last of several of that name, as System.Text.Json reads them), undefined when there is none |
+| `Put(key, node)`, `Set(key, node)`, `Push(node)` | add a member (in order), replace or add one, add an element - the node is taken (it belongs to the tree) |
+| `Count`, `At(i)`, `KeyAt(i)`, `items`, `keys` | the elements, or the members in the order of the text |
+| `AsString()`, `AsInt()`, `AsFloat()`, `AsBool()`, `text` | the value (undefined for `null`, a `JsonException` for another kind); a number keeps its text (`1.50` stays `1.50`) |
+| `JsonNode.MakeNull()`, `MakeBool(b)`, `MakeInt(n)`, `MakeNumber(text)`, `MakeText(s)`, `MakeArray()`, `MakeObject()`, `Strings(list)` | new nodes |
+| `JsonNode.MakeRaw(json)` | a piece of JSON written as it is (`WriteRawValue`; in an indented array it follows the comma on the same line, as in System.Text.Json) |
+
+The messages of a text that cannot be read are those of System.Text.Json, with the line and the position in the line counted from 0
+(`Expected either ',' or ']' after a value. LineNumber: 0 | BytePositionInLine: 5.`); positions count characters, not UTF-8 bytes.
+
+**Lenient reading for objects:** `Json.Parse(text, options)` and `Json.Deserialize<T>(text, options)` take the same `JsonReadOptions`: the comments and trailing
+commas they allow are blanked out (lines and columns stay) before the reader of the runtime runs, so its messages keep pointing at the right place. Without
+options both stay strict.
 
 ## What is written
 
