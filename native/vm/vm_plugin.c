@@ -219,7 +219,7 @@ static bool vmPlEndsWith(const char* s, const char* tail) {
     for (i = 0; i < m; i++) { char c = s[n - m + i]; if (c >= 'A' && c <= 'Z') c = (char)(c + 32); if (c != tail[i]) return false; }
     return true;
 }
-static bool vmPlExists(const char* path) { FILE* f = fopen(path, "rb"); if (!f) return false; fclose(f); return true; }
+static bool vmPlExists(const char* path) { FILE* f = vmFopen(path, "rb"); if (!f) return false; fclose(f); return true; }
 
 /* The bytecode of a fire plugin that `path` names (the `.fireplugin` file, or a native library with one next to it); NULL: none. Malloc'd. */
 static char* vmPluginFileFor(const char* path) {

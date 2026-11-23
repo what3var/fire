@@ -70,25 +70,46 @@ FIRE_PKG_EXPORT int fire_gfx_host_display(const void* host) {   /* (a FireDispla
  *  header size: the ring, slot k at header + k * slot size: int32 type, button, buttons, keyCode, modifiers, width, height, joystick, index; float x, y, dx, dy,
  *  value, pressure; int32 (0); int64 finger; char text[32] (UTF-8, zero terminated) - the events of fire_display_headless.h (FireDisplayHostEvent, without data)
  *  header size + slots * slot size: the picture, width * height words R,G,B,A
- * (POSIX: mmap of the file; Windows: not yet - the variable is ignored there.) */
-#if defined(FIRE_DISPLAY_DESKTOP_H) && !defined(_WIN32)
+ * (POSIX: mmap of the file; Windows: CreateFileMapping/MapViewOfFile of the same file - the views of one file are coherent between processes.) */
+#if defined(FIRE_DISPLAY_DESKTOP_H)
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
+#endif
 typedef struct FireShmDisplay { unsigned char* base; size_t size; int64_t lastPresent; } FireShmDisplay;
 static FireShmDisplay g_fireShm;
 #define FIRE_SHM_I32(off) ((volatile int32_t*)(g_fireShm.base + (off)))
 #define FIRE_SHM_I64(off) ((int64_t*)(g_fireShm.base + (off)))
+#if !defined(_WIN32) || defined(__GNUC__) || defined(__clang__)
+#define FIRE_SHM_LOAD(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)
+#define FIRE_SHM_STORE(p, v) __atomic_store_n((p), (v), __ATOMIC_RELEASE)
+#define FIRE_SHM_FENCE() __atomic_thread_fence(__ATOMIC_SEQ_CST)
+#else   /* (MSVC, TinyCC on Windows: the interlocked functions are full barriers) */
+#define FIRE_SHM_LOAD(p) InterlockedCompareExchange64((volatile LONG64*)(p), 0, 0)
+#define FIRE_SHM_STORE(p, v) ((void)InterlockedExchange64((volatile LONG64*)(p), (LONG64)(v)))
+#define FIRE_SHM_FENCE() MemoryBarrier()
+#endif
+#if defined(_WIN32)
+static int64_t fire_shm_nowMs(void) { return (int64_t)GetTickCount64(); }
+static void fire_shm_sleepMs(int64_t ms) { Sleep((DWORD)ms); }
+static int32_t fire_shm_pid(void) { return (int32_t)GetCurrentProcessId(); }
+#else
 static int64_t fire_shm_nowMs(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000; }
+static void fire_shm_sleepMs(int64_t ms) { struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = (long)ms * 1000000L; nanosleep(&ts, NULL); }
+static int32_t fire_shm_pid(void) { return (int32_t)getpid(); }
+#endif
 
 static int32_t fire_shm_next(void* ctx, int32_t window, FireDisplayHostEvent* out) {
     int64_t r, w;
     const unsigned char* s;
     int32_t hs = *FIRE_SHM_I32(12), slots = *FIRE_SHM_I32(16), slotSize = *FIRE_SHM_I32(20);
     (void)ctx; (void)window;
-    r = __atomic_load_n(FIRE_SHM_I64(40), __ATOMIC_ACQUIRE);
-    w = __atomic_load_n(FIRE_SHM_I64(32), __ATOMIC_ACQUIRE);
+    r = FIRE_SHM_LOAD(FIRE_SHM_I64(40));
+    w = FIRE_SHM_LOAD(FIRE_SHM_I64(32));
     if (r >= w || slots <= 0) return 0;
     s = g_fireShm.base + hs + (size_t)(r % slots) * (size_t)slotSize;
     memset(out, 0, sizeof *out);
@@ -97,7 +118,7 @@ static int32_t fire_shm_next(void* ctx, int32_t window, FireDisplayHostEvent* ou
     memcpy(&out->x, s + 36, 4); memcpy(&out->y, s + 40, 4); memcpy(&out->dx, s + 44, 4); memcpy(&out->dy, s + 48, 4); memcpy(&out->value, s + 52, 4); memcpy(&out->pressure, s + 56, 4);
     memcpy(&out->finger, s + 64, 8); memcpy(out->text, s + 72, 32);
     out->text[31] = 0;
-    __atomic_store_n(FIRE_SHM_I64(40), r + 1, __ATOMIC_RELEASE);
+    FIRE_SHM_STORE(FIRE_SHM_I64(40), r + 1);
     return 1;
 }
 
@@ -107,17 +128,18 @@ static void fire_shm_present(void* ctx, int32_t window, const uint32_t* rgba, in
     size_t bytes = (size_t)width * (size_t)height * 4;
     (void)ctx;
     if ((int64_t)bytes > cap || off + bytes > g_fireShm.size) { (*FIRE_SHM_I32(76))++; return; }
-    seq = __atomic_load_n(FIRE_SHM_I64(48), __ATOMIC_RELAXED);
-    __atomic_store_n(FIRE_SHM_I64(48), seq | 1, __ATOMIC_RELEASE);   /* (odd: being written) */
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    seq = FIRE_SHM_LOAD(FIRE_SHM_I64(48));
+    FIRE_SHM_STORE(FIRE_SHM_I64(48), seq | 1);   /* (odd: being written) */
+    FIRE_SHM_FENCE();
     memcpy(g_fireShm.base + off, rgba, bytes);
     *FIRE_SHM_I32(56) = width; *FIRE_SHM_I32(60) = height; *FIRE_SHM_I32(64) = window;
-    __atomic_store_n(FIRE_SHM_I64(48), (seq | 1) + 1, __ATOMIC_RELEASE);
+    FIRE_SHM_FENCE();
+    FIRE_SHM_STORE(FIRE_SHM_I64(48), (seq | 1) + 1);
     if (vsync) {
         int64_t wait;
         now = fire_shm_nowMs();
         wait = 16 - (now - g_fireShm.lastPresent);
-        if (wait > 0 && wait <= 16) { struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = (long)wait * 1000000L; nanosleep(&ts, NULL); }
+        if (wait > 0 && wait <= 16) fire_shm_sleepMs(wait);
     }
     g_fireShm.lastPresent = fire_shm_nowMs();
 }
@@ -126,23 +148,49 @@ static void fire_shm_cursor(void* ctx, int32_t window, int32_t cursor) { (void)c
 
 /* FIRE_DISPLAY_SHM names the file of a host: the windows of the program are the host's from now on (fire_pkg_set_host, before the first window). */
 static void fire_gfx_host_fromEnvironment(void) {
-    const char* path = getenv("FIRE_DISPLAY_SHM");
-    int fd;
-    off_t size;
     void* base;
+    size_t size;
     FireDisplayHost host;
-    if (path == NULL || *path == 0 || g_fireShm.base != NULL) return;
-    fd = open(path, O_RDWR);
-    if (fd < 0) return;
-    size = lseek(fd, 0, SEEK_END);
-    if (size < 4096) { close(fd); return; }
-    base = mmap(NULL, (size_t)size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    close(fd);
-    if (base == MAP_FAILED) return;
-    if (memcmp(base, "FIRESHM1", 8) != 0) { munmap(base, (size_t)size); return; }
+#if defined(_WIN32)
+    {
+        /* (the name as the system has it - the host's temporary folder may have any letters; the mapping holds the file, the handles go now) */
+        wchar_t wide[1024];
+        HANDLE file, mapping;
+        LARGE_INTEGER length;
+        DWORD n = GetEnvironmentVariableW(L"FIRE_DISPLAY_SHM", wide, (DWORD)(sizeof wide / sizeof wide[0]));
+        if (n == 0 || n >= sizeof wide / sizeof wide[0] || g_fireShm.base != NULL) return;
+        file = CreateFileW(wide, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (file == INVALID_HANDLE_VALUE) return;
+        if (!GetFileSizeEx(file, &length) || length.QuadPart < 4096 || (unsigned long long)length.QuadPart > (unsigned long long)(size_t)-1) { CloseHandle(file); return; }
+        size = (size_t)length.QuadPart;
+        mapping = CreateFileMappingW(file, NULL, PAGE_READWRITE, 0, 0, NULL);
+        CloseHandle(file);
+        if (mapping == NULL) return;
+        base = MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, size);
+        CloseHandle(mapping);
+        if (base == NULL) return;
+        if (memcmp(base, "FIRESHM1", 8) != 0) { UnmapViewOfFile(base); return; }
+    }
+#else
+    {
+        const char* path = getenv("FIRE_DISPLAY_SHM");
+        int fd;
+        if (path == NULL || *path == 0 || g_fireShm.base != NULL) return;
+        fd = open(path, O_RDWR);
+        off_t length;
+        if (fd < 0) return;
+        length = lseek(fd, 0, SEEK_END);
+        if (length < 4096) { close(fd); return; }
+        size = (size_t)length;
+        base = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        close(fd);
+        if (base == MAP_FAILED) return;
+        if (memcmp(base, "FIRESHM1", 8) != 0) { munmap(base, size); return; }
+    }
+#endif
     g_fireShm.base = (unsigned char*)base;
-    g_fireShm.size = (size_t)size;
-    *FIRE_SHM_I32(72) = (int32_t)getpid();
+    g_fireShm.size = size;
+    *FIRE_SHM_I32(72) = fire_shm_pid();
     memset(&host, 0, sizeof host);
     host.size = (int32_t)sizeof host;
     host.next_event = fire_shm_next;

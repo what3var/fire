@@ -42,6 +42,9 @@ void fbMapFree(FbMap* m);
 
 /* ---- files ---- */
 uint8_t* fbReadFile(const char* path, size_t* len);   /* malloc'd, NULL when it cannot be read */
+#ifndef FB_FOPEN
+#define FB_FOPEN fopen   /* (the program that includes this file may open its paths otherwise: the VM takes UTF-8 paths on Windows, fire.c) */
+#endif
 
 /* the program that includes this file says what happens when memory runs out */
 void fbOutOfMemory(void);
@@ -158,7 +161,7 @@ void fbMapPut(FbMap* m, const char* key, void* value) {
 void fbMapFree(FbMap* m) { free(m->entries); free(m->index); memset(m, 0, sizeof *m); }
 
 uint8_t* fbReadFile(const char* path, size_t* len) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = FB_FOPEN(path, "rb");
     uint8_t* b;
     long n;
     if (!f) return NULL;

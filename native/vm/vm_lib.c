@@ -112,15 +112,84 @@ static Value vmLibCall(Value fn, Value sig, Value args, Value release, OwnList* 
 #endif
 
 /* `extern string __HostCommand()` without a library: the next command of the host that runs the program (spark's live view, LiveSession: one line on the
- * program's standard input; "" when none has come). Never waits. (Windows: none yet.) */
+ * program's standard input; "" when none has come). Never waits: POSIX polls stdin. Windows looks how much a pipe holds (PeekNamedPipe) and reads only that;
+ * where a pipe cannot be looked into (Wine's pipes of the host system) or stdin is a console, a thread of its own reads it from the first call on and the
+ * call takes what it has read; a file is read as it is. */
 #if !defined(_WIN32)
 #include <poll.h>
 #include <unistd.h>
+#endif
 static char g_vmHostCmd[4096];
 static size_t g_vmHostCmdLen;
+#if defined(_WIN32)
+static int g_vmHostCmdMode = -1;   /* 0 nothing to read, 1 PeekNamedPipe, 2 a reader thread, 3 a file */
+static CRITICAL_SECTION g_vmHostCmdLock;
+static char g_vmHostCmdIn[4096];
+static size_t g_vmHostCmdInLen;
+static DWORD WINAPI vmHostCmdReader(LPVOID arg) {
+    HANDLE in = (HANDLE)arg;
+    char chunk[512];
+    for (;;) {
+        DWORD got = 0, i;
+        if (!ReadFile(in, chunk, sizeof chunk, &got, NULL) || got == 0) return 0;
+        for (;;) {
+            EnterCriticalSection(&g_vmHostCmdLock);
+            i = (DWORD)(sizeof g_vmHostCmdIn - g_vmHostCmdInLen);
+            if (i >= got) { memcpy(g_vmHostCmdIn + g_vmHostCmdInLen, chunk, got); g_vmHostCmdInLen += got; LeaveCriticalSection(&g_vmHostCmdLock); break; }
+            LeaveCriticalSection(&g_vmHostCmdLock);
+            Sleep(5);   /* (the program has not taken what came before: the host waits like on a full pipe) */
+        }
+    }
+}
+#endif
+/* What stdin has now without waiting into `to` (at most `cap`): the bytes read, 0 when there are none (or it has ended). */
+static size_t vmHostCmdRead(char* to, size_t cap) {
+#if defined(_WIN32)
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD avail = 0, got = 0;
+    if (g_vmHostCmdMode < 0) {
+        DWORD type = in == NULL || in == INVALID_HANDLE_VALUE ? FILE_TYPE_UNKNOWN : GetFileType(in);
+        g_vmHostCmdMode = 0;
+        if (type == FILE_TYPE_DISK) g_vmHostCmdMode = 3;
+        else if (type == FILE_TYPE_PIPE && PeekNamedPipe(in, NULL, 0, NULL, &avail, NULL)) g_vmHostCmdMode = 1;
+        else if (type == FILE_TYPE_PIPE || type == FILE_TYPE_CHAR) {
+            HANDLE t;
+            InitializeCriticalSection(&g_vmHostCmdLock);
+            t = CreateThread(NULL, 64 * 1024, vmHostCmdReader, (LPVOID)in, 0, NULL);
+            if (t) { CloseHandle(t); g_vmHostCmdMode = 2; }
+        }
+    }
+    switch (g_vmHostCmdMode) {
+        case 1:
+            if (!PeekNamedPipe(in, NULL, 0, NULL, &avail, NULL) || avail == 0) return 0;
+            if (avail > cap) avail = (DWORD)cap;
+            return ReadFile(in, to, avail, &got, NULL) ? (size_t)got : 0;
+        case 2: {
+            size_t n;
+            EnterCriticalSection(&g_vmHostCmdLock);
+            n = g_vmHostCmdInLen < cap ? g_vmHostCmdInLen : cap;
+            memcpy(to, g_vmHostCmdIn, n);
+            memmove(g_vmHostCmdIn, g_vmHostCmdIn + n, g_vmHostCmdInLen - n);
+            g_vmHostCmdInLen -= n;
+            LeaveCriticalSection(&g_vmHostCmdLock);
+            return n;
+        }
+        case 3: return ReadFile(in, to, (DWORD)cap, &got, NULL) ? (size_t)got : 0;
+        default: return 0;
+    }
+#else
+    struct pollfd pfd;
+    ssize_t got;
+    pfd.fd = 0; pfd.events = POLLIN; pfd.revents = 0;
+    if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & (POLLIN | POLLHUP))) return 0;
+    got = read(0, to, cap);
+    return got > 0 ? (size_t)got : 0;
+#endif
+}
 static Value vmHostCommand(OwnList* list) {
     for (;;) {
         char* nl = g_vmHostCmdLen ? (char*)memchr(g_vmHostCmd, '\n', g_vmHostCmdLen) : NULL;
+        size_t got;
         if (nl) {
             size_t n = (size_t)(nl - g_vmHostCmd);
             Value v;
@@ -132,20 +201,11 @@ static Value vmHostCommand(OwnList* list) {
             return v;
         }
         if (g_vmHostCmdLen == sizeof g_vmHostCmd) g_vmHostCmdLen = 0;   /* (a line longer than the buffer: dropped) */
-        {
-            struct pollfd pfd;
-            ssize_t got;
-            pfd.fd = 0; pfd.events = POLLIN; pfd.revents = 0;
-            if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & (POLLIN | POLLHUP))) return strFromUtf8("", list);
-            got = read(0, g_vmHostCmd + g_vmHostCmdLen, sizeof g_vmHostCmd - g_vmHostCmdLen);
-            if (got <= 0) return strFromUtf8("", list);
-            g_vmHostCmdLen += (size_t)got;
-        }
+        got = vmHostCmdRead(g_vmHostCmd + g_vmHostCmdLen, sizeof g_vmHostCmd - g_vmHostCmdLen);
+        if (got == 0) return strFromUtf8("", list);
+        g_vmHostCmdLen += got;
     }
 }
-#else
-static Value vmHostCommand(OwnList* list) { return strFromUtf8("", list); }
-#endif
 
 /* CallExtern: a function of a C library (`#extern "lib"` + `extern int f(int)`, SPEC 8.1) - by its signature, like Library (VM.ResolveDynamicExtern). An
  * `inline c` function needs a C compiler while the program runs: not in this VM. */

@@ -367,9 +367,11 @@ static class LinkageTests
         string placed = Path.Combine(built, "fire_gfx.dll");
         File.Copy(dll, placed, true);
         File.SetLastWriteTimeUtc(placed, DateTime.UtcNow.AddDays(1));   // (newer than the sources and the compiler: taken as it is)
+        File.WriteAllText(placed + ".runtime", PackageLibrary.GraphicsRuntimeKey(graphics, windows, TargetProfile.Windows));   // (and built against the runtime of that forge: its stamp)
         string shown = RunWine($"\"{Path.Combine(winForge, "forge.exe")}\" run window.fire");
         Check("VM unter Wine (forge.exe win-x64): ein ui-Fenster oeffnet (Tick True) mit der Bibliothek von MinGW", shown.Contains("open True\nend"), shown);
         File.Delete(placed);
+        File.Delete(placed + ".runtime");
         string missing = RunWine($"\"{Path.Combine(winForge, "forge.exe")}\" run window.fire");
         Check("VM unter Wine ohne C-Compiler: new Window sagt, warum kein Fenster kommt (die Bibliothek kann nicht gebaut werden)",
             missing.Contains("caught: No display") && missing.Contains("C compiler") && missing.Contains("end"), missing);

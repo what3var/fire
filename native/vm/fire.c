@@ -26,6 +26,7 @@
 #define FIRE_HEAP_STATS 1          /* (-DFIRE_VM_STATS: counts the strings that live - the check that a script leaves nothing behind) */
 #endif
 #define FIRE_RT_IMPLEMENTATION 1
+#define FIRE_ARGS_UTF8 1           /* (Windows: main hands the runtime UTF-8 arguments it split from the wide command line - fire_platform_win32.h) */
 /* (the platform layer of this machine, from the repository: a native build copies it next to the runtime) */
 #if defined(_WIN32)
 #define FIRE_PLATFORM_HEADER "../platform/windows/fire_platform.h"
@@ -34,6 +35,27 @@
 #endif
 #include "../runtime/fire_rt.h"
 #include <setjmp.h>
+#if defined(_WIN32)
+/* Windows: the paths of the VM are UTF-8 (its arguments, fire_plat_programPath, FIRE_PKG_PATH's folders) - opened with the wide functions of the system,
+ * not in the ANSI code page. */
+static FILE* vmFopen(const char* path, const char* mode) {
+    wchar_t* w = fire_plat_toWide(path);
+    wchar_t m[8];
+    size_t i;
+    FILE* f;
+    for (i = 0; mode[i] && i < 7; i++) m[i] = (wchar_t)mode[i];
+    m[i] = 0;
+    f = w ? _wfopen(w, m) : NULL;
+    free(w);
+    return f;
+}
+#define FB_FOPEN vmFopen
+/* A variable of the environment as UTF-8 into `buf` (NULL: not set) - getenv gives the ANSI code page (a folder of the user with other letters). */
+static const char* vmGetenv(const char* name, char* buf, size_t cap) { return fire_plat_getenv(name, buf, cap) >= 0 ? buf : NULL; }
+#else
+#define vmFopen fopen
+static const char* vmGetenv(const char* name, char* buf, size_t cap) { (void)buf; (void)cap; return getenv(name); }
+#endif
 #define FIRE_BASE_IMPLEMENTATION 1
 #include "../base/fire_base.h"
 
@@ -88,10 +110,19 @@ static uint32_t vmLiveHandles(void) { return g_slots.count - g_slots.nfree; }
 #if defined(_WIN32)
 #include <direct.h>
 #include <process.h>
-#define vmMkdir(p) _mkdir(p)
+static int vmMkdir(const char* p) { wchar_t* w = fire_plat_toWide(p); int r = w ? _wmkdir(w) : -1; free(w); return r; }
+static int vmRemove(const char* p) { wchar_t* w = fire_plat_toWide(p); int r = w ? _wremove(w) : -1; free(w); return r; }
+static bool vmReplaceFile(const char* from, const char* to) {
+    wchar_t* a = fire_plat_toWide(from);
+    wchar_t* b = fire_plat_toWide(to);
+    bool ok = a && b && MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
+    free(a); free(b);
+    return ok;
+}
 #define vmGetPid() _getpid()
 #define VM_SEP '\\'
 #else
+#define vmRemove(p) remove(p)
 #include <sys/stat.h>
 #include <unistd.h>
 #define vmMkdir(p) mkdir(p, 0700)
@@ -114,13 +145,44 @@ static void vmExecVariant(const char* variant) {
 #else
     snprintf(path, sizeof path, "%.*s%s", slash ? (int)(slash - g_vmSelf + 1) : 0, g_vmSelf, variant);
 #endif
-    if (strcmp(path, g_vmSelf) == 0 || !(probe = fopen(path, "rb"))) return;
+    if (strcmp(path, g_vmSelf) == 0 || !(probe = vmFopen(path, "rb"))) return;
     fclose(probe);
     fflush(stdout); fflush(stderr);
-    g_vmArgv[0] = path;
 #if defined(_WIN32)
-    { intptr_t code = _spawnv(_P_WAIT, path, (const char* const*)g_vmArgv); if (code >= 0) exit((int)code); }
+    {
+        /* (the variant gets this process's command line as it is - its arguments untouched, also quotes and other letters; only the program before them is
+         * the variant; its standard handles are these; this process waits and ends with its code) */
+        const wchar_t* line = GetCommandLineW();
+        const wchar_t* rest = line;
+        int quoted = 0;
+        wchar_t* exe = fire_plat_toWide(path);
+        wchar_t* cmd;
+        size_t n;
+        STARTUPINFOW si;
+        PROCESS_INFORMATION pi;
+        DWORD code = 1;
+        while (*rest == L' ' || *rest == L'\t') rest++;
+        while (*rest && (quoted || (*rest != L' ' && *rest != L'\t'))) { if (*rest == L'"') quoted = !quoted; rest++; }
+        if (!exe) return;
+        n = wcslen(exe) + wcslen(rest) + 4;
+        cmd = (wchar_t*)malloc(sizeof(wchar_t) * n);
+        if (!cmd) { free(exe); return; }
+        _snwprintf(cmd, n, L"\"%ls\"%ls", exe, rest);
+        cmd[n - 1] = 0;
+        memset(&si, 0, sizeof si);
+        si.cb = sizeof si;
+        if (CreateProcessW(exe, cmd, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, INFINITE);
+            GetExitCodeProcess(pi.hProcess, &code);
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            free(cmd); free(exe);
+            exit((int)code);
+        }
+        free(cmd); free(exe);
+    }
 #else
+    g_vmArgv[0] = path;
     execv(path, g_vmArgv);
 #endif
 }
@@ -305,7 +367,7 @@ static bool vmSeek(FILE* f, uint64_t at) {
 
 /* The payload behind the file `self`: 1 with its entries (malloc'd), 0 when there is none, -1 when it is broken (`why`). */
 static int vmPayloadOf(const char* self, VmPayEntry** out, uint32_t* count, char* why, size_t cap) {
-    FILE* f = fopen(self, "rb");
+    FILE* f = vmFopen(self, "rb");
     uint8_t foot[VM_PAY_FOOTER];
     uint8_t* index = NULL;
     uint64_t size, at, ilen;
@@ -361,7 +423,7 @@ broken:
 
 /* The bytes of an entry (malloc'd), checked against its hash; NULL when they cannot be read or are not right. */
 static uint8_t* vmPayloadRead(const char* self, const VmPayEntry* e) {
-    FILE* f = fopen(self, "rb");
+    FILE* f = vmFopen(self, "rb");
     uint8_t* b;
     if (!f) return NULL;
     b = (uint8_t*)malloc(e->length ? (size_t)e->length : 1);
@@ -385,21 +447,23 @@ static bool vmMakeDirs(const char* path) {
     {
         FILE* probe;
         snprintf(part, sizeof part, "%s%c.probe-%d", path, VM_SEP, (int)vmGetPid());
-        probe = fopen(part, "wb");
+        probe = vmFopen(part, "wb");
         if (!probe) return false;
         fclose(probe);
-        remove(part);
+        vmRemove(part);
     }
     return true;
 }
 
 /* The folder of the cache the libraries of packed programs are written into. */
 static bool vmCacheFolder(char* out, size_t cap) {
-    const char* e = getenv("FIRE_VM_CACHE");
+    char given[1024];
+    const char* e = vmGetenv("FIRE_VM_CACHE", given, sizeof given);
     if (e && *e) { snprintf(out, cap, "%s", e); return true; }
 #if defined(_WIN32)
-    if ((e = getenv("LOCALAPPDATA")) != NULL && *e) { snprintf(out, cap, "%s\\fire\\native", e); return true; }
-    if ((e = getenv("TEMP")) != NULL && *e) { snprintf(out, cap, "%s\\fire-native", e); return true; }
+    /* (the folders of the user as UTF-8: a user name of other letters is not in the ANSI code page) */
+    if ((e = vmGetenv("LOCALAPPDATA", given, sizeof given)) != NULL && *e) { snprintf(out, cap, "%s\\fire\\native", e); return true; }
+    if ((e = vmGetenv("TEMP", given, sizeof given)) != NULL && *e) { snprintf(out, cap, "%s\\fire-native", e); return true; }
     return false;
 #else
     if ((e = getenv("XDG_CACHE_HOME")) != NULL && *e == '/') { snprintf(out, cap, "%s/fire/native", e); return true; }
@@ -438,17 +502,17 @@ static bool vmWriteLibraries(const char* self, const VmPayEntry* e, uint32_t n, 
         if (!(b = vmPayloadRead(self, &e[i]))) { snprintf(why, whyCap, "the library '%s' behind this file is damaged (build the program again)", e[i].name); return false; }
         /* (written next to it and renamed: a library in the cache is always whole, also when two starts write it at the same time) */
         snprintf(part, sizeof part, "%s.%d.part", path, (int)vmGetPid());
-        f = fopen(part, "wb");
+        f = vmFopen(part, "wb");
         ok = f && fwrite(b, 1, (size_t)e[i].length, f) == e[i].length;
         if (f && fclose(f) != 0) ok = false;
         free(b);
 #if defined(_WIN32)
-        ok = ok && MoveFileExA(part, path, MOVEFILE_REPLACE_EXISTING);
+        ok = ok && vmReplaceFile(part, path);
 #else
         ok = ok && rename(part, path) == 0;
 #endif
         if (!ok) {
-            remove(part);
+            vmRemove(part);
             if (vmCachedRight(path, &e[i])) continue;   /* (another start wrote it, or a loaded one is in use) */
             snprintf(why, whyCap, "the library '%s' cannot be written into '%s' (set FIRE_VM_CACHE)", e[i].name, dir);
             return false;
@@ -498,7 +562,10 @@ static void vmUsage(FILE* to) {
 
 static void vmSetEnv(const char* name, const char* value) {
 #if defined(_WIN32)
-    _putenv_s(name, value);
+    wchar_t* n = fire_plat_toWide(name);
+    wchar_t* v = fire_plat_toWide(value);
+    if (n && v) _wputenv_s(n, v);   /* (UTF-8: the wide environment, which vmGetenv reads) */
+    free(n); free(v);
 #else
     setenv(name, value, 1);
 #endif
@@ -507,8 +574,9 @@ static void vmSetEnv(const char* name, const char* value) {
 /* The folder of `fire` itself goes behind FIRE_PKG_PATH: installed next to forge, it finds the libraries forge built (Packages/) or brought (Prebuilt/). */
 static void vmAddSelfToPkgPath(const char* self) {
     const char* slash = strrchr(self, '/');
-    const char* old = getenv("FIRE_PKG_PATH");
-    char value[4096];
+    char given[4096];
+    const char* old = vmGetenv("FIRE_PKG_PATH", given, sizeof given);
+    char value[8192];
 #if defined(_WIN32)
     const char* back = strrchr(self, '\\');
     if (back && (!slash || back > slash)) slash = back;
@@ -543,6 +611,28 @@ static int vmOption(int argc, char** argv, int* i, bool* stats) {
     return 0;
 }
 
+#if defined(_WIN32)
+typedef struct VmArgList { char** v; int n, cap; } VmArgList;
+static void vmArgAdd(const char* utf8, void* ctx) {
+    VmArgList* l = (VmArgList*)ctx;
+    if (l->n + 2 > l->cap) {
+        l->cap = l->cap ? l->cap * 2 : 16;
+        l->v = (char**)realloc(l->v, sizeof(char*) * (size_t)l->cap);
+        if (!l->v) outOfMemory();
+    }
+    l->v[l->n++] = vmPkgDup(utf8);
+    l->v[l->n] = NULL;
+}
+/* The arguments of this process as UTF-8, the first one the program itself (kept for the life of the process). */
+static char** vmWinArgv(int* argc, const char* self) {
+    VmArgList l = { NULL, 0, 0 };
+    vmArgAdd(self, &l);
+    fire_plat_eachCommandLineArg(vmArgAdd, &l);
+    *argc = l.n;
+    return l.v;
+}
+#endif
+
 int main(int argc, char** argv) {
     char self[4096], why[300];
     bool stats = false;
@@ -550,9 +640,19 @@ int main(int argc, char** argv) {
     VmPayEntry* entries;
     uint32_t nentries;
     int packed;
-    /* FIRE_STDOUT_LINES=1: stdout is written line by line also into a pipe (spark's Output panel shows a running program's lines as they come) */
-    { const char* lines = getenv("FIRE_STDOUT_LINES"); if (lines != NULL && *lines == '1') setvbuf(stdout, NULL, _IOLBF, 0); }
+    /* FIRE_STDOUT_LINES=1: stdout is written line by line also into a pipe (spark's Output panel shows a running program's lines as they come; the C runtime
+     * of Windows has no line buffering - _IOLBF is full buffering there - so stdout is not buffered at all) */
+    { const char* lines = getenv("FIRE_STDOUT_LINES"); if (lines != NULL && *lines == '1') {
+#if defined(_WIN32)
+        setvbuf(stdout, NULL, _IONBF, 0);
+#else
+        setvbuf(stdout, NULL, _IOLBF, 0);
+#endif
+    } }
     if (fire_plat_programPath(self, sizeof self) <= 0) snprintf(self, sizeof self, "%s", argc > 0 && argv[0] ? argv[0] : "fire");
+#if defined(_WIN32)
+    argv = vmWinArgv(&argc, self);   /* (UTF-8 from the wide command line: main's argv is in the ANSI code page) */
+#endif
 
     /* a packed program: every argument is the program's */
     packed = vmPayloadOf(self, &entries, &nentries, why, sizeof why);
