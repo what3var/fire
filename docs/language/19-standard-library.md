@@ -100,7 +100,7 @@ print(Math.Min(weights))            // 500g
 | Member | What |
 |---|---|
 | `Environment.Args` | the arguments of the program as a `string[]`, without the program's name |
-| `Environment.ProgramPath` | the path of the running program (the executable; for `forge run` and *Run* in spark the main source file) |
+| `Environment.ProgramPath` | the path of the running executable: of a built program (`forge build`, VM or native) the program itself; under `forge run` (and *Run* in spark), which run the source in the virtual machine `fire`, the path of `fire` - not of the source file |
 | `Environment.Get(name)` | the value of an environment variable, `undefined` if it is not set |
 | `Environment.Set(name, value)` | sets a variable for the program and the processes it starts; `undefined` removes it |
 | `Environment.Variables` | all variables as a `Dictionary<string, string>` (sorted by name) |
