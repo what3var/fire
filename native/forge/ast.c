@@ -13,7 +13,7 @@ static const char* const fcStmtKindNames[] = {
 };
 static const char* const fcUnaryOpNames[] = { "Negate", "LogicalNot", "BitNot", "Dereference", "AddressOf", "FlatCopy", "DeepCopy", "Take", "Trust", "TryTake" };
 static const char* const fcBinaryOpNames[] = { "Add", "Sub", "Mul", "Div", "Mod", "Eq", "NotEq", "Lt", "LtEq", "Gt", "GtEq", "And", "Or", "BitAnd", "BitOr",
-    "BitXor", "ShiftLeft", "ShiftRight", "Power", "ShiftRightLogical" };
+    "BitXor", "ShiftLeft", "ShiftRight", "Power", "ShiftRightLogical", "Coalesce" };
 static const char* const fcAccessNames[] = { "Public", "Private", "Protected" };
 static const char* const fcCoerceNames[] = { "Factor", "From", "To" };
 static const char* const fcConstraintNames[] = { "IsOf", "IsIn" };

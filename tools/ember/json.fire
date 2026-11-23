@@ -1,0 +1,108 @@
+#import "filesystem"
+#import "compression"
+#import "hash"
+#import "http"
+#import "json"
+#import "process"
+#import "random"
+#import "time"
+
+// ember: JSON as ember reads and writes it (the files of System.Text.Json in the C# ember: package.json, ember-lock.json, index.json, ember.json), with the
+// JsonNode of the package json. Reading takes comments and trailing commas (as the C# ember does); writing is the indented form of System.Text.Json: two
+// spaces per level, `"name": value`, `[]`/`{}` for empty lists, and one of its two escapers (the relaxed one of package.json and the lock file, the
+// default one of index.json).
+
+/// <summary>Reads JSON text as the C# ember does: with `//` and `/* */` comments and trailing commas.</summary>
+class JsonReader {
+    static JsonNode Parse(string text) { return JsonNode.Parse(text, new JsonReadOptions(true)) }
+}
+
+/// <summary>Writes JSON like System.Text.Json with WriteIndented, and reads typed values the way it does.</summary>
+class Json2 {
+    static string Quote(string s, bool relaxed) { return JsonTextWriter.Quote(s, relaxed ? JsonEscaping.Relaxed : JsonEscaping.Default) }
+
+    static string Write(JsonNode node, bool relaxed) { return node.ToJson(new JsonWriteOptions(true, relaxed ? JsonEscaping.Relaxed : JsonEscaping.Default)) }
+
+    // ---- reading typed values (System.Text.Json: a value of the wrong kind is an error; null is null) ----
+
+    static string Kind(JsonNode n) {
+        string names[] = ["Null", "True", "Number", "String", "StartArray", "StartObject", "Raw"]
+        if (n.kind == JsonKind.Bool && !n.flag) { return "False" }
+        return names[n.kind!int]
+    }
+
+    static JsonException Mismatch(JsonNode n, string type, string path) {
+        return new JsonException("The JSON value could not be converted to " + type + ". Path: " + path + ".")
+    }
+
+    /// <summary>A string member: undefined when it is missing (then `fallback`) or null.</summary>
+    static string Str(JsonNode obj, string key, string path, string fallback, bool ci = false) {
+        JsonNode v = undefined
+        if (ci) { v = obj.GetIgnoreCase(key) } else { v = obj.Get(key) }
+        if (v == undefined) { return fallback }
+        if (v.kind == JsonKind.Null) { return undefined }
+        if (v.kind != JsonKind.String) { throw Json2.Mismatch(v, "System.String", path + "." + key) }
+        return v.text
+    }
+
+    static any BoolOf(JsonNode obj, string key, string path, any fallback, bool ci = false) {
+        JsonNode v = undefined
+        if (ci) { v = obj.GetIgnoreCase(key) } else { v = obj.Get(key) }
+        if (v == undefined) { return fallback }
+        if (v.kind == JsonKind.Null) {
+            if (fallback == undefined) { return undefined }
+            throw Json2.Mismatch(v, "System.Boolean", path + "." + key)
+        }
+        if (v.kind != JsonKind.Bool) { throw Json2.Mismatch(v, "System.Boolean", path + "." + key) }
+        return v.flag
+    }
+
+    static any IntOf(JsonNode obj, string key, string path, any fallback, bool ci = false) {
+        JsonNode v = undefined
+        if (ci) { v = obj.GetIgnoreCase(key) } else { v = obj.Get(key) }
+        if (v == undefined) { return fallback }
+        if (v.kind == JsonKind.Null && fallback == undefined) { return undefined }
+        if (!v.IsWholeNumber()) { throw Json2.Mismatch(v, "System.Int32", path + "." + key) }
+        any parsed = v.text.TryToInt()
+        if (parsed == undefined) { throw Json2.Mismatch(v, "System.Int32", path + "." + key) }
+        return parsed
+    }
+
+    /// <summary>A list of strings: undefined when the member is missing (the caller keeps its default) or null.</summary>
+    static List<string> StrList(JsonNode obj, string key, string path, bool ci = false) {
+        JsonNode v = undefined
+        if (ci) { v = obj.GetIgnoreCase(key) } else { v = obj.Get(key) }
+        if (v == undefined || v.kind == JsonKind.Null) { return undefined }
+        if (v.kind != JsonKind.Array) { throw Json2.Mismatch(v, "System.Collections.Generic.List`1[System.String]", path + "." + key) }
+        var list = new List<string>()
+        for (int i = 0; i < v.items.Count; i++) {
+            var item = v.items[i]
+            if (item.kind == JsonKind.Null) { list.Add(undefined) }
+            else if (item.kind != JsonKind.String) { throw Json2.Mismatch(item, "System.String", path + "." + key + "[" + i + "]") }
+            else { list.Add(item.text) }
+        }
+        return list
+    }
+
+    /// <summary>A dictionary of strings (in the order of the text).</summary>
+    static Dictionary<string, string> StrMap(JsonNode obj, string key, string path) {
+        var v = obj.Get(key)
+        if (v == undefined || v.kind == JsonKind.Null) { return undefined }
+        if (v.kind != JsonKind.Object) { throw Json2.Mismatch(v, "System.Collections.Generic.Dictionary`2[System.String,System.String]", path + "." + key) }
+        var map = new Dictionary<string, string>()
+        for (int i = 0; i < v.items.Count; i++) {
+            var item = v.items[i]
+            if (item.kind == JsonKind.Null) { map[v.keys[i]] = undefined }
+            else if (item.kind != JsonKind.String) { throw Json2.Mismatch(item, "System.String", path + "." + key + "." + v.keys[i]) }
+            else { map[v.keys[i]] = item.text }
+        }
+        return map
+    }
+
+    /// <summary>A string map as an object node.</summary>
+    static JsonNode MapNode(Dictionary<string, string> map) {
+        var n = JsonNode.MakeObject()
+        foreach (pair in map) { n.Put(pair.Key, JsonNode.MakeText(pair.Value)) }
+        return n
+    }
+}

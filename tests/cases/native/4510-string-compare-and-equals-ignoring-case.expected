@@ -1,0 +1,12 @@
+True
+False
+False
+False True
+True
+-1 1
+1 -1
+0 -1 1
+1 1
+Alpha, Bravo, charlie, delta
+False
+undefined: A string or char was expected, not Undefined.

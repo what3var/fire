@@ -765,6 +765,7 @@ namespace fire.Compiler
                         break;
                     case IsOfExpr isOf when NameOf(isOf.Operand) is { } tested: asked.Add(tested); break;
                     case ConditionalAccessExpr access when NameOf(access.Target) is { } accessed: asked.Add(accessed); break;
+                    case BinaryExpr { Op: BinaryOp.Coalesce } coalesce when NameOf(coalesce.Left) is { } coalesced: asked.Add(coalesced); break;
                 }
             foreach (var name in asked)
                 if (FieldCandidates().TryGetValue(name, out var fields))
@@ -865,7 +866,7 @@ namespace fire.Compiler
         private void Report(string code, string message, int line)
         {
             if (_source < _reportFrom) return;
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode or TextConversionCode or BlockTakeLocalCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode or TextConversionCode or BlockTakeLocalCode or StoredLocalCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
         }
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
@@ -2657,6 +2658,12 @@ namespace fire.Compiler
         private StaticType InferBinary(BinaryExpr b)
         {
             var (left, right) = InferOperands(b);
+            if (b.Op == BinaryOp.Coalesce)
+            {
+                // `a ?? b`: the common type of both; defined when a is or b is
+                var joined = Join([left, right], b);
+                return joined.WithNull(left.Null == Nullness.Defined ? Nullness.Defined : right.Null);
+            }
             if (b.Op is BinaryOp.And or BinaryOp.Or)
             {
                 string op = b.Op == BinaryOp.And ? "&&" : "||";
@@ -2674,7 +2681,7 @@ namespace fire.Compiler
         /// units become unitless, their types stay. The operands are inferred from left to right.</summary>
         private (StaticType Left, StaticType Right) InferOperands(BinaryExpr b)
         {
-            if (b.Op is BinaryOp.And or BinaryOp.Or) return (Infer(b.Left), Infer(b.Right));
+            if (b.Op is BinaryOp.And or BinaryOp.Or or BinaryOp.Coalesce) return (Infer(b.Left), Infer(b.Right));
             var leftInfo = Compiler.AnalyzeCoercion(b.Left);
             var rightInfo = Compiler.AnalyzeCoercion(b.Right);
             if (!leftInfo.RequestsAnyAuto && !rightInfo.RequestsAnyAuto) return (Infer(b.Left), Infer(b.Right));
@@ -3287,6 +3294,7 @@ namespace fire.Compiler
                     CheckTreeRules(call.Callee, line);
                     foreach (var a in call.Args) CheckTreeRules(a, line);
                     return;
+                case BinaryExpr { Op: BinaryOp.Coalesce }: No("'??' (write 'a != undefined ? a : b')"); return;
                 case BinaryExpr b: CheckTreeRules(b.Left, line); CheckTreeRules(b.Right, line); return;
                 case UnaryExpr { Op: UnaryOp.Negate or UnaryOp.LogicalNot or UnaryOp.BitNot } u: CheckTreeRules(u.Operand, line); return;
                 case UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake }: No("a 'take'"); return;

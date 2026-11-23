@@ -1,4 +1,4 @@
 int where = 3
 print(where)
 //# modes: Release
-//# name: diag 23: int where = 3
+//# name: diag 23: int where = 3 - where is a contextual word: a name of a variable

@@ -1412,10 +1412,23 @@ static void CompileLogicalOr(FcComp* cm, FcBinaryExpr* b) {
     CompileExpr(cm, b->right);
     E_patch(cm, endJumpAt, E_here(cm));
 }
+/* `a ?? b`: [a] -> [a, a] -> is it undefined? Then a goes and b is evaluated; otherwise a is the result (b is not evaluated). */
+static void CompileCoalesce(FcComp* cm, FcBinaryExpr* b) {
+    int doneAt;
+    CompileExpr(cm, b->left);
+    E_op(cm, OP_Dup);
+    E_op(cm, OP_IsOfType);
+    E_u16(cm, E_str(cm, "undefined"));
+    doneAt = EmitJumpIfFalse(cm);
+    E_op(cm, OP_Pop);
+    CompileExpr(cm, b->right);
+    E_patch(cm, doneAt, E_here(cm));
+}
 static void CompileBinary(FcComp* cm, FcBinaryExpr* b) {
     FcOp op;
     if (b->op == BOP_And) { CompileLogicalAnd(cm, b); return; }
     if (b->op == BOP_Or) { CompileLogicalOr(cm, b); return; }
+    if (b->op == BOP_Coalesce) { CompileCoalesce(cm, b); return; }
     EmitCoercedOperands(cm, b->left, b->right);
     switch (b->op) {
         case BOP_Add: op = OP_Add; break;

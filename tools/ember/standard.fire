@@ -1,0 +1,201 @@
+// ember: what ember asks forge for (the standard packages, packing a library project), the cache of native libraries and the files of
+// `ember create` / `ember blank` (StandardPackages.cs, GitHubSource.PackWithForge, NativeLibraryCache.cs and Templates.cs of the C# ember).
+
+class Standard {
+    static string Prefix = "fire-"
+
+    /// <summary>forge next to ember, as [program, arguments before the command] (forge.dll through dotnet), or undefined.</summary>
+    static List<string> Forge() {
+        var result = new List<string>()
+        foreach (n in ["forge.exe", "forge"]) {
+            string path = Here.File(n)
+            if (IO.File.Exists(path)) {
+                result.Add(path)
+                return result
+            }
+        }
+        string dll = Here.File("forge.dll")
+        if (IO.File.Exists(dll)) {
+            result.Add("dotnet")
+            result.Add(dll)
+            return result
+        }
+        return undefined
+    }
+
+    static string[] ToArray(List<string> list) {
+        string result[] = new string[list.Count]
+        for (int i = 0; i < list.Count; i++) { result[i] = list[i] }
+        return result
+    }
+
+    /// <summary>The lines a process wrote (the empty ones left out).</summary>
+    static List<string> Lines(string output) {
+        var lines = new List<string>()
+        foreach (raw in output.Split("\n")) {
+            string line = raw
+            if (line.EndsWith("\r")) { line = line.Substring(0, line.Length - 1) }
+            if (line.Length > 0) { lines.Add(line) }
+        }
+        return lines
+    }
+
+    /// <summary>Runs `forge install-standard` next to ember, which packs and installs the standard libraries from Source when they are missing or changed.
+    /// Never throws; what forge says goes to the output.</summary>
+    static undefined EnsureInstalled() {
+        try {
+            if (!IO.File.Exists(IO.Path.Combine(Here.Folder(), "Source", "Packages.firesln"))) { return }
+            var forge = Standard.Forge()
+            if (forge == undefined) { return }
+            var args = new List<string>()
+            for (int i = 1; i < forge.Count; i++) { args.Add(forge[i]) }
+            args.Add("install-standard")
+            var options = new ProcessOptions()
+            options.MergeError = true
+            var r = Process.Run(forge[0], Standard.ToArray(args), options)
+            foreach (line in Standard.Lines(r.Output)) { Log.Line(line) }
+        } catch (ProcessException e) { Log.Line("The standard packages could not be checked: " + e.message) }
+        catch (IO.IOException e) { Log.Line("The standard packages could not be checked: " + e.message) }
+    }
+
+    /// <summary>Packs a library project of a source snapshot with `forge build project -o folder`.</summary>
+    static string PackWithForge(string project, string output) {
+        var forge = Standard.Forge()
+        if (forge == undefined) { throw new PackageException("The source is a library project; packing it needs forge (the compiler), which is not next to ember.") }
+        var args = new List<string>()
+        for (int i = 1; i < forge.Count; i++) { args.Add(forge[i]) }
+        foreach (a in ["build", project, "-o", output]) { args.Add(a) }
+        var options = new ProcessOptions()
+        options.MergeError = true
+        ProcessResult r = undefined
+        try {
+            r = Process.Run(forge[0], Standard.ToArray(args), options)
+        } catch (ProcessException e) { throw new PackageException("forge could not be started.") }
+        var lines = Standard.Lines(r.Output)
+        var built = new List<string>()
+        if (IO.Directory.Exists(output)) { foreach (f in IO.Directory.GetFiles(output)) { if (f.EndsWith(Fpk.Extension)) { built.Add(f) } } }
+        if (r.ExitCode != 0 || built.Count != 1) {
+            var last = new List<string>()
+            for (int i = Math.Max(0, lines.Count - 20); i < lines.Count; i++) { last.Add(lines[i]) }
+            throw new PackageException("forge could not pack " + IO.Path.GetFileName(project) + ":\n  " + "\n  ".Join(last))
+        }
+        return built[0]
+    }
+}
+
+/// <summary>The user-wide cache of the static libraries of native builds (linkage "static"): FIRE_NATIVE_CACHE, else fire/cache/native below the folder for
+/// application data of the user (~/.local/share on Linux, %LOCALAPPDATA% on Windows, ~/Library/Application Support on macOS).</summary>
+class NativeLibraryCache {
+    static string Root() {
+        string dir = Environment.Get("FIRE_NATIVE_CACHE")
+        if (dir != undefined && dir.Length > 0) { return dir }
+        return IO.Path.Combine(NativeLibraryCache.LocalApplicationData(), "fire", "cache", "native")
+    }
+
+    /// <summary>Environment.SpecialFolder.LocalApplicationData (with SpecialFolderOption.Create: the folder is made).</summary>
+    static string LocalApplicationData() {
+        string folder = undefined
+        if (Environment.Platform == "windows") { folder = Environment.Get("LOCALAPPDATA") ?? "" }
+        else if (Environment.Platform == "macos") { folder = IO.Path.Combine(IO.Directory.GetHomeDirectory(), "Library", "Application Support") }
+        else {
+            string xdg = Environment.Get("XDG_DATA_HOME")
+            if (xdg != undefined && xdg.Length > 0 && IO.Path.IsPathRooted(xdg)) { folder = xdg }
+            else { folder = IO.Path.Combine(IO.Directory.GetHomeDirectory(), ".local", "share") }
+        }
+        if (folder.Length > 0) {
+            try {
+                IO.Directory.CreateDirectory(folder)
+            } catch (IO.IOException e) { }
+        }
+        return folder
+    }
+
+    /// <summary>[libraries, bytes] in the cache.</summary>
+    static int[] Size() {
+        string root = NativeLibraryCache.Root()
+        if (!IO.Directory.Exists(root)) { return [0, 0] }
+        int count = 0
+        int bytes = 0
+        foreach (file in IO.Directory.GetFiles(root, "*", IO.SearchOption.AllDirectories)) {
+            try {
+                bytes += IO.File.Size(file)
+            } catch (IO.IOException e) { }
+            if (file.EndsWith(".a") || Ci.EndsWith(file, ".lib")) { count++ }
+        }
+        return [count, bytes]
+    }
+
+    static int[] Clean() {
+        var size = NativeLibraryCache.Size()
+        string root = NativeLibraryCache.Root()
+        if (IO.Directory.Exists(root)) { IO.Directory.Delete(root, true) }
+        return size
+    }
+}
+
+/// <summary>`ember create` and `ember blank`: the file that `ember forge` reads.</summary>
+class Templates {
+    static string ExamplePrelude() {
+        return "// The prelude of the import \"mathkit\": fire source that is added to the program by `#import \"mathkit\"`.\n"
+            + "class MathKit {\n"
+            + "    static Square(float x) { return x * x }\n"
+            + "    // __mathkit_hypot is a native written in C++ (mathkit.hpp, see docs/packages/natives.md): native builds include it, the virtual machine runs it from a shared library.\n"
+            + "    static Hypot(float a, float b) { return __mathkit_hypot(a, b) }\n"
+            + "}"
+    }
+
+    static string ExampleNative() {
+        return "// C++ source of the natives of \"mathkit\" (docs/packages/natives.md). It is put into the natives of the program (fire_natives.cpp) after the runtime (fire_rt_cpp.hpp), outside of any namespace, and built into a shared library for the virtual machine.\n"
+            + "#include <cmath>\n"
+            + "\n"
+            + "namespace fire {\n"
+            + "\n"
+            + "// Value mk_hypot(Value a, Value b): arguments and result are Values (Int(...), Float(...), toR(v) reads a number as a real).\n"
+            + "inline Value mk_hypot(Value a, Value b) { return Float((Real)std::hypot((double)toR(a), (double)toR(b))); }\n"
+            + "\n"
+            + "}  // namespace fire"
+    }
+
+    /// <summary>A description with example values (and the example files it names, next to it, where they do not exist yet).</summary>
+    static PackageManifest Example(string forgeJsonPath, bool writeFiles) {
+        string dir = IO.Path.Combine(IO.Path.GetDirectoryName(IO.Path.GetFullPath(forgeJsonPath)), "mathkit")
+        string prelude = IO.Path.Combine(dir, "mathkit.fire")
+        string native = IO.Path.Combine(dir, "mathkit.hpp")
+        if (writeFiles) {
+            IO.Directory.CreateDirectory(dir)
+            if (!IO.File.Exists(prelude)) { IO.File.WriteAllText(prelude, Templates.ExamplePrelude()) }
+            if (!IO.File.Exists(native)) { IO.File.WriteAllText(native, Templates.ExampleNative()) }
+        }
+        var m = new PackageManifest()
+        m.name = "mathkit"
+        m.version = "1.0.0"
+        m.author = "Your Name"
+        m.description = "Example: a class in fire and a C++ native (hypot) for the native backend."
+        m.license = "MIT"
+        m.homepage = "https://example.com/mathkit"
+        var i = new PackageImport()
+        i.name = "mathkit"
+        i.prelude = prelude
+        i.native = new PackageNative()
+        i.native.sources.Add(native)
+        var f = new PackageNativeFunction()
+        f.name = "__mathkit_hypot"
+        f.arguments = 2
+        f.cpp = "mk_hypot"
+        i.native.functions.Add(take f)
+        m.imports.Add(take i)
+        return m
+    }
+
+    /// <summary>All fields there, nothing in them.</summary>
+    static PackageManifest Blank() {
+        var m = new PackageManifest()
+        var i = new PackageImport()
+        i.prelude = ""
+        i.native = new PackageNative()
+        i.native.sources.Add("")
+        i.native.functions.Add(new PackageNativeFunction())
+        m.imports.Add(take i)
+        return m
+    }
+}

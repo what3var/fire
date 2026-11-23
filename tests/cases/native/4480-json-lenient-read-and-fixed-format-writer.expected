@@ -1,0 +1,27 @@
+strict: '/' is an invalid start of a property name. Expected a '"'. LineNumber: 1 | BytePositionInLine: 2.
+strict: The JSON array contains a trailing comma at the end which is not supported in this mode. Change the reader options. LineNumber: 0 | BytePositionInLine: 6.
+kit 2 1.50 True True
+{"name":"kit","tags":["a","b"],"n":1.50,"ok":true,"none":null}
+{
+  "name": "kit",
+  "tags": [
+    "a",
+    "b"
+  ],
+  "n": 1.50,
+  "ok": true,
+  "none": null
+}
+{
+  "q": "a\"b<é>",
+  "empty": [],
+  "arr": [
+    1,{ "file": "x", "order": 2 }
+  ]
+}
+{"q":"a\u0022b\u003C\u00E9\u003E","empty":[],"arr":[1,{ "file": "x", "order": 2 }]}
+kit 2
+runtime strict fails
+kit b 1.5
+strict: Expected either ',' or '}' after a property value. LineNumber: 0 | BytePositionInLine: 8.
+Expected either ',' or ']' after a value. LineNumber: 0 | BytePositionInLine: 5.

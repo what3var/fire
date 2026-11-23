@@ -1,0 +1,1 @@
+0630-coalescing-assignment-needs-a-plain-target.fire(5): error E3159: The target of '??=' must not contain a call, '++', '--' or an assignment (write the assignment out)

@@ -1578,6 +1578,8 @@ class extends string {
     any TryToInt() { return __StringCall(19, this) }
     any TryToFloat() { return __StringCall(20, this) }
     int CompareTo(any other) { return __StringCall(21, this, other) }
+    int CompareIgnoreCase(any other) { return __StringCall(23, this, other) }
+    bool EqualsIgnoreCase(any other) { return __StringCall(24, this, other) }
     string Join(any items) {
         int n = 0
         if (items is of List) { n = items.Count } else { n = items.length }

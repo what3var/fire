@@ -135,6 +135,17 @@ static void trLines(TrProtocol* p, const char* text, size_t n) {
 
 /* a program with its arguments: what it writes to stdout and stderr, its exit code (Process.ExitCode: 128 + the signal when one ended it) */
 static const char* trPkgPath;   /* FIRE_PKG_PATH of the program that runs (NULL: as it is) */
+#ifdef _WIN32
+static int trExec(FcCtx* c, char** argv, FcBuf* out, FcBuf* err) {
+    char* env[2] = { NULL, NULL };
+    int code;
+    fflush(stdout);
+    fflush(stderr);
+    if (trPkgPath && *trPkgPath) env[0] = (char*)fcFmt(c, "FIRE_PKG_PATH=%s", trPkgPath);
+    code = fwRun(argv[0], fwCommandLineOf(c, argv), NULL, (const char* const*)env, out, err);
+    return code;
+}
+#else
 static int trExec(FcCtx* c, char** argv, FcBuf* out, FcBuf* err) {
     int o[2], e[2], status = 0;
     pid_t pid;
@@ -171,6 +182,7 @@ static int trExec(FcCtx* c, char** argv, FcBuf* out, FcBuf* err) {
     if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
     return -1;
 }
+#endif
 
 /* ---- the driver of a run ---- */
 typedef struct TrDriver { TrRun* run; PjPlan* plan; FcList* files; int tests; const TdFilter* filter; } TrDriver;

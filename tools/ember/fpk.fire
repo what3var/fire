@@ -1,0 +1,272 @@
+// ember: the package file (.fpk, a zip with the package.json in its root) - fire.Package.Manager/Fpk.cs of the C# ember.
+
+/// <summary>Files on the disk: a path is absolute or relative to `baseDir` (the folder of the forge file).</summary>
+class DiskFiles : IFiles {
+    string baseDir
+    construct(string baseDir) { this.baseDir = baseDir }
+
+    string Absolute(string path) {
+        if (IO.Path.IsPathRooted(path)) { return IO.Path.GetFullPath(path) }
+        return IO.Path.GetFullPath(IO.Path.Combine(this.baseDir, path))
+    }
+
+    bool Exists(string path) {
+        try {
+            return IO.File.Exists(this.Absolute(path))
+        } catch (IO.IOException e) { return false }
+    }
+
+    string Read(string path) {
+        string full = this.Absolute(path)
+        try {
+            if (!IO.File.Exists(full)) { return undefined }
+            return IO.File.ReadAllText(full)
+        } catch (IO.IOException e) { return undefined }
+    }
+}
+
+/// <summary>The entries of a package file.</summary>
+class ZipFiles : IFiles {
+    Zip.Archive zip
+    construct(Zip.Archive zip) { this.zip = zip }
+    bool Exists(string path) { return this.zip.GetEntry(path.Replace("\\", "/")) != undefined }
+    string Read(string path) {
+        var e = this.zip.GetEntry(path.Replace("\\", "/"))
+        if (e == undefined) { return undefined }
+        return e.ReadAllText()
+    }
+}
+
+class Fpk {
+    static string ManifestEntry = "package.json"
+    static string Extension = ".fpk"
+    static string TemplatesEntry = "templates"
+
+    /// <summary>The package.json of a package file; the problems of a package that cannot be used are an exception.</summary>
+    static PackageManifest ReadManifest(string fpkPath) {
+        Zip.Archive zip = undefined
+        try {
+            zip = Zip.Archive.Open(fpkPath)
+        } catch (Zip.ZipException e) { throw new PackageException("'" + fpkPath + "' is not a package file (.fpk).") }
+        catch (Compression.InvalidDataException e) { throw new PackageException("'" + fpkPath + "' is not a package file (.fpk).") }
+        catch (IO.IOException e) { throw new PackageException("Cannot read '" + fpkPath + "': " + e.message) }
+        try {
+            return Fpk.ReadManifestOf(zip, fpkPath)
+        } finally { zip.Close() }
+    }
+
+    static PackageManifest ReadManifestOf(Zip.Archive zip, string fpkPath) {
+        var entry = zip.GetEntry(Fpk.ManifestEntry)
+        if (entry == undefined) { throw new PackageException("'" + fpkPath + "' has no " + Fpk.ManifestEntry + " in its root.") }
+        string text = undefined
+        try {
+            text = entry.ReadAllText()
+        } catch (Zip.ZipException e) { throw new PackageException("'" + fpkPath + "' is not a package file (.fpk).") }
+        catch (Compression.InvalidDataException e) { throw new PackageException("'" + fpkPath + "' is not a package file (.fpk).") }
+        catch (IO.IOException e) { throw new PackageException("Cannot read '" + fpkPath + "': " + e.message) }
+        var manifest = PackageManifest.Parse(text)
+        var problems = manifest.Validate(new ZipFiles(zip))
+        if (problems.Count > 0) { throw new PackageException("The package '" + fpkPath + "' has problems:\n  " + "\n  ".Join(problems)) }
+        return manifest
+    }
+
+    /// <summary>Unpacks a package into `directory` (which must not exist) and returns its manifest.</summary>
+    static PackageManifest Extract(string fpkPath, string directory) {
+        Zip.Archive zip = undefined
+        try {
+            zip = Zip.Archive.Open(fpkPath)
+        } catch (Zip.ZipException e) { throw new PackageException("'" + fpkPath + "' is not a package file (.fpk).") }
+        catch (Compression.InvalidDataException e) { throw new PackageException("'" + fpkPath + "' is not a package file (.fpk).") }
+        catch (IO.IOException e) { throw new PackageException("Cannot unpack '" + fpkPath + "': " + e.message) }
+        try {
+            var manifest = Fpk.ReadManifestOf(zip, fpkPath)
+            string root = IO.Path.GetFullPath(directory) + IO.Path.DirectorySeparatorChar
+            foreach (entry in zip.Entries) {
+                if (entry.FullName.EndsWith("/")) { continue }
+                string target = IO.Path.GetFullPath(IO.Path.Combine(directory, entry.FullName))
+                if (!target.StartsWith(root)) { throw new PackageException("'" + fpkPath + "' contains a path that leaves the package folder: " + entry.FullName) }
+                IO.Directory.CreateDirectory(IO.Path.GetDirectoryName(target))
+                entry.ExtractToFile(target, true)
+            }
+            return manifest
+        } catch (Zip.ZipException e) { throw new PackageException("'" + fpkPath + "' is not a package file (.fpk).") }
+        catch (Compression.InvalidDataException e) { throw new PackageException("'" + fpkPath + "' is not a package file (.fpk).") }
+        catch (IO.IOException e) { throw new PackageException("Cannot unpack '" + fpkPath + "': " + e.message) }
+        finally { zip.Close() }
+    }
+
+    /// <summary>`ember forge`: builds `outputDirectory/name-version.fpk` from a forge file and keeps a copy of the description with absolute paths in
+    /// `outputDirectory/json/name-version.json`. Returns [package, copy].</summary>
+    static string[] Forge(string forgeJsonPath, string outputDirectory) {
+        string forgeFile = IO.Path.GetFullPath(forgeJsonPath)
+        if (!IO.File.Exists(forgeFile)) { throw new PackageException("'" + forgeJsonPath + "' does not exist.") }
+        string baseDir = IO.Path.GetDirectoryName(forgeFile)
+        var manifest = PackageManifest.Load(forgeFile)
+        var disk = new DiskFiles(baseDir)
+        var problems = manifest.Validate(disk)
+        if (problems.Count == 0) {
+            foreach (import in manifest.imports) {
+                if (import.native != undefined) {
+                    foreach (p in NativeSourceOrder.CheckAllPlatforms(import.native, disk)) { problems.Add("Import '" + import.name + "': " + p) }
+                }
+            }
+        }
+        if (problems.Count > 0) { throw new PackageException("The package description has problems:\n  " + "\n  ".Join(problems)) }
+
+        // the forge copy: the same file with every path absolute
+        var forgeCopy = manifest.Clone()
+        foreach (import in forgeCopy.imports) {
+            if (!Ci.IsBlank(import.prelude)) { import.prelude = disk.Absolute(import.prelude) }
+            if (import.resources != undefined) {
+                var abs = new Dictionary<string, string>()
+                foreach (pair in import.resources) { abs[pair.Key] = disk.Absolute(pair.Value) }
+                import.resources = take abs
+            }
+            if (import.native != undefined) {
+                var n = import.native
+                n.sources = Fpk.MapList(n.sources, disk, undefined)
+                var ps = new Dictionary<string, NativeSourceList>(Owns.Values)
+                foreach (pair in n.platformSources) { ps[pair.Key] = Fpk.MapList(pair.Value, disk, undefined) }
+                n.platformSources = take ps
+                var libs = new Dictionary<string, string>()
+                foreach (pair in n.libraries) { libs[pair.Key] = disk.Absolute(pair.Value) }
+                n.libraries = take libs
+                var headers = new List<string>()
+                foreach (h in n.headers) { headers.Add(disk.Absolute(h)) }
+                n.headers = take headers
+            }
+        }
+
+        // the templates: a folder next to the forge file (or the one the description names) goes into the package as `templates/`
+        string templatesDir = undefined
+        if (!Ci.IsBlank(manifest.templates)) {
+            templatesDir = disk.Absolute(manifest.templates)
+            if (!IO.Directory.Exists(templatesDir)) { throw new PackageException("The templates folder '" + manifest.templates + "' does not exist.") }
+        } else if (IO.Directory.Exists(IO.Path.Combine(baseDir, Fpk.TemplatesEntry))) { templatesDir = IO.Path.Combine(baseDir, Fpk.TemplatesEntry) }
+
+        // the package: every file below a folder of its import; the package.json names them relative to the root
+        var packaged = manifest.Clone()
+        var placer = new Placer(disk)
+        foreach (import in packaged.imports) {
+            if (!Ci.IsBlank(import.prelude)) { import.prelude = placer.Place(import.name, import.prelude) }
+            if (import.resources != undefined && import.resources.Count > 0) {
+                string folder = ""
+                if (import.prelude.IndexOf("/") >= 0) { folder = import.prelude.Substring(0, import.prelude.LastIndexOf("/") + 1) }
+                var placed = new Dictionary<string, string>()
+                foreach (pair in import.resources) {
+                    string entry = folder + pair.Key.Replace("\\", "/")
+                    if (!placer.used.Add(entry.ToUpper())) { throw new PackageException("The resource '" + pair.Key + "' of '" + import.name + "' collides with another file of the package ('" + entry + "').") }
+                    placer.sources.Add(disk.Absolute(pair.Value))
+                    placer.entries.Add(entry)
+                    placed[pair.Key] = entry
+                }
+                import.resources = take placed
+            }
+            if (import.native != undefined) {
+                var n = import.native
+                n.sources = Fpk.MapList(n.sources, disk, placer, import.name)
+                var ps = new Dictionary<string, NativeSourceList>(Owns.Values)
+                foreach (pair in n.platformSources) { ps[pair.Key] = Fpk.MapList(pair.Value, disk, placer, import.name) }
+                n.platformSources = take ps
+                var libs = new Dictionary<string, string>()
+                foreach (pair in n.libraries) { libs[pair.Key] = placer.Place(import.name, pair.Value) }
+                n.libraries = take libs
+                var headers = new List<string>()
+                foreach (h in n.headers) { headers.Add(placer.Place(import.name, h)) }
+                n.headers = take headers
+            }
+        }
+
+        // the documents (readme, licence, notices): the ones the description names, or those next to the forge file; in the package in its root
+        var documents = new List<string>()
+        if (manifest.documents != undefined && manifest.documents.Count > 0) {
+            foreach (d in manifest.documents) { documents.Add(disk.Absolute(d)) }
+        } else {
+            var next = new List<string>()
+            foreach (f in IO.Directory.GetFiles(baseDir)) { if (PackageManifest.IsDocumentName(IO.Path.GetFileName(f))) { next.Add(f) } }
+            next.Sort((string a, string b) => a.CompareTo(b))
+            foreach (f in next) { documents.Add(f) }
+        }
+        if (documents.Count > 0) {
+            var copyDocs = new List<string>()
+            foreach (d in documents) { copyDocs.Add(d) }
+            forgeCopy.documents = take copyDocs
+            packaged.documents = new List<string>()
+            foreach (document in documents) {
+                string entry = IO.Path.GetFileName(document)
+                if (!placer.used.Add(entry.ToUpper())) { throw new PackageException("The document '" + document + "' has the name of another file of the package ('" + entry + "').") }
+                placer.sources.Add(document)
+                placer.entries.Add(entry)
+                packaged.documents.Add(entry)
+            }
+        }
+
+        if (templatesDir != undefined) {
+            forgeCopy.templates = templatesDir
+            packaged.templates = Fpk.TemplatesEntry
+            var files = new List<string>()
+            foreach (f in IO.Directory.GetFiles(templatesDir, "*", IO.SearchOption.AllDirectories)) { files.Add(f) }
+            files.Sort((string a, string b) => a.CompareTo(b))
+            foreach (file in files) {
+                placer.sources.Add(file)
+                placer.entries.Add(Fpk.TemplatesEntry + "/" + IO.Path.GetRelativePath(templatesDir, file).Replace("\\", "/"))
+            }
+        }
+
+        string outDir = undefined
+        if (outputDirectory == undefined) { outDir = IO.Path.GetFullPath(IO.Path.Combine(baseDir, "build")) }
+        else { outDir = IO.Path.GetFullPath(outputDirectory) }
+        IO.Directory.CreateDirectory(outDir)
+        string baseName = manifest.name + "-" + manifest.version
+        string fpk = IO.Path.Combine(outDir, baseName + Fpk.Extension)
+        if (IO.File.Exists(fpk)) { IO.File.Delete(fpk) }
+        var zip = Zip.Archive.Create(fpk)
+        try {
+            zip.Add(Fpk.ManifestEntry, packaged.ToJson(), 9)
+            for (int i = 0; i < placer.entries.Count; i++) { zip.AddFile(placer.entries[i], placer.sources[i], 9) }
+        } finally { zip.Close() }
+        string jsonDir = IO.Path.Combine(outDir, "json")
+        IO.Directory.CreateDirectory(jsonDir)
+        string jsonCopy = IO.Path.Combine(jsonDir, baseName + ".json")
+        forgeCopy.Save(jsonCopy)
+        return [fpk, jsonCopy]
+    }
+
+    /// <summary>A list of sources with every entry mapped (to an absolute path, or - with a placer - to its place in the package), the orders kept.</summary>
+    static NativeSourceList MapList(NativeSourceList list, DiskFiles disk, Placer placer, string importName = "") {
+        var result = new NativeSourceList()
+        foreach (entry in list.files) {
+            string mapped = undefined
+            if (placer == undefined) { mapped = disk.Absolute(entry) } else { mapped = placer.Place(importName, entry) }
+            result.Add(mapped, list.OrderOf(entry))
+        }
+        return result
+    }
+}
+
+/// <summary>Where the files of a forge file go in the package: `import/file`, `import/2_file` for a second file of the same name.</summary>
+class Placer {
+    DiskFiles disk
+    List<string> sources = new List<string>()
+    List<string> entries = new List<string>()
+    HashSet<string> used = new HashSet<string>()
+    Dictionary<string, string> byFile = new Dictionary<string, string>()
+
+    construct(DiskFiles disk) {
+        this.disk = disk
+        this.used.Add("PACKAGE.JSON")
+    }
+
+    string Place(string importName, string source) {
+        string abs = this.disk.Absolute(source)
+        string key = abs.ToUpper()
+        if (this.byFile.ContainsKey(key)) { return this.byFile[key] }
+        string file = IO.Path.GetFileName(abs)
+        string entry = importName + "/" + file
+        for (int k = 2; !this.used.Add(entry.ToUpper()); k++) { entry = importName + "/" + k + "_" + file }
+        this.byFile[key] = entry
+        this.sources.Add(abs)
+        this.entries.Add(entry)
+        return entry
+    }
+}

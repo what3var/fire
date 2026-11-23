@@ -23,6 +23,10 @@ The program is a path or a name that is looked up in `PATH` (on Windows also wit
 shell in between, so blanks and quotes need no escaping. A shell command line is run by starting the shell: `Process.Run("sh", ["-c", "ls | wc -l"])`,
 `Process.Run("cmd", ["/c", "dir"])`.
 
+The arguments are a `string[]` or a `List<string>` (`Process.Run` and `Process.Start` alike; any other array or `IEnumerable` too - its elements as their
+text); `undefined` is none. One string (`Process.Run("sh", "-c ls")`), a value of another kind or an `undefined` element is an `ArgumentException` that
+says so.
+
 ## Start, talk, wait
 
 ```fire

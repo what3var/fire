@@ -1,0 +1,298 @@
+// ember: the installed packages (Packages/<name>/ next to the program) and the lock file of the packages from GitHub - PackageStore.cs and
+// PackageLock.cs of the C# ember.
+
+class InstalledPackage {
+    PackageManifest manifest
+    string directory
+    construct(PackageManifest manifest, string directory) {
+        this.manifest = try take manifest
+        this.directory = directory
+    }
+    string Name { get { return this.manifest.name } }
+    string Version { get { return this.manifest.version } }
+}
+
+/// <summary>The folder of the program (AppContext.BaseDirectory of the C# ember): the store, the sources and forge are found next to it.</summary>
+class Here {
+    static string Folder() {
+        string program = Environment.ProgramPath
+        return IO.Path.GetDirectoryName(IO.Path.GetFullPath(program))
+    }
+    /// <summary>A file next to the program, as Path.Combine(AppContext.BaseDirectory, name) gives it.</summary>
+    static string File(string name) { return IO.Path.Combine(Here.Folder(), name) }
+}
+
+class PackageStore {
+    string root
+
+    construct(string root) { this.root = IO.Path.GetFullPath(root) }
+
+    static PackageStore Default() { return new PackageStore(Here.File("Packages")) }
+
+    /// <summary>All installed packages (a folder whose package.json cannot be read is left out), by the name of their folder.</summary>
+    List<InstalledPackage> Installed() {
+        var list = new List<InstalledPackage>(Owns.Values)
+        if (!IO.Directory.Exists(this.root)) { return list }
+        var dirs = new List<string>()
+        foreach (d in IO.Directory.GetDirectories(this.root)) { dirs.Add(d) }
+        dirs.Sort((string a, string b) => Ci.Compare(a, b))
+        foreach (dir in dirs) {
+            string json = IO.Path.Combine(dir, Fpk.ManifestEntry)
+            if (!IO.File.Exists(json)) { continue }
+            try {
+                list.Add(new InstalledPackage(PackageManifest.Load(json), dir))
+            } catch (PackageException e) { }
+        }
+        return list
+    }
+
+    InstalledPackage Find(string name) {
+        var all = this.Installed()
+        for (int i = 0; i < all.Count; i++) {
+            if (Ci.Eq(all[i].Name, name)) { return all.TakeAt(i) }
+        }
+        return undefined
+    }
+
+    /// <summary>The installed package a dependency or a reference names: a name, `name@1.2.0` (whatever version is installed), or `github:owner/repo...`
+    /// (the package the lock file says came from that repository).</summary>
+    InstalledPackage FindBySpec(string spec) {
+        if (GitHubSpec.IsGitHub(spec)) {
+            var gh = GitHubSpec.TryParse(spec)
+            if (gh == undefined) { return undefined }
+            PackageLock lockFile = undefined
+            try {
+                lockFile = PackageLock.Load(this)
+            } catch (PackageException e) { return undefined }
+            var entry = lockFile.ForRepository(gh.Repository())
+            if (entry == undefined) { return undefined }
+            return this.Find(entry.package)
+        }
+        int at = spec.IndexOf("@")
+        if (at > 0) { return this.Find(spec.Substring(0, at)) }
+        return this.Find(spec)
+    }
+
+    /// <summary>The package that has the import `name` (not case sensitive), or undefined.</summary>
+    InstalledPackage OwnerOfImport(string importName) {
+        var all = this.Installed()
+        for (int i = 0; i < all.Count; i++) {
+            foreach (imp in all[i].manifest.imports) {
+                if (Ci.Eq(imp.name, importName)) { return all.TakeAt(i) }
+            }
+        }
+        return undefined
+    }
+
+    /// <summary>Installs a package file; an installed package of the same name is replaced. Another package that has one of the imports is an error.</summary>
+    InstalledPackage Install(string fpkPath) {
+        var manifest = Fpk.ReadManifest(fpkPath)
+        foreach (import in manifest.imports) {
+            var other = this.OwnerOfImport(import.name)
+            if (other != undefined && !Ci.Eq(other.Name, manifest.name)) { throw new PackageException("The import '" + import.name + "' already belongs to the package '" + other.Name + "'.") }
+        }
+        IO.Directory.CreateDirectory(this.root)
+        string temp = IO.Path.Combine(this.root, ".tmp-" + Guid.NewGuid().ToString("N"))
+        try {
+            Fpk.Extract(fpkPath, temp)
+            string target = IO.Path.Combine(this.root, manifest.name)
+            if (IO.Directory.Exists(target)) { IO.Directory.Delete(target, true) }
+            IO.Directory.Move(temp, target)
+            return new InstalledPackage(take manifest, target)
+        } finally {
+            if (IO.Directory.Exists(temp)) { IO.Directory.Delete(temp, true) }
+        }
+    }
+
+    /// <summary>Removes a package; false if it is not installed.</summary>
+    bool Remove(string name) {
+        var package = this.Find(name)
+        if (package == undefined) { return false }
+        IO.Directory.Delete(package.directory, true)
+        return true
+    }
+
+    /// <summary>The installed packages that list `name` as a dependency (their names).</summary>
+    List<string> DependentsOf(string name) {
+        var result = new List<string>()
+        foreach (p in this.Installed()) {
+            bool needs = false
+            foreach (d in p.manifest.dependencies) {
+                if (Ci.Eq(d, name)) { needs = true }
+                else if (GitHubSpec.IsGitHub(d) || d.IndexOf("@") >= 0) {
+                    var other = this.FindBySpec(d)
+                    if (other != undefined && Ci.Eq(other.Name, name)) { needs = true }
+                }
+            }
+            if (needs) { result.Add(p.Name) }
+        }
+        return result
+    }
+}
+
+/// <summary>One package installed straight from a GitHub repository (an entry of ember-lock.json).</summary>
+class GitHubLockEntry {
+    string repository = ""
+    string reference = ""
+    string kind = ""
+    string tag = undefined
+    string commit = ""
+    string asset = undefined
+    string sha256 = ""
+    string verified = ""
+    string package = ""
+    string version = ""
+    /// <summary>The time of the install as System.Text.Json writes a DateTime ("2026-11-18T10:00:00.1234567Z").</summary>
+    string installed = "0001-01-01T00:00:00"
+
+    /// <summary>What was installed, for `ember list`: `github:owner/repo@v1.2.0 (commit 3f2c1a0)`.</summary>
+    string Origin() {
+        string at = this.commit
+        if (this.reference.Length > 0) { at = this.reference }
+        if (this.tag != undefined) { at = this.tag }
+        string text = "github:" + this.repository + "@" + at
+        if (this.commit.Length >= 7) { text = text + " (commit " + this.commit.Substring(0, 7) + ")" }
+        return text
+    }
+
+    static GitHubLockEntry Read(JsonNode v, string path) {
+        if (v.kind != JsonKind.Object) { throw Json2.Mismatch(v, "fire.Package.Manager.GitHubLockEntry", path) }
+        var e = new GitHubLockEntry()
+        e.repository = Json2.Str(v, "repository", path, e.repository, true)
+        e.reference = Json2.Str(v, "ref", path, e.reference, true)
+        e.kind = Json2.Str(v, "kind", path, e.kind, true)
+        e.tag = Json2.Str(v, "tag", path, undefined, true)
+        e.commit = Json2.Str(v, "commit", path, e.commit, true)
+        e.asset = Json2.Str(v, "asset", path, undefined, true)
+        e.sha256 = Json2.Str(v, "sha256", path, e.sha256, true)
+        e.verified = Json2.Str(v, "verified", path, e.verified, true)
+        e.package = Json2.Str(v, "package", path, e.package, true)
+        e.version = Json2.Str(v, "version", path, e.version, true)
+        e.installed = Json2.Str(v, "installed", path, e.installed, true)
+        return e
+    }
+
+    JsonNode ToNode() {
+        var n = JsonNode.MakeObject()
+        n.Put("repository", JsonNode.MakeText(this.repository))
+        n.Put("ref", JsonNode.MakeText(this.reference))
+        n.Put("kind", JsonNode.MakeText(this.kind))
+        if (this.tag != undefined) { n.Put("tag", JsonNode.MakeText(this.tag)) }
+        n.Put("commit", JsonNode.MakeText(this.commit))
+        if (this.asset != undefined) { n.Put("asset", JsonNode.MakeText(this.asset)) }
+        n.Put("sha256", JsonNode.MakeText(this.sha256))
+        n.Put("verified", JsonNode.MakeText(this.verified))
+        n.Put("package", JsonNode.MakeText(this.package))
+        n.Put("version", JsonNode.MakeText(this.version))
+        n.Put("installed", JsonNode.MakeText(this.installed))
+        return n
+    }
+
+    GitHubLockEntry Copy() {
+        var e = new GitHubLockEntry()
+        e.repository = this.repository
+        e.reference = this.reference
+        e.kind = this.kind
+        e.tag = this.tag
+        e.commit = this.commit
+        e.asset = this.asset
+        e.sha256 = this.sha256
+        e.verified = this.verified
+        e.package = this.package
+        e.version = this.version
+        e.installed = this.installed
+        return e
+    }
+
+    /// <summary>Now in UTC, as System.Text.Json writes DateTime.UtcNow (the fraction without its trailing zeros).</summary>
+    static string Now() {
+        var t = DateTime.UtcNow
+        int[64] ticks = t.Ticks
+        int fraction = (ticks % 10000000)!int
+        string text = "" + t.Year.ToString().PadLeft(4, '0') + "-" + t.Month.ToString().PadLeft(2, '0') + "-" + t.Day.ToString().PadLeft(2, '0')
+            + "T" + t.Hour.ToString().PadLeft(2, '0') + ":" + t.Minute.ToString().PadLeft(2, '0') + ":" + t.Second.ToString().PadLeft(2, '0')
+        if (fraction > 0) {
+            string digits = fraction.ToString().PadLeft(7, '0')
+            while (digits.EndsWith("0")) { digits = digits.Substring(0, digits.Length - 1) }
+            text = text + "." + digits
+        }
+        return text + "Z"
+    }
+}
+
+/// <summary>`ember-lock.json` in the root of the store: `{ "format": 1, "github": [ ... ] }`.</summary>
+class PackageLock {
+    static string FileName = "ember-lock.json"
+    int format = 1
+    List<GitHubLockEntry> github = new List<GitHubLockEntry>(Owns.Values)
+    string path = ""
+
+    static string PathFor(PackageStore store) { return IO.Path.Combine(store.root, PackageLock.FileName) }
+
+    static PackageLock Load(PackageStore store) {
+        string path = PackageLock.PathFor(store)
+        var result = new PackageLock()
+        result.path = path
+        if (!IO.File.Exists(path)) { return result }
+        JsonNode root = undefined
+        try {
+            root = JsonReader.Parse(IO.File.ReadAllText(path))
+            if (root.kind == JsonKind.Null) { return result }
+            if (root.kind != JsonKind.Object) { throw Json2.Mismatch(root, "fire.Package.Manager.PackageLock", "$") }
+            result.format = Json2.IntOf(root, "format", "$", 1, true)
+            var list = root.GetIgnoreCase("github")
+            if (list != undefined && list.kind != JsonKind.Null) {
+                if (list.kind != JsonKind.Array) { throw Json2.Mismatch(list, "System.Collections.Generic.List`1[fire.Package.Manager.GitHubLockEntry]", "$.github") }
+                for (int i = 0; i < list.items.Count; i++) { result.github.Add(GitHubLockEntry.Read(list.items[i], "$.github[" + i + "]")) }
+            }
+        } catch (JsonException e) { throw new PackageException(path + " is not valid: " + e.message) }
+        if (result.format > 1) { throw new PackageException(path + " has format " + result.format + "; this version of ember reads format 1 - a newer ember is needed.") }
+        return result
+    }
+
+    string ToJson() {
+        var n = JsonNode.MakeObject()
+        n.Put("format", JsonNode.MakeInt(this.format))
+        var list = JsonNode.MakeArray()
+        foreach (e in this.github) { list.Push(e.ToNode()) }
+        n.Put("gitHub", list)
+        return Json2.Write(n, true)
+    }
+
+    undefined Save() {
+        IO.Directory.CreateDirectory(IO.Path.GetDirectoryName(this.path))
+        string temp = this.path + ".tmp"
+        IO.File.WriteAllText(temp, this.ToJson())
+        IO.File.Move(temp, this.path, true)
+    }
+
+    GitHubLockEntry ForRepository(string repository) {
+        foreach (e in this.github) { if (Ci.Eq(e.repository, repository)) { return e } }
+        return undefined
+    }
+
+    GitHubLockEntry ForPackage(string package) {
+        foreach (e in this.github) { if (Ci.Eq(e.package, package)) { return e } }
+        return undefined
+    }
+
+    /// <summary>Puts the entry in place of the one of the same repository (and of one that had the same package from another repository); sorted by repository.</summary>
+    undefined Set(GitHubLockEntry entry) {
+        for (int i = this.github.Count - 1; i >= 0; i--) {
+            if (Ci.Eq(this.github[i].repository, entry.repository) || Ci.Eq(this.github[i].package, entry.package)) { this.github.RemoveAt(i) }
+        }
+        this.github.Add(entry.Copy())
+        this.github.Sort((GitHubLockEntry a, GitHubLockEntry b) => Ci.Compare(a.repository, b.repository))
+    }
+
+    bool RemovePackage(string package) {
+        bool removed = false
+        for (int i = this.github.Count - 1; i >= 0; i--) {
+            if (Ci.Eq(this.github[i].package, package)) {
+                this.github.RemoveAt(i)
+                removed = true
+            }
+        }
+        return removed
+    }
+}

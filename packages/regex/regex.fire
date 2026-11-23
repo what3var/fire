@@ -1,0 +1,937 @@
+// Regular expressions (docs/stdlib/regex.md): a small backtracking engine in fire. The pattern is parsed into a tree and compiled into the instructions
+// of a little machine (characters, classes, splits, jumps, saves of the groups); matching runs them with an explicit stack of the choices left, so a
+// deep pattern does not grow the call stack. The syntax is a subset of .NET's (and of most others): see the documentation for what is in it.
+
+/// <summary>A pattern that cannot be read, or a match that needs too many steps.</summary>
+class RegexException : Exception {
+    construct(string message) { this.message = message }
+}
+
+/// <summary>A node of the parsed pattern.</summary>
+class RegexNode {
+    static int KEmpty = 0
+    static int KChar = 1
+    static int KAny = 2
+    static int KClass = 3
+    static int KSeq = 4
+    static int KAlt = 5
+    static int KGroup = 6
+    static int KRepeat = 7
+    static int KAssert = 8
+    static int KBackref = 9
+    static int KLook = 10
+
+    defined int kind
+    // the character (KChar), the class (KClass), the group (KGroup, -1: not capturing; KBackref), the assertion (KAssert), negative (KLook: 1)
+    defined int value
+    defined int min
+    defined int max
+    bool lazy
+    List<RegexNode> parts
+
+    construct(defined int kind) {
+        this.kind = kind
+        this.value = 0
+        this.min = 0
+        this.max = 0
+        this.lazy = false
+        this.parts = new List<RegexNode>(Owns.Values)
+    }
+
+    static RegexNode Of(defined int kind, defined int value) {
+        var n = new RegexNode(kind)
+        n.value = value
+        return n
+    }
+}
+
+/// <summary>A character class: ranges of codes, the shorthand classes in it (\d, \w, \s and their negations) and whether it is negated.</summary>
+class RegexClass {
+    List<int> lo
+    List<int> hi
+    // \d \D \w \W \s \S inside the brackets: 1, 2, 3, 4, 5, 6
+    List<int> shorthands
+    bool negate
+    bool ignoreCase
+
+    construct() {
+        this.lo = new List<int>()
+        this.hi = new List<int>()
+        this.shorthands = new List<int>()
+        this.negate = false
+        this.ignoreCase = false
+    }
+
+    undefined Add(defined int a, defined int b) {
+        this.lo.Add(a)
+        this.hi.Add(b)
+    }
+
+    static bool Shorthand(defined int which, defined int c) {
+        if (which == 1) { return c >= 48 && c <= 57 }
+        if (which == 2) { return !(c >= 48 && c <= 57) }
+        if (which == 3) { return Regex.IsWordChar(c) }
+        if (which == 4) { return !Regex.IsWordChar(c) }
+        bool space = c.ToChar().IsWhiteSpace()
+        if (which == 5) { return space }
+        return !space
+    }
+
+    bool Raw(defined int c) {
+        for (int i = 0; i < this.lo.Count; i++) {
+            if (c >= this.lo[i] && c <= this.hi[i]) { return true }
+        }
+        for (int j = 0; j < this.shorthands.Count; j++) {
+            if (RegexClass.Shorthand(this.shorthands[j], c)) { return true }
+        }
+        return false
+    }
+
+    bool Contains(defined int c) {
+        bool hit = this.Raw(c)
+        if (!hit && this.ignoreCase) {
+            var ch = c.ToChar()
+            hit = this.Raw(ch.ToUpper().ToInt()) || this.Raw(ch.ToLower().ToInt())
+        }
+        return hit != this.negate
+    }
+}
+
+/// <summary>One match: where it is, its text and the text of its groups (group 0 is the whole match).</summary>
+class RegexMatch {
+    string input
+    any caps
+    List<string> names
+    List<int> numbers
+
+    construct() { }
+
+    /// <summary>Whether the pattern matched (Regex.Match gives an unsuccessful match rather than undefined).</summary>
+    bool Success { get { return this.caps != undefined } }
+    defined int Index { get { return this.Success ? this.caps[0] : -1 } }
+    defined int Length { get { return this.Success ? this.caps[1] - this.caps[0] : 0 } }
+    string Value { get { return this.Success ? this.input.Substring(this.caps[0], this.caps[1] - this.caps[0]) : "" } }
+    /// <summary>The number of groups, with group 0.</summary>
+    defined int GroupCount { get { return this.Success ? this.caps.length / 2 : 0 } }
+
+    /// <summary>Did group `n` take part in the match?</summary>
+    bool Has(defined int n) { return this.Success && n >= 0 && n * 2 < this.caps.length && this.caps[n * 2] >= 0 && this.caps[n * 2 + 1] >= 0 }
+
+    /// <summary>The text of group `n` ("" when it did not take part in the match).</summary>
+    string Group(defined int n) {
+        if (!this.Has(n)) { return "" }
+        return this.input.Substring(this.caps[n * 2], this.caps[n * 2 + 1] - this.caps[n * 2])
+    }
+
+    /// <summary>The text of a named group `(?<name>...)` ("" when there is none of that name or it did not take part).</summary>
+    string Group(string name) { return this.Group(this.NumberOf(name)) }
+
+    /// <summary>Where group `n` starts (-1 when it did not take part).</summary>
+    defined int GroupIndex(defined int n) {
+        if (!this.Has(n)) { return -1 }
+        return this.caps[n * 2]
+    }
+
+    defined int NumberOf(string name) {
+        for (int i = 0; i < this.names.Count; i++) {
+            if (this.names[i] == name) { return this.numbers[i] }
+        }
+        return -1
+    }
+
+    string ToString() { return this.Value }
+}
+
+/// <summary>A compiled regular expression: `new Regex("(\\d+)-(\\d+)")`, then IsMatch, Match, Matches, Replace, Split.</summary>
+class Regex {
+    /// <summary>Letters match without regard to case.</summary>
+    static defined int IgnoreCase = 1
+    /// <summary>`^` and `$` match at the start and the end of every line.</summary>
+    static defined int Multiline = 2
+    /// <summary>`.` matches a line break too.</summary>
+    static defined int Singleline = 4
+    /// <summary>The most steps (instructions run, counting the backtracking) one call may take before it is a RegexException.</summary>
+    static defined int MaxSteps = 1000000
+
+    static int OpChar = 0
+    static int OpAny = 1
+    static int OpAnyNl = 2
+    static int OpClass = 3
+    static int OpSplit = 4
+    static int OpJmp = 5
+    static int OpSave = 6
+    static int OpBol = 7
+    static int OpEol = 8
+    static int OpWordB = 9
+    static int OpNotWordB = 10
+    static int OpBegin = 11
+    static int OpEnd = 12
+    static int OpEndZ = 13
+    static int OpMatch = 14
+    static int OpBackref = 15
+    static int OpLook = 16
+    static int OpMark = 17
+    static int OpCheck = 18
+    static int OpCharFold = 19
+
+    string pattern
+    defined int options
+    // the program: an instruction is ops[i] with its operands a[i], b[i]
+    List<int> ops
+    List<int> a
+    List<int> b
+    List<RegexClass> classes
+    defined int groups
+    defined int marks
+    List<string> names
+    List<int> numbers
+    // the parser
+    string p
+    defined int at
+    bool anchored
+
+    construct(string pattern) { this.Init(pattern, 0) }
+
+    construct(string pattern, defined int options) { this.Init(pattern, options) }
+
+    undefined Init(string pattern, defined int options) {
+        this.pattern = pattern
+        this.options = options
+        this.ops = new List<int>()
+        this.a = new List<int>()
+        this.b = new List<int>()
+        this.classes = new List<RegexClass>(Owns.Values)
+        this.names = new List<string>()
+        this.numbers = new List<int>()
+        this.groups = 1
+        this.marks = 0
+        this.p = pattern
+        this.at = 0
+        var tree = this.ParseAlt()
+        if (this.at < this.p.Length) { throw this.Bad("unbalanced ')'") }
+        this.anchored = Regex.StartsAnchored(tree, (options & Regex.Multiline) != 0)
+        this.Emit(Regex.OpSave, 0, 0)
+        this.Compile(tree)
+        this.Emit(Regex.OpSave, 1, 0)
+        this.Emit(Regex.OpMatch, 0, 0)
+    }
+
+    string Pattern { get { return this.pattern } }
+
+    /// <summary>The number of capturing groups, with group 0 (the whole match).</summary>
+    defined int GroupCount { get { return this.groups } }
+
+    static bool IsWordChar(defined int c) {
+        if (c == 95) { return true }
+        return c.ToChar().IsLetterOrDigit()
+    }
+
+    // ---- reading the pattern ----
+
+    RegexException Bad(string what) { return new RegexException("Invalid pattern '" + this.pattern + "' at offset " + this.at + ": " + what + ".") }
+
+    bool More { get { return this.at < this.p.Length } }
+
+    char Peek() { return this.p[this.at] }
+
+    RegexNode ParseAlt() {
+        var first = this.ParseSeq()
+        if (!this.More || this.Peek() != '|') { return first }
+        var alt = new RegexNode(RegexNode.KAlt)
+        alt.parts.Add(first)
+        while (this.More && this.Peek() == '|') {
+            this.at++
+            alt.parts.Add(this.ParseSeq())
+        }
+        return alt
+    }
+
+    RegexNode ParseSeq() {
+        var seq = new RegexNode(RegexNode.KSeq)
+        while (this.More && this.Peek() != '|' && this.Peek() != ')') {
+            var atom = this.ParseAtom()
+            seq.parts.Add(this.ParseQuantifier(atom))
+        }
+        if (seq.parts.Count == 1) { return seq.parts[0] }
+        return seq
+    }
+
+    // a number of a quantifier `{n,m}` (-1 when there are no digits)
+    defined int Number() {
+        int start = this.at
+        int n = 0
+        while (this.More && this.Peek().IsDigit()) {
+            n = n * 10 + (this.Peek().ToInt() - 48)
+            if (n > 100000) { throw this.Bad("a count above 100000") }
+            this.at++
+        }
+        if (this.at == start) { return -1 }
+        return n
+    }
+
+    RegexNode ParseQuantifier(RegexNode atom) {
+        if (!this.More) { return atom }
+        char c = this.Peek()
+        int min = -1
+        int max = -1
+        if (c == '*') {
+            min = 0
+            this.at++
+        } else if (c == '+') {
+            min = 1
+            this.at++
+        } else if (c == '?') {
+            min = 0
+            max = 1
+            this.at++
+        } else if (c == '{') {
+            // `{n}`, `{n,}`, `{n,m}` - anything else is a literal `{`
+            int save = this.at
+            this.at++
+            int n = this.Number()
+            if (n < 0) {
+                this.at = save
+                return atom
+            }
+            int m = n
+            if (this.More && this.Peek() == ',') {
+                this.at++
+                m = this.Number()
+            }
+            if (!this.More || this.Peek() != '}') {
+                this.at = save
+                return atom
+            }
+            this.at++
+            if (m >= 0 && m < n) { throw this.Bad("{" + n + "," + m + "}: the range is reversed") }
+            min = n
+            max = m
+        } else { return atom }
+        if (atom.kind == RegexNode.KAssert || atom.kind == RegexNode.KLook) { throw this.Bad("a quantifier after an assertion") }
+        var rep = new RegexNode(RegexNode.KRepeat)
+        rep.min = min
+        rep.max = max
+        rep.parts.Add(take atom)
+        if (this.More && this.Peek() == '?') {
+            rep.lazy = true
+            this.at++
+        }
+        if (this.More && (this.Peek() == '*' || this.Peek() == '+' || this.Peek() == '?' || this.Peek() == '{') && this.QuantifierFollows()) { throw this.Bad("a quantifier after a quantifier") }
+        return rep
+    }
+
+    bool QuantifierFollows() {
+        if (this.Peek() != '{') { return true }
+        int save = this.at
+        this.at++
+        bool yes = this.Number() >= 0
+        this.at = save
+        return yes
+    }
+
+    RegexNode ParseAtom() {
+        char c = this.Peek()
+        this.at++
+        if (c == '.') { return new RegexNode(RegexNode.KAny) }
+        if (c == '^') { return RegexNode.Of(RegexNode.KAssert, Regex.OpBol) }
+        if (c == '$') { return RegexNode.Of(RegexNode.KAssert, Regex.OpEol) }
+        if (c == '[') { return this.ParseClass() }
+        if (c == '(') { return this.ParseGroup() }
+        if (c == ')') { throw this.Bad("unbalanced ')'") }
+        if (c == '*' || c == '+' || c == '?') { throw this.Bad("'" + c + "' follows nothing") }
+        if (c == '\\') { return this.ParseEscape() }
+        return RegexNode.Of(RegexNode.KChar, c.ToInt())
+    }
+
+    RegexNode ParseGroup() {
+        int number = -1
+        if (this.More && this.Peek() == '?') {
+            this.at++
+            if (!this.More) { throw this.Bad("an unfinished group") }
+            char k = this.Peek()
+            this.at++
+            if (k == ':') { number = -1 }
+            else if (k == '=' || k == '!') {
+                var look = RegexNode.Of(RegexNode.KLook, k == '!' ? 1 : 0)
+                look.parts.Add(this.ParseAlt())
+                this.CloseGroup()
+                return look
+            } else if (k == '<' || k == '\'') {
+                char close = k == '<' ? '>' : '\''
+                int start = this.at
+                while (this.More && this.Peek() != close) {
+                    if (!Regex.IsWordChar(this.Peek().ToInt())) { throw this.Bad("a bad character in the name of a group") }
+                    this.at++
+                }
+                if (!this.More || this.at == start) { throw this.Bad("a group name that does not end") }
+                string name = this.p.Substring(start, this.at - start)
+                this.at++
+                number = this.groups
+                this.groups++
+                this.names.Add(name)
+                this.numbers.Add(number)
+            } else { throw this.Bad("'(?" + k + "' is not supported") }
+        } else {
+            number = this.groups
+            this.groups++
+        }
+        var g = RegexNode.Of(RegexNode.KGroup, number)
+        g.parts.Add(this.ParseAlt())
+        this.CloseGroup()
+        return g
+    }
+
+    undefined CloseGroup() {
+        if (!this.More || this.Peek() != ')') { throw this.Bad("a missing ')'") }
+        this.at++
+    }
+
+    // `\x` after the backslash: a class, an assertion, a back reference or a character
+    RegexNode ParseEscape() {
+        if (!this.More) { throw this.Bad("'\\' at the end of the pattern") }
+        char e = this.Peek()
+        this.at++
+        int sh = Regex.ShorthandOf(e)
+        if (sh > 0) {
+            var cls = new RegexClass()
+            cls.shorthands.Add(sh)
+            return RegexNode.Of(RegexNode.KClass, this.AddClass(cls))
+        }
+        if (e == 'b') { return RegexNode.Of(RegexNode.KAssert, Regex.OpWordB) }
+        if (e == 'B') { return RegexNode.Of(RegexNode.KAssert, Regex.OpNotWordB) }
+        if (e == 'A') { return RegexNode.Of(RegexNode.KAssert, Regex.OpBegin) }
+        if (e == 'z') { return RegexNode.Of(RegexNode.KAssert, Regex.OpEnd) }
+        if (e == 'Z') { return RegexNode.Of(RegexNode.KAssert, Regex.OpEndZ) }
+        if (e >= '1' && e <= '9') {
+            int n = e.ToInt() - 48
+            while (this.More && this.Peek().IsDigit() && n * 10 + (this.Peek().ToInt() - 48) < this.groups) {
+                n = n * 10 + (this.Peek().ToInt() - 48)
+                this.at++
+            }
+            if (n >= this.groups) { throw this.Bad("a reference to group " + n + ", which is not defined before it") }
+            return RegexNode.Of(RegexNode.KBackref, n)
+        }
+        if (e == 'k' && this.More && this.Peek() == '<') {
+            int close = this.p.IndexOf(">", this.at)
+            if (close < 0) { throw this.Bad("a group name that does not end") }
+            string name = this.p.Substring(this.at + 1, close - this.at - 1)
+            this.at = close + 1
+            for (int i = 0; i < this.names.Count; i++) {
+                if (this.names[i] == name) { return RegexNode.Of(RegexNode.KBackref, this.numbers[i]) }
+            }
+            throw this.Bad("a reference to the group '" + name + "', which is not defined before it")
+        }
+        return RegexNode.Of(RegexNode.KChar, this.EscapedChar(e))
+    }
+
+    static defined int ShorthandOf(char e) {
+        if (e == 'd') { return 1 }
+        if (e == 'D') { return 2 }
+        if (e == 'w') { return 3 }
+        if (e == 'W') { return 4 }
+        if (e == 's') { return 5 }
+        if (e == 'S') { return 6 }
+        return 0
+    }
+
+    // the character of an escape that stands for one (`\n`, `\x41`, `é`, `\.`); a letter or digit without a meaning is an error
+    defined int EscapedChar(char e) {
+        if (e == 'n') { return 10 }
+        if (e == 'r') { return 13 }
+        if (e == 't') { return 9 }
+        if (e == 'f') { return 12 }
+        if (e == 'v') { return 11 }
+        if (e == 'e') { return 27 }
+        if (e == '0') { return 0 }
+        if (e == 'x' || e == 'u') {
+            int digits = e == 'x' ? 2 : 4
+            if (this.at + digits > this.p.Length) { throw this.Bad("'\\" + e + "' needs " + digits + " hex digits") }
+            int v = 0
+            for (int i = 0; i < digits; i++) {
+                int d = Regex.Hex(this.p[this.at + i])
+                if (d < 0) { throw this.Bad("'\\" + e + "' needs " + digits + " hex digits") }
+                v = v * 16 + d
+            }
+            this.at += digits
+            return v
+        }
+        if (e.IsLetterOrDigit()) { throw this.Bad("'\\" + e + "' is not a known escape") }
+        return e.ToInt()
+    }
+
+    static defined int Hex(char h) {
+        if (h >= '0' && h <= '9') { return h.ToInt() - 48 }
+        if (h >= 'a' && h <= 'f') { return h.ToInt() - 87 }
+        if (h >= 'A' && h <= 'F') { return h.ToInt() - 55 }
+        return -1
+    }
+
+    defined int AddClass(RegexClass cls) {
+        cls.ignoreCase = (this.options & Regex.IgnoreCase) != 0
+        this.classes.Add(take cls)
+        return this.classes.Count - 1
+    }
+
+    RegexNode ParseClass() {
+        var cls = new RegexClass()
+        if (this.More && this.Peek() == '^') {
+            cls.negate = true
+            this.at++
+        }
+        bool first = true
+        while (true) {
+            if (!this.More) { throw this.Bad("a missing ']'") }
+            char c = this.Peek()
+            if (c == ']' && !first) {
+                this.at++
+                break
+            }
+            first = false
+            this.at++
+            int lo = c.ToInt()
+            if (c == '\\') {
+                if (!this.More) { throw this.Bad("'\\' at the end of the pattern") }
+                char e = this.Peek()
+                this.at++
+                int sh = Regex.ShorthandOf(e)
+                if (sh > 0) {
+                    cls.shorthands.Add(sh)
+                    continue
+                }
+                if (e == 'b') { lo = 8 } else { lo = this.EscapedChar(e) }
+            }
+            int hi = lo
+            // a range `a-z` (a `-` before `]` is itself)
+            if (this.at + 1 < this.p.Length && this.Peek() == '-' && this.p[this.at + 1] != ']') {
+                this.at++
+                char d = this.Peek()
+                this.at++
+                hi = d.ToInt()
+                if (d == '\\') {
+                    if (!this.More) { throw this.Bad("'\\' at the end of the pattern") }
+                    char e2 = this.Peek()
+                    this.at++
+                    if (Regex.ShorthandOf(e2) > 0) { throw this.Bad("a range up to a class") }
+                    hi = this.EscapedChar(e2)
+                }
+                if (hi < lo) { throw this.Bad("the range [" + lo.ToChar() + "-" + hi.ToChar() + "] is reversed") }
+            }
+            cls.Add(lo, hi)
+        }
+        return RegexNode.Of(RegexNode.KClass, this.AddClass(cls))
+    }
+
+    // does every match start at the beginning of the text (`^...` without Multiline, `\A...`)? Then only position 0 is tried.
+    static bool StartsAnchored(RegexNode n, bool multiline) {
+        if (n.kind == RegexNode.KAssert) { return n.value == Regex.OpBegin || (n.value == Regex.OpBol && !multiline) }
+        if (n.kind == RegexNode.KSeq) { return n.parts.Count > 0 && Regex.StartsAnchored(n.parts[0], multiline) }
+        if (n.kind == RegexNode.KGroup) { return Regex.StartsAnchored(n.parts[0], multiline) }
+        if (n.kind == RegexNode.KAlt) {
+            foreach (part in n.parts) { if (!Regex.StartsAnchored(part, multiline)) { return false } }
+            return true
+        }
+        return false
+    }
+
+    // ---- compiling ----
+
+    defined int Emit(defined int op, defined int x, defined int y) {
+        if (this.ops.Count >= 200000) { throw new RegexException("The pattern '" + this.pattern + "' is too large (more than 200000 instructions - a large count {n,m} of a large group).") }
+        this.ops.Add(op)
+        this.a.Add(x)
+        this.b.Add(y)
+        return this.ops.Count - 1
+    }
+
+    undefined Compile(RegexNode n) {
+        int k = n.kind
+        if (k == RegexNode.KEmpty) { return }
+        if (k == RegexNode.KChar) {
+            if ((this.options & Regex.IgnoreCase) != 0 && n.value.ToChar().ToUpper() != n.value.ToChar().ToLower()) {
+                this.Emit(Regex.OpCharFold, n.value.ToChar().ToLower().ToInt(), n.value.ToChar().ToUpper().ToInt())
+            } else { this.Emit(Regex.OpChar, n.value, 0) }
+            return
+        }
+        if (k == RegexNode.KAny) {
+            if ((this.options & Regex.Singleline) != 0) { this.Emit(Regex.OpAnyNl, 0, 0) } else { this.Emit(Regex.OpAny, 0, 0) }
+            return
+        }
+        if (k == RegexNode.KClass) {
+            this.Emit(Regex.OpClass, n.value, 0)
+            return
+        }
+        if (k == RegexNode.KSeq) {
+            foreach (part in n.parts) { this.Compile(part) }
+            return
+        }
+        if (k == RegexNode.KAlt) {
+            var ends = new List<int>()
+            for (int i = 0; i < n.parts.Count; i++) {
+                if (i < n.parts.Count - 1) {
+                    int split = this.Emit(Regex.OpSplit, 0, 0)
+                    this.a[split] = this.ops.Count
+                    this.Compile(n.parts[i])
+                    ends.Add(this.Emit(Regex.OpJmp, 0, 0))
+                    this.b[split] = this.ops.Count
+                } else { this.Compile(n.parts[i]) }
+            }
+            foreach (j in ends) { this.a[j] = this.ops.Count }
+            return
+        }
+        if (k == RegexNode.KGroup) {
+            if (n.value >= 0) { this.Emit(Regex.OpSave, n.value * 2, 0) }
+            this.Compile(n.parts[0])
+            if (n.value >= 0) { this.Emit(Regex.OpSave, n.value * 2 + 1, 0) }
+            return
+        }
+        if (k == RegexNode.KAssert) {
+            this.Emit(n.value, 0, 0)
+            return
+        }
+        if (k == RegexNode.KBackref) {
+            this.Emit(Regex.OpBackref, n.value, 0)
+            return
+        }
+        if (k == RegexNode.KLook) {
+            int look = this.Emit(Regex.OpLook, n.value, 0)
+            this.Compile(n.parts[0])
+            this.Emit(Regex.OpMatch, 0, 0)
+            this.b[look] = this.ops.Count
+            return
+        }
+        // a repetition: the body `min` times, then (max - min) optional ones, or a loop for no upper bound
+        var body = n.parts[0]
+        for (int r = 0; r < n.min; r++) { this.Compile(body) }
+        if (n.max < 0) {
+            // L: split body, out; body: mark; X; check (an empty round does not count); jmp L
+            int mark = this.marks
+            this.marks++
+            int loop = this.Emit(Regex.OpSplit, 0, 0)
+            int start = this.ops.Count
+            this.Emit(Regex.OpMark, mark, 0)
+            this.Compile(body)
+            this.Emit(Regex.OpCheck, mark, 0)
+            this.Emit(Regex.OpJmp, loop, 0)
+            this.Choice(loop, start, this.ops.Count, n.lazy)
+            return
+        }
+        var outs = new List<int>()
+        for (int r = n.min; r < n.max; r++) {
+            int split = this.Emit(Regex.OpSplit, 0, 0)
+            outs.Add(split)
+            this.a[split] = this.ops.Count
+            this.Compile(body)
+        }
+        foreach (s in outs) { this.Choice(s, this.a[s], this.ops.Count, n.lazy) }
+    }
+
+    // a split that tries `first` first (greedy) or `skip` first (lazy)
+    undefined Choice(defined int split, defined int first, defined int skip, bool lazy) {
+        if (lazy) {
+            this.a[split] = skip
+            this.b[split] = first
+        } else {
+            this.a[split] = first
+            this.b[split] = skip
+        }
+    }
+
+    // ---- matching ----
+
+    // Runs the program from `pc` at `pos`: true with the groups in `caps`. `caps` and `marks` are restored on the way back.
+    bool Run(string s, defined int pc0, defined int pos0, any caps, any marks, any steps) {
+        int pc = pc0
+        int pos = pos0
+        int n = s.Length
+        // the stack of what to undo: kind 0 a choice (pc, pos), 1 a group slot (slot, old value), 2 a mark (mark, old value)
+        var kinds = new List<int>()
+        var xs = new List<int>()
+        var ys = new List<int>()
+        bool ic = (this.options & Regex.IgnoreCase) != 0
+        bool ml = (this.options & Regex.Multiline) != 0
+        while (true) {
+            steps[0] = steps[0] + 1
+            if (steps[0] > Regex.MaxSteps) { throw new RegexException("The pattern '" + this.pattern + "' needs more than " + Regex.MaxSteps + " steps for this text (too much backtracking).") }
+            int op = this.ops[pc]
+            bool ok = true
+            if (op == Regex.OpChar) {
+                if (pos < n && s[pos].ToInt() == this.a[pc]) {
+                    pos++
+                    pc++
+                } else { ok = false }
+            } else if (op == Regex.OpCharFold) {
+                if (pos < n && (s[pos].ToInt() == this.a[pc] || s[pos].ToInt() == this.b[pc] || s[pos].ToLower().ToInt() == this.a[pc])) {
+                    pos++
+                    pc++
+                } else { ok = false }
+            } else if (op == Regex.OpAny) {
+                if (pos < n && s[pos] != '\n') {
+                    pos++
+                    pc++
+                } else { ok = false }
+            } else if (op == Regex.OpAnyNl) {
+                if (pos < n) {
+                    pos++
+                    pc++
+                } else { ok = false }
+            } else if (op == Regex.OpClass) {
+                if (pos < n && this.classes[this.a[pc]].Contains(s[pos].ToInt())) {
+                    pos++
+                    pc++
+                } else { ok = false }
+            } else if (op == Regex.OpSplit) {
+                kinds.Add(0)
+                xs.Add(this.b[pc])
+                ys.Add(pos)
+                pc = this.a[pc]
+            } else if (op == Regex.OpJmp) {
+                pc = this.a[pc]
+            } else if (op == Regex.OpSave) {
+                kinds.Add(1)
+                xs.Add(this.a[pc])
+                ys.Add(caps[this.a[pc]])
+                caps[this.a[pc]] = pos
+                pc++
+            } else if (op == Regex.OpMark) {
+                kinds.Add(2)
+                xs.Add(this.a[pc])
+                ys.Add(marks[this.a[pc]])
+                marks[this.a[pc]] = pos
+                pc++
+            } else if (op == Regex.OpCheck) {
+                if (marks[this.a[pc]] == pos) { ok = false } else { pc++ }
+            } else if (op == Regex.OpMatch) {
+                return true
+            } else if (op == Regex.OpBol) {
+                if (pos == 0 || (ml && s[pos - 1] == '\n')) { pc++ } else { ok = false }
+            } else if (op == Regex.OpEol) {
+                if (pos == n || (ml && s[pos] == '\n') || (!ml && pos == n - 1 && s[pos] == '\n')) { pc++ } else { ok = false }
+            } else if (op == Regex.OpBegin) {
+                if (pos == 0) { pc++ } else { ok = false }
+            } else if (op == Regex.OpEnd) {
+                if (pos == n) { pc++ } else { ok = false }
+            } else if (op == Regex.OpEndZ) {
+                if (pos == n || (pos == n - 1 && s[pos] == '\n')) { pc++ } else { ok = false }
+            } else if (op == Regex.OpWordB || op == Regex.OpNotWordB) {
+                bool before = pos > 0 && Regex.IsWordChar(s[pos - 1].ToInt())
+                bool after = pos < n && Regex.IsWordChar(s[pos].ToInt())
+                if ((before != after) == (op == Regex.OpWordB)) { pc++ } else { ok = false }
+            } else if (op == Regex.OpBackref) {
+                int g = this.a[pc]
+                int begin = caps[g * 2]
+                int to = caps[g * 2 + 1]
+                if (begin < 0 || to < 0) { ok = false }
+                else {
+                    int len = to - begin
+                    if (pos + len > n) { ok = false }
+                    else {
+                        for (int i = 0; i < len && ok; i++) {
+                            char x = s[begin + i]
+                            char y = s[pos + i]
+                            if (x != y && !(ic && x.ToLower() == y.ToLower())) { ok = false }
+                        }
+                        if (ok) {
+                            pos += len
+                            pc++
+                        }
+                    }
+                }
+            } else if (op == Regex.OpLook) {
+                // the look-ahead runs on its own (its groups are not kept): its result, or the opposite for (?!...)
+                var inner = new int[caps.length]
+                for (int i = 0; i < caps.length; i++) { inner[i] = caps[i] }
+                var innerMarks = new int[marks.length]
+                for (int i = 0; i < marks.length; i++) { innerMarks[i] = marks[i] }
+                bool found = this.Run(s, pc + 1, pos, inner, innerMarks, steps)
+                if (found != (this.a[pc] == 1)) { pc = this.b[pc] } else { ok = false }
+            }
+            if (ok) { continue }
+            // back to the last choice, undoing the groups and marks set after it
+            bool resumed = false
+            while (kinds.Count > 0) {
+                int last = kinds.Count - 1
+                int kind = kinds[last]
+                int x = xs[last]
+                int y = ys[last]
+                kinds.RemoveAt(last)
+                xs.RemoveAt(last)
+                ys.RemoveAt(last)
+                if (kind == 0) {
+                    pc = x
+                    pos = y
+                    resumed = true
+                    break
+                }
+                if (kind == 1) { caps[x] = y } else { marks[x] = y }
+            }
+            if (!resumed) { return false }
+        }
+    }
+
+    /// <summary>The first match at or after `start` (an unsuccessful RegexMatch when there is none).</summary>
+    RegexMatch Match(string input, defined int start = 0) {
+        if (start < 0 || start > input.Length) { throw new ArgumentException("The start " + start + " is outside of the text (0 .. " + input.Length + ").") }
+        var steps = new int[1]
+        steps[0] = 0
+        int last = input.Length
+        if (this.anchored) { last = Math.Min(start, 0) }
+        for (int at = start; at <= last; at++) {
+            var caps = new int[this.groups * 2]
+            for (int i = 0; i < caps.length; i++) { caps[i] = -1 }
+            var marks = new int[Math.Max(this.marks, 1)]
+            for (int i = 0; i < marks.length; i++) { marks[i] = -1 }
+            if (this.Run(input, 0, at, caps, marks, steps)) {
+                var found = this.MatchOf(input)
+                found.caps = take caps
+                return found
+            }
+        }
+        return this.MatchOf(input)
+    }
+
+    RegexMatch MatchOf(string input) {
+        var m = new RegexMatch()
+        m.input = input
+        m.caps = undefined
+        // (copies: the match may live longer than the Regex)
+        m.names = new List<string>()
+        m.numbers = new List<int>()
+        for (int i = 0; i < this.names.Count; i++) {
+            m.names.Add(this.names[i])
+            m.numbers.Add(this.numbers[i])
+        }
+        return m
+    }
+
+    bool IsMatch(string input) { return this.Match(input).Success }
+
+    /// <summary>All matches that do not overlap, from left to right (after an empty match the search goes on one character further).</summary>
+    List<RegexMatch> Matches(string input) {
+        var result = new List<RegexMatch>(Owns.Values)
+        int start = 0
+        while (start <= input.Length) {
+            var m = this.Match(input, start)
+            if (!m.Success) { break }
+            start = m.Index + m.Length
+            if (m.Length == 0) { start++ }
+            result.Add(take m)
+        }
+        return result
+    }
+
+    /// <summary>Every match replaced by `replacement`, in which `$0` (or `$&amp;`) is the match, `$1` ... `$99` a group, `${name}` a named group and `$$` a `$`.</summary>
+    string Replace(string input, string replacement) { return this.Replace(input, replacement, -1) }
+
+    /// <summary>The first `count` matches replaced (-1: all).</summary>
+    string Replace(string input, string replacement, defined int count) {
+        var sb = new StringBuilder()
+        int done = 0
+        int copied = 0
+        foreach (m in this.Matches(input)) {
+            if (count >= 0 && done >= count) { break }
+            sb.Append(input.Substring(copied, m.Index - copied))
+            sb.Append(Regex.Expand(m, replacement))
+            copied = m.Index + m.Length
+            done++
+        }
+        sb.Append(input.Substring(copied))
+        return sb.ToString()
+    }
+
+    /// <summary>The replacement for one match: `$n`, `${name}`, `$&amp;`, `$$`; another `$` stays.</summary>
+    static string Expand(RegexMatch m, string replacement) {
+        var sb = new StringBuilder()
+        int i = 0
+        int n = replacement.Length
+        while (i < n) {
+            char c = replacement[i]
+            if (c != '$' || i + 1 >= n) {
+                sb.Append(c)
+                i++
+                continue
+            }
+            char d = replacement[i + 1]
+            if (d == '$') {
+                sb.Append('$')
+                i += 2
+            } else if (d == '&') {
+                sb.Append(m.Value)
+                i += 2
+            } else if (d.IsDigit()) {
+                int g = d.ToInt() - 48
+                int j = i + 2
+                if (j < n && replacement[j].IsDigit() && g * 10 + (replacement[j].ToInt() - 48) < m.GroupCount) {
+                    g = g * 10 + (replacement[j].ToInt() - 48)
+                    j++
+                }
+                if (g < m.GroupCount) {
+                    sb.Append(m.Group(g))
+                    i = j
+                } else {
+                    sb.Append(c)
+                    i++
+                }
+            } else if (d == '{') {
+                int close = replacement.IndexOf("}", i + 2)
+                int g = -1
+                if (close > i + 2) {
+                    string name = replacement.Substring(i + 2, close - i - 2)
+                    any number = name.TryToInt()
+                    if (number != undefined) { g = number } else { g = m.NumberOf(name) }
+                }
+                if (g >= 0 && g < m.GroupCount) {
+                    sb.Append(m.Group(g))
+                    i = close + 1
+                } else {
+                    sb.Append(c)
+                    i++
+                }
+            } else {
+                sb.Append(c)
+                i++
+            }
+        }
+        return sb.ToString()
+    }
+
+    /// <summary>The parts of the text between the matches (the texts of the capturing groups of each match go in between, as in .NET).</summary>
+    string[] Split(string input) {
+        var parts = new List<string>()
+        int copied = 0
+        foreach (m in this.Matches(input)) {
+            if (m.Length == 0 && (m.Index == 0 || m.Index == input.Length)) { continue }
+            parts.Add(input.Substring(copied, m.Index - copied))
+            for (int g = 1; g < m.GroupCount; g++) { if (m.Has(g)) { parts.Add(m.Group(g)) } }
+            copied = m.Index + m.Length
+        }
+        parts.Add(input.Substring(copied))
+        var result = new string[parts.Count]
+        for (int i = 0; i < parts.Count; i++) { result[i] = parts[i] }
+        return result
+    }
+
+    /// <summary>The text with every character that has a meaning in a pattern escaped: `Regex.Escape("1+1")` is `1\+1`.</summary>
+    static string Escape(string text) {
+        var sb = new StringBuilder()
+        for (int i = 0; i < text.Length; i++) {
+            char c = text[i]
+            if ("\\*+?|{}[]()^$.#".IndexOf(c) >= 0) { sb.Append('\\') }
+            if (c == '\n') { sb.Append("\\n") }
+            else if (c == '\t') { sb.Append("\\t") }
+            else if (c == '\r') { sb.Append("\\r") }
+            else if (c == ' ') { sb.Append("\\ ") }
+            else { sb.Append(c) }
+        }
+        return sb.ToString()
+    }
+
+    // (one-off uses without keeping the Regex; the names differ from the methods: a static and an instance method may not share one)
+    /// <summary>`Regex.Test(text, pattern)`: does the pattern match somewhere in the text?</summary>
+    static bool Test(string input, string pattern) { return new Regex(pattern).IsMatch(input) }
+    static bool Test(string input, string pattern, defined int options) { return new Regex(pattern, options).IsMatch(input) }
+    /// <summary>`Regex.Find(text, pattern)`: the first match.</summary>
+    static RegexMatch Find(string input, string pattern) { return new Regex(pattern).Match(input) }
+    static RegexMatch Find(string input, string pattern, defined int options) { return new Regex(pattern, options).Match(input) }
+    /// <summary>`Regex.ReplaceAll(text, pattern, replacement)`: every match replaced.</summary>
+    static string ReplaceAll(string input, string pattern, string replacement) { return new Regex(pattern).Replace(input, replacement) }
+}

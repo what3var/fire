@@ -1,6 +1,7 @@
 /* native/forge/forge.c - the program forge-c: one file that includes the whole frontend in C (docs/spec/FORGE_C.md).
  *
  *   cc -O2 native/forge/forge.c -o forge-c -lm      (gcc, clang; -Wall -Wextra without warnings; libm: Math.Pow of a unit conversion)
+ *   x86_64-w64-mingw32-gcc -O2 native/forge/forge.c -o forge-c.exe -static   (Windows as the host: win32.h; MSVC: cl /O2 native\forge\forge.c)
  *
  *   forge-c tokens <file.fire>                      the tokens of the preprocessed source (and the diagnostics)
  *   forge-c ast <file.fire>                         the syntax tree (and the diagnostics)
@@ -19,7 +20,7 @@
 #define FIRE_BASE_IMPLEMENTATION
 #include "forge.h"
 #ifdef _WIN32
-#include <direct.h>
+#include "win32.h"   /* (Windows as the host: what the builder takes from POSIX, in terms of Win32 - Phase D 2/3) */
 #else
 #include <unistd.h>
 #include <sys/stat.h>
@@ -45,6 +46,7 @@
 #include "compiler2.c"
 #include "compilertrees.c"
 #include "programfile.c"
+#include "programread.c"   /* ProgramFile.Read (`dump <program.fbc>`, Phase D 4) */
 
 void fbOutOfMemory(void) {
     fputs("forge-c: out of memory\n", stderr);
@@ -90,7 +92,7 @@ static bool fcStrictTag(const char* path);
 #include "gen/plugins.c"
 #include "gen/native.c"
 
-/* the native builder (Phase D 2, build/): POSIX for now */
+/* the native builder (Phase D 2, build/): POSIX, or Windows through win32.h */
 #ifndef _WIN32
 #include <dirent.h>
 #include <errno.h>
@@ -98,6 +100,7 @@ static bool fcStrictTag(const char* path);
 #include <pthread.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#endif
 #include "build/toolchain.c"
 #include "build/builder.c"
 #include "build/linkage.c"   /* linkage static/shared/plugin */
@@ -110,7 +113,6 @@ static bool fcStrictTag(const char* path);
 #include "build/tools.c"
 #include "build/cvm.c"   /* the engine vm (Phase D 3) */
 #include "build/plugin.c"   /* linkage plugin (after pkglib.c and cvm.c) */
-#endif
 
 /* the markup generators (Phase C 5) */
 #include "markupmodel.c"
@@ -130,9 +132,10 @@ static bool fcStrictTag(const char* path);
 #include "model/meshmodel.c"
 #include "model/command.c"
 
-/* projects and solutions, the package file (Phase D 3, project/): POSIX, with the builder */
+/* projects and solutions, the package file (Phase D 3, project/), with the builder */
 #ifndef _WIN32
 #include <fcntl.h>
+#endif
 #include "project/projectmodel.c"
 #include "project/projectfiles.c"
 #include "project/manifest.c"
@@ -142,14 +145,16 @@ static bool fcStrictTag(const char* path);
 #include "project/command.c"
 #include "project/publisher.c"
 #include "project/cli.c"
+#ifndef _WIN32
 #include <sys/file.h>
+#endif
 #include "project/standard.c"   /* the standard packages installed from Source/ (Phase D 3) */
 /* the rest of the command line (Phase D 4, tools/): `forge test` */
 #include "tools/testdriver.c"
 #include "tools/testrunner.c"
 #include "tools/commands.c"   /* the rest of the command line: run, bytecode of projects, ... (Phase D 4) */
 #include "tools/report.c"     /* build|publish|bytecode --report json (Phase D 4) */
-#endif
+#include "tools/setup.c"      /* the toolchains forge downloads (Phase D 5) */
 
 /* `ui|biscuit|fdata <file>` (Program.cs: MarkupFiles.GenerateScript, the script on stdout, the diagnostics of a MarkupException on stderr) and
  * `falstad <file>` (FalstadImport.Convert: the warnings on stderr, the schematic on stdout); `out` and `err` get what forge writes there */
@@ -285,23 +290,19 @@ static void fcDumpRun(FcCtx* c, FcDumpJob* job) {
         fgDumpNative(c, job->command + 5, job->path, job->prelude, job->store, job->out);
         return;
     }
-#ifndef _WIN32
     if (strncmp(job->command, "buildplan:", 10) == 0) {
         /* `buildplan <options>`: what a native build of the file would run (Phase D 2, build/) */
         nbDumpBuildPlan(c, job->command + 10, job->path, job->prelude, job->store, job->out);
         return;
     }
-#endif
     if (strncmp(job->command, "fbc:", 4) == 0) {
         /* `fbc <mode>`: the program file `forge bytecode <file> -m <mode>` writes */
         const char* m = job->command + 4;
         int mode = strcmp(m, "debug") == 0 ? 0 : strcmp(m, "release") == 0 ? 1 : strcmp(m, "performance") == 0 ? 2 : -1;
         FcLinked* linked;
         c->collecting = true;   /* (the warnings: `forge-c bytecode` prints them as forge does) */
-#ifndef _WIN32
         if (pjIsProjectFile(job->path)) linked = pjLinkProjectFile(c, job->path, job->prelude, job->store, mode, strcmp(m, "native") == 0);   /* (a project, Phase D 3) */
         else
-#endif
         linked = fcLinkFile(c, job->path, job->prelude, job->store, fcStrictTag(job->path), mode);
         fcProgramFileWrite(c, linked, true, job->out);
         return;
@@ -410,16 +411,29 @@ static bool fcIsCommand(const char* s) { return strcmp(s, "tokens") == 0 || strc
 
 int main(int argc, char** argv) {
     char preludeBuf[4096], storeBuf[4096];
+#ifdef _WIN32
+    char selfBuf[4096];
+    const char* self = fwSelfPath(selfBuf, sizeof selfBuf);   /* (the program with '/': argv[0] may have neither its folder nor .exe) */
+    const char* prelude = fcFindPrelude(self ? self : argv[0], preludeBuf, sizeof preludeBuf);
+    const char* store = fcFindStore(self ? self : argv[0], storeBuf, sizeof storeBuf);
+#else
+    const char* self = argv[0];
     const char* prelude = fcFindPrelude(argv[0], preludeBuf, sizeof preludeBuf);
     const char* store = fcFindStore(argv[0], storeBuf, sizeof storeBuf);
+#endif
     char fbcCommand[256];
-#ifndef _WIN32
+#ifdef _WIN32
+    fwSlashes(preludeBuf);
+    fwSlashes(storeBuf);
+    _setmode(_fileno(stdout), _O_BINARY);   /* (the output byte for byte as on Linux: no CR before LF) */
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
     {
         /* (the builder, Phase D 2: Toolchain/ next to the program - AppContext.BaseDirectory -, the files of the runtime in native/ next to the tables) */
         char exeBuf[4096], tablesBuf[4096];
         const char* root = getenv("FIRE_NATIVE_ROOT");
         const char* slash;
-        if (realpath(argv[0], exeBuf) && (slash = strrchr(exeBuf, '/')) != NULL) { exeBuf[slash - exeBuf] = 0; nbBaseDirectory = strdup(exeBuf); }
+        if (realpath(self ? self : argv[0], exeBuf) && (slash = strrchr(exeBuf, '/')) != NULL) { exeBuf[slash - exeBuf] = 0; nbBaseDirectory = strdup(exeBuf); }
         if (root && *root) nbNativeRoot = root;
         else {
             snprintf(tablesBuf, sizeof tablesBuf, "%s", prelude);
@@ -439,15 +453,12 @@ int main(int argc, char** argv) {
         return nbBuildMain(argc, argv, prelude, store);   /* Phase D 2 */
     }
     if (argc >= 2 && strcmp(argv[1], "publish") == 0) return pjPublishCommand(argc, argv, prelude, store);   /* Phase D 3 */
-    if (argc >= 2 && strcmp(argv[1], "build-vm") == 0) return nvBuildVmMain(argc, argv, store);   /* Phase D 3: the VM in C into a folder (build/cvm.c) */
+    if (argc >= 2 && strcmp(argv[1], "build-vm") == 0) return nvBuildVmMain(argc, argv, store);
+    if (argc >= 2 && strcmp(argv[1], "toolchain-setup") == 0) return tsMain(argc, argv);   /* Phase D 5: a portable toolchain downloaded (tools/setup.c) */   /* Phase D 3: the VM in C into a folder (build/cvm.c) */
     if (argc == 3 && strcmp(argv[1], "projectplan") == 0) return pjProjectPlanDump(argv[2], stdout);
     if (argc == 3 && strcmp(argv[1], "fpk") == 0) return pjPackageDump(argv[2], stdout);
     { int r = nbToolsMain(argc, argv, prelude, store); if (r >= 0) return r; }   /* Phase D 2: pkglib and the measures of the tools (build/tools.c) */
-#endif
     if (argc >= 3 && strcmp(argv[1], "model") == 0) return mdModelCommand(argc, argv);   /* Phase D 4: `forge model` (model/command.c) */
-#ifndef _WIN32
-    /* (`forge test`, Phase D 4: tools/commands.c parses it, tools/testrunner.c runs it) */
-#endif
     /* `fbc <mode> ...`: the mode is part of the command */
     if (argc >= 4 && (strcmp(argv[1], "fbc") == 0 || strcmp(argv[1], "cgen") == 0 || strcmp(argv[1], "buildplan") == 0) && strlen(argv[2]) < 200) {
         snprintf(fbcCommand, sizeof fbcCommand, "%s:%s", argv[1], argv[2]);
@@ -566,9 +577,7 @@ int main(int argc, char** argv) {
         free(list);
         return 0;
     }
-#ifndef _WIN32
     if (argc >= 2) return tcUnknownCommand(argc, argv);   /* (CommandLineParser.Parse: "Unknown command ..." with the usage, Phase D 4) */
-#endif
     fprintf(stderr, "usage: forge-c tokens|ast|diagnostics <file.fire> | forge-c tokens|ast|diagnostics --list <files.txt> --out <folder>\n");
     return 2;
 }

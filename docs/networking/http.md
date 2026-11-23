@@ -16,21 +16,39 @@ server.Run()                                                       // or ServeOn
 
 | class | |
 |---|---|
-| `Http.Client` | `Get(url)`, `Head`, `Delete`, `Post(url, body, contentType = undefined)`, `Put`, `Request(method, url, body, headers)`; a body is a text (UTF-8) or a byte buffer; `headers` an `Http.Headers` or undefined. Settings: `timeout` (ms, connect and every read; 30000), `followRedirects` (true), `maxRedirects` (5), `maxBodyBytes` (16 MiB), `userAgent`, `headers` (sent with every request). Redirects 301/302/303 become a GET without body, 307/308 keep method and body. Sends `Connection: close`. Understands `Content-Length`, chunked bodies (trailer fields in `response.trailers`) and bodies that end with the connection; sends no `Accept-Encoding`, so bodies come uncompressed. |
-| `Http.Response` | `status`, `reason`, `headers`, `body` (bytes), `url` (the final URL), `Ok` (2xx), `Length`, `Text()` (UTF-8), `Header(name)`; for routes: `FromText(text, status = 200, contentType)`, `FromHtml`, `FromJson`, `Error(status, message)`, `Redirect(location, status = 302)` and `new Http.Response(status, body)` |
+| `Http.Client` | `Get(url)`, `Head`, `Delete`, `Post(url, body, contentType = undefined)`, `Put`, `Request(method, url, body, headers)`; a body is a text (UTF-8) or a byte buffer; `headers` an `Http.Headers` or undefined. Settings: `timeout` (ms, connect and every read; 30000), `followRedirects` (true), `maxRedirects` (5), `maxBodyBytes` (16 MiB), `userAgent`, `headers` (sent with every request). Redirects 301/302/303 become a GET without body, 307/308 keep method and body. Sends `Connection: close`. Understands `Content-Length`, chunked bodies (trailer fields in `response.trailers`) and bodies that end with the connection; sends no `Accept-Encoding`, so bodies come uncompressed. `Send(method, url, body, headers)` streams the body instead of reading it (below), `GetFile(url, path, headers)` writes it into a file. |
+| `Http.Response` | `status`, `reason`, `headers`, `body` (bytes), `url` (the final URL), `Ok` (2xx), `Length`, `Text()` (UTF-8), `Header(name)`; of `Send`: `stream` (the body as it arrives), `SaveTo(path)`, `ReadBody()`, `Close()`; for routes: `FromText(text, status = 200, contentType)`, `FromHtml`, `FromJson`, `Error(status, message)`, `Redirect(location, status = 302)` and `new Http.Response(status, body)` |
 | `Http.Request` (server side) | `method`, `target`, `path` (percent decoded), `version`, `headers`, `body`, `remoteHost`, `Query(name, fallback)` (percent decoded, `+` is a space), `Text()`, `Header(name)` |
 | `Http.Server(host, port)` | host `""`: every interface - IPv6 with IPv4, or IPv4 alone without IPv6 (networking/README.md, *Every interface*); `Route(method, path, lambda)` (method `"*"` = any; a path ending in `*` matches the prefix; HEAD uses the route of GET and sends no body), `Fallback(lambda)` (default 404), `OnError(lambda)` (a route's lambda threw: the client gets a 500), `ServeOne(timeout = undefined)` (true if a connection was served), `Run()` (until `Stop()`), `Handle(connection)` (answers one request on a `Net.IConnection` you accepted yourself and closes it), `Port`, `Close()`; `readTimeout` (10 s) and `maxBodyBytes` (1 MiB) |
 | `Http.Headers` | `Get(name)` (not case sensitive), `Set`, `Add`, `Has`, `Remove`, `Count`; `Set`/`Add` return the headers |
-| `Http.Url` | `Parse(text)` (http and https, IPv6 in brackets), `scheme`, `host`, `port`, `path`, `Resolve(location)` |
+| `Http.Url` | `Parse(text)` (http and https, IPv6 in brackets), `scheme`, `host`, `port`, `path`, `Resolve(reference)` (RFC 3986 section 5.2: absolute, `//host/...`, `/path`, relative with `./` and `../`, `?query`, `#fragment`; the dot segments are removed - `Http.Url.Parse("http://a/b/c/d;p?q").Resolve("../../g")` is `http://a/g`), `RemoveDotSegments(path)` |
 | `Http.Uri` | `Encode(text)`, `Decode(text, plus = false)` (UTF-8 percent encoding) |
 
 The server answers one connection after the other with `Connection: close`: simple and light enough for a microcontroller. For parallel requests run several servers (on different ports) in fire threads; a route's lambda
 runs in the thread of its server. A route's lambda must not fail with a *runtime error* (`x.y` on undefined ends the thread, like anywhere): throw an exception of your own class; `OnError` sees it. Errors of the library are `Http.HttpException`
-(`code`: 1 bad URL, 2 malformed message, 3 too many redirects, 4 too large, 5 not supported); network errors are the `Net.NetException`s of the net package. `https://` URLs work through the `tls` package ([TLS](tls.md)): `client.tls = options` (a `Tls.Options`) says whom to trust; `server.UseTls(certPem, keyPem)` serves HTTPS.
+(`code`: 1 bad URL, 2 malformed message, 3 too many redirects, 4 too large, 5 not supported; for 4 `length` is what the `Content-Length` announced - `The message has 300000 bytes, more than the limit of 1000 bytes.` - and -1 when the body was cut off while it came: `The message is larger than 1000 bytes.`); network errors are the `Net.NetException`s of the net package. `https://` URLs work through the `tls` package ([TLS](tls.md)): `client.tls = options` (a `Tls.Options`) says whom to trust; `server.UseTls(certPem, keyPem)` serves HTTPS.
+
+## Streaming a body: `Client.Send`
+
+`Get`, `Post`, ... and `Request` keep the body of the answer in memory (up to `maxBodyBytes`). `Send` gives the response as soon as its header is
+there and leaves the body to `response.stream`, an `Http.BodyStream` (an `IO.Stream`) that reads it from the connection as it arrives - with a
+`Content-Length`, chunked or up to the end of the connection, through the redirects `Send` follows like `Request`:
+
+```fire
+var client = new Http.Client()
+var r = client.Send("GET", "https://example.org/big.bin", undefined, headers)
+if (r.Ok) { r.SaveTo("/tmp/big.bin") }      // a piece at a time; the file is deleted when it fails
+else { r.ReadBody(); print(r.Text()) }      // or r.stream.Read(buffer, 0, buffer.length) until it gives 0, then r.Close()
+```
+
+`maxBodyBytes` still holds: a `Content-Length` above it is refused by `Send` itself (code 4, with the announced length in `length`), a body without
+one when it grows beyond it while it is read. The stream owns the connection: `SaveTo` and `ReadBody` close it, a body that is not read to its end
+needs `r.Close()`. `client.GetFile(url, path, headers)` is `Send` with `SaveTo` for a 2xx answer (another one keeps its body in memory and writes
+nothing). For own headers per hop (a token only for one host) set `followRedirects = false` and follow the `Location` with `Url.Resolve` yourself.
 
 ## Large files: `Http.Download`
 
-`Http.Client` keeps a body in memory (up to `maxBodyBytes`); a large file goes straight into a file with `Http.Download`:
+`Http.Client` keeps a body in memory (up to `maxBodyBytes`) or streams it (`Send`); a large file that should survive an interrupted connection goes into a file with `Http.Download`:
 
 ```fire
 var d = new Http.Download("https://example.org/big.bin", "/tmp/big.bin")

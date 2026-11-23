@@ -110,9 +110,10 @@ foreach (c in "abc") { print(c) }
 | `ToInt()`, `ToFloat()` | the number in the text, with its unit if one follows (`"5mm"`); an `ArgumentException` if it is none. The result type is `int : any` / `float : any`: `float x : mm = "5cm".ToFloat()` converts, a parameter declared without a unit checks for a unitless value |
 | `TryToInt()`, `TryToFloat()` | the number (with its unit), or `undefined` if the text is none |
 | `CompareTo(other)` | `-1`, `0` or `1`: the order of the two texts (ordinal) |
+| `EqualsIgnoreCase(other)`, `CompareIgnoreCase(other)` | the same without regard to case: `bool`, and `-1`, `0` or `1` (ordinal ignore-case, see below) |
 | `Join(items)` | the elements of a list or an array as text, with this text between them |
 
-Searching and comparing are **ordinal**: case matters, there is no culture.
+Searching and comparing are **ordinal**: case matters, there is no culture - except in `EqualsIgnoreCase` and `CompareIgnoreCase`.
 
 ```fire
 string s = "Hello, World, again"
@@ -185,6 +186,18 @@ characters, so `"Z" < "a"` (upper case comes first) and `"abc" < "abd"`; a short
 ```fire
 print("apple" < "banana")           // True
 print("b".CompareTo("a"))           // 1
+```
+
+`EqualsIgnoreCase` and `CompareIgnoreCase` compare without regard to case, **ordinal** as well (C#'s `StringComparison.OrdinalIgnoreCase`): every
+character is taken as its upper case (`ToUpper()` of the one character, the letters of ASCII, Latin-1, Greek and Cyrillic) and then
+compared by its code - no culture, and no character becomes two (`"straße"` is not `"STRASSE"`). So `"a_"` comes after `"aB"` (`_` is 95, `B` 66).
+`EqualsIgnoreCase(undefined)` is `false`; `CompareIgnoreCase(undefined)` is an `ArgumentException`, like `CompareTo`.
+
+```fire
+print("Hello".EqualsIgnoreCase("hELLO"))        // True
+print("apple".CompareIgnoreCase("BANANA"))      // -1 (CompareTo gives 1: 'a' comes after 'B')
+var names = new List<string>(["delta", "Alpha", "charlie", "Bravo"])
+names.Sort((x, y) => x.CompareIgnoreCase(y))    // Alpha, Bravo, charlie, delta
 ```
 
 ## Bytes and text

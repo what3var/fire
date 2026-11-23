@@ -1,0 +1,52 @@
+class Holder {
+    List<int> items
+    List<int> kept
+    int arr[]
+    int size = 0
+    construct() {
+        var list = new List<int>()
+        list.Add(1)
+        this.items = list
+        var other = new List<int>()
+        this.kept = take other
+        var mine = new List<int>()
+        mine.Add(2)
+    }
+    undefined Fill(Holder h) {
+        int a[] = [1, 2]
+        h.arr = a
+        var b = new int[3]
+        b.TakeTo(h)
+        h.arr = b
+    }
+    List<int> Make() {
+        var l = new List<int>()
+        this.items = l
+        return l
+    }
+    List<int> Items {
+        get { return this.items }
+        set { this.items = take value }
+    }
+    undefined Reset() {
+        var fresh = new List<int>()
+        this.Items = fresh
+        var pair = new Holder()
+        var inside = new List<int>()
+        pair.items = inside
+    }
+}
+var h = new Holder()
+try { print(h.items.Count) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+print(h.kept.Count)
+h.Reset()
+print(h.Items.Count)
+var top = new List<int>()
+h.items = top
+print(h.items.Count)
+if (h.size == 0) {
+    var inner = new List<int>()
+    h.kept = inner
+}
+//# modes: Release
+//# name: types: TC036 - a new value of a block (`var x = new ...`) stored plainly in a field that outlives it (of this, a parameter, a variable from outside the block); not with `take`, TakeTo, `return x`, a property (its setter may take), a holder of the same block, nor at the top level of the program

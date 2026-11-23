@@ -1,5 +1,6 @@
 class A {
     static int F(int from) { return from }
 }
+print(A.F(4))
 //# modes: Release
-//# name: diag 24: class A {
+//# name: diag 24: class A { - from is a contextual word: a name of a parameter

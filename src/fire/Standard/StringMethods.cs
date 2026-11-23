@@ -35,6 +35,8 @@ namespace fire.Standard
         TryToFloat = 20,
         CompareTo = 21,
         Join = 22,
+        CompareIgnoreCase = 23,
+        EqualsIgnoreCase = 24,
     }
 
     /// <summary>
@@ -81,6 +83,8 @@ namespace fire.Standard
             (StringMethod.TryToInt, "any", "TryToInt", ""),
             (StringMethod.TryToFloat, "any", "TryToFloat", ""),
             (StringMethod.CompareTo, "int", "CompareTo", "any other"),
+            (StringMethod.CompareIgnoreCase, "int", "CompareIgnoreCase", "any other"),
+            (StringMethod.EqualsIgnoreCase, "bool", "EqualsIgnoreCase", "any other"),
         };
 
         /// <summary>The fire source `class extends string { ... }` for the prelude, generated from
@@ -307,12 +311,37 @@ namespace fire.Standard
                     Arity(method, argc, 1, 1);
                     return Value.MakeInt(Math.Sign(string.CompareOrdinal(s, Text(a0))));
 
+                // ordinal without regard to case (StringComparison.OrdinalIgnoreCase): the characters compared as their upper case (char.ToUpperInvariant,
+                // one UTF-16 unit at a time) - the runtime in C does the same with toUpperC
+                case StringMethod.CompareIgnoreCase:
+                    Arity(method, argc, 1, 1);
+                    return Value.MakeInt(CompareIgnoringCase(s, Text(a0)));
+                case StringMethod.EqualsIgnoreCase:
+                {
+                    Arity(method, argc, 1, 1);
+                    if (a0.Kind == ValueKind.Undefined) return Value.MakeBool(false);
+                    string other = Text(a0);
+                    return Value.MakeBool(other.Length == s.Length && CompareIgnoringCase(s, other) == 0);
+                }
+
                 default:
                     throw new InvalidOperationException($"{NativeName}: unknown method ID {(int)method}.");
             }
         }
 
         private static bool IsSpace(char c) => c is ' ' or '\t' or '\r' or '\n';
+
+        /// <summary>-1, 0 or 1: the order of the two texts with every character taken as its upper case (ordinal, not by culture).</summary>
+        private static int CompareIgnoringCase(string a, string b)
+        {
+            int n = Math.Min(a.Length, b.Length);
+            for (int i = 0; i < n; i++)
+            {
+                char x = char.ToUpperInvariant(a[i]), y = char.ToUpperInvariant(b[i]);
+                if (x != y) return x < y ? -1 : 1;
+            }
+            return a.Length < b.Length ? -1 : a.Length > b.Length ? 1 : 0;
+        }
 
         /// <summary>A number followed by a unit (`"5mm"`, `"-2.5 km/h"`, `"3in"` of a program that declares `in`): the first place where a letter starts a
         /// unit text (Unit.ParseKnown) and the text in front of it is a number (spaces between them are allowed): the text of the number and the unit.

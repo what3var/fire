@@ -1,0 +1,25 @@
+#import "random"
+var g = Guid.Parse("{6F9619FF-8B86-D011-B42D-00C04FC964FF}")
+print(g)
+print(g.ToString("N") + " " + g.ToString("B") + " " + g.ToString("P"))
+print(Guid.Parse("6f9619ff8b86d011b42d00c04fc964ff") == g)
+print(Guid.Parse("  (6f9619ff-8b86-d011-b42d-00c04fc964ff) ").Equals(g) + " " + (g.GetHashCode() == Guid.Parse(g.ToString()).GetHashCode()))
+print(Guid.TryParse("6f9619ff-8b86-d011-b42d-00c04fc964f") + " " + Guid.TryParse("6f9619ff-8b86-d011-b42d_00c04fc964ff") + " " + Guid.TryParse("xyz"))
+try { Guid.Parse("nope") } catch (ArgumentException e) { print(e.message) }
+try { g.ToString("X") } catch (ArgumentException e) { print(e.message) }
+print(Guid.Empty + " " + Guid.Empty.IsEmpty + " " + g.IsEmpty)
+var a = Guid.NewGuid(new PseudoRandom(42))
+var b = Guid.NewGuid(new PseudoRandom(42))
+print(a + " " + (a == b) + " " + a.Version)
+var seen = new HashSet<string>()
+bool ok = true
+for (int i = 0; i < 200; i++) {
+    var n = Guid.NewGuid()
+    string t = n.ToString()
+    if (seen.Contains(t) || n.Version != 4 || "89ab".IndexOf(t[19]) < 0 || t.Length != 36) { ok = false }
+    seen.Add(t)
+}
+print("200 new: " + ok + " " + seen.Count)
+print(Guid.FromBytes(g.ToBytes()) == g)
+print(g.CompareTo(Guid.Empty) + " " + Guid.Empty.CompareTo(g) + " " + (g != Guid.Empty))
+//# name: random: Guid - Parse (the forms D, N, B, P), TryParse, ToString(format), Empty, NewGuid (version 4; with a seeded PseudoRandom the same), FromBytes/ToBytes in the order of the text, ==, Equals, GetHashCode, CompareTo

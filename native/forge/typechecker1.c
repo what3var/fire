@@ -36,6 +36,7 @@
 #define TC_KindCode "TC033"
 #define TC_TextConversionCode "TC034"
 #define TC_BlockTakeLocalCode "TC035"
+#define TC_StoredLocalCode "TC036"
 #define TC_ReadonlyWriteCode "E4052"
 
 static bool fcBufferMethodsHas(const char* name) {
@@ -120,6 +121,8 @@ typedef struct FcTC {
     FcDict* fieldCands;           /* name -> FcList* of FieldDecl*, NULL until made */
     FcDict fieldOwner;            /* FieldDecl* -> class name */
     FcDict otherFieldNames, fieldBad, fieldNeeds;
+    FcDict* tlProperties;         /* TC036: the names of the properties of the program */
+    FcList* tlProgramTop;         /* TC036: the statements of the top level of the program being walked */
 } FcTC;
 static const FcKeptAt fcNoKept = { NULL, NULL, NULL };
 
@@ -153,7 +156,7 @@ static void Report(FcTC* t, const char* code, const char* message, int line) {
     if (t->source < t->reportFrom) return;
     warningAlways = streq0(code, TC_UnitLossCode) || streq0(code, TC_AssignInConditionCode) || streq0(code, TC_SwitchMissingCode) || streq0(code, TC_SetterClaimCode)
         || streq0(code, TC_LateVarTypeCode) || streq0(code, TC_TakeIntoCopyCode) || streq0(code, TC_StoredTemporaryCode) || streq0(code, TC_ArrayToBufferCode)
-        || streq0(code, TC_TextConversionCode) || streq0(code, TC_BlockTakeLocalCode);
+        || streq0(code, TC_TextConversionCode) || streq0(code, TC_BlockTakeLocalCode) || streq0(code, TC_StoredLocalCode);
     d = fcDiagNew(TC_, line, message, Strict(t) && !warningAlways ? FC_SEV_ERROR : FC_SEV_WARNING, code, NULL, 0);
     fcListAdd(TC_, t->diagnostics, d);
 }

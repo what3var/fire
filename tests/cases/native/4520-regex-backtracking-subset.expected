@@ -1,0 +1,31 @@
+True 12 10 2026-11-23 2026 11 4
+2026-11-23 at 12
+2026-12-01 at 32
+23.11.2026
+[a][b]c[a][b] a$b$c
+True False False False
+True
+stdio.h
+64 9f86d081
+<a><b> <a>
+aaab True 0
+True False aaa aa
+False True ab
+ll the
+100 200
+True ABCabc
+2 0 False True
+True False False
+a-b_c x] 3 ÄÖü
+3 1 1\+1=2\?\ \(yes\)
+a|b|c||d 1|-|2|-|3
+Invalid pattern '(ab' at offset 3: a missing ')'.
+Invalid pattern 'ab)' at offset 2: unbalanced ')'.
+Invalid pattern '[a-' at offset 3: a missing ']'.
+Invalid pattern 'a**' at offset 2: a quantifier after a quantifier.
+Invalid pattern '*a' at offset 1: '*' follows nothing.
+Invalid pattern 'x{3,1}' at offset 6: {3,1}: the range is reversed.
+Invalid pattern '\q' at offset 2: '\q' is not a known escape.
+Invalid pattern '(?<n>a)\k<m>' at offset 12: a reference to the group 'm', which is not defined before it.
+Invalid pattern 'a\' at offset 2: '\' at the end of the pattern.
+The pattern '(a|aa)*$x' needs 

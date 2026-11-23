@@ -104,14 +104,27 @@ static const char* nbEffectiveCompiler(const NbToolchain* t) {
 static bool nbCompilesCpp(const NbToolchain* t) { return !streq0(nbKind(t), "tcc") && !nbIsWatcom(nbKind(t)); }
 
 /* ---- paths (System.IO.Path as forge uses it on POSIX) ---- */
+#ifdef _WIN32
+static bool nbIsRooted(const char* p) { return p[0] == '/' || p[0] == '\\' || (p[0] && p[1] == ':'); }   /* (Path.IsPathRooted on Windows: C:/x, /x) */
+#else
 static bool nbIsRooted(const char* p) { return p[0] == '/'; }
-static const char* nbDirName(FcCtx* c, const char* p) {
+#endif
+/* the last separator of a path ('/', on Windows '\\' as well) */
+static const char* nbLastSep(const char* p) {
     const char* last = strrchr(p, '/');
+#ifdef _WIN32
+    const char* back = strrchr(p, '\\');
+    if (back && (!last || back > last)) last = back;
+#endif
+    return last;
+}
+static const char* nbDirName(FcCtx* c, const char* p) {
+    const char* last = nbLastSep(p);
     if (!last) return "";
     if (last == p) return "/";
     return fcStrN(c, p, (size_t)(last - p));
 }
-static const char* nbFileName(const char* p) { const char* last = strrchr(p, '/'); return last ? last + 1 : p; }
+static const char* nbFileName(const char* p) { const char* last = nbLastSep(p); return last ? last + 1 : p; }
 static const char* nbCombine(FcCtx* c, const char* a, const char* b) {
     if (!*a) return b;
     if (nbIsRooted(b)) return b;
@@ -153,7 +166,13 @@ static const char* nbEffectiveCCompiler(FcCtx* c, const NbToolchain* t) { return
 static const char* nbBaseDirectory = ".";
 /* Toolchain/ next to the program */
 static const char* nbToolchainRoot(FcCtx* c) { return nbCombine(c, nbBaseDirectory, "Toolchain"); }
+#ifdef _WIN32
+static const char* const nbWatcomFolders[] = { "binnt64", "binnt" };   /* WatcomToolchain.CompilerFolders (Windows) */
+#define NB_EXE ".exe"
+#else
 static const char* const nbWatcomFolders[] = { "binl64", "binl" };   /* WatcomToolchain.CompilerFolders (Linux) */
+#define NB_EXE ""
+#endif
 static int nbCmpOrdinalIgnoreCase(const void* a, const void* b) { return fcCmpIgnoreCase(a, b); }
 /* The bin folders of the toolchains to look in before the PATH: the portable ones next to the program (Directory.GetDirectories: in the order of the file system,
  * here by name). */
@@ -191,6 +210,19 @@ static FcList* nbSearchDirectories(FcCtx* c) {
             if (nbDirExists(bin)) fcListAdd(c, r, (void*)bin);
         }
     }
+#ifdef _WIN32
+    {
+        /* (Windows: the well-known places of MinGW, MSYS2 and LLVM) */
+        const char* home = getenv("USERPROFILE");
+        const char* known[8];
+        int i, n = 0;
+        known[n++] = "C:/w64devkit/bin";
+        if (home && *home) known[n++] = nbCombine(c, nbCombine(c, fwSlashes((char*)fcStr(c, home)), "w64devkit"), "bin");
+        known[n++] = "C:/msys64/ucrt64/bin"; known[n++] = "C:/msys64/mingw64/bin"; known[n++] = "C:/mingw64/bin"; known[n++] = "C:/MinGW/bin";
+        known[n++] = "C:/Program Files/LLVM/bin";
+        for (i = 0; i < n; i++) if (nbDirExists(known[i])) fcListAdd(c, r, (void*)known[i]);
+    }
+#endif
     (void)nbCmpOrdinalIgnoreCase;
     return r;
 }
@@ -202,7 +234,11 @@ static const char* nbFindProgram(FcCtx* c, const char* name) {
     if (nbIsRooted(name)) return nbFileExists(name) ? name : nbFileExists(fcFmt(c, "%s.exe", name)) ? fcFmt(c, "%s.exe", name) : NULL;
     dirs = nbSearchDirectories(c);
     if (path) {
+#ifdef _WIN32
+        FcList* parts = fgSplit(c, path, ';');
+#else
         FcList* parts = fgSplit(c, path, ':');
+#endif
         for (i = 0; i < parts->count; i++) {
             const char* p = (const char*)parts->items[i];
             size_t n;
@@ -215,6 +251,9 @@ static const char* nbFindProgram(FcCtx* c, const char* name) {
     }
     for (i = 0; i < dirs->count; i++) {
         const char* candidate = nbCombine(c, (const char*)dirs->items[i], name);
+#ifdef _WIN32
+        if (nbFileExists(fcFmt(c, "%s.exe", candidate))) return fcFmt(c, "%s.exe", candidate);
+#endif
         if (nbFileExists(candidate)) return candidate;
     }
     return NULL;
@@ -224,7 +263,7 @@ static const char* nbFindProgram(FcCtx* c, const char* name) {
 static const char* nbWatcomCompilerIn(FcCtx* c, const char* root, const char* name) {
     int i;
     for (i = 0; i < 2; i++) {
-        const char* candidate = nbCombine(c, nbCombine(c, root, nbWatcomFolders[i]), name);
+        const char* candidate = nbCombine(c, nbCombine(c, root, nbWatcomFolders[i]), fcFmt(c, "%s%s", name, nbEndsWithI(name, NB_EXE) ? "" : NB_EXE));
         if (nbFileExists(candidate)) return candidate;
     }
     return NULL;
@@ -236,7 +275,11 @@ static const char* nbWatcomLocate(FcCtx* c, const NbToolchain* t) {
     if ((found = nbFindProgram(c, name)) != NULL) return found;
     if (env && *env && (found = nbWatcomCompilerIn(c, env, name)) != NULL) return found;
     if ((found = nbWatcomCompilerIn(c, nbCombine(c, nbToolchainRoot(c), "watcom"), name)) != NULL) return found;
+#ifdef _WIN32
+    return nbWatcomCompilerIn(c, "C:/WATCOM", name);
+#else
     return nbWatcomCompilerIn(c, "/opt/watcom", name);
+#endif
 }
 static const char* nbQuoteSpace(FcCtx* c, const char* s) { return strchr(s, ' ') ? fcFmt(c, "\"%s\"", s) : s; }
 /* The startup code of a platform without an operating system (bios16: fire_bios16_start.asm), in the order of the names. */
@@ -490,7 +533,7 @@ static NbToolchain* nbDetect(FcCtx* c) {
     if (chosen && nbFind(c, chosen)) return chosen;
     dirs = nbSearchDirectories(c);
     for (i = 0; i < dirs->count; i++) {
-        const char* gxx = nbCombine(c, (const char*)dirs->items[i], "g++");
+        const char* gxx = nbCombine(c, (const char*)dirs->items[i], "g++" NB_EXE);
         if (nbFileExists(gxx)) {
             NbToolchain* t = nbToolchainNew(c);
             t->extends = "gcc"; t->kind = "gcc"; t->compiler = gxx; t->std = "c++17"; t->optimization = "-O2"; t->args = nbStrings(c, 2, "-Wall", "-Wextra");
@@ -656,7 +699,7 @@ static NbConfig* nbConfigFindFor(FcCtx* c, const char* sourceFile) {
     for (;;) {
         const char* candidate = nbCombine(c, dir, "fire.native.json");
         if (nbFileExists(candidate)) return nbConfigLoad(c, candidate);
-        if (streq0(dir, "/") || streq0(dir, ".")) break;
+        if (fcIsRootDir(dir) || streq0(dir, ".")) break;
         dir = fcDirectoryName(c, dir);
     }
     return nbConfigNew(c);

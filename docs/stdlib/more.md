@@ -27,6 +27,30 @@ print(names.Count)                                 // 3
 
 It is not for cryptography; keys and tokens need a source of the operating system.
 
+### Guid
+
+`Guid` (in the same import) is a 128-bit identifier as RFC 9562 and .NET's `System.Guid` define it:
+
+```fire
+#import "random"
+
+var id = Guid.NewGuid()                                    // version 4: 3f2c1a0e-...-4...-[89ab]...
+var g = Guid.Parse("{6F9619FF-8B86-D011-B42D-00C04FC964FF}")
+print(g)                                                   // 6f9619ff-8b86-d011-b42d-00c04fc964ff
+print(g.ToString("N"))                                     // 6f9619ff8b86d011b42d00c04fc964ff
+print(g == Guid.Parse("6f9619ff8b86d011b42d00c04fc964ff")) // True
+```
+
+| Member | Meaning |
+| --- | --- |
+| `Guid.NewGuid()` | a random version 4 Guid; the bits come from a `PseudoRandom` seeded once per program from the clock and the memory of the process - unique in practice, **not unguessable** (for a token: `Guid.FromBytes(Net.SecureRandom.Bytes(16))`) |
+| `Guid.NewGuid(random)` | a version 4 Guid from this `PseudoRandom` (the same seed, the same Guids) |
+| `Guid.Parse(text)`, `Guid.TryParse(text)` | the forms of .NET: `D` (`8-4-4-4-12`), `N` (32 digits), `B` (`{...}`), `P` (`(...)`), either case, spaces around; `Parse` throws an `ArgumentException`, `TryParse` gives `undefined` |
+| `ToString()`, `ToString(format)` | `D` by default; `N`, `B`, `P`; lower-case digits as in .NET |
+| `Guid.Empty`, `IsEmpty`, `Version` | all zeros; the version (4 for `NewGuid`) |
+| `Guid.FromBytes(bytes)`, `ToBytes()` | 16 bytes **in the order of the text** (big-endian, RFC 9562) - not the order of .NET's `ToByteArray`, whose first three fields are little-endian |
+| `==`, `!=`, `Equals`, `GetHashCode`, `CompareTo` | by the bits (a Guid works as a key of a `Dictionary` or `HashSet`) |
+
 ## Queries (`#import "linq"`)
 
 Queries in the style of C# LINQ on arrays, lists and every `IEnumerable`:

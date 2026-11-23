@@ -412,7 +412,11 @@ static const char* tcPkgPath(FcCtx* c, FcList* libraries) {
         if (!fcListHasStr(dirs, d)) fcListAdd(c, dirs, (void*)d);
     }
     if (old && *old) fcListAdd(c, dirs, (void*)old);
+#ifdef _WIN32
+    return fgJoin(c, dirs, ";");
+#else
     return fgJoin(c, dirs, ":");
+#endif
 }
 /* runs the program file with the VM of its widths: its stdin, stdout and stderr are this process's; the exit code of the VM */
 static int tcRunInVm(FcCtx* c, FcLinked* linked, FcList* libraries, FcList* arguments) {
@@ -439,6 +443,16 @@ static int tcRunInVm(FcCtx* c, FcLinked* linked, FcList* libraries, FcList* argu
     argv[4 + n] = NULL;
     fflush(stdout);
     fflush(stderr);
+#ifdef _WIN32
+    {
+        char* env[2] = { NULL, NULL };
+        (void)pid;
+        if (*pkgPath) env[0] = (char*)fcFmt(c, "FIRE_PKG_PATH=%s", pkgPath);
+        status = fwRun(argv[0], fwCommandLineOf(c, argv), NULL, (const char* const*)env, NULL, NULL);
+        trRemoveTree(dir);
+        return status < 0 ? 1 : status;
+    }
+#else
     pid = fork();
     if (pid == 0) {
         if (*pkgPath) setenv("FIRE_PKG_PATH", pkgPath, 1);
@@ -450,6 +464,7 @@ static int tcRunInVm(FcCtx* c, FcLinked* linked, FcList* libraries, FcList* argu
     if (status < 0) return 1;
     if (WIFEXITED(status)) return WEXITSTATUS(status);
     return 1;
+#endif
 }
 
 /* DescribeErrors on stderr (and the warnings of the step as they came before) */
@@ -524,6 +539,7 @@ static int tcRun(FcCtx* c, const TcOptions* o, const char* prelude, const char* 
 }
 
 /* `bytecode <files> | <project|solution> [-p <project>] [-o <out.fbc>]` (Bytecode) - the link of the files or of the plan as a program file */
+static void tcErrLine(const char* fc8);
 static int tcBytecode(FcCtx* c, const TcOptions* o, const char* prelude, const char* storeRoot) {
     FcCtx step;
     PjPlan* volatile plan = NULL;
@@ -547,13 +563,42 @@ static int tcBytecode(FcCtx* c, const TcOptions* o, const char* prelude, const c
             tcPlanOptions(c, o, plan);
             break;
         }
-    if (o->command == TC_DUMP && !plan && o->files->count == 1) {
-        /* (a program file: ProgramFile.Read - forge-c has the writer only) */
+    if (o->command == TC_DUMP && o->files->count == 1) {
+        /* a program file (ProgramFile.IsProgram of its head): ProgramFile.Read, its error "<file>: <message>" (1) */
+        const char* file = (const char*)o->files->items[0];
         size_t n = 0;
-        uint8_t* head = fbReadFile((const char*)o->files->items[0], &n);
-        bool program = head && n >= 4 && memcmp(head, "FBC\x1A", 4) == 0;
-        free(head);
-        if (program) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: dump of a program file (ProgramFile.Read)");
+        uint8_t* bytes = fbReadFile(file, &n);
+        if (fcIsProgramFile(bytes, n)) {
+            FcCtx step;
+            fcCtxInit(&step);
+            FC_TRY(&step) {
+                FcLinked* linked = fcProgramFileRead(&step, bytes, n);
+                FcBuf text = {0}, utf8 = {0};
+                fcBufStr(&text, "");
+                fcBufStr(&utf8, "");
+                tdProgram(&step, linked, true, &text);
+                fcOut8(&utf8, text.p);
+                fcBufFree(&text);
+                if (o->output) {
+                    if (!nbWriteBytes(&step, o->outputFile, utf8.p, utf8.len)) fcThrow(&step, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(&step, "unported: the file cannot be written ('%s')", o->outputFile));
+                } else fwrite(utf8.p, 1, utf8.len, stdout);
+                fcBufFree(&utf8);
+            } FC_CATCH(&step) {
+                const char* m = step.err.message ? step.err.message : "?";
+                if (fcStartsWith(m, "pf: ")) { fprintf(stderr, "%s: ", file); tcErrLine(m + 4); result = 1; }
+                else if (fcStartsWith(m, "unhandled: ")) {
+                    /* (an exception the C# reader does not turn into a ProgramFileException: the forge ends with it) */
+                    const char* colon = strstr(m + 11, ": ");
+                    fprintf(stderr, "Unhandled exception. System.%.*s", colon ? (int)(colon - (m + 11)) : 0, m + 11);
+                    tcErrLine(colon ? colon : m + 11);
+                    result = 134;
+                } else { const char* again = fcStr(c, m); FcErrKind kind = step.err.kind; free(bytes); fcCtxFree(&step); fcThrow(c, kind, 0, 0, NULL, again); }
+            } FC_END_TRY;
+            free(bytes);
+            fcCtxFree(&step);
+            return result;
+        }
+        free(bytes);
     }
     if (!plan) {
         const char* missing;
@@ -616,6 +661,14 @@ static int tcTest(const TcOptions* o, const char* prelude, const char* storeRoot
     return trTestRun(&a, prelude, storeRoot);
 }
 
+/* the plans of a publish: the overlays (PublishOptions.TextOf), --types and --global-jobs (Linker.ProcessDefaultTypeChecking, ProcessGlobalJobs: process-wide in C#);
+ * not -D (CommandLine.Publish passes no Defines), -i goes process-wide (pjProcessIntWidth) */
+static void tcPublishPlanHook(FcCtx* c, const void* state, PjPlan* plan) {
+    TcOptions o = *(const TcOptions*)state;
+    tcApplyOverlays(c, &o, plan);
+    o.defines = fcListNew(c);
+    tcPlanOptions(c, &o, plan);
+}
 /* PjBuildArgs of the options (the configuration of a native build: KeepAll, ConfigFor; the builds of project/command.c) */
 static void tcPlanHook(FcCtx* c, const void* state, PjPlan* plan) { tcApplyOverlays(c, (const TcOptions*)state, plan); tcPlanOptions(c, (const TcOptions*)state, plan); }
 static PjBuildArgs tcArgs(const TcOptions* o) {
@@ -1247,6 +1300,185 @@ static int tcStats(FcCtx* c, int argc, char** argv) {
     return 0;
 }
 
+/* ---- `tables <folder>` (Tables.Write): the tables of native/tables as files - the opcodes, the messages with a code and the natives every program has as
+ * forge-c carries them (compiled in from the .def files: the same lines as the C# definitions write), the prelude as forge-c reads it (FIRE_TABLES). Only the
+ * files that changed are written; "Written: <names>" or "The tables are up to date." ---- */
+/* Tables.CString: '"' and '\' escaped, \n, \t, every other control as \xNN followed by `" "` */
+static void tcCString(FcBuf* b, const char* s) {
+    const unsigned char* p = (const unsigned char*)s;
+    fcBufChar(b, '"');
+    for (; *p; p++) {
+        if (*p == '"' || *p == '\\') { fcBufChar(b, '\\'); fcBufChar(b, (char)*p); }
+        else if (*p == '\n') fcBufStr(b, "\\n");
+        else if (*p == '\t') fcBufStr(b, "\\t");
+        else if (*p < 0x20) fcBufFmt(b, "\\x%02x\" \"", *p);
+        else fcBufChar(b, (char)*p);
+    }
+    fcBufChar(b, '"');
+}
+typedef struct TcErrorRow { const char* code; const char* area; const char* text; } TcErrorRow;
+static const TcErrorRow tcErrorRows[] = {
+#define FIRE_ERROR(code, area, text) { #code, #area, text },
+#include "../../tables/errors.def"
+#undef FIRE_ERROR
+};
+typedef struct TcNativeRow { int index; const char* name; int tryable; } TcNativeRow;
+static const TcNativeRow tcNativeRows[] = {
+#define FIRE_NATIVE(index, name, tryable) { index, name, tryable },
+#include "../../tables/natives.def"
+#undef FIRE_NATIVE
+};
+typedef struct TcOpRow { const char* name; int number; const char* sizes; } TcOpRow;
+static const TcOpRow tcOpRows[] = {
+#define FIRE_OP(name, number, operands) { #name, number, operands },
+#include "../../tables/opcodes.def"
+#undef FIRE_OP
+};
+static int tcTables(const char* folder, const char* prelude) {
+    FcCtx ctx;
+    FcCtx* c = &ctx;
+    FcBuf texts[4];
+    static const char* const names[4] = { "opcodes.def", "errors.def", "natives.def", "prelude.fire" };
+    FcList* changed;
+    size_t i, k, n = 0;
+    uint8_t* source;
+    int result = 0;
+    fcCtxInit(c);
+    memset(texts, 0, sizeof texts);
+    for (i = 0; i < 4; i++) fcBufStr(&texts[i], "");
+    fcBufStr(&texts[0], "/* The opcodes of the bytecode (docs/spec/BYTECODE.md): FIRE_OP(name, number, operands) - a character per operand, its size in bytes (2: u16 little endian, 1: u8).\n");
+    fcBufStr(&texts[0], " * Written by `forge tables` from OpCode.cs and OperandSizes.cs; do not edit. */\n");
+    for (i = 0; i < sizeof tcOpRows / sizeof tcOpRows[0]; i++) fcBufFmt(&texts[0], "FIRE_OP(%s, %d, \"%s\")\n", tcOpRows[i].name, tcOpRows[i].number, tcOpRows[i].sizes);
+    fcBufStr(&texts[1], "/* The messages of the compiler with a code (docs/tools/errors.md): FIRE_ERROR(code, area, template) - {*} in a template is a part that varies.\n");
+    fcBufStr(&texts[1], " * First the general code of each area, then the messages in the order of the catalogue. Written by `forge tables` from ErrorCatalog; do not edit. */\n");
+    for (i = 0; i < sizeof tcErrorRows / sizeof tcErrorRows[0]; i++) {
+        fcBufFmt(&texts[1], "FIRE_ERROR(%s, %s, ", tcErrorRows[i].code, tcErrorRows[i].area);
+        tcCString(&texts[1], tcErrorRows[i].text);
+        fcBufStr(&texts[1], ")\n");
+    }
+    fcBufStr(&texts[2], "/* The native functions every program has: FIRE_NATIVE(index, name, tryable) - the index is the one `CallNative` uses; what a program imports follows.\n");
+    fcBufStr(&texts[2], " * Written by `forge tables` from NativeRegistry.CreateDefault; do not edit. */\n");
+    for (i = 0; i < sizeof tcNativeRows / sizeof tcNativeRows[0]; i++) {
+        fcBufFmt(&texts[2], "FIRE_NATIVE(%d, ", tcNativeRows[i].index);
+        tcCString(&texts[2], tcNativeRows[i].name);
+        fcBufFmt(&texts[2], ", %d)\n", tcNativeRows[i].tryable);
+    }
+    source = fbReadFile(prelude, &n);
+    if (!source) { fprintf(stderr, "forge-c: the prelude '%s' cannot be read\n", prelude); fcCtxFree(c); return 2; }
+    for (k = 0; k < n; k++) if (!(source[k] == '\r' && k + 1 < n && source[k + 1] == '\n')) fcBufChar(&texts[3], (char)source[k]);
+    free(source);
+    nbMkdirs(c, folder);
+    changed = fcListNew(c);
+    for (i = 0; i < 4; i++) {
+        const char* path = nbCombine(c, folder, names[i]);
+        size_t have = 0;
+        uint8_t* old = fbReadFile(path, &have);
+        size_t skip = old && have >= 3 && old[0] == 0xEF && old[1] == 0xBB && old[2] == 0xBF ? 3 : 0;   /* (File.ReadAllText: without the BOM) */
+        bool same = old && have - skip == texts[i].len && memcmp(old + skip, texts[i].p, texts[i].len) == 0;
+        free(old);
+        if (same) continue;
+        if (!nbWriteBytes(c, path, texts[i].p, texts[i].len)) { fprintf(stderr, "Could not find a part of the path '%s'.\n", fcFullPath(c, ".", path)); result = 1; break; }
+        fcListAdd(c, changed, (void*)names[i]);
+    }
+    if (!result) printf("%s\n", changed->count == 0 ? "The tables are up to date." : fcFmt(c, "Written: %s", fgJoin(c, changed, ", ")));
+    for (i = 0; i < 4; i++) fcBufFree(&texts[i]);
+    fcCtxFree(c);
+    return result;
+}
+
+/* ---- `prebuild-standard <Source> <Prebuilt>` (StandardSources.Prebuild): for the build of the solution - the projects of Source packed into a store of its
+ * own, every native part of it built for this machine (PackageLibrary.Ensure, EnsureGraphics) and kept under Prebuilt/<package>/<rid>/ with the fingerprint of its
+ * C (.hash) and of the runtime (.runtime); the libraries on the output, one per line, the messages on the error output ---- */
+/* StorePrebuilt: nothing to do when it is that file already or the one there has the same fingerprints; a file that cannot be replaced stays */
+static bool tcStorePrebuilt(FcCtx* c, const char* built, const char* lib, const char* hash, const char* key, const char* what) {
+    const char* have;
+    bool same = streq0(fcFullPath(c, ".", built), fcFullPath(c, ".", lib));
+    if (!same && nbFileExists(lib) && (have = nlReadTrimmed(c, fcFmt(c, "%s.hash", lib))) != NULL && streq0(have, hash) && nlSameRuntime(c, lib, key)) return true;   /* (already there) */
+    if ((!same && !nbCopyFile(c, built, lib)) || !nbWriteText(c, fcFmt(c, "%s.hash", lib), hash) || !nbWriteText(c, nlKeyFile(c, lib), key)) {
+        FcBuf u = {0};
+        fcBufStr(&u, "");
+        fcOut8(&u, fcFmt(c, "%s: the prebuilt library '%s' is in use and stays as it was (%s) - close the programs that use it and build again", what, lib, strerror(errno)));
+        fprintf(stderr, "%s\n", u.p);
+        fcBufFree(&u);
+        return false;
+    }
+    return true;
+}
+/* the first 20 lines of a message (string.Join('\n', message.Split('\n').Take(20))) */
+static const char* tcFirstLines(FcCtx* c, const char* message, int lines) {
+    const char* p = message;
+    while (*p) { if (*p == '\n' && --lines == 0) break; p++; }
+    return fcStrN(c, message, (size_t)(p - message));
+}
+static void tcErrLine(const char* fc8) { FcBuf u = {0}; fcBufStr(&u, ""); fcOut8(&u, fc8); fprintf(stderr, "%s\n", u.p); fcBufFree(&u); }
+static int tcPrebuildStandard(const char* folder, const char* prebuiltFolder, const char* prelude) {
+    FcCtx ctx;
+    FcCtx* c = &ctx;
+    FcStore store;
+    FcDict* cache;
+    FcList* result;
+    const char* storeDir;
+    FgInstImport* graphics;
+    FgInstImport* windows;
+    int i, k;
+    fcCtxInit(c);
+    storeDir = fcFmt(c, "%sfire-prebuild-%s", nbTempPath(c), nbGuid(c));
+    result = fcListNew(c);
+    nsEnsureInstalledIn(prelude, folder, storeDir, false, stderr, NULL);
+    FC_TRY(c) {
+        memset(&store, 0, sizeof store);
+        store.root = storeDir;
+        cache = fcDictNew(c, FC_KEY_PTR);
+        fcStoreLoad(c, &store);
+        for (i = 0; i < store.imports->count; i++) {
+            FgInstImport* x = fgInstalledImport(c, cache, (FcPkgImport*)store.imports->items[i]);
+            bool any = false;
+            FcBuf log = {0};
+            NlResult r;
+            if (!x->native) continue;
+            for (k = 0; k < x->native->functions->count; k++) if (!((FgPkgFn*)x->native->functions->items[k])->host) any = true;
+            if (!any) continue;
+            fcBufStr(&log, "");
+            r = nlEnsure(c, cache, &store, x, &log);
+            if (log.len) { FcBuf u = {0}; fcBufStr(&u, ""); fcOut8(&u, log.p); fputs(u.p, stderr); fcBufFree(&u); }
+            fcBufFree(&log);
+            if (r.path) {
+                const char* dir = nbCombine(c, nbCombine(c, prebuiltFolder, x->pkgName), nlRid());
+                const char* lib = nbCombine(c, dir, nlFileNameFor(c, x));
+                nbMkdirs(c, dir);
+                if (tcStorePrebuilt(c, r.path, lib, nlNativeHashOf(c, cache, &store, x), nlRuntimeKeyOf(c, nlWrapperOf(c, cache, &store, x)), x->pkgName)) fcListAdd(c, result, (void*)lib);
+            } else tcErrLine(fcFmt(c, "%s: no prebuilt library for %s (%s)", x->pkgName, nlRid(), tcFirstLines(c, r.error, 20)));
+        }
+        /* the library of graphics and windows for the VM (one library for both) */
+        graphics = nlFindImport(c, cache, &store, "graphics");
+        windows = nlFindImport(c, cache, &store, "windows");
+        if (graphics && windows) {
+            FcBuf log = {0};
+            NlResult r;
+            fcBufStr(&log, "");
+            r = nlEnsureGraphics(c, cache, &store, graphics, windows, &log);
+            if (log.len) { FcBuf u = {0}; fcBufStr(&u, ""); fcOut8(&u, log.p); fputs(u.p, stderr); fcBufFree(&u); }
+            fcBufFree(&log);
+            if (r.path) {
+                const char* dir = nbCombine(c, nbCombine(c, prebuiltFolder, "fire-gfx"), nlRid());
+                const char* lib = nbCombine(c, dir, NL_GRAPHICS_FILE);
+                nbMkdirs(c, dir);
+                if (tcStorePrebuilt(c, r.path, lib, nlGraphicsSourceHash(c, cache, &store, graphics, windows),
+                        nlRuntimeKeyOf(c, nlGenerateGraphicsWrapper(c, cache, &store, graphics, windows, fgHostTarget())), "graphics and windows")) fcListAdd(c, result, (void*)lib);
+            } else tcErrLine(fcFmt(c, "graphics and windows: no prebuilt library for %s (%s)", nlRid(), tcFirstLines(c, r.error, 20)));
+        }
+    } FC_CATCH(c) {
+        if (nbDirExists(storeDir)) nbDeleteTree(c, storeDir);
+        fprintf(stderr, "forge-c: internal: %s\n", c->err.message ? c->err.message : "?");
+        fcCtxFree(c);
+        return 2;
+    } FC_END_TRY;
+    if (nbDirExists(storeDir)) nbDeleteTree(c, storeDir);
+    for (i = 0; i < result->count; i++) printf("%s\n", (const char*)result->items[i]);
+    fcCtxFree(c);
+    return 0;
+}
+
 static int tcReportMain(int argc, char** argv, const char* prelude, const char* storeRoot);   /* (tools/report.c) */
 static bool tcWantsReport(int argc, char** argv);
 
@@ -1262,8 +1494,13 @@ static int tcMain(int argc, char** argv, const char* prelude, const char* storeR
     if (argc < 2) return -1;
     cmd = argv[1];
     if (tcWantsReport(argc, argv)) return tcReportMain(argc, argv, prelude, storeRoot);
-    if (streq0(cmd, "tables") && argc == 3) { fprintf(stderr, "forge-c: unported: tables (Tables.Write: the tables of native/tables are written from the C# definitions; forge-c reads them)\n"); return 2; }
-    if (streq0(cmd, "prebuild-standard") && argc >= 4) { fprintf(stderr, "forge-c: unported: prebuild-standard (StandardSources.Prebuild; `forge-c pkglib --all` builds the libraries of the store)\n"); return 2; }
+    if (streq0(cmd, "tables") && argc == 3) return tcTables(argv[2], prelude);
+    if (streq0(cmd, "prebuild-standard") && argc >= 4) return tcPrebuildStandard(argv[2], argv[3], prelude);
+    {
+        /* (BackgroundWork.WriteLines: with FIRE_PROGRESS_LINES the work without a build window on the error output - spark shows it in its status bar) */
+        const char* lines = getenv("FIRE_PROGRESS_LINES");
+        if (lines && *lines && !streq0(lines, "0")) fcBgChanged = fcBgWriteLine;
+    }
     if (streq0(cmd, "stats")) { fcCtxInit(c); result = tcStats(c, argc, argv); fcCtxFree(c); return result; }
     if (fcAsciiIEq(cmd, "data")) {
         fcCtxInit(c);
@@ -1288,9 +1525,13 @@ static int tcMain(int argc, char** argv, const char* prelude, const char* storeR
         gap = o->command == TC_BUILD && (o->files->count > 1 || o->defines->count > 0 || o->intWidth || o->overlays->count > 0 || o->debugInfo || o->globalJobs >= 0 || o->host
             || (o->types >= 0 && o->files->count == 1 && tcIsProjectFile((const char*)o->files->items[0])));
         if (o->command == TC_PUBLISH && (o->overlays->count > 0 || o->defines->count > 0 || o->intWidth || o->types >= 0 || o->globalJobs >= 0)) {
-            fprintf(stderr, "forge-c: unported: publish with --overlay, -D, -i, --types or --global-jobs\n");
+            /* (CommandLine.Publish: the overlays as PublishOptions.TextOf; -i, --types and --global-jobs process-wide as Linker.Process*; -D it takes and does not use) */
+            nsEnsureInstalled(prelude, storeRoot, stderr);
+            pjPublishPlanHook = tcPublishPlanHook; pjPublishHookState = o; pjProcessIntWidth = o->intWidth;
+            result = pjPublishRun(c, o->files->count == 1 ? (const char*)o->files->items[0] : NULL, o->files->count, o->projectName, o->toolchainName, o->quick, prelude, storeRoot);
+            pjPublishPlanHook = NULL;
             fcCtxFree(c);
-            return 2;
+            return result;
         }
         if (!gap) { fcCtxFree(c); return -1; }
         FC_TRY(c) {

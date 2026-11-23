@@ -4383,6 +4383,7 @@ namespace fire.Compiler
         {
             if (b.Op == BinaryOp.And) { CompileLogicalAnd(b); return; }
             if (b.Op == BinaryOp.Or) { CompileLogicalOr(b); return; }
+            if (b.Op == BinaryOp.Coalesce) { CompileCoalesce(b); return; }
 
             EmitCoercedOperands(b.Left, b.Right);
 
@@ -4419,6 +4420,19 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.Pop);
             CompileExpr(b.Right);
             _chunk.PatchU16(endJumpAt, _chunk.Here);
+        }
+
+        /// <summary>`a ?? b`: [a] -> [a, a] -> is it undefined? Then a goes and b is evaluated; otherwise a is the result (b is not evaluated).</summary>
+        private void CompileCoalesce(BinaryExpr b)
+        {
+            CompileExpr(b.Left);
+            _chunk.EmitOp(OpCode.Dup);
+            _chunk.EmitOp(OpCode.IsOfType);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString("undefined")));
+            int doneAt = EmitJumpIfFalse();
+            _chunk.EmitOp(OpCode.Pop);
+            CompileExpr(b.Right);
+            _chunk.PatchU16(doneAt, _chunk.Here);
         }
 
         private void CompileLogicalOr(BinaryExpr b)

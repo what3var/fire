@@ -1,0 +1,44 @@
+class Animal { }
+class Dog : Animal { }
+class Move {
+    string from
+    string where
+    bool is
+    int of
+    any under
+    construct(string from, string where) {
+        this.from = from
+        this.where = where
+        this.is = true
+        this.of = 2
+    }
+    static string Of(string from, int of) { return from + of }
+}
+string from = "Berlin"
+string where = "Paris"
+var m = new Move(from, where)
+print(m.from + " -> " + m.where + " " + m.is + " " + m.of)
+print(Move.Of("x", 3))
+// the words keep their meaning where they mean something
+any d = new Dog()
+bool is = d is of Animal
+print(is + " " + (d is of Dog) + " " + (from is of string))
+int of = 5
+var box = new Move("a", "b")
+box.under = new Dog()
+print(box.under is from box)
+print(box.under is under box)
+print(of + 1)
+// as lambda parameters and loop variables
+var join = (string from, string where) => from + "/" + where
+print(join("a", "b"))
+foreach (under in [1, 2]) { print(under) }
+class Box<T> where T is of Animal {
+    T item
+}
+var b = new Box<Dog>()
+print(b.item == undefined)
+// `x is of T` at the start of a statement is still the test, not a variable named `is`
+d is of Dog
+print(where)
+//# name: contextual words: from, where, is, of, under are names of variables, parameters, fields and lambda parameters, and keep their meaning in `x is of T`, `is in`, `is from`, `is under`, `where T is of A`

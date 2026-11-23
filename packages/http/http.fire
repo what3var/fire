@@ -11,10 +11,13 @@ namespace Http {
     class HttpException : Exception {
         string message
         defined int code
+        // A message that is too large (code 4): the length its Content-Length announced, -1 when it did not say (chunked, up to the end of the connection).
+        defined int length
 
-        construct(string message, defined int code = 2) {
+        construct(string message, defined int code = 2, defined int length = -1) {
             this.message = message
             this.code = code
+            this.length = length
         }
     }
 
@@ -178,18 +181,113 @@ namespace Http {
             return h
         }
 
-        // The URL a `Location` header points to, seen from this one (absolute, `//host/...`, `/path` or relative).
-        string Resolve(string location) {
-            if (location.StartsWith("http://") || location.StartsWith("https://")) { return location }
-            var origin = this.scheme + "://" + this.HostHeader()
-            if (location.StartsWith("//")) { return this.scheme + ":" + location }
-            if (location.StartsWith("/")) { return origin + location }
-            var dir = this.path
-            any q = dir.IndexOf("?")
-            if (q >= 0) { dir = dir.Substring(0, q) }
-            any last = dir.LastIndexOf("/")
-            if (last >= 0) { dir = dir.Substring(0, last + 1) } else { dir = "/" }
-            return origin + dir + location
+        // A reference (a `Location` header, a link) resolved against this URL as its base, per RFC 3986 section 5.2: absolute (`https://...`),
+        // `//host/...`, `/path`, relative (`a/b`, `../x`, `./y`), `?query` or `#fragment`; the dot segments (`.`, `..`) of the path are removed.
+        string Resolve(string reference) {
+            string r = reference
+            // (the scheme and the authority of the result, and the reference's path with what follows it)
+            string front = undefined
+            string rest = undefined
+            any sep = r.IndexOf("://")
+            any colon = r.IndexOf(":")
+            any slash = r.IndexOf("/")
+            if (colon > 0 && (slash < 0 || colon < slash) && Http.Url.IsScheme(r.Substring(0, colon))) {
+                // an absolute reference: its own scheme (and authority)
+                if (sep == colon) {
+                    any start = colon + 3
+                    any end = Http.Url.PathStart(r, start)
+                    front = r.Substring(0, end)
+                    rest = r.Substring(end)
+                } else {
+                    front = r.Substring(0, colon + 1)
+                    rest = r.Substring(colon + 1)
+                }
+                return front + Http.Url.DotFree(rest)
+            }
+            string origin = this.scheme + "://" + this.HostHeader()
+            if (r.StartsWith("//")) {
+                any end = Http.Url.PathStart(r, 2)
+                return this.scheme + ":" + r.Substring(0, end) + Http.Url.DotFree(r.Substring(end))
+            }
+            // the base: its path without the query
+            string basePath = this.path
+            string baseQuery = ""
+            any q = basePath.IndexOf("?")
+            if (q >= 0) {
+                baseQuery = basePath.Substring(q)
+                basePath = basePath.Substring(0, q)
+            }
+            if (r == "") { return origin + basePath + baseQuery }
+            if (r.StartsWith("#")) { return origin + basePath + baseQuery + r }
+            if (r.StartsWith("?")) { return origin + basePath + r }
+            if (r.StartsWith("/")) { return origin + Http.Url.DotFree(r) }
+            // merge (5.2.3): the base path up to its last "/", then the reference
+            any last = basePath.LastIndexOf("/")
+            string dir = "/"
+            if (last >= 0) { dir = basePath.Substring(0, last + 1) }
+            return origin + Http.Url.DotFree(dir + r)
+        }
+
+        // A scheme (RFC 3986 3.1): a letter, then letters, digits, "+", "-", ".".
+        static bool IsScheme(string text) {
+            if (text.Length == 0) { return false }
+            for (var i = 0; i < text.Length; i++) {
+                char c = text[i]
+                bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                if (i == 0 && !letter) { return false }
+                if (!letter && !c.IsDigit() && c != '+' && c != '-' && c != '.') { return false }
+            }
+            return true
+        }
+
+        // Where the path of a reference starts after its authority (at `start`): the first "/", "?" or "#", or the end.
+        static defined int PathStart(string r, defined int start) {
+            for (var i = start; i < r.Length; i++) {
+                char c = r[i]
+                if (c == '/' || c == '?' || c == '#') { return i }
+            }
+            return r.Length
+        }
+
+        // A path with its query and fragment: the dot segments of the path removed, the rest as it is.
+        static string DotFree(string pathAndRest) {
+            any cut = pathAndRest.Length
+            any q = pathAndRest.IndexOf("?")
+            any h = pathAndRest.IndexOf("#")
+            if (q >= 0) { cut = q }
+            if (h >= 0 && h < cut) { cut = h }
+            string path = Http.Url.RemoveDotSegments(pathAndRest.Substring(0, cut))
+            return path + pathAndRest.Substring(cut)
+        }
+
+        // RFC 3986 5.2.4: "/a/b/../c/./d" is "/a/c/d"; ".." above the root stays at the root.
+        static string RemoveDotSegments(string path) {
+            string input = path
+            string output = ""
+            while (input.Length > 0) {
+                if (input.StartsWith("../")) { input = input.Substring(3) }
+                else if (input.StartsWith("./")) { input = input.Substring(2) }
+                else if (input.StartsWith("/./")) { input = input.Substring(2) }
+                else if (input == "/.") { input = "/" }
+                else if (input.StartsWith("/../") || input == "/..") {
+                    if (input == "/..") { input = "/" } else { input = input.Substring(3) }
+                    any drop = output.LastIndexOf("/")
+                    if (drop >= 0) { output = output.Substring(0, drop) } else { output = "" }
+                }
+                else if (input == "." || input == "..") { input = "" }
+                else {
+                    any next = input.IndexOf("/", 1)
+                    if (input.StartsWith("/")) { next = input.IndexOf("/", 1) } else { next = input.IndexOf("/") }
+                    if (next < 0) {
+                        output = output + input
+                        input = ""
+                    } else {
+                        output = output + input.Substring(0, next)
+                        input = input.Substring(next)
+                    }
+                }
+            }
+            return output
         }
 
         string ToString() { return this.scheme + "://" + this.HostHeader() + this.path }
@@ -386,6 +484,58 @@ namespace Http {
 
         // The value of a header field, undefined if it is not there.
         string Header(string name) { return this.headers.Get(name) }
+
+        // A response of Http.Client.Send: the body comes from `stream` - piece by piece with `stream.Read(buffer, offset, count)`, into a file with SaveTo
+        // or into `body` with ReadBody. Close() closes the connection (needed when the body is not read to its end; SaveTo and ReadBody close it).
+        undefined Close() {
+            if (this.stream != undefined) { this.stream.Close() }
+        }
+
+        // The (rest of the) streamed body into a file (created or replaced), a piece at a time: the number of bytes written. When it fails (too large, the
+        // connection ended) the file is deleted. Then the connection is closed.
+        defined int SaveTo(string path) {
+            if (this.stream == undefined) {
+                IO.File.WriteAllBytes(path, this.body)
+                return this.body.length
+            }
+            var file = IO.File.Create(path)
+            defined int total = 0
+            try {
+                var buffer = new byte[65536]
+                while (true) {
+                    var n = this.stream.Read(buffer, 0, buffer.length)
+                    if (n <= 0) { break }
+                    file.Write(buffer, 0, n)
+                    total = total + n
+                }
+            } catch (Exception e) {
+                file.Close()
+                IO.File.Delete(path)
+                this.Close()
+                throw e
+            }
+            file.Close()
+            this.Close()
+            return total
+        }
+
+        // The (rest of the) streamed body into `body`, in memory as Http.Client.Request reads it; then the connection is closed.
+        undefined ReadBody() {
+            if (this.stream == undefined) { return }
+            var sink = new IO.MemoryStream()
+            try {
+                var buffer = new byte[65536]
+                while (true) {
+                    var n = this.stream.Read(buffer, 0, buffer.length)
+                    if (n <= 0) { break }
+                    sink.Write(buffer, 0, n)
+                }
+            } finally { this.Close() }
+            this.body = sink.ToBuffer()
+            this.body.TakeTo(this)
+            sink.Close()
+            this.stream = undefined
+        }
     }
 
     // A request as the server gets it.
@@ -510,6 +660,25 @@ namespace Http {
             return IO.Utf8.GetString(rest, 0, rest.length)
         }
 
+        // Up to `count` bytes into `buffer` at `offset`: what is buffered, else one read of the stream; 0 at the end of the stream.
+        defined int ReadSome(byte buffer[], defined int offset, defined int count) {
+            if (count <= 0) { return 0 }
+            if (this.pos < this.len) {
+                var n = this.len - this.pos
+                if (n > count) { n = count }
+                for (var i = 0; i < n; i++) { buffer[offset + i] = this.chunk[this.pos + i] }
+                this.pos = this.pos + n
+                return n
+            }
+            if (this.eof) { return 0 }
+            var got = this.source.Read(buffer, offset, count)
+            if (got <= 0) {
+                this.eof = true
+                return 0
+            }
+            return got
+        }
+
         // Exactly `count` bytes; Http.HttpException (code 2) if the stream ends first.
         byte[] ReadExact(defined int count) {
             var result = new byte[count]
@@ -626,11 +795,16 @@ namespace Http {
             if (cl != undefined) {
                 var n = Http.Num.Parse(cl)
                 if (n < 0) { throw new Http.HttpException("A bad Content-Length: '" + cl + "'.", 2) }
-                if (n > limit) { throw new Http.HttpException("The message is larger than " + limit + " bytes.", 4) }
+                if (n > limit) { throw Http.Wire.TooLarge(n, limit) }
                 return reader.ReadExact(n)
             }
             if (untilClose) { return reader.ReadToEnd(limit) }
             return new byte[0]
+        }
+
+        // A Content-Length above the limit: an error of code 4 that says how long the message would be.
+        static Http.HttpException TooLarge(defined int announced, defined int limit) {
+            return new Http.HttpException("The message has " + announced + " bytes, more than the limit of " + limit + " bytes.", 4, announced)
         }
 
         // Writes the start line, the header fields, the empty line and the body.
@@ -638,6 +812,85 @@ namespace Http {
             var head = IO.Utf8.GetBytes(startLine + "\r\n" + headers.ToString() + "\r\n")
             stream.Write(head, 0, head.length)
             if (body != undefined && body.length > 0) { stream.Write(body, 0, body.length) }
+        }
+    }
+
+    // The body of a response as it arrives (Http.Client.Send): with a Content-Length, chunked (the trailer fields go into the response's `trailers`) or
+    // up to the end of the connection. More than `limit` bytes is an Http.HttpException (code 4). It owns the connection: Close() closes it (also before
+    // the end of the body).
+    class BodyStream : IO.Stream {
+        Net.IConnection connection
+        Http.Reader reader
+        Http.Headers trailers
+        // the bytes left of the Content-Length or of the current chunk (-1: up to the end of the connection; chunked: -1 before the size of the first chunk)
+        defined int left
+        bool chunked
+        bool done
+        defined int limit
+        // The bytes read so far.
+        defined int Received
+
+        construct(Net.IConnection connection, Http.Reader reader, Http.Headers headers, bool hasBody, defined int limit, Http.Headers trailers) {
+            this.connection = take connection
+            this.reader = take reader
+            this.trailers = trailers
+            this.limit = limit
+            this.Received = 0
+            this.done = !hasBody
+            this.chunked = false
+            this.left = -1
+            if (!hasBody) { return }
+            var te = headers.Get("Transfer-Encoding")
+            if (te != undefined && te.ToLower().IndexOf("chunked") >= 0) {
+                this.chunked = true
+                return
+            }
+            var cl = headers.Get("Content-Length")
+            if (cl != undefined) {
+                var n = Http.Num.Parse(cl)
+                if (n < 0) { throw new Http.HttpException("A bad Content-Length: '" + cl + "'.", 2) }
+                if (n > limit) { throw Http.Wire.TooLarge(n, limit) }
+                this.left = n
+                if (n == 0) { this.done = true }
+            }
+        }
+
+        override bool CanRead { get { return true } }
+
+        override defined int Read(byte buffer[], defined int offset, defined int count) {
+            if (this.done || count <= 0) { return 0 }
+            if (this.chunked && this.left <= 0) {
+                if (this.left == 0) { Http.Chunked.ReadEnd(this.reader) }
+                this.left = Http.Chunked.ReadSize(this.reader)
+                if (this.left == 0) {
+                    var into = this.trailers
+                    if (into == undefined) { into = new Http.Headers() }
+                    Http.Chunked.ReadTrailers(this.reader, into)
+                    this.done = true
+                    return 0
+                }
+                if (this.Received + this.left > this.limit) { throw new Http.HttpException("The message is larger than " + this.limit + " bytes.", 4) }
+            }
+            var want = count
+            if (this.left >= 0 && want > this.left) { want = this.left }
+            var n = this.reader.ReadSome(buffer, offset, want)
+            if (n <= 0) {
+                if (this.left > 0) { throw new Http.HttpException("The connection ended before the whole message arrived.", 2) }
+                this.done = true
+                return 0
+            }
+            this.Received = this.Received + n
+            if (this.Received > this.limit) { throw new Http.HttpException("The message is larger than " + this.limit + " bytes.", 4) }
+            if (this.left > 0) {
+                this.left = this.left - n
+                if (this.left == 0 && !this.chunked) { this.done = true }
+            }
+            return n
+        }
+
+        override undefined Close() {
+            this.done = true
+            if (this.connection != undefined) { this.connection.Close() }
         }
     }
 
@@ -798,18 +1051,35 @@ namespace Http {
         }
 
         // Sends the request and returns the Http.Response (redirects are followed unless `followRedirects` is false).
-        Http.Response Request(string method, string url, any body, Headers headers) {
+        Http.Response Request(string method, string url, any body, Headers headers) { return this.Follow(method, url, body, headers, false) }
+
+        // Like Request, but the body of the answer is not read into memory: it comes from `response.stream` (an Http.BodyStream) as it arrives - read it
+        // piece by piece (`response.stream.Read(buffer, 0, n)`), into a file (`response.SaveTo(path)`) or into `body` (`response.ReadBody()`). More than
+        // maxBodyBytes is an HttpException (code 4; with a Content-Length above it already here, with the length in `length`). Close() the response when its
+        // body is not read to the end.
+        Http.Response Send(string method, string url, any body = undefined, Headers headers = undefined) { return this.Follow(method, url, body, headers, true) }
+
+        // A GET whose body goes into a file as it arrives (a 2xx answer; another one keeps its body in memory and nothing is written). The response tells
+        // the status and the header fields; `Length` is 0 when the file was written.
+        Http.Response GetFile(string url, string path, Headers headers = undefined) {
+            var response = this.Send("GET", url, undefined, headers)
+            if (response.Ok) { response.SaveTo(path) } else { response.ReadBody() }
+            return response
+        }
+
+        Http.Response Follow(string method, string url, any body, Headers headers, bool streamed) {
             var current = url
             var verb = method
             any payload = body
             var redirects = 0
             while (true) {
                 var parsed = Http.Url.Parse(current)
-                var response = this.Once(verb, parsed, payload, headers)
+                var response = this.Exchange(verb, parsed, payload, headers, streamed)
                 var location = response.headers.Get("Location")
                 var s = response.status
                 var redirect = s == 301 || s == 302 || s == 303 || s == 307 || s == 308
                 if (this.followRedirects && redirect && location != undefined) {
+                    response.Close()
                     redirects = redirects + 1
                     if (redirects > this.maxRedirects) { throw new Http.HttpException("More than " + this.maxRedirects + " redirects.", 3) }
                     current = parsed.Resolve(location)
@@ -825,7 +1095,10 @@ namespace Http {
         }
 
         // One request and its response over a connection of its own.
-        Http.Response Once(string method, Url url, any body, Headers headers) {
+        Http.Response Once(string method, Url url, any body, Headers headers) { return this.Exchange(method, url, body, headers, false) }
+
+        // One request over a connection of its own; `streamed`: the body of the answer is left to `response.stream`, which owns the connection.
+        Http.Response Exchange(string method, Url url, any body, Headers headers, bool streamed) {
             byte bytes[] = undefined
             if (body != undefined) { bytes = Http.Response.Bytes(body) }
             var h = new Http.Headers()
@@ -860,10 +1133,26 @@ namespace Http {
                 }
                 if (reason.Length > 0) { response.reason = reason }
                 Http.Wire.ReadHeaders(reader, response.headers)
-                if (method != "HEAD" && !Http.Status.NoBody(status)) {
+                bool hasBody = method != "HEAD" && !Http.Status.NoBody(status)
+                if (hasBody) {
                     var te = response.headers.Get("Transfer-Encoding")
-                    if (te != undefined && te.ToLower().IndexOf("chunked") >= 0) { response.trailers = new Http.Headers() }
-                    response.body = Http.Wire.ReadBody(reader, response.headers, true, this.maxBodyBytes, response.trailers)
+                    bool chunked = te != undefined && te.ToLower().IndexOf("chunked") >= 0
+                    if (chunked) { response.trailers = new Http.Headers() }
+                    if (streamed && !chunked) {
+                        // (a Content-Length that is wrong or too large: refused before the body is read)
+                        var cl = response.headers.Get("Content-Length")
+                        if (cl != undefined) {
+                            var announced = Http.Num.Parse(cl)
+                            if (announced < 0) { throw new Http.HttpException("A bad Content-Length: '" + cl + "'.", 2) }
+                            if (announced > this.maxBodyBytes) { throw Http.Wire.TooLarge(announced, this.maxBodyBytes) }
+                        }
+                    }
+                    if (!streamed) { response.body = Http.Wire.ReadBody(reader, response.headers, true, this.maxBodyBytes, response.trailers) }
+                }
+                if (streamed) {
+                    var bodyStream = new Http.BodyStream(take stream, take reader, response.headers, hasBody, this.maxBodyBytes, response.trailers)
+                    response.stream = take bodyStream
+                    return response
                 }
                 stream.Close()
                 return response

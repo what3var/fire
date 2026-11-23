@@ -1,0 +1,12 @@
+6f9619ff-8b86-d011-b42d-00c04fc964ff
+6f9619ff8b86d011b42d00c04fc964ff {6f9619ff-8b86-d011-b42d-00c04fc964ff} (6f9619ff-8b86-d011-b42d-00c04fc964ff)
+True
+True True
+undefined undefined undefined
+'nope' is not a Guid (32 hex digits, as 8-4-4-4-12 with hyphens, optionally in {} or ()).
+The format of a Guid is "D", "N", "B" or "P", not "X".
+00000000-0000-0000-0000-000000000000 True False
+7811e0ea-b8db-4a6c-b57c-32088b066ee9 True 4
+200 new: True 200
+True
+1 -1 True

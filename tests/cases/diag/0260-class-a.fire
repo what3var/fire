@@ -1,5 +1,8 @@
 class A {
     int under
 }
+var a = new A()
+a.under = 2
+print(a.under)
 //# modes: Release
-//# name: diag 26: class A {
+//# name: diag 26: class A { - under is a contextual word: a name of a field

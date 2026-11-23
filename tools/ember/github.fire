@@ -1,0 +1,657 @@
+// ember: packages straight from a GitHub repository - GitHubSource.cs of the C# ember: the spec, the settings, the REST API (releases, commits,
+// assets, tarballs), the checksums, the source snapshot unpacked and packed.
+
+/// <summary>`github:owner/repo[@ref][#name]`.</summary>
+class GitHubSpec {
+    static string Prefix = "github:"
+    string owner
+    string repo
+    string reference
+    string packageName
+
+    construct(string owner, string repo, string reference, string packageName) {
+        this.owner = owner
+        this.repo = repo
+        this.reference = reference
+        this.packageName = packageName
+    }
+
+    string Repository() { return this.owner + "/" + this.repo }
+    string Text() {
+        if (this.reference.Length > 0) { return GitHubSpec.Prefix + this.Repository() + "@" + this.reference }
+        return GitHubSpec.Prefix + this.Repository()
+    }
+    string WebUrl() { return "https://github.com/" + this.Repository() }
+    bool RefIsCommit() { return GitHubSpec.IsCommit(this.reference) }
+
+    static bool IsHex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') }
+
+    /// <summary>^[0-9a-fA-F]{7,40}$</summary>
+    static bool IsCommit(string s) {
+        if (s.Length < 7 || s.Length > 40) { return false }
+        for (int i = 0; i < s.Length; i++) { if (!GitHubSpec.IsHex(s[i])) { return false } }
+        return true
+    }
+
+    static bool IsGitHub(string spec) { return spec != undefined && Ci.StartsWith(spec, GitHubSpec.Prefix) }
+
+    static GitHubSpec TryParse(string spec) {
+        try {
+            return GitHubSpec.Parse(spec)
+        } catch (PackageException e) { return undefined }
+    }
+
+    /// <summary>^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$</summary>
+    static bool IsOwner(string s) { return s.Length <= 39 && Ci.Plain(s, "-", false) }
+    /// <summary>^[A-Za-z0-9._-]{1,100}$</summary>
+    static bool IsRepo(string s) {
+        if (s.Length < 1 || s.Length > 100) { return false }
+        return Ci.Plain("a" + s, "._-", false)
+    }
+    /// <summary>^[A-Za-z0-9._+-][A-Za-z0-9._/+-]{0,199}$</summary>
+    static bool IsRef(string s) {
+        if (s.Length < 1 || s.Length > 200) { return false }
+        if (s[0] == '/') { return false }
+        return Ci.Plain("a" + s, "._+-/", false)
+    }
+
+    static GitHubSpec Parse(string spec) {
+        if (!GitHubSpec.IsGitHub(spec)) { throw new PackageException("'" + spec + "' is not a GitHub package (github:owner/repo[@ref][#name]).") }
+        string rest = spec.Substring(GitHubSpec.Prefix.Length).Trim()
+        string name = undefined
+        int hash = rest.IndexOf("#")
+        if (hash >= 0) {
+            name = rest.Substring(hash + 1)
+            rest = rest.Substring(0, hash)
+            if (!PackageManifest.IsName(name)) { throw new PackageException("'" + name + "' in '" + spec + "' is not a package name.") }
+        }
+        string reference = ""
+        int at = rest.IndexOf("@")
+        if (at >= 0) {
+            reference = rest.Substring(at + 1)
+            rest = rest.Substring(0, at)
+        }
+        var parts = rest.Split("/")
+        if (parts.length != 2 || !GitHubSpec.IsOwner(parts[0]) || !GitHubSpec.IsRepo(parts[1]) || parts[1] == "." || parts[1] == "..") {
+            throw new PackageException("'" + spec + "' does not name a repository: github:owner/repo[@ref][#name].")
+        }
+        string repo = parts[1]
+        if (Ci.EndsWith(repo, ".git")) { repo = repo.Substring(0, repo.Length - 4) }
+        if (at >= 0 && (!GitHubSpec.IsRef(reference) || reference.IndexOf("..") >= 0 || reference.EndsWith("/") || reference.IndexOf("//") >= 0)) {
+            throw new PackageException("'" + reference + "' in '" + spec + "' is not a tag, branch or commit.")
+        }
+        return new GitHubSpec(parts[0], repo, reference, name)
+    }
+}
+
+/// <summary>Where the API of GitHub is and the token for it: FIRE_GITHUB_API, FIRE_GITHUB_TOKEN, GITHUB_TOKEN before ember.json.</summary>
+class GitHubSettings {
+    static string DefaultApi = "https://api.github.com"
+    string apiBase = "https://api.github.com"
+    string token = undefined
+    string tokenSource = undefined
+
+    static GitHubSettings Resolve(string configApi, string configToken) {
+        string api = GitHubSettings.DefaultApi
+        string envApi = Environment.Get("FIRE_GITHUB_API")
+        if (envApi != undefined && envApi.Length > 0) { api = envApi }
+        else if (configApi != undefined && configApi.Length > 0) { api = configApi }
+        var s = new GitHubSettings()
+        s.apiBase = Sources.TrimEndChar(api, '/')
+        foreach (name in ["FIRE_GITHUB_TOKEN", "GITHUB_TOKEN"]) {
+            string t = Environment.Get(name)
+            if (t != undefined && t.Length > 0) {
+                s.token = t.Trim()
+                s.tokenSource = name
+                return s
+            }
+        }
+        if (!Ci.IsBlank(configToken)) {
+            s.token = configToken.Trim()
+            s.tokenSource = EmberSettings.FileName
+        }
+        return s
+    }
+}
+
+/// <summary>Resolves a spec with the REST API of GitHub and gets the package (the .fpk asset of a release, or built from the source of the commit).</summary>
+class GitHubSource {
+    static int MaxTarballBytes = 104857600
+    static int MaxUnpackedBytes = 419430400
+    static int MaxEntries = 20000
+
+    GitHubSettings settings
+    Http.Url api
+    string apiText
+
+    construct(GitHubSettings settings) {
+        this.settings = try take settings
+        Web.CheckSecure(this.settings.apiBase)
+        this.apiText = Sources.TrimEndChar(this.settings.apiBase, '/') + "/"
+        try {
+            this.api = Http.Url.Parse(this.apiText)
+        } catch (Http.HttpException e) { throw new PackageException("'" + this.settings.apiBase + "' is not an address.") }
+    }
+
+    bool IsApiOrigin(Http.Url u) { return u.scheme == this.api.scheme && Ci.Eq(u.host, this.api.host) && u.port == this.api.port }
+
+    /// <summary>One GET, redirects followed by hand (each hop https or this machine; the token only for the API's origin). The body is streamed (response.stream).</summary>
+    Http.Response Send(string url, string accept) {
+        string current = url
+        int hop = -1
+        while (true) {
+            hop++
+            Web.CheckSecure(current)
+            Http.Url u = undefined
+            try {
+                u = Http.Url.Parse(current)
+            } catch (Http.HttpException e) { throw new PackageException("'" + current + "' is not an address.") }
+            var headers = new Http.Headers()
+            headers.Set("Accept", accept)
+            if (this.IsApiOrigin(u)) {
+                headers.Set("X-GitHub-Api-Version", "2022-11-28")
+                if (this.settings.token != undefined) { headers.Set("Authorization", "Bearer " + this.settings.token) }
+            }
+            // (streamed: the body comes from response.stream - SaveLimited, ReadAll - and the size limit is the caller's, as in the C# ember)
+            Http.Response response = undefined
+            try {
+                response = Web.Send(current, headers, false, 120000)
+            } catch (Http.HttpException e) {
+                throw new PackageException("GitHub cannot be reached (" + u.host + "): " + e.message)
+            } catch (PackageException e) { throw e }
+            catch (Exception e) { throw new PackageException("GitHub cannot be reached (" + u.host + "): " + e.message) }
+            int status = response.status
+            string location = response.Header("Location")
+            if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && location != undefined) {
+                response.Close()
+                if (hop >= 5) { throw new PackageException("Too many redirects from '" + current + "'.") }
+                current = u.Resolve(location)
+                continue
+            }
+            return response
+        }
+    }
+
+    /// <summary>A failed answer as a message: the rate limit with the time it resets, a token that is not accepted, other errors.</summary>
+    PackageException Failure(Http.Response response, string what) {
+        int status = response.status
+        bool exhausted = response.Header("x-ratelimit-remaining") == "0"
+        string retryAfter = response.Header("retry-after")
+        if ((status == 403 || status == 429) && (exhausted || retryAfter != undefined)) {
+            string when = ""
+            string resetText = response.Header("x-ratelimit-reset")
+            any reset = undefined
+            if (resetText != undefined) { reset = resetText.Trim().TryToInt() }
+            if (reset != undefined && reset is of int) {
+                var at = DateTime.FromUnixSeconds(reset)
+                float seconds = reset - (DateTime.UtcNow.Ticks - TimeSpan.UnixEpoch) / 10000000.0
+                int minutes = Math.Max(0, Math.Ceiling(seconds / 60.0)!int)
+                string plural = "s"
+                if (minutes == 1) { plural = "" }
+                when = " It resets at " + at.Hour.ToString().PadLeft(2, '0') + ":" + at.Minute.ToString().PadLeft(2, '0') + " UTC (in " + minutes + " minute" + plural + ")."
+            } else if (retryAfter != undefined && retryAfter.Trim().TryToInt() != undefined) { when = " Try again in " + retryAfter.Trim().ToInt() + " seconds." }
+            string auth = " - without a token GitHub allows 60 requests an hour; set GITHUB_TOKEN or FIRE_GITHUB_TOKEN for more"
+            if (this.settings.token != undefined) { auth = " (with the token)" }
+            return new PackageException("GitHub's rate limit is used up" + auth + "." + when)
+        }
+        if (status == 401) { return new PackageException("GitHub does not accept the token (" + this.settings.tokenSource + ") for " + what + ": check or remove it.") }
+        if (status == 404) {
+            if (this.settings.token == undefined) { return new PackageException(what + " was not found on GitHub (a private repository needs a token: GITHUB_TOKEN or FIRE_GITHUB_TOKEN).") }
+            return new PackageException(what + " was not found on GitHub.")
+        }
+        return new PackageException("GitHub answered " + status + " " + response.reason + " for " + what + ".")
+    }
+
+    /// <summary>A JSON answer of the API; undefined for 404.</summary>
+    JsonNode GetJson(string path, string what) {
+        var response = this.Send(this.apiText + path, "application/vnd.github+json")
+        if (response.status == 404 && response.Header("x-ratelimit-remaining") != "0") {
+            response.Close()
+            return undefined
+        }
+        if (!response.Ok) {
+            response.Close()
+            throw this.Failure(response, what)
+        }
+        any announced = Web.ContentLength(response)
+        if (announced != undefined && announced > 8388608) {
+            response.Close()
+            throw new PackageException("The answer of GitHub for " + what + " is too big.")
+        }
+        try {
+            response.ReadBody()
+        } catch (Exception e) { throw new PackageException("GitHub cannot be reached (" + this.api.host + "): " + e.message) }
+        try {
+            return JsonReader.Parse(response.Text())
+        } catch (JsonException e) { throw new PackageException("The answer of GitHub for " + what + " is not valid JSON: " + e.message) }
+    }
+
+    undefined Download(string url, string target, int limit, string accept, string what) {
+        if (!Web.IsWeb(url)) { throw new PackageException("'" + url + "' is not an address.") }
+        var response = this.Send(url, accept)
+        if (!response.Ok) {
+            response.Close()
+            throw this.Failure(response, what)
+        }
+        Downloads.SaveLimited(response, target, limit, url)
+    }
+
+    static string Segment(string text) { return Http.Uri.Encode(text).Replace("%2F", "/") }
+
+    static string Str(JsonNode e, string name) {
+        if (e == undefined || e.kind != JsonKind.Object) { return undefined }
+        var v = e.Get(name)
+        if (v == undefined || v.kind != JsonKind.String) { return undefined }
+        return v.text
+    }
+
+    // ---- resolving ----
+
+    JsonNode Release(GitHubSpec spec, string reference) {
+        string repo = "repos/" + spec.owner + "/" + spec.repo
+        if (reference.Length == 0) { return this.GetJson(repo + "/releases/latest", "the newest release of " + spec.Repository()) }
+        var found = this.GetJson(repo + "/releases/tags/" + GitHubSource.Segment(reference), "the release " + reference + " of " + spec.Repository())
+        if (found != undefined) { return found }
+        // semver tags are found with or without the `v`
+        string other = "v" + reference
+        if (reference.StartsWith("v") || reference.StartsWith("V")) { other = reference.Substring(1) }
+        string bare = other
+        while (bare.StartsWith("v") || bare.StartsWith("V")) { bare = bare.Substring(1) }
+        if (SemanticVersion.IsValid(bare) && bare.Length > 0 && bare[0].IsDigit()) {
+            return this.GetJson(repo + "/releases/tags/" + GitHubSource.Segment(other), "the release " + other + " of " + spec.Repository())
+        }
+        return undefined
+    }
+
+    string CommitOf(GitHubSpec spec, string reference) {
+        var c = this.GetJson("repos/" + spec.owner + "/" + spec.repo + "/commits/" + GitHubSource.Segment(reference), "the commit of '" + reference + "' in " + spec.Repository())
+        if (c == undefined) { return undefined }
+        string sha = GitHubSource.Str(c, "sha") ?? ""
+        bool ok = sha.Length == 40
+        for (int i = 0; ok && i < 40; i++) { ok = (sha[i] >= '0' && sha[i] <= '9') || (sha[i] >= 'a' && sha[i] <= 'f') }
+        if (!ok) { throw new PackageException("GitHub gave no commit for '" + reference + "' in " + spec.Repository() + ".") }
+        return sha
+    }
+
+    /// <summary>Gets the package of `spec` into `directory`; returns [the path of the package file] and fills `entry` (the lock entry).</summary>
+    string Fetch(GitHubSpec spec, GitHubLockEntry pinnedIn, bool update, string directory, GitHubLockEntry entry) {
+        IO.Directory.CreateDirectory(directory)
+        GitHubLockEntry pinned = pinnedIn
+        if (pinned != undefined && !Ci.Eq(pinned.repository, spec.Repository())) { pinned = undefined }
+        string reference = spec.reference
+        bool pinnedSource = false
+        if (pinned != undefined && !update && (spec.reference.Length == 0 || spec.reference == pinned.reference)) {
+            if (pinned.kind == "source" && pinned.tag == undefined) {
+                reference = pinned.commit
+                pinnedSource = true
+            } else if (pinned.tag != undefined) { reference = pinned.tag }
+            if (spec.reference.Length == 0 || pinnedSource) {
+                string to = pinned.tag
+                if (to == undefined) { to = pinned.commit.Substring(0, 7) }
+                Log.Line(spec.Text() + " is pinned by " + PackageLock.FileName + " to " + to + " (`ember update` moves it).")
+            }
+        } else if (pinned != undefined && pinned.reference == spec.reference && spec.RefIsCommit()) { reference = pinned.commit }
+
+        JsonNode release = undefined
+        if (!(pinnedSource || (spec.RefIsCommit() && reference == spec.reference))) { release = this.Release(spec, reference) }
+        if (release == undefined && reference.Length == 0) {
+            throw new PackageException(spec.Repository() + " has no release (or it was not found). Name a tag, branch or commit to build the package from the source: " + spec.Text() + "@main.")
+        }
+
+        string fpk = undefined
+        if (release != undefined) {
+            string tag = GitHubSource.Str(release, "tag_name")
+            if (tag == undefined) { throw new PackageException("The release of " + spec.Repository() + " has no tag.") }
+            string commit = this.CommitOf(spec, tag)
+            if (commit == undefined) { throw new PackageException("The tag " + tag + " of " + spec.Repository() + " has no commit.") }
+            GitHubSource.CheckPinnedCommit(spec, pinned, tag, commit)
+            var assets = new List<JsonNode>()
+            var a = release.Get("assets")
+            if (a != undefined && a.kind == JsonKind.Array) { foreach (x in a.items) { assets.Add(x) } }
+            var chosen = GitHubSource.ChooseAsset(spec, tag, assets)
+            if (chosen != undefined) {
+                string name = GitHubSource.Str(chosen, "name")
+                Log.Line("Fetching " + name + " of the release " + tag + " of " + spec.WebUrl() + " (commit " + commit.Substring(0, 7) + ")...")
+                var check = this.UpstreamChecksum(spec, name, chosen, assets, directory)
+                string sha = check[0]
+                string verified = check[1]
+                string target = IO.Path.Combine(directory, IO.Path.GetFileName(name))
+                any size = undefined
+                var sz = chosen.Get("size")
+                if (sz != undefined && sz.IsWholeNumber()) { size = sz.text.ToInt() }
+                if (size != undefined && size > Downloads.MaxPackageBytes) { throw new PackageException(name + " has " + size + " bytes - more than ember takes (" + Downloads.MaxPackageBytes + " bytes).") }
+                int limit = Downloads.MaxPackageBytes
+                if (size != undefined) { limit = size }
+                // with a token the asset is fetched through the API (works for private repositories; the redirect to the storage host gets no token), else from the download address
+                string apiUrl = GitHubSource.Str(chosen, "url")
+                string browserUrl = GitHubSource.Str(chosen, "browser_download_url")
+                if (this.settings.token != undefined && apiUrl != undefined) { this.Download(apiUrl, target, limit, "application/octet-stream", name) }
+                else {
+                    string source = browserUrl ?? apiUrl
+                    if (source == undefined) { throw new PackageException("The asset " + name + " has no address.") }
+                    this.Download(source, target, limit, "application/octet-stream", name)
+                }
+                int actual = IO.File.Size(target)
+                if (size != undefined && actual != size) { throw new PackageException(name + " has " + actual + " bytes, GitHub says " + size + " - the file is not the one that was published.") }
+                string have = Downloads.Sha256Of(target)
+                if (sha != undefined && !Ci.Eq(have, sha)) {
+                    throw new PackageException("The checksum of " + name + " does not match its " + verified + " - the file is not the one that was published (expected " + sha + ", got " + have + ").")
+                }
+                if (pinned != undefined && pinned.kind == "release" && pinned.tag == tag && !Ci.Eq(pinned.sha256, have)) {
+                    throw new PackageException(name + " of " + spec.Repository() + " " + tag + " is not the file that was installed before (its SHA-256 is " + have + ", " + PackageLock.FileName + " has " + pinned.sha256 + "): the asset was replaced. "
+                        + "Remove the package (`ember remove`) and install it again only if you trust the new file.")
+                }
+                if (sha != undefined) { Log.Line("Verified: the SHA-256 matches the " + verified + " of the release.") }
+                else if (pinned != undefined && pinned.tag == tag) {
+                    verified = pinned.verified
+                    Log.Line("Verified: the SHA-256 matches the one recorded in " + PackageLock.FileName + " on first use (not verified upstream).")
+                } else {
+                    verified = "first use"
+                    Log.Line("Warning: the release gives no checksum for " + name + " (no asset digest, no " + name + ".sha256, no SHA256SUMS) - it was NOT verified upstream. "
+                        + "Its SHA-256 " + have + " is recorded in " + PackageLock.FileName + " and checked from now on.")
+                }
+                entry.kind = "release"
+                entry.tag = tag
+                entry.commit = commit
+                entry.asset = name
+                entry.sha256 = have
+                entry.verified = verified
+                fpk = target
+            } else {
+                Log.Line("The release " + tag + " of " + spec.WebUrl() + " has no .fpk asset: building the package from the source at commit " + commit.Substring(0, 7) + "...")
+                fpk = this.BuildFromSource(spec, commit, directory)
+                entry.kind = "source"
+                entry.tag = tag
+                entry.commit = commit
+                entry.sha256 = Downloads.Sha256Of(fpk)
+                entry.verified = "source"
+            }
+        } else {
+            string commit = this.CommitOf(spec, reference)
+            if (commit == undefined) { throw new PackageException(spec.Repository() + " has no release, tag, branch or commit '" + spec.reference + "'.") }
+            if (pinned != undefined && spec.RefIsCommit() && !Ci.StartsWith(pinned.commit, spec.reference)) { pinned = undefined }
+            string what = "'" + spec.reference + "', commit"
+            if (spec.RefIsCommit()) { what = "commit" }
+            Log.Line("Building the package from the source of " + spec.WebUrl() + " at " + what + " " + commit.Substring(0, 7) + "...")
+            fpk = this.BuildFromSource(spec, commit, directory)
+            entry.kind = "source"
+            entry.commit = commit
+            entry.sha256 = Downloads.Sha256Of(fpk)
+            entry.verified = "source"
+        }
+        entry.repository = spec.Repository()
+        if (spec.reference.Length == 0 && pinned != undefined && !update) { entry.reference = pinned.reference } else { entry.reference = spec.reference }
+        entry.installed = GitHubLockEntry.Now()
+        return fpk
+    }
+
+    static undefined CheckPinnedCommit(GitHubSpec spec, GitHubLockEntry pinned, string tag, string commit) {
+        if (pinned != undefined && pinned.tag == tag && !Ci.Eq(pinned.commit, commit)) {
+            string was = pinned.commit
+            if (was.Length > 7) { was = was.Substring(0, 7) }
+            throw new PackageException("The tag " + tag + " of " + spec.Repository() + " moved: it is commit " + commit.Substring(0, 7) + " now, " + PackageLock.FileName + " pinned " + was + ". "
+                + "Remove the package (`ember remove`) and install it again only if you trust the new commit.")
+        }
+    }
+
+    /// <summary>The .fpk asset of a release: the only one, or - with several - the one named like the package or the repository. None: undefined.</summary>
+    static JsonNode ChooseAsset(GitHubSpec spec, string tag, List<JsonNode> assets) {
+        var fpks = new List<JsonNode>()
+        foreach (a in assets) {
+            string n = GitHubSource.Str(a, "name")
+            if (n != undefined && Ci.EndsWith(n, Fpk.Extension)) { fpks.Add(a) }
+        }
+        if (fpks.Count == 0) { return undefined }
+        if (fpks.Count == 1) { return fpks[0] }
+        string wanted = spec.packageName ?? spec.repo
+        var named = new List<JsonNode>()
+        foreach (a in fpks) {
+            string stem = IO.Path.GetFileNameWithoutExtension(GitHubSource.Str(a, "name"))
+            bool ok = Ci.Eq(stem, wanted)
+            if (!ok && Ci.StartsWith(stem, wanted + "-")) {
+                string v = stem.Substring(wanted.Length + 1)
+                while (v.StartsWith("v")) { v = v.Substring(1) }
+                ok = SemanticVersion.IsValid(v)
+            }
+            if (ok) { named.Add(a) }
+        }
+        if (named.Count == 1) { return named[0] }
+        var names = new List<string>()
+        foreach (a in fpks) { names.Add(GitHubSource.Str(a, "name")) }
+        throw new PackageException("The release " + tag + " of " + spec.Repository() + " has several .fpk files (" + ", ".Join(names) + ") and none is named after '" + wanted + "': "
+            + "name the package with " + spec.Text() + "#name.")
+    }
+
+    string TextOf(JsonNode a, int limit, string directory) {
+        string target = IO.Path.Combine(directory, "checksum-" + Guid.NewGuid().ToString("N"))
+        string apiUrl = GitHubSource.Str(a, "url")
+        string browserUrl = GitHubSource.Str(a, "browser_download_url")
+        string url = browserUrl ?? apiUrl ?? ""
+        if (this.settings.token != undefined && apiUrl != undefined) { url = apiUrl }
+        this.Download(url, target, limit, "application/octet-stream", GitHubSource.Str(a, "name"))
+        try {
+            return IO.File.ReadAllText(target)
+        } finally { IO.File.Delete(target) }
+    }
+
+    /// <summary>A run of exactly 64 hex digits between non-word characters (\b[0-9a-fA-F]{64}\b), or undefined.</summary>
+    static string Sha256In(string text) {
+        int i = 0
+        while (i < text.Length) {
+            char c = text[i]
+            bool isWord = c.IsLetterOrDigit() || c == '_'
+            if (!isWord) {
+                i++
+                continue
+            }
+            int start = i
+            bool hex = true
+            while (i < text.Length && (text[i].IsLetterOrDigit() || text[i] == '_')) {
+                if (!GitHubSpec.IsHex(text[i])) { hex = false }
+                i++
+            }
+            if (hex && i - start == 64) { return text.Substring(start, 64) }
+        }
+        return undefined
+    }
+
+    /// <summary>The checksum the release gives for the asset: its digest, an asset `name.sha256`, the line of SHA256SUMS; [sha, where from] or [undefined, undefined].</summary>
+    string[] UpstreamChecksum(GitHubSpec spec, string name, JsonNode asset, List<JsonNode> assets, string directory) {
+        var shas = new List<string>()
+        var froms = new List<string>()
+        string digest = GitHubSource.Str(asset, "digest")
+        if (digest != undefined && Ci.StartsWith(digest, "sha256:")) {
+            shas.Add(digest.Substring(7).Trim().ToLower())
+            froms.Add("asset digest")
+        }
+        JsonNode shaAsset = undefined
+        JsonNode sums = undefined
+        foreach (a in assets) {
+            string n = GitHubSource.Str(a, "name")
+            if (n == undefined) { continue }
+            if (shaAsset == undefined && Ci.Eq(n, name + ".sha256")) { shaAsset = a }
+            if (sums == undefined && (n.ToUpper() == "SHA256SUMS" || n.ToUpper() == "SHA256SUMS.TXT")) { sums = a }
+        }
+        if (shaAsset != undefined) {
+            string shaText = this.TextOf(shaAsset, 4096, directory)
+            string found = GitHubSource.Sha256In(shaText)
+            if (found == undefined) { throw new PackageException(name + ".sha256 of " + spec.Repository() + " holds no SHA-256.") }
+            shas.Add(found.ToLower())
+            froms.Add("sha256 asset")
+        }
+        if (sums != undefined) {
+            string sumsText = this.TextOf(sums, 1048576, directory)
+            foreach (rawLine in sumsText.Split("\n")) {
+                string line = rawLine.Trim()
+                if (line.Length < 66) { continue }
+                string hex = line.Substring(0, 64)
+                bool ok = true
+                for (int i = 0; i < 64; i++) { if (!GitHubSpec.IsHex(hex[i])) { ok = false } }
+                if (!ok) { continue }
+                int p = 64
+                int spaces = p
+                while (p < line.Length && (line[p] == ' ' || line[p] == '\t')) { p++ }
+                if (p == spaces) { continue }
+                if (p < line.Length && line[p] == '*') { p++ }
+                if (p >= line.Length) { continue }
+                string file = IO.Path.GetFileName(line.Substring(p).Trim())
+                if (file == name) {
+                    shas.Add(hex.ToLower())
+                    froms.Add("SHA256SUMS")
+                    break
+                }
+            }
+        }
+        if (shas.Count == 0) { return [undefined, undefined] }
+        bool differ = false
+        foreach (s in shas) { if (s != shas[0]) { differ = true } }
+        if (differ) {
+            var all = new List<string>()
+            for (int i = 0; i < shas.Count; i++) { all.Add(froms[i] + " " + shas[i]) }
+            throw new PackageException("The checksums of " + name + " in the release of " + spec.Repository() + " disagree (" + ", ".Join(all) + ") - nothing is installed.")
+        }
+        return [shas[0], " and ".Join(froms)]
+    }
+
+    // ---- the source: the tarball of the commit, unpacked with care, packed like `ember forge` (package.json) or Pack Library (.fireproj) ----
+
+    string BuildFromSource(GitHubSpec spec, string commit, string directory) {
+        string tarball = IO.Path.Combine(directory, "source.tar.gz")
+        this.Download(this.apiText + "repos/" + spec.owner + "/" + spec.repo + "/tarball/" + commit, tarball, GitHubSource.MaxTarballBytes, "application/vnd.github+json",
+            "the source of " + spec.Repository() + " at " + commit.Substring(0, 7))
+        string root = IO.Path.Combine(directory, "source")
+        SourceTar.Unpack(tarball, root)
+        IO.File.Delete(tarball)
+        return GitHubSource.BuildPackage(root, IO.Path.Combine(directory, "built"))
+    }
+
+    /// <summary>The package of an unpacked source: a package.json in the root (packed as `ember forge` does), else the one library project.</summary>
+    static string BuildPackage(string rootIn, string output) {
+        string root = IO.Path.GetFullPath(rootIn)
+        string description = IO.Path.Combine(root, Fpk.ManifestEntry)
+        if (IO.File.Exists(description)) {
+            var manifest = PackageManifest.Load(description)
+            GitHubSource.CheckInside(root, root, GitHubSource.ManifestPaths(manifest))
+            Log.Line("Packing " + Fpk.ManifestEntry + " of the source (" + manifest.name + " " + manifest.version + ")...")
+            return Fpk.Forge(description, output)[0]
+        }
+        var projects = new List<string>()
+        foreach (f in IO.Directory.GetFiles(root)) { if (f.EndsWith(".fireproj")) { projects.Add(f) } }
+        if (projects.Count == 0) { GitHubSource.FindProjects(root, 0, projects) }
+        if (projects.Count == 0) { throw new PackageException("The source has no " + Fpk.ManifestEntry + " (a package description) and no library project (.fireproj) to build a package from.") }
+        var libraries = new List<string>()
+        foreach (p in projects) { if (GitHubSource.IsLibraryProject(p)) { libraries.Add(p) } }
+        if (libraries.Count != 1) {
+            if (libraries.Count == 0) {
+                var rel = new List<string>()
+                foreach (p in projects) { rel.Add(IO.Path.GetRelativePath(root, p)) }
+                throw new PackageException("The project of the source (" + ", ".Join(rel) + ") is not a library: only a library becomes a package.")
+            }
+            var rel2 = new List<string>()
+            foreach (p in libraries) { rel2.Add(IO.Path.GetRelativePath(root, p)) }
+            throw new PackageException("The source has several library projects (" + ", ".Join(rel2) + "); put a " + Fpk.ManifestEntry + " into its root or publish a release with the .fpk.")
+        }
+        string project = libraries[0]
+        GitHubSource.CheckInside(root, IO.Path.GetDirectoryName(project), GitHubSource.JsonStrings(IO.File.ReadAllText(project)))
+        Log.Line("Packing the library project " + IO.Path.GetRelativePath(root, project) + " of the source...")
+        string fpk = Standard.PackWithForge(project, output)
+        if (!IO.File.Exists(fpk)) { throw new PackageException("Packing " + IO.Path.GetFileName(project) + " made no package.") }
+        return fpk
+    }
+
+    /// <summary>The .fireproj files of the tree, at most three folders down (EnumerationOptions.MaxRecursionDepth = 3).</summary>
+    static undefined FindProjects(string dir, int depth, List<string> found) {
+        foreach (f in IO.Directory.GetFiles(dir)) { if (f.EndsWith(".fireproj")) { found.Add(f) } }
+        if (depth >= 3) { return }
+        foreach (d in IO.Directory.GetDirectories(dir)) { GitHubSource.FindProjects(d, depth + 1, found) }
+    }
+
+    static bool IsLibraryProject(string file) {
+        JsonNode root = undefined
+        try {
+            root = JsonReader.Parse(IO.File.ReadAllText(file))
+        } catch (JsonException e) { throw new PackageException(IO.Path.GetFileName(file) + " of the source is not valid: " + e.message) }
+        if (root.kind != JsonKind.Object) { return false }
+        var t = root.Get("type")
+        return t != undefined && t.kind == JsonKind.String && t.text.ToLower() == "library"
+    }
+
+    static List<string> ManifestPaths(PackageManifest m) {
+        var paths = new List<string>()
+        if (m.templates != undefined) { paths.Add(m.templates) }
+        if (m.documents != undefined) { foreach (d in m.documents) { paths.Add(d) } }
+        foreach (i in m.imports) {
+            if (i.prelude != undefined) { paths.Add(i.prelude) }
+            if (i.resources != undefined) { foreach (pair in i.resources) { paths.Add(pair.Value) } }
+            if (i.native != undefined) { foreach (f in i.native.AllFiles()) { paths.Add(f) } }
+        }
+        return paths
+    }
+
+    /// <summary>Every string of a JSON file (the project file: its paths, patterns and other values).</summary>
+    static List<string> JsonStrings(string json) {
+        var result = new List<string>()
+        JsonNode root = undefined
+        try {
+            root = JsonReader.Parse(json)
+        } catch (JsonException e) { throw new PackageException("The project of the source is not valid: " + e.message) }
+        GitHubSource.Walk(root, result)
+        return result
+    }
+
+    static undefined Walk(JsonNode e, List<string> result) {
+        if (e.kind == JsonKind.String) { result.Add(e.text) }
+        else { foreach (x in e.items) { GitHubSource.Walk(x, result) } }
+    }
+
+    /// <summary>A path of the source that is absolute or leads out of it (`..`) would pack a file of this machine into the package: refused.</summary>
+    static undefined CheckInside(string root, string baseDir, List<string> paths) {
+        string prefix = Sources.TrimEndChar(root, '/') + "/"
+        foreach (path in paths) {
+            if (Ci.IsBlank(path) || path.IndexOf("://") >= 0) { continue }
+            string p = path.Replace("\\", "/")
+            bool drive = p.Length >= 2 && p[1] == ':' && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z'))
+            bool rooted = IO.Path.IsPathRooted(p) || p.StartsWith("~") || drive
+            bool leaves = !rooted && p.IndexOf("..") >= 0 && !IO.Path.GetFullPath(IO.Path.Combine(baseDir, p)).StartsWith(prefix)
+            if (rooted || leaves) { throw new PackageException("The source names a file outside of it ('" + path + "'): ember builds a package only from the files of the repository.") }
+        }
+    }
+}
+
+/// <summary>Unpacks the source snapshot (a .tar.gz of GitHub: one folder at the top, which is left out) with Tar.Archive of the package compression:
+/// only files and folders, every path checked to stay inside `root`, the number of files and the unpacked size limited.</summary>
+class SourceTar {
+    static undefined Unpack(string tarGz, string root) {
+        IO.Directory.CreateDirectory(root)
+        string full = IO.Path.GetFullPath(root) + "/"
+        Tar.Archive archive = undefined
+        try {
+            archive = Tar.Archive.Open(tarGz)
+        } catch (Compression.InvalidDataException e) { throw new PackageException("The source snapshot is not a valid .tar.gz: " + e.message) }
+        catch (Tar.TarException e) { throw new PackageException("The source snapshot is not a valid .tar.gz: " + e.message.Substring(0, 1).ToLower() + e.message.Substring(1)) }
+        int total = 0
+        int count = 0
+        foreach (entry in archive.Entries) {
+            // links, devices: not taken
+            if (!entry.IsFile && !entry.IsDirectory) { continue }
+            count++
+            if (count > GitHubSource.MaxEntries) { throw new PackageException("The source has more than " + GitHubSource.MaxEntries + " files.") }
+            string entryName = entry.FullName
+            string n = entryName.Replace("\\", "/")
+            int slash = n.IndexOf("/")
+            if (slash < 0) { continue }
+            n = n.Substring(slash + 1)
+            if (n.Length == 0) { continue }
+            string target = IO.Path.GetFullPath(IO.Path.Combine(root, n))
+            if (!target.StartsWith(full)) { throw new PackageException("The source contains a path that leaves its folder: " + entryName) }
+            if (entry.IsDirectory) {
+                IO.Directory.CreateDirectory(target)
+                continue
+            }
+            total += entry.Length
+            if (total > GitHubSource.MaxUnpackedBytes) { throw new PackageException("The source is bigger than " + GitHubSource.MaxUnpackedBytes + " bytes unpacked.") }
+            IO.Directory.CreateDirectory(IO.Path.GetDirectoryName(target))
+            IO.File.WriteAllBytes(target, entry.ReadAllBytes())
+        }
+    }
+}

@@ -712,7 +712,7 @@ namespace fire.Editor
             if (i < _tokens.Count && _tokens[i].Type == TokenType.Colon)
             {
                 i++;
-                while (i < _tokens.Count && _tokens[i].Type != TokenType.LBrace && _tokens[i].Type != TokenType.Where
+                while (i < _tokens.Count && _tokens[i].Type != TokenType.LBrace && !(_tokens[i].Type == TokenType.Identifier && _tokens[i].Lexeme == "where")
                        && _tokens[i].Type != TokenType.Eof)
                 {
                     if (_tokens[i].Type == TokenType.Identifier)

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The rest of the command line of forge-c against the C# forge (docs/spec/FORGE_C.md, Phase D Schritt 4): `build|publish|bytecode --report json` (what
 # spark reads), `run`, `native`, `bytecode` of projects and several files, `build` with -D/-i/--overlay/--debug-info, `test` with several files, -D, -f,
-# `data`, the errors of the command line - each command with both forges in a copy of a small fixture (written here: files, a solution of a library, a
+# `data`, `tables`, `dump` of a program file, `publish` with --overlay/-D/-i, the events "background" of the report (and FIRE_PROGRESS_LINES) with an empty
+# store, the errors of the command line - each command with both forges in a copy of a small fixture (written here: files, a solution of a library, a
 # program and a broken program, tests, a data program), comparing stdout, stderr, the exit code and the files they wrote (text files with the folder of the
 # copy replaced; the pid of the report, the GUIDs of temporary folders, the seconds of `test` and the lines of building a package's natives are left out).
 #
@@ -9,7 +10,8 @@
 #
 # Both forges are given with ABSOLUTE paths (the commands run in the copies). FIRE_PACKAGES is the store of the C# forge (both use it); FIRE_TABLES, else
 # native/tables of the repository, is forge-c's. COMMANDS_PACKAGES="vm native" also runs `test <project>` for every project of packages/ with both
-# (the engines listed; slow). The work folder (default: a temporary one) is emptied after each command. Exit code 0 when everything matches.
+# (the engines listed; slow). COMMANDS_PREBUILD=1 also runs `prebuild-standard` (the libraries of the standard packages; with Prebuilt/ next to the forges
+# quick). The work folder (default: a temporary one) is emptied after each command. Exit code 0 when everything matches.
 set -u
 if [ $# -lt 2 ]; then echo "usage: $0 <forge (C#)> <forge-c> [work folder]" >&2; exit 2; fi
 FORGE_CS=$1; FORGE_C=$2
@@ -51,6 +53,9 @@ printf 'print("a")\n' > "$F/stats/a.fire"
 printf 'class K { int x\n string Name() { return "k" + x } }\nvar k = new K()\nfor (int i = 0; i < 10; i++) print(k.Name() + i)\nprint(Math.Sqrt(2.0))\n' > "$F/stats/b.fire"
 (cd "$F/stats" && "$FORGE_CS" build a.fire --engine native --toolchain gcc --stats -o pa > /dev/null 2>&1; "$FORGE_CS" build b.fire --engine native --toolchain gcc --stats -o pb > /dev/null 2>&1
  rm -f pa pb pa.map pb.map a.fire b.fire; printf '{"Target": 3}' > bad.json; printf 'null' > null.json; printf '{nope' > broken.json)
+printf 'print("overlaid app")\n' > "$F/sol/ov.txt"
+# (program files of the C# forge, a cut one, one of another version)
+(cd "$F/files" && "$FORGE_CS" bytecode a.fire -o a.fbc > /dev/null 2>&1 && "$FORGE_CS" bytecode two.fire -m debug -o d.fbc > /dev/null 2>&1 && head -c 300 a.fbc > cut.fbc && printf 'FBC\x1a\x07\x00' > v7.fbc)
 printf '#import "data"\n[Table "people"]\nclass Person {\n    [Key] int id\n    string name\n}\n[Migration 1, "people"]\nclass CreatePeople {\n    undefined Up(Data.Migrator m) {\n        m.CreateTable("people", [m.Key("id"), m.Column("name", "string", 100, true)])\n    }\n    undefined Down(Data.Migrator m) { m.DropTable("people") }\n}\nprint("top level")\n' > "$F/data/app.fire"
 
 # ---- one command with both: same (0) or not (1) ----
@@ -88,7 +93,7 @@ for a in "build a.fire --report json" "build bad.fire --report json" "bytecode a
          "bytecode a.fire bad.fire --report json -D X" "build nope.fire --report json" "build a.fire --report xml" "build a.fire --report json --overlay a.fire=ov.txt" \
          "bytecode a.fire --report json --overlay=a.fire=ov.txt" "build a.fire --report json --config nope.json" "build a.fire --report json -t esp32 --engine vm" \
          "build --report json" "build a.fire b.fire --report json" "build a.fire --report json --engine native -t wasm" "bytecode a.fire --report json -i 32 -f 32" \
-         "build a.fire --report json -m debug --types strict"; do one files $a; done
+         "nofiles build a.fire --report json -m debug --types strict"; do one files $a; done
 for a in "build All.firesln --report json" "build App/App.fireproj --report json -D EXTRA" "build All.firesln -p Core --report json" "build All.firesln -p Core --check --report json" \
          "build All.firesln -p Bad --report json" "build All.firesln -p Bad --report json --engine native" "build All.firesln --all --report json" \
          "build All.firesln --all --report json --engine native" "bytecode All.firesln --report json" "bytecode All.firesln -p Core --report json" \
@@ -109,7 +114,32 @@ for a in "build Pkg/Pkg.fireproj" "build Pkg/Pkg.fireproj --report json" "byteco
 for a in "data status app.fire --url memory:" "data migrate app.fire --url sqlite:x.db" "data import --url sqlite:x.db" "data migrate --url memory:" "data" "data frob" \
          "data status app.fire" "data status app.fire --url foo:x" "data status app.fire --url memory: --to 3"; do one data $a; done
 # dump, stats
-for a in "dump a.fire" "dump bad.fire" "dump a.fire -o d.txt" "dump a.fire two.fire -m debug -D X"; do one files $a; done
+for a in "dump a.fire" "dump bad.fire" "dump a.fire -o d.txt" "dump a.fire two.fire -m debug -D X" "dump a.fbc" "dump d.fbc -o d.txt" "dump cut.fbc" "dump v7.fbc"; do one files $a; done
+# tables, publish with the options of the command line (prebuild-standard: COMMANDS_PREBUILD)
+for a in "tables tab" "tables ."; do one files $a; done
+for a in "publish All.firesln --overlay App/main.fire=ov.txt" "publish All.firesln -p App -D EXTRA -i 32" "publish App/App.fireproj --types strict --global-jobs sync" \
+         "publish All.firesln --report json --overlay App/main.fire=ov.txt -D EXTRA"; do one sol $a; done
+[ "${COMMANDS_PREBUILD:-0}" = 1 ] && one files prebuild-standard "$CSDIR/Source" pb
+# the work without a build window (BackgroundWork) at the first start, with an empty store: the events "background" of the report, the lines of FIRE_PROGRESS_LINES.
+# (The C# forge has its store next to it - Packages/ -, so do both forges here: it is moved aside for each run and put back; both forges in one folder.)
+empty() {
+  local lines=$1 f forge store="$CSDIR/Packages"; shift
+  if [ "$CSDIR" != "$CDIR" ] || [ "${FIRE_PACKAGES:-$store}" != "$store" ] || [ ! -d "$store" ]; then echo "  (empty store: skipped - both forges in one folder with Packages/ next to them)"; return; fi
+  for f in cs fc; do
+    forge=$FORGE_CS; [ $f = fc ] && forge=$FORGE_C
+    rm -rf "$WORK/run-$f"; mkdir -p "$WORK/run-$f"; cp -r "$F/files/." "$WORK/run-$f/"
+    mv "$store" "$store.compare-keep"
+    (cd "$WORK/run-$f" && env -u FIRE_PACKAGES FIRE_PROGRESS_LINES=$lines "$forge" "$@" > ../o-$f.txt 2> ../e-$f.txt < /dev/null; echo "exit $?" >> ../o-$f.txt)
+    rm -rf "${store:?}"; mv "$store.compare-keep" "$store"
+    for s in o e; do sed -E -e "s#$WORK/run-(cs|fc)#<DIR>#g" -e 's/"pid":[0-9]+/"pid":0/' "$WORK/$s-$f.txt" > "$WORK/$s-$f.n"; done
+  done
+  if cmp -s "$WORK/o-cs.n" "$WORK/o-fc.n" && cmp -s "$WORK/e-cs.n" "$WORK/e-fc.n"; then same=$((same + 1)); else
+    different=$((different + 1)); echo "  differs: (empty store, FIRE_PROGRESS_LINES=$lines) $*"
+    diff "$WORK/o-cs.n" "$WORK/o-fc.n" | head -8 | sed 's/^/    /'; diff "$WORK/e-cs.n" "$WORK/e-fc.n" | head -6 | sed 's/^/    /'; fi
+  rm -rf "$WORK/run-cs" "$WORK/run-fc"
+}
+empty 0 build a.fire --report json
+empty 1 bytecode a.fire -o x.fbc
 one sol dump All.firesln
 [ -f "$F/stats/pa.stats.json" ] && for a in "stats pa.stats.json pb.stats.json" "stats pb.stats.json pa.stats.json" "stats pa.stats.json pa.stats.json" "stats pa.stats.json bad.json" \
   "stats null.json pa.stats.json" "stats broken.json pa.stats.json" "stats nope.json pa.stats.json" "stats pa.stats.json"; do one stats $a; done

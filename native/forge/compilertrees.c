@@ -110,6 +110,7 @@ static const char* TreeOpText(FcBinaryOp op) {
         case BOP_Eq: return "=="; case BOP_NotEq: return "!="; case BOP_Lt: return "<"; case BOP_LtEq: return "<="; case BOP_Gt: return ">"; case BOP_GtEq: return ">=";
         case BOP_And: return "&&"; case BOP_Or: return "||"; case BOP_BitAnd: return "&"; case BOP_BitOr: return "|"; case BOP_BitXor: return "^^";
         case BOP_ShiftLeft: return "<<"; case BOP_ShiftRight: return ">>"; case BOP_ShiftRightLogical: return ">>>"; case BOP_Power: return "^";
+        case BOP_Coalesce: return "??";
         default: return "?";
     }
 }

@@ -144,8 +144,8 @@ static void fcStoreLoad(FcCtx* c, FcStore* store) {
     int i, k, f;
     store->loaded = true;
     store->imports = fcListNew(c);
-#ifndef _WIN32
     {
+        /* (Windows: opendir of win32.h) */
         DIR* d = opendir(store->root);
         struct dirent* e;
         if (!d) return;
@@ -155,7 +155,6 @@ static void fcStoreLoad(FcCtx* c, FcStore* store) {
         }
         closedir(d);
     }
-#endif
     if (dirs->count > 1) qsort(dirs->items, (size_t)dirs->count, sizeof(void*), fcCmpIgnoreCase);
     for (i = 0; i < dirs->count; i++) {
         const char* dir = (const char*)dirs->items[i];
@@ -230,7 +229,7 @@ static FcPkgImport* fcStoreFindKey(FcCtx* c, FcStore* store, const char* key) {
 static const char* const fcStandardBridges[] = { "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net",
     "process", "hash", "compression", "ai", "ai.agent", "ai.models", "assistant", "mcp", "tls", "http", "http.rpc", "http.pages", "data", "data.sqlite", "data.memory", "data.mysql",
     "data.sqlserver", "data.postgres", "http.data", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics",
-    "ui.docking", "json", "net.channel", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86" };
+    "ui.docking", "json", "net.channel", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86", "regex" };
 
 /* ---- the linker ---- */
 typedef struct FcLinker {

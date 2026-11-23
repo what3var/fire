@@ -163,19 +163,36 @@ Texts are joined with `+`; as soon as one side is a `string`, the other side is 
 
 ## Keywords
 
-These words are keywords: they cannot be the name of a variable, a parameter, a field, a method or a class (`int where = 3` is the error
-"'where' is a keyword and cannot be a name").
+These words are keywords: they cannot be the name of a variable, a parameter, a field, a method or a class (`int in = 3` is the error
+"'in' is a keyword and cannot be a name").
 
 ```
 var func class construct destruct return if else while do for foreach in on new base this try catch finally throw
-is of from under extern unsafe interface readonly override static public private protected namespace enum with extends
-switch case default break continue where fire taking handover operator sync flat copy take replace leave terminate actor
+extern unsafe interface readonly override static public private protected namespace enum with extends
+switch case default break continue fire taking handover operator sync flat copy take replace leave terminate actor
 process true false undefined bool int float char string byte word and or
 ```
 
 Some words are keywords only where they mean something, and names everywhere else - for example `delete` (in front of a name: `delete x`), `probe`,
-`silence`, `warn`, `await`, `until`, `dedicated`, `defined`, `trust`, `unit`, `coerce`, `inline`, `flag`. Methods of the standard library
+`silence`, `warn`, `await`, `until`, `dedicated`, `defined`, `trust`, `unit`, `coerce`, `inline`, `flag`, and the words of the tests and constraints
+**`is`, `of`, `from`, `under`, `where`**: `x is of T`, `x is in "m"`, `x is from o`, `x is under o`, `where T is of A`, `coerce from m`. A variable, a
+parameter, a field or a lambda parameter may have such a name:
+
+```fire
+string from = "Berlin"
+string where = "Paris"
+bool is = where is of string        // a variable `is`, and the test `is of`
+```
+
+`is` is the test where `in`, `of`, `from` or `under` follows it (`x is of Dog` at the start of a statement is the test, not a variable `is` of the
+type `x`); `of`, `from` and `under` are words only after `is`, `where` only after the head of a generic class or method. Methods of the standard library
 are written with a capital letter (`s.Replace(a, b)`), so they never meet a keyword.
+
+Some words stay keywords although they look contextual, because a name there would be ambiguous: `in` (`foreach (x in xs)`: a loop variable
+`in` could not be told from the `in` after it - `foreach (d in in)`, and `foreach (Dog d in dogs)` reads a type and a name before it), `on`
+(`f on obj` rebinds a lambda: `Dog on` at the start of a statement would be a declaration or a rebinding), `word` and the other type names
+(`word x` declares, `word * p` would be a pointer declaration or a product, `word[n]` a buffer type or an element), `and`/`or` (operators between
+two operands: `a or b`).
 
 ## Ending the program
 

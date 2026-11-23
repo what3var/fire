@@ -160,8 +160,9 @@ class Process {
     static bool IsSupported { get { return __ProcSupported() } }
 
     /// Starts `file` (a path, or a name that is looked up in PATH) with the arguments - each one reaches the program as it is (no shell, no quoting needed).
-    static Process Start(string file, string args[] = undefined, ProcessOptions options = undefined) {
-        if (args == undefined) { args = new string[0] }
+    /// `args` is a `string[]` or a `List<string>` (or undefined: none).
+    static Process Start(string file, any args = undefined, ProcessOptions options = undefined) {
+        string argv[] = Process.ArgumentsOf(args)
         if (options == undefined) { options = new ProcessOptions() }
         var flags = 0
         if (options.RedirectInput) { flags = flags | 1 }
@@ -177,7 +178,7 @@ class Process {
             env[i + 1] = pair.Value
             i = i + 2
         }
-        var h = __ProcStart(file, args, options.WorkingDirectory, env, flags)
+        var h = __ProcStart(file, argv, options.WorkingDirectory, env, flags)
         if (h < 0) { ProcessCodes.Throw() }
         var p = new Process()
         p.handle = h
@@ -189,7 +190,7 @@ class Process {
 
     /// Runs `file` to its end and gives its exit code and everything it wrote (standard input: nothing). `timeout` (milliseconds or a TimeSpan): it is ended after that
     /// time (Kill) and a ProcessException is thrown.
-    static ProcessResult Run(string file, string args[] = undefined, ProcessOptions options = undefined, any timeout = undefined) {
+    static ProcessResult Run(string file, any args = undefined, ProcessOptions options = undefined, any timeout = undefined) {
         if (options == undefined) { options = new ProcessOptions() }
         options.RedirectInput = true
         options.RedirectOutput = true
@@ -232,6 +233,22 @@ class Process {
         }
         var result = new ProcessResult(p.ExitCode, IO.Utf8.GetString(out.ToBuffer()), IO.Utf8.GetString(err.ToBuffer()))
         p.Close()
+        return result
+    }
+
+    /// The arguments as an array of strings: a `string[]` as it is, the elements of a `List` (or of another array or IEnumerable) as their texts; an
+    /// ArgumentException for anything else.
+    static string[] ArgumentsOf(any args) {
+        if (args == undefined) { return new string[0] }
+        if (args is of string) { throw new ArgumentException("The arguments of a process are a string[] or a List<string>, not one string (each argument reaches the program as it is: [\"-c\", \"echo hi\"]).") }
+        if (!(args is of IEnumerable)) { throw new ArgumentException("The arguments of a process are a string[] or a List<string>, not a value of another kind.") }
+        var texts = new List<string>()
+        foreach (a in args) {
+            if (a == undefined) { throw new ArgumentException("Argument " + texts.Count + " of the process is undefined.") }
+            texts.Add("" + a)
+        }
+        var result = new string[texts.Count]
+        for (int i = 0; i < texts.Count; i++) { result[i] = texts[i] }
         return result
     }
 

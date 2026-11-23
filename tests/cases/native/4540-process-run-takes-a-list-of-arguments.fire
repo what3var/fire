@@ -1,0 +1,23 @@
+#import "process"
+var list = new List<string>()
+list.Add("-c")
+list.Add("echo \"$0|$1\"")
+list.Add("one two")
+list.Add("x")
+print(Process.Run("/bin/sh", list).Output.Trim())
+string arr[] = ["-c", "echo arr $0", "zero"]
+print(Process.Run("/bin/sh", arr).Output.Trim())
+print(Process.Run("/bin/sh", ["-c", "exit 3"]).ExitCode)
+any items[] = ["-c", "echo $0", 42]
+print(Process.Run("/bin/sh", items).Output.Trim())
+var p = Process.Start("/bin/sh", new List<string>(["-c", "exit 4"]))
+p.WaitForExit()
+print(p.ExitCode)
+p.Close()
+try { Process.Run("/bin/sh", "-c echo") } catch (ArgumentException e) { print(e.message) }
+try { Process.Run("/bin/sh", 5) } catch (ArgumentException e) { print(e.message) }
+var holes = new List<string>()
+holes.Add(undefined)
+try { Process.Run("/bin/sh", holes) } catch (ArgumentException e) { print(e.message) }
+print(Process.Run("/bin/true", undefined, undefined, 5000).ExitCode)
+//# name: process: Process.Run and Process.Start take the arguments as a string[] or a List<string> (and any array: numbers as their text); one string, another kind or an undefined argument is an ArgumentException

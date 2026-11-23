@@ -13,7 +13,7 @@ typedef struct FcBlockStmt FcBlockStmt;
 /* ---- enums of the tree (names printed as the C# enums) ---- */
 typedef enum FcUnaryOp { UOP_Negate, UOP_LogicalNot, UOP_BitNot, UOP_Dereference, UOP_AddressOf, UOP_FlatCopy, UOP_DeepCopy, UOP_Take, UOP_Trust, UOP_TryTake, UOP__NONE } FcUnaryOp;
 typedef enum FcBinaryOp { BOP_Add, BOP_Sub, BOP_Mul, BOP_Div, BOP_Mod, BOP_Eq, BOP_NotEq, BOP_Lt, BOP_LtEq, BOP_Gt, BOP_GtEq, BOP_And, BOP_Or, BOP_BitAnd, BOP_BitOr,
-    BOP_BitXor, BOP_ShiftLeft, BOP_ShiftRight, BOP_Power, BOP_ShiftRightLogical, BOP__NONE } FcBinaryOp;
+    BOP_BitXor, BOP_ShiftLeft, BOP_ShiftRight, BOP_Power, BOP_ShiftRightLogical, BOP_Coalesce, BOP__NONE } FcBinaryOp;
 typedef enum FcAccess { ACC_Public, ACC_Private, ACC_Protected } FcAccess;
 typedef enum FcCoerceDirection { COE_Factor, COE_From, COE_To } FcCoerceDirection;
 typedef enum FcConstraintKind { TCK_IsOf, TCK_IsIn } FcConstraintKind;

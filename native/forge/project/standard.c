@@ -198,8 +198,14 @@ static const char* nsDescribe(FcCtx* c) {
     }
     return fgJoin(c, parts, "\n");
 }
-/* EnsureInstalled: packs and installs what is missing or changed; never fails - what goes wrong goes to log (stderr). Returns the number installed. */
-static int nsEnsureInstalled(const char* prelude, const char* storeRoot, FILE* log) {
+/* the messages of EnsureInstalled: to logHook (the report: one event per line), else to log */
+static void nsLog(FILE* log, void (*logHook)(const char*), const char* fc8) {
+    if (logHook) logHook(fc8);
+    else if (log) { FcBuf u = {0}; fcBufStr(&u, ""); fcOut8(&u, fc8); fprintf(log, "%s\n", u.p); fcBufFree(&u); }
+}
+/* EnsureInstalled(log, folder, store, prebuiltFolder): the projects of `folder` (Source/ next to forge-c) into the store; usePrebuilt: the libraries of Prebuilt/ next
+ * to forge-c go along (UsePrebuilt; prebuild-standard: not) */
+static int nsEnsureInstalledIn(const char* prelude, const char* sourceFolder, const char* storeRoot, bool usePrebuilt, FILE* log, void (*logHook)(const char*)) {
     FcCtx ctx;
     FcCtx* c = &ctx;
     const char* folder;
@@ -207,7 +213,7 @@ static int nsEnsureInstalled(const char* prelude, const char* storeRoot, FILE* l
     volatile int installed = 0;
     volatile int lockFd = -1;
     fcCtxInit(c);
-    folder = nbCombine(c, nbBaseDirectory, "Source");
+    folder = sourceFolder ? sourceFolder : nbCombine(c, nbBaseDirectory, "Source");
     solution = nbCombine(c, folder, "Packages.firesln");
     if (!nbFileExists(solution)) { fcCtxFree(c); return 0; }
     FC_TRY(c) {
@@ -221,7 +227,11 @@ static int nsEnsureInstalled(const char* prelude, const char* storeRoot, FILE* l
         nbMkdirs(c, storeRoot);
         /* (one installation at a time per store: a lock file - the C# forge takes a named mutex, they do not see each other's) */
         lockFd = open(nbCombine(c, storeRoot, ".source-lock"), O_RDWR | O_CREAT, 0644);
-        if (lockFd >= 0) flock(lockFd, LOCK_EX);
+        if (lockFd >= 0 && flock(lockFd, LOCK_EX | LOCK_NB) != 0) {
+            long waiting = fcBgBegin("Waiting for another program that installs the packages", 0, 0);
+            flock(lockFd, LOCK_EX);
+            fcBgEnd(waiting);
+        }
         stamps = nsLoadStamps(c, storeRoot);
         w = pjWorkspaceOpen(c, solution);
         projects = nsProjects(c, w);
@@ -243,6 +253,7 @@ static int nsEnsureInstalled(const char* prelude, const char* storeRoot, FILE* l
             PjLoaded* p = (PjLoaded*)due->items[i];
             FcCtx step;
             const char* volatile failure = NULL;
+            long background = fcBgBegin(fcFmt(c, "Installing the package %s (%d/%d)", p->project->name, i + 1, due->count), i, due->count);
             pjStepInit(&step);
             FC_TRY(&step) {
                 PjPlan* plan = pjPlanCreate(w, p, false);
@@ -255,9 +266,9 @@ static int nsEnsureInstalled(const char* prelude, const char* storeRoot, FILE* l
                 fcBufStr(&ignored, "");
                 FC_TRY(&step) {
                     fpk = pjPackLibrary(&step, &po, plan, work, prelude, storeRoot, false);
-                    fprintf(log, "Installing the standard package %s %s from %s...\n", p->project->name, pjPackageVersion(&step, plan->settings->version), nbFileName(p->project->directory));
+                    nsLog(log, logHook, fcFmt(&step, "Installing the standard package %s %s from %s...", p->project->name, pjPackageVersion(&step, plan->settings->version), nbFileName(p->project->directory)));
                     nsStoreInstall(&step, storeRoot, fpk);
-                    nsUsePrebuilt(&step, storeRoot, p->project->name);
+                    if (usePrebuilt) nsUsePrebuilt(&step, storeRoot, p->project->name);
                 } FC_CATCH(&step) {
                     fcBufFree(&ignored);
                     if (nbDirExists(work)) nbDeleteTree(&step, work);
@@ -271,15 +282,18 @@ static int nsEnsureInstalled(const char* prelude, const char* storeRoot, FILE* l
                 else failure = fcStr(c, step.err.message ? step.err.message : "?");
             } FC_END_TRY;
             fcCtxFree(&step);
-            if (failure) { fprintf(log, "The standard package %s could not be installed: %s\n", p->project->name, failure); continue; }
+            if (failure) { nsLog(log, logHook, fcFmt(c, "The standard package %s could not be installed: %s", p->project->name, failure)); fcBgEnd(background); continue; }
             nsSetStamp(c, &stamps, p->project->name, (const char*)dueHash->items[i]);
             installed++;
             nsSaveStamps(c, storeRoot, &stamps);
+            fcBgEnd(background);
         }
     } FC_CATCH(c) {
-        fprintf(log, "The standard packages could not be checked: %s\n", c->err.message ? c->err.message : "?");
+        nsLog(log, logHook, fcFmt(c, "The standard packages could not be checked: %s", c->err.message ? c->err.message : "?"));
     } FC_END_TRY;
     if (lockFd >= 0) { flock(lockFd, LOCK_UN); close(lockFd); }
     fcCtxFree(c);
     return installed;
 }
+/* EnsureInstalled: packs and installs what is missing or changed; never fails - what goes wrong goes to log (stderr). Returns the number installed. */
+static int nsEnsureInstalled(const char* prelude, const char* storeRoot, FILE* log) { return nsEnsureInstalledIn(prelude, NULL, storeRoot, true, log, NULL); }

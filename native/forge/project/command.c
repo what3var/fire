@@ -338,7 +338,7 @@ static int pjBuildVmProgram(FcCtx* c, PjOut* po, const PjBuildArgs* a, PjPlan* p
     if (!program) {
         const char* mode = a->mode >= 0 ? (a->mode == 0 ? "debug" : a->mode == 2 ? "performance" : "release")
             : pjEffectiveModeName(po, plan, prelude, storeRoot, NULL, a->mode, a->floatWidth);
-        program = pjProgramPath(c, plan->project->project->directory, plan->project->project->name, "vm", mode, "");
+        program = pjProgramPath(c, plan->project->project->directory, plan->project->project->name, "vm", mode, NV_EXTENSION);   /* (ProgramPath(..., windows): .exe) */
     }
     full = pjFull(c, program, ".");
     nbMkdirs(c, fcDirectoryName(c, full));

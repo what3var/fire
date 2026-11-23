@@ -222,7 +222,7 @@ static const char* pjTrimEndSep(FcCtx* c, const char* p) {
     return fcStrN(c, p, n);
 }
 static const char* pjParentDir(FcCtx* c, const char* d) {   /* Path.GetDirectoryName of a full path (NULL for the root) */
-    if (streq0(d, "/")) return NULL;
+    if (fcIsRootDir(d)) return NULL;
     return fcDirectoryName(c, d);
 }
 static const char* pjRepositoryRoot(FcCtx* c, const char* path) {
