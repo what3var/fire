@@ -130,7 +130,7 @@ print(d.Name())                            // my driver
   the program owns keep working; `Library.Load` of it again runs the initialisers again. `Unload` of a C library is a `LibraryException`; a second `Unload`
   does nothing.
 - At the end of the program the program's global scope goes first, then the scopes of its plugins in the order they were loaded (the destructors of the
-  program's objects may still use the plugins' static fields). Details: [PLUGINS.md](../spec/PLUGINS.md).
+  program's objects may still use the plugins' static fields). Details: `docs/spec/PLUGINS.md` in the repository.
 - A plugin may declare **units** of its own (`unit`, `prefixed unit`, `coerce`) and use those of fire, of its libraries and the program's values with
   theirs: a unit is the program's when it has the same dimensions, factor and symbol; a new dimension of the plugin (`3pears`) takes a free place - a native
   program has room for 16 dimensions in all, more and `Load` says so.
