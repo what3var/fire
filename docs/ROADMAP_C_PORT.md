@@ -656,6 +656,17 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    und gehen als Natives des Packages mit). Voraussetzungen: Schritt 7 (Package `forge`, ohne globalen Zustand, ohne `exit` - L6), die
    Toolchains im Ziel (Prozesse starten, Dateien), die Standard-Packages als Quellen im Ziel. Prüfung: das so gebaute forge übersetzt den Korpus
    byte-gleich wie das C-forge und baut sich selbst noch einmal (Fixpunkt).
+   **Umgesetzt** ([EMBED.md](spec/EMBED.md#phase-d-schritt-8-libforge-als-eine-datei-im-package-forge), 23.11.2026): `tools/forge.fire` (`#import "forge"`,
+   `terminate(Forge.Compiler.Main(Environment.Args))`). libforge geht als **eine C-Datei** mit dem Package (`packages/forge/native/libforge.c`, geschrieben von
+   `forge-c amalgamate`, `--check` prüft, ob sie aktuell ist - Weg B; Begründung in EMBED.md: forge ist schon eine Übersetzungseinheit, die Regeln der Header
+   und das Packen der Pakete bleiben, nichts in C#) und wird über die neue Liste `native.units` für sich übersetzt und dazugelinkt - nativ für jedes Ziel, in die
+   Bibliothek des Pakets für die VM; die Brücke ruft `fire_embed.h` dann direkt (`FIRE_PKG_UNITS_FORGE`), ohne den Define (C#-forge) lädt sie libforge wie
+   bisher. `fire_forge_main` schreibt auf eigene Ströme (`fire_forge_set_output`; das Package: `Forge.Compiler.Run` mit gesammelter Ausgabe), `package-dist`
+   baut libforge/libfirevm in den Ordner, ein gepacktes Programm der VM mit `script` trägt libfirevm im Payload. Prüfung (Linux x64): `tools/forge.fire` nativ
+   mit gcc und tcc und als Programm der VM - `bytecode` über jeden 10. Fall des Korpus, alle Projekte und Tests der Pakete (191) byte-gleich mit forge-c,
+   `tests/compare-commands.sh <forge-c> <forge aus fire>`, Fixpunkt (das gebaute forge baut sich wieder, mit `SOURCE_DATE_EPOCH` byte-gleich), für Windows mit
+   MinGW gebaut und unter Wine geprüft. Offen: libfirevm (Paket `script`) für andere Ziele - ihre Runtime passt nicht neben die des Programms, sie bleibt eine
+   Shared Library der Maschine; `units` mit linkage static/shared/plugin; `libforge.c` muss nach jeder Änderung an forge neu geschrieben werden.
 
 **M3:** forge und die VM sind C-Programme und C-Bibliotheken; wer nur sie braucht, braucht kein .NET. Der Bau von fire selbst braucht nur einen
 C-Compiler. `fire`, `fire.Compiler`, `fire.Native` und der Kern von `fire.Testing` verlassen die Solution; .NET steckt nur noch in spark und ember.

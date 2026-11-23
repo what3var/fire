@@ -1,0 +1,11 @@
+// forge with a frontend in fire (docs/ROADMAP_C_PORT.md, Phase D step 8): the command line goes unchanged to the compiler of the package forge, which runs in
+// this program (libforge, linked in) - what it writes is this program's output, its exit code this program's. forge builds it for any target it builds for:
+//
+//   forge build tools/forge.fire --engine native -t <target> -o forge     (Windows: -t windows -o forge.exe; tcc, MinGW, ... with --toolchain)
+//   forge build tools/forge.fire --engine vm -o forge                     (the VM with the program behind it)
+//
+// Next to the program forge finds its folders as forge-c does: FIRE_TABLES, FIRE_PACKAGES, FIRE_NATIVE_ROOT, else native/tables, Packages/ and native/ of a
+// distribution (`forge package-dist`) next to it. So fire builds itself for other platforms: `forge build tools/forge.fire --engine native -t <target>`.
+#import "forge"
+
+terminate(Forge.Compiler.Main(Environment.Args))

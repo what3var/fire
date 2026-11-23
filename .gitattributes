@@ -66,3 +66,5 @@ native/tables/** text eol=lf
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+# libforge as one C file (forge amalgamate, docs/packages/forge.md): generated from native/forge, compared byte for byte by `forge amalgamate --check`.
+packages/forge/native/libforge.c text eol=lf linguist-generated=true

@@ -543,7 +543,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     if (registry) *registry = &L->registry;
     if (in->storeOut) *in->storeOut = &L->store;
 #ifndef FIRE_FORGE_LIBRARY
-    neEnsureFor(c, linked);   /* (a program that imports forge or script: the libraries its natives load, build/embedlib.c) */
+    neEnsureFor(c, linked, &L->store);   /* (a program that imports script: libfirevm, which its natives load - build/embedlib.c) */
 #endif
     return linked;
 }

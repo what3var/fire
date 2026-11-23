@@ -16,7 +16,7 @@ extern int dladdr(const void* address, FeDlInfo* info);
 #endif
 #endif
 
-struct FireForge { char* prelude; char* store; char* native; char* base; };
+struct FireForge { char* prelude; char* store; char* native; char* base; FireWriteFn write; void* user; };
 typedef struct FeDiag { char* text[5]; int line, column; } FeDiag;
 struct FireCompilation { int ok; uint8_t* program; size_t length; char* pkgPath; FeDiag* diags; int ndiags, cap; };
 
@@ -236,15 +236,107 @@ FIRE_EMBED_API void fire_compilation_free(FireCompilation* c) {
     free(c);
 }
 
+FIRE_EMBED_API void fire_forge_set_output(FireForge* f, FireWriteFn write, void* user) {
+    if (!f) return;
+    f->write = write;
+    f->user = user;
+}
+
+/* ---- the streams of fire_forge_main (libforge): stdout and stderr of the command line go to the host's callback (forge.c: g_feOut, g_feErr) ---- */
+#ifdef FIRE_FORGE_LIBRARY
+typedef struct FeSink { FireForge* f; int stream; } FeSink;
+static void feSinkWrite(const FeSink* s, const char* data, size_t n) { if (n) s->f->write(s->f->user, s->stream, data, n); }
+#if defined(__linux__)
+/* (fopencookie: glibc declares it by default since 2.28, before only with _GNU_SOURCE - which forge does not define -, musl only with it: else its
+ * declaration with the layout of cookie_io_functions_t) */
+#if !defined(__USE_GNU) && !(defined(__GLIBC__) && defined(__USE_MISC) && (__GLIBC__ > 2 || __GLIBC_MINOR__ >= 28))
+typedef struct FeCookieIo { void* read; ssize_t (*write)(void*, const char*, size_t); void* seek; void* close; } FeCookieIo;
+extern FILE* fopencookie(void* cookie, const char* mode, FeCookieIo io);
+#else
+typedef cookie_io_functions_t FeCookieIo;
+#endif
+static ssize_t feCookieWrite(void* cookie, const char* data, size_t n) { feSinkWrite((const FeSink*)cookie, data, n); return (ssize_t)n; }
+static FILE* feSinkOpen(FeSink* s) {
+    FeCookieIo io;
+    FILE* f;
+    memset(&io, 0, sizeof io);
+    io.write = feCookieWrite;
+    f = fopencookie(s, "w", io);
+    if (f) setvbuf(f, NULL, _IOLBF, 0);
+    return f;
+}
+static void feSinkClose(FILE* f, const FeSink* s) { (void)s; if (f) fclose(f); }
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+static int feFunWrite(void* cookie, const char* data, int n) { feSinkWrite((const FeSink*)cookie, data, (size_t)n); return n; }
+static FILE* feSinkOpen(FeSink* s) {
+    FILE* f = funopen(s, NULL, feFunWrite, NULL, NULL);
+    if (f) setvbuf(f, NULL, _IOLBF, 0);
+    return f;
+}
+static void feSinkClose(FILE* f, const FeSink* s) { (void)s; if (f) fclose(f); }
+#else
+/* (no stream with callbacks: a temporary file, handed over when the command has ended) */
+static FILE* feSinkOpen(FeSink* s) { (void)s; return tmpfile(); }
+static void feSinkClose(FILE* f, const FeSink* s) {
+    char buf[4096];
+    size_t n;
+    if (!f) return;
+    fflush(f);
+    rewind(f);
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) feSinkWrite(s, buf, n);
+    fclose(f);
+}
+#endif
+#endif
+
 FIRE_EMBED_API int fire_forge_main(FireForge* f, int argc, char** argv) {
     int r;
+#ifdef _WIN32
+    int outMode, errMode;
+#endif
+#ifdef FIRE_FORGE_LIBRARY
+    FeSink outSink, errSink;
+    FILE* out = NULL;
+    FILE* err = NULL;
+#endif
     if (!f) return 2;
-    if (argc >= 2 && strcmp(argv[1], "serve") == 0) { fputs("forge: serve runs only as a program of its own (forge-c serve)\n", stderr); return 2; }
     pthread_mutex_lock(&feLock);
-    feSettings(f);
-    r = fcCliMain(argc, argv, f->prelude, f->store);
+#ifdef FIRE_FORGE_LIBRARY
+    if (f->write) {
+        outSink.f = f; outSink.stream = 1;
+        errSink.f = f; errSink.stream = 2;
+        fflush(feProcessStdout());
+        fflush(feProcessStderr());
+        out = feSinkOpen(&outSink);
+        err = feSinkOpen(&errSink);
+        g_feOut = out;
+        g_feErr = err;
+    }
+#endif
+#ifdef _WIN32
+    /* (the output byte for byte as forge-c writes it - no CR before LF -, the modes of the process's streams back afterwards) */
     fflush(stdout);
     fflush(stderr);
+    outMode = _setmode(_fileno(stdout), _O_BINARY);
+    errMode = _setmode(_fileno(stderr), _O_BINARY);
+#endif
+    if (argc >= 2 && strcmp(argv[1], "serve") == 0) { fputs("forge: serve runs only as a program of its own (forge-c serve)\n", stderr); r = 2; }
+    else {
+        feSettings(f);
+        r = fcCliMain(argc, argv, f->prelude, f->store);
+    }
+    fflush(stdout);
+    fflush(stderr);
+#ifdef _WIN32
+    if (outMode != -1) _setmode(_fileno(stdout), outMode);
+    if (errMode != -1) _setmode(_fileno(stderr), errMode);
+#endif
+#ifdef FIRE_FORGE_LIBRARY
+    g_feOut = NULL;
+    g_feErr = NULL;
+    if (out) feSinkClose(out, &outSink);
+    if (err) feSinkClose(err, &errSink);
+#endif
     pthread_mutex_unlock(&feLock);
     return r;
 }
