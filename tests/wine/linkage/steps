@@ -15,12 +15,12 @@ expect-text "42 5 v1\n"
 cd
 forge build threads.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/sharedA/a.exe
 wine $OUT/sharedA/a.exe
-expect-text "caught in thread {\"$type\":\"Box\",\"n\":41} 2\n"
+expect-text "caught in thread {\"\$type\":\"Box\",\"n\":41} 2\n"
 sh sed 's/41/42/' threads.fire > $OUT/threadsB.fire
 forge build $OUT/threadsB.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/sharedB/b.exe
 count ": built in " =0
 wine $OUT/sharedB/b.exe
-expect-text "caught in thread {\"$type\":\"Box\",\"n\":42} 2\n"
+expect-text "caught in thread {\"\$type\":\"Box\",\"n\":42} 2\n"
 # another layout of Lib (a field more): its DLL in place of the one the first program was built with
 cd $OUT/sln
 sh sed -i 's/^        int n = 0$/        int n = 0\n        int extra = 1/' Lib/lib.script && grep -q extra Lib/lib.script
