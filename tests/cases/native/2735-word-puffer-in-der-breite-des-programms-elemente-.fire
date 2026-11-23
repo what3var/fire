@@ -1,0 +1,14 @@
+#import "json"
+word w[] = [258, 65, 0xFFFFFFFFFF]
+byte le[] = w.ToLittleEndian()
+byte be[] = w.ToBigEndian()
+print(w.length + " " + le.length + " " + be.length + " " + w[2])
+print(le[0] + " " + le[1] + " " + be[be.length / 3 - 1] + " " + be[be.length / 3 - 2])
+print(w.ToString().length + " " + w.ToUnicode(2).length)
+word n[] = new word[4]
+n[1] = 0x1234
+byte nb[] = n.ToLittleEndian()
+print(nb.length + " " + nb[nb.length / 4] + " " + nb[nb.length / 4 + 1])
+print(Json.Serialize(w))
+//# note: the elements of a word buffer have the width of `word` (8 bytes here); tests/vm-word-width.sh runs this case in the VM with the words of a 16-bit and a 32-bit program and natively for targets with "wordWidth": 16 and 32 - the same lines
+//# name: Word: Puffer in der Breite des Programms - Elemente, Bytes (ToLittleEndian/ToBigEndian, ToString, ToUnicode) und Json eines Wortpuffers

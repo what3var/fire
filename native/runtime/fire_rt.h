@@ -1626,7 +1626,7 @@ typedef struct Buf {
     Owned h;
     uint32_t length;   /* the number of elements: bytes, or the words of a buffer of machine words */
     uint8_t little;    /* the byte order the buffer is tagged with (metadata only: the bytes never change by themselves) */
-    uint8_t elem;      /* the bytes of an element: 1, or sizeof(FireWord) for `word a[]` (SPEC 8.10; the words in the byte order of the machine) */
+    uint8_t elem;      /* the bytes of an element: 1, or the width of `word` for `word a[]` (FIRE_WORD_ELEM: sizeof(FireWord), in the VM the width of its program; SPEC 8.10; the words in the byte order of the machine) */
     uint8_t* data;     /* the bytes: right behind the header - or, in a package library, the memory of the buffer of the VM (see allocBufExternal) */
 #ifdef __cplusplus
     uint8_t* bytes() { return data; }
@@ -2019,6 +2019,26 @@ FIRE_FN Arr* arrOf(Value v) { return (Arr*)leafOf(v); }
 #else
 #define FIRE_BUF_LD(p) (*(p))
 #define FIRE_BUF_ST(p, x) ((void)(*(p) = (x)))
+#endif
+/* The bytes of an element of a buffer of machine words: the width of `word` - sizeof(FireWord) in a native build; in the VM (FIRE_WORD_DYNAMIC, a word kept
+ * in 64 bits) the width of the program it runs, 2, 4 or 8 bytes, so a word buffer has the size and the bytes of the native build of that target (and of the
+ * C# VM: width/8) - `ToLittleEndian`, `ToString`, JSON see the same bytes. */
+#if defined(FIRE_WORD_DYNAMIC)
+#define FIRE_WORD_ELEM ((uint8_t)(FIRE_WORD_BITS / 8))
+FIRE_FN uint64_t bufWordGet(Buf* b, uint32_t i) {
+    if (b->elem == 2) return (uint64_t)FIRE_BUF_LD(&((uint16_t*)(void*)b->data)[i]);
+    if (b->elem == 4) return (uint64_t)FIRE_BUF_LD(&((uint32_t*)(void*)b->data)[i]);
+    return (uint64_t)FIRE_BUF_LD(&((uint64_t*)(void*)b->data)[i]);
+}
+FIRE_FN void bufWordSet(Buf* b, uint32_t i, uint64_t w) {
+    if (b->elem == 2) FIRE_BUF_ST(&((uint16_t*)(void*)b->data)[i], (uint16_t)w);
+    else if (b->elem == 4) FIRE_BUF_ST(&((uint32_t*)(void*)b->data)[i], (uint32_t)w);
+    else FIRE_BUF_ST(&((uint64_t*)(void*)b->data)[i], w);
+}
+#else
+#define FIRE_WORD_ELEM ((uint8_t)sizeof(FireWord))
+FIRE_FN uint64_t bufWordGet(Buf* b, uint32_t i) { return (uint64_t)FIRE_BUF_LD(&bufWords(b)[i]); }
+FIRE_FN void bufWordSet(Buf* b, uint32_t i, uint64_t w) { FIRE_BUF_ST(&bufWords(b)[i], (FireWord)w); }
 #endif
 /* (no FIRE_DOM_TOUCH: a buffer of the shared domain is shared memory - its elements are read and written without the lock of the globals, by any thread;
  * its memory lives on until no thread can be in an access any more - see "Global buffers" at bufRetire) */
@@ -4323,7 +4343,7 @@ FIRE_FN Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat
 /* The byte order of the machine, found out at run time (a 16-bit 1 starts with its low byte in little-endian memory). */
 FIRE_FN bool hostLittle(void) { uint16_t one = 1; return *(uint8_t*)&one == 1; }
 
-/* A buffer of `length` elements of `elem` bytes (1: a byte buffer; sizeof(FireWord): a buffer of machine words), all 0. The data is aligned for a word. */
+/* A buffer of `length` elements of `elem` bytes (1: a byte buffer; FIRE_WORD_ELEM: a buffer of machine words), all 0. The data is aligned for a word. */
 FIRE_FN Buf* allocBufOf(uint32_t length, uint8_t elem, OwnList* list) {
     size_t head = (sizeof(Buf) + 7u) & ~(size_t)7u;
     Buf* b = (Buf*)dataAllocZero(head, length, elem);
@@ -7217,8 +7237,8 @@ FIRE_FN bool bufFromArray(Value v, int rank, int depth, OwnList* list, Value* ou
     }
     if (words) {
         /* a buffer of machine words (SPEC 8.10; the VM: BufferFromArrayValue): an int or a word cut to the width, `undefined` 0 */
-        b = allocBufOf(a->length, (uint8_t)sizeof(FireWord), a->h.owner ? a->h.owner : list);
-        for (i = 0; i < a->length; i++) { Value e = arrElemGet(a, i); bufWords(b)[i] = e.kind == K_Int ? (FireWord)(uint64_t)(int64_t)e.i : e.kind == K_Word ? (FireWord)e.w : 0; }
+        b = allocBufOf(a->length, FIRE_WORD_ELEM, a->h.owner ? a->h.owner : list);
+        for (i = 0; i < a->length; i++) { Value e = arrElemGet(a, i); bufWordSet(b, i, e.kind == K_Int ? (uint64_t)(int64_t)e.i & FIRE_WORD_MASK : e.kind == K_Word ? e.w : 0); }
         *out = BufV(b);
         return true;
     }
@@ -7253,7 +7273,7 @@ FIRE_FN Value newWordBuffer(Value size, OwnList* list) {
     if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
     if (FIRE_UNLIKELY(size.kind != K_Int)) return kindError("An array size must be an int, not %s.", size.kind);   /* (the VM's ArgumentException, OpNewArray) */
     if (size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
-    return BufV(allocBufOf((uint32_t)size.i, (uint8_t)sizeof(FireWord), list));
+    return BufV(allocBufOf((uint32_t)size.i, FIRE_WORD_ELEM, list));
 }
 
 /* `int[8] a[] = new int[n]` (NewArray right before TypeArray): the packed array made at once - header, ArrTyped and the numbers in one block. */
@@ -7421,7 +7441,7 @@ FIRE_FN Value arrayGet(Value a, Value i) {
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         b = bufOf(a);
         if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
-        if (FIRE_UNLIKELY(b->elem != 1)) return WordV((uint64_t)FIRE_BUF_LD(&bufWords(b)[i.i]));   /* (a buffer of machine words) */
+        if (FIRE_UNLIKELY(b->elem != 1)) return WordV(bufWordGet(b, (uint32_t)i.i));   /* (a buffer of machine words) */
         return Int(FIRE_BUF_LD(&b->data[i.i]));
     }
     if (a.kind == K_String) {
@@ -7483,7 +7503,7 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
             }
             if ((uint64_t)i.i >= b->length) { indexError("Array index", i.i, b->length); return v; }
             stored = wordOf(v, true);
-            FIRE_BUF_ST(&bufWords(b)[i.i], (FireWord)stored.w);
+            bufWordSet(b, (uint32_t)i.i, stored.w);
             return stored;
         }
         if (v.kind == K_Word) v = Int((int64_t)(uint64_t)v.w);   /* (a word into a byte buffer: cut like an int) */
@@ -7757,10 +7777,27 @@ FIRE_FN bool wordsArg(Value v, const char* what, FireWords* out) {
         Buf* b;
         if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return false; }
         b = bufOf(v);
-        if (FIRE_UNLIKELY(b->elem != sizeof(FireWord))) {
+        if (FIRE_UNLIKELY(b->elem == 1)) {
             snprintf(text, sizeof text, "%s expects words (a word buffer or an array of ints), not a byte buffer.", what);
             fireError("ArgumentException", text);
             return false;
+        }
+        if (FIRE_UNLIKELY(b->elem != sizeof(FireWord))) {
+            /* (the VM running a program with narrower words: its words, widened - a copy, as for an array) */
+            TempBytes* t;
+            FireWord* words;
+            size_t head = (sizeof(TempBytes) + 7u) & ~(size_t)7u;
+            uint32_t i;
+            t = (TempBytes*)malloc(blockSize(head + 1, b->length, sizeof(FireWord)));
+            if (FIRE_UNLIKELY(!t)) allocFailed();
+            words = (FireWord*)(void*)((uint8_t*)t + head);
+            for (i = 0; i < b->length; i++) words[i] = (FireWord)bufWordGet(b, i);
+            t->h.type = R_Bytes;
+            t->length = b->length;
+            registerTemp(&t->h, NULL);
+            out->data = words;
+            out->length = b->length;
+            return true;
         }
         out->data = bufWords(b);
         out->length = b->length;

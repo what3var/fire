@@ -71,7 +71,10 @@ static void vmPkgNoteThread(void) { g_vmPkgThread = pthread_self(); }
 #endif
 
 /* ---- values: Value -> fire_val (the memory of the conversion lives until the call has returned) ---- */
-typedef struct VmPkgArena { void** blocks; uint32_t n, cap; } VmPkgArena;
+/* (a word buffer of a program with narrower words - 2 or 4 bytes an element, FIRE_WORD_ELEM - goes to a library as 64-bit words, the ABI's FIRE_WORDS: a
+ * widened copy, written back into the buffer after the call - the library may write the words in place) */
+typedef struct VmPkgWordsBack { Buf* buf; uint64_t* words; struct VmPkgWordsBack* next; } VmPkgWordsBack;
+typedef struct VmPkgArena { void** blocks; uint32_t n, cap; VmPkgWordsBack* back; } VmPkgArena;
 static void* vmPkgAlloc(VmPkgArena* a, size_t bytes) {
     void* p = malloc(bytes ? bytes : 1);
     if (!p) outOfMemory();
@@ -84,7 +87,13 @@ static void* vmPkgAlloc(VmPkgArena* a, size_t bytes) {
     a->blocks[a->n++] = p;
     return p;
 }
-static void vmPkgArenaFree(VmPkgArena* a) { uint32_t i; for (i = 0; i < a->n; i++) free(a->blocks[i]); free(a->blocks); a->blocks = NULL; a->n = a->cap = 0; }
+static void vmPkgArenaFree(VmPkgArena* a) { uint32_t i; for (i = 0; i < a->n; i++) free(a->blocks[i]); free(a->blocks); a->blocks = NULL; a->n = a->cap = 0; a->back = NULL; }
+/* the widened words back into their buffers (cut to the width of the program's words) */
+static void vmPkgWordsBack(VmPkgArena* a) {
+    VmPkgWordsBack* w;
+    uint32_t i;
+    for (w = a->back; w; w = w->next) for (i = 0; i < w->buf->length; i++) bufWordSet(w->buf, i, w->words[i] & FIRE_WORD_MASK);
+}
 
 static int64_t vmPkgLambdaHandle(Value v) {
     if (g_vmPkgLamCount == g_vmPkgLamCap) {
@@ -130,6 +139,16 @@ static bool vmPkgToNative(VmPkgArena* arena, Value v, fire_val* out, const char*
         case K_Buffer: {
             Buf* b = bufOf(v);   /* by reference: the native reads and writes the bytes in place */
             out->kind = b->elem != 1 ? FIRE_WORDS : FIRE_BUFFER; out->length = (int32_t)b->length; out->v.p = b->data;
+            if (b->elem != 1 && b->elem != 8) {
+                VmPkgWordsBack* w = (VmPkgWordsBack*)vmPkgAlloc(arena, sizeof(VmPkgWordsBack));
+                uint32_t i;
+                w->buf = b;
+                w->words = (uint64_t*)vmPkgAlloc(arena, (size_t)b->length * 8);
+                for (i = 0; i < b->length; i++) w->words[i] = bufWordGet(b, i);
+                w->next = arena->back;
+                arena->back = w;
+                out->v.p = w->words;
+            }
             return true;
         }
         case K_Lambda: out->kind = FIRE_LAMBDA; out->length = (int32_t)lamOf(v)->nparams; out->v.i = vmPkgLambdaHandle(v); return true;
@@ -159,10 +178,16 @@ static Value vmPkgFromNative(const fire_val* in, OwnList* list) {
             for (i = 0; i < in->length; i++) { Value x = vmPkgFromNative(&items[i], list); arrItems(a)[i] = x; retain(x); }
             return ArrV(a);
         }
-        case FIRE_BUFFER: case FIRE_WORDS: {
-            uint8_t elem = in->kind == FIRE_WORDS ? (uint8_t)sizeof(FireWord) : 1;
-            Buf* b = allocBufOf((uint32_t)(in->length > 0 ? in->length : 0), elem, list);
-            if (in->length > 0) memcpy(b->data, in->v.p, (size_t)in->length * elem);
+        case FIRE_BUFFER: {
+            Buf* b = allocBufOf((uint32_t)(in->length > 0 ? in->length : 0), 1, list);
+            if (in->length > 0) memcpy(b->data, in->v.p, (size_t)in->length);
+            return BufV(b);
+        }
+        case FIRE_WORDS: {
+            /* (64-bit words of the ABI into a word buffer of the program's width, each cut to it) */
+            Buf* b = allocBufOf((uint32_t)(in->length > 0 ? in->length : 0), FIRE_WORD_ELEM, list);
+            int32_t i;
+            for (i = 0; i < in->length; i++) bufWordSet(b, (uint32_t)i, ((const uint64_t*)in->v.p)[i] & FIRE_WORD_MASK);
             return BufV(b);
         }
         default: fatal("A native function of a package returned a value of an unknown kind.");
@@ -602,6 +627,7 @@ static Value vmPkgCall(VmPkgLib* lib, int index, const char* name, const FireFnI
     }
     g_vmPkgDepth--;
     g_vmPkgNat = outerNat;
+    vmPkgWordsBack(&arena);
     vmPkgArenaFree(&arena);
     if (g_vmPkgDeferredSet && g_vmPkgDepth <= g_vmPkgBarrier) {
         /* a callback of this native threw: thrown here, the same object (SPEC 8.1.4) */
