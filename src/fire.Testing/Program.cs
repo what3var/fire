@@ -7774,13 +7774,15 @@ else
                 string abiVm;
                 try { abiVm = vmOutput(abiScript); } catch (Exception ex) { abiVm = ex.Message; }
                 string abiFail;
-                try { abiFail = vmOutput("#import \"pkabi\"\ntry { PkAbi.Fail(7) } catch (IndexOutOfBoundsException e) { print(\"caught: \" + e.message) }"); } catch (Exception ex) { abiFail = ex.Message; }
+                try { abiFail = vmOutput("#import \"pkabi\"\ntry { PkAbi.Fail(7) } catch (IndexOutOfBoundsException e) { print(\"caught: \" + e.message + \" | \" + e.index + \" \" + e.length) }"); } catch (Exception ex) { abiFail = ex.Message; }
                 CheckNat("Paket: Zahlen, Text (UTF-16), Arrays und Byte-Puffer gehen ueber die C-ABI hin und zurueck",
                     abiVm == "HELLO W\u00f6RLD\n6.5\n2 3 0 255\n", abiVm);
                 string fillVm;
                 try { fillVm = vmOutput("#import \"pkabi\"\nvar big = new byte[1000000]\nprint(PkAbi.Fill(big, 7))\nprint(big[0] + \" \" + big[500000] + \" \" + big[999999])\nvar small = new byte[4]\nPkAbi.Fill(small, 9)\nprint(small[3])"); } catch (Exception ex) { fillVm = ex.Message; }
                 CheckNat("Paket: ein Byte-Puffer geht ohne Kopie an die Native (in place beschrieben, auch ein grosser wie ein Framebuffer)", fillVm == "1000000\n7 7 7\n9\n", fillVm);
-                CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) wird eine abfangbare Ausnahme seiner Klasse mit seinem Text", abiFail.StartsWith("caught: ") && abiFail.Contains("Array index 7 out of range"), abiFail);
+                // (over the C ABI only the class and the text come: makeClassError of the VM makes it with the constructor of three arguments, index and length read back
+                // from the text - as the native build has them; before, its message stayed undefined)
+                CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) wird eine abfangbare Ausnahme seiner Klasse mit seinem Text", abiFail.StartsWith("caught: ") && abiFail.Contains("Array index 7 out of range") && abiFail.EndsWith(" | 7 3\n"), abiFail);
 
                 // machine words as arguments (fire_rt.h wordsArg, SPEC 8.10): a word buffer without a copy (written in place), an array copied, a byte buffer refused
                 string wordsCpp = "#include <cstdint>\nnamespace fire {\n"

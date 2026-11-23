@@ -440,7 +440,11 @@ im Ordner selbst, in `Packages/<paket>/lib/<rid>/` (der Paketspeicher eines forg
 Build von forge mitbringt). Eine Bibliothek bleibt für die folgenden Programme geladen; am Ende jedes Programms `fire_pkg_reset`. Werte gehen als
 Daten hinüber (Zahlen, Text, Arrays kopiert - ein Text ohne Kopie, die UTF-16 der Runtime sind die der ABI -, Byte- und Wortpuffer per Referenz),
 ein Objekt oder Zeiger ist die `ArgumentException` der C#-VM. Ein Fehler der Bibliothek (1) beendet das Programm mit dem Text, eine Ausnahme (2)
-wird mit `fireError` geworfen (die Klasse des Programms, sonst das Ende mit ihrem Text).
+wird mit `fireError` geworfen (die Klasse des Programms, sonst das Ende mit ihrem Text). Über die ABI kommen nur die Klasse und der Text: `makeClassError`
+(vm_core.c) baut die Ausnahme mit dem Konstruktor eines Arguments, eine Klasse ohne einen solchen (`IndexOutOfBoundsException`: Text, Index, Länge;
+`UnitMismatchException`) mit dem Konstruktor der wenigsten Parameter, der Text zuerst, der Rest `undefined` - wie die C#-VM (`NativeFail`). Index und Länge,
+die `indexError` der Runtime in den Text schreibt (`Array index 7 out of range (length 3).`), werden daraus zurückgelesen, wie sie der native Build hat
+(`makeIndexError`). Vorher bekam eine solche Klasse gar keinen Konstruktor, ihr `message` blieb `undefined` (Paket-Prüfung "ein Fehler der Native").
 
 **Der Host** (`fire_host`): Konsole = die des Prozesses (`std_write` geht durch `stdout` der Runtime: die Reihenfolge mit `print` bleibt), Pfade und
 Hosts sind alle erlaubt (wie die gepackte Runtime der C#-VM: sie hat keinen anderen Host), Geräte des Hosts keine (das devices-Paket nimmt seine
