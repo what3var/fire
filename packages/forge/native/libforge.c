@@ -26434,7 +26434,7 @@ static const char* fgHeadersInline(FcCtx* c, const char* text, FcDict* headers, 
                     const char* inner = fgReadText(c, path);
                     const char* r;
                     size_t n;
-                    if (nesting > 32) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: PackageException: The headers include each other without end ('%s').", fileName));
+                    if (nesting > 32) fcThrow(c, FC_ERR_PACKAGE, 0, 0, NULL, fcFmt(c, "The headers include each other without end ('%s').", fileName));
                     r = fgHeadersInline(c, fgReplace(c, inner ? inner : "", "\r\n", "\n"), headers, sources, placed, level, nesting + 1);
                     n = strlen(r);
                     while (n > 0 && r[n - 1] == '\n') n--;
@@ -26533,12 +26533,21 @@ static FcList* fgUsedImports(FcCtx* c, FcDict* cache, FcStore* store, const FgIn
             other = fgInstalledImport(c, cache, pi);
             if (other->native) found = other;
         }
-        if (!found) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: PackageException: The natives of '%s' use the platform layer of '%s', which is not installed.", imp->name, use->import));
+        if (!found) fcThrow(c, FC_ERR_PACKAGE, 0, 0, NULL, fcFmt(c, "The natives of '%s' use the platform layer of '%s', which is not installed.", imp->name, use->import));
         fcListAdd(c, r, found);
     }
     return r;
 }
 typedef struct FgNamedText { const char* name; const char* text; } FgNamedText;
+/* (ReadNativeSources.Display: a source shown relative to the package - or the project - when its path is in that folder) */
+static const char* fgSourceDisplay(FcCtx* c, const FgInstImport* imp, const char* name) {
+    size_t n;
+    if (!(name[0] == '/' || name[0] == '\\' || (name[0] && name[1] == ':')) || !imp->dir) return name;
+    n = strlen(imp->dir);
+    while (n > 0 && (imp->dir[n - 1] == '/' || imp->dir[n - 1] == '\\')) n--;
+    if (strncmp(name, imp->dir, n) != 0 || !(name[n] == '/' || name[n] == '\\')) return name;
+    return fgReplace(c, name + n + 1, "\\", "/");
+}
 /* InstalledImport.ReadNativeSources */
 static FcList* fgReadNativeSources(FcCtx* c, FcDict* cache, FcStore* store, const FgInstImport* imp, FcList* keys) {
     FcList* used = fcListNew(c);
@@ -26579,22 +26588,30 @@ static FcList* fgReadNativeSources(FcCtx* c, FcDict* cache, FcStore* store, cons
         if (!t->text) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: the source %s cannot be read", t->name));
         fcListAdd(c, texts, t);
     }
-    /* NativeSourceOrder.CheckIncludes: a source that includes one built after it */
-    for (i = 0; i < texts->count; i++) {
-        FcList* lines = fgLinesOf(c, ((FgNamedText*)texts->items[i])->text);
-        for (k = 0; k < lines->count; k++) {
-            const char* line = (const char*)lines->items[k];
-            const char* name;
-            const char* after;
-            int nameLen;
-            if (!fgIncludeAt(line, line + strlen(line), true, &name, &nameLen, &after)) continue;
-            for (m = i + 1; m < texts->count; m++)
-                if (streq0(fgFileNameOf(c, ((FgNamedText*)texts->items[m])->name), fgFileNameOf(c, fcStrN(c, name, (size_t)nameLen)))) {
-                    int first;
-                    for (first = 0; first < m; first++) if (streq0(fgFileNameOf(c, ((FgNamedText*)texts->items[first])->name), fgFileNameOf(c, fcStrN(c, name, (size_t)nameLen)))) break;
-                    if (first == m) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: PackageException: The build order of the natives of '%s' is wrong", imp->name));
-                }
+    /* NativeSourceOrder.CheckIncludes: a source that includes one built after it - a PackageException naming the file and the line of each `#include` */
+    {
+        FcList* problems = fcListNew(c);
+        for (i = 0; i < texts->count; i++) {
+            FcList* lines = fgLinesOf(c, ((FgNamedText*)texts->items[i])->text);
+            for (k = 0; k < lines->count; k++) {
+                const char* line = (const char*)lines->items[k];
+                const char* name;
+                const char* after;
+                const char* written;
+                const char* fileName;
+                int nameLen, at = -1;
+                if (!fgIncludeAt(line, line + strlen(line), true, &name, &nameLen, &after)) continue;
+                written = fcStrN(c, name, (size_t)nameLen);
+                fileName = fgFileNameOf(c, written);
+                /* (the position of a file name: its first source; not a source of the list, or built before it - or itself: fine) */
+                for (m = 0; m < texts->count && at < 0; m++) if (streq0(fgFileNameOf(c, ((FgNamedText*)texts->items[m])->name), fileName)) at = m;
+                if (at <= i) continue;
+                fcListAdd(c, problems, (void*)fcFmt(c, "%s:%d: #include \"%s\" is a source of the same package that is built after it - give '%s' a smaller build order (\"order\") than '%s', or list it before.",
+                    fgSourceDisplay(c, imp, ((FgNamedText*)texts->items[i])->name), k + 1, written, fgSourceDisplay(c, imp, ((FgNamedText*)texts->items[at])->name),
+                    fgSourceDisplay(c, imp, ((FgNamedText*)texts->items[i])->name)));
+            }
         }
+        if (problems->count > 0) fcThrow(c, FC_ERR_PACKAGE, 0, 0, NULL, fcFmt(c, "The build order of the natives of '%s' is wrong:\n  %s", imp->name, fgJoin(c, problems, "\n  ")));
     }
     for (i = 0; i < sources->count; i++) fcSetAdd(names, fgFileNameOf(c, (const char*)sources->items[i]));
     for (i = 0; i < used->count; i++) fcSetAdd(names, fgFileNameOf(c, ((FgNamedText*)used->items[i])->name));
