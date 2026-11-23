@@ -241,6 +241,27 @@ text, the program file, the C) to compare two compilers.
 the measure of phase B of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md); `--cache` keeps the program files between runs ([VM_C.md](../spec/VM_C.md)). The
 libraries of the packages' natives come from the folder of the forge (its `Packages/` and `Prebuilt/`: `FIRE_PKG_PATH`).
 
+**Without .NET at all: `forge-c conformance`** (`native/forge/tools/conformance.c`, [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md) phase D step 6) is the same
+runner inside the forge in C - the core of this test program that is data: the cases of `tests/cases` by the rules of the two scripts (and of `TestCasesVm`),
+and with `--engine native` the cases "native == VM" of the group native built as native programs and compared the way `Program.cs` compares them
+(`Abbruch:` with its exit code 1 and the line on stderr, `(Meldung auf stderr)`, `(Http.Pages-Zeile auf stderr)`, `Threads:` with `terminate(n)`; a case with
+`//# output: varies` against what the VM prints of it).
+
+```
+forge-c conformance                                   every group in the VM in C (the six variants of the VM are built into the user's cache once)
+forge-c conformance smoke vm-gl native/04 -j 2        groups, or the cases of a group whose names start so; two jobs at a time
+forge-c conformance native --engine native            the group native as native programs (the C compiler forge chooses; --toolchain gcc)
+forge-c conformance --engine all --filter "Records"   both engines, only the cases whose title or name contains the text (| between several)
+forge-c conformance --cache ~/.cache/fire-cases       keeps the program files; a second run only runs the VM
+```
+
+Every case is compiled by forge-c in a process of its own (`forge-c bytecode`, `forge-c build --engine native`) in the folder of the case, and run as a
+process with a timeout (the VM: 20 s, `VM_TIMEOUT`; a native program: 120 s), so a case that crashes or hangs takes only itself along. The default is half
+the cores, at most 4 (`-j`). A case that is wrong runs once more alone at the end (`--no-retry`: not). The output lists what is not right with the first line
+that differs (`--list`: every case), then the counts per group and engine; the exit code is 0 when every case that ran is right. forge-c finds the cases in
+`--cases`, `FIRE_CASES` or the nearest `tests/cases` above the working folder, the VM with `--fire` or `FIRE_VM_EXE` (its variants next to it), otherwise it
+builds the VM of its own sources (`forge-c build-vm`). On 23.11.2026: 1173 of 1173 cases right, the same verdicts as `tests/run-cases-vm.sh` with forge-c.
+
 **Cases that master adds.** As long as master holds these cases as text in `Program.cs`, `tests/tools/merge-master.sh` merges it: the cases master added
 or changed go into the files (`tests/tools/cases.py`: a new case gets a number between its neighbours, a changed one loses its expected output, a case
 keeps its file as long as it keeps its title), the rest of `Program.cs` is merged as usual. Then build, record with `FIRE_TESTS_UPDATE=1`, look, commit.

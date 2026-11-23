@@ -58,6 +58,8 @@ FIRE_EMBED_API FireForge* fire_forge_new(const char* tables, const char* package
     f->base = feSelfFolder();
     if (!tables && (e = getenv("FIRE_TABLES")) != NULL && *e) tables = e;
     if (!tables && f->base) { snprintf(tablesBuf, sizeof tablesBuf, "%s/../tables", f->base); if (feIsDir(tablesBuf)) tables = tablesBuf; }
+    /* (a distribution, `package-dist`: native/ next to forge and the libraries) */
+    if (!tables && f->base) { snprintf(tablesBuf, sizeof tablesBuf, "%s/native/tables", f->base); if (feIsDir(tablesBuf)) tables = tablesBuf; }
     if (!tables && feIsDir("native/tables")) tables = "native/tables";
     snprintf(file, sizeof file, "%s/prelude.fire", tables ? tables : ".");
     f->prelude = feDup(realpath(file, real) ? real : file);

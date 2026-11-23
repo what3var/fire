@@ -641,6 +641,8 @@ Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge
 | `build/tools.c` | die Befehle der Werkzeuge (`pkglib` und die Messungen) | `BuilderToolsDump.cs` (die Messungen auf der Seite von C#) |
 | `win32.h` | Windows als Host: `opendir`, `stat`/`lstat`, `mkdir`, `realpath`, `rename`, `flock`, `utimes`, `sysconf`, die Zeit, `setenv`, `pthread_*`, `fwRun` (`CreateProcess` mit zwei Pipes), `fwResolveExe`, `fwQuoteArg`, `fwSelfPath` | - (in C# die Laufzeit von .NET) |
 | `tools/setup.c` | Schritt 5: `DownloadTransfer.Fetch` (WinHTTP; ein Socket für http, curl/wget für https), `InstallW64devkit`, `FindDownloadUrl`, `SaveMachineToolchain`, `WatcomSetup.Install`/`Unpack`/`FindRoot`, `TinyccSetup.Install`/`Verify`/`Unpack`, `toolchain-setup` | `src/fire.Native/ToolchainSetup.cs`, `TinyccSetup.cs`, `DownloadTransfer.cs` |
+| `tools/conformance.c` | Schritt 6: `conformance` - die Fälle von `tests/cases` in der VM in C und nativ, die Prozesse mit Timeout (`cfSpawn`) | `tests/run-cases.sh`, `run-cases-vm.sh`, `src/fire.Testing/TestCases.cs`, `TestCasesVm.cs`, `Program.cs` (`NatVerdict`) |
+| `tools/dist.c` | Schritt 6: `package-dist` - forge, die VM, `native/`, `Source/`, `Prebuilt/` in einen Ordner | `FireVm.targets`, `StandardSources.targets`, `fire.Editor.csproj` (`PublishTools`) |
 | `build/stats.c` | `--stats`: `MapOptions`, die Map von GNU ld und Open Watcom (`ReadMap`), woher jede Funktion kommt (`OriginsOf` mit der `DefinitionRegex` ausgeschrieben), `Analyze`, `Text`, `Json` (wie System.Text.Json eingerückt mit dem Standard-Encoder), `DosLoadBytes`, `WriteStats` | `NativeStats.cs`, `NativeBuilder.cs` (`WriteStats`) |
 
 ### Entscheidungen
@@ -1100,6 +1102,98 @@ Entpacken durch Python, `owcc` ausführbar), ein nativer Build für `dos32` ohne
 der Build mit dem gefundenen `owcc`), `toolchain-setup w64devkit --archive` unter Wine (ein falsches 7z, das sich "entpackt": `toolchain.json` geschrieben),
 `toolchain-setup tcc --archive` mit einem falschen Zip (die Meldung des SHA-256), die Meldungen von w64devkit und TinyCC unter Linux. Nicht gemessen: ein echter
 Download (https, w64devkit, TinyCC) - kein Netz.
+
+## Phase D Schritt 6: `conformance` und die Distribution ohne .NET
+
+Stand 23.11.2026, zwei neue Dateien in `native/forge/tools/` und zwei Zeilen in der Befehlstabelle (`tcMain`):
+
+**`forge-c conformance`** (`tools/conformance.c`): der datengetriebene Kern von `fire.Testing` ohne .NET - die Fälle von `tests/cases` nach den Regeln von
+`tests/run-cases.sh`/`run-cases-vm.sh` und `TestCasesVm.cs` (`.expected`, `.diagnostics` ohne die Zeilen "Building the native part of"/"Installing the standard
+package", `.error` als Teil der Meldung, `.unhandled` der Gruppe native, `UNBEHANDELT: ` ohne den Stack, in `trace` mit ihm, die Modi von `//# modes:`, die
+Gruppe native in `RELEASE`, `//# types:` als `--types`, `//# skip: forge run` und `//# output: varies` nicht in der VM), und mit `--engine native|all` die
+Fälle "nativ == VM" der Gruppe native als native Programme nach `NatVerdict` von `Program.cs` (`Abbruch:` mit Exitcode 1 und der Zeile auf stderr,
+`(Meldung auf stderr)`, `(Http.Pages-Zeile auf stderr)`, `Threads:` mit `terminate(n)`; `output: varies` gegen das, was die VM davon druckt).
+
+```
+forge-c conformance [<gruppe>|<gruppe>/<fall>...] [--filter <text>] [-j <n>] [--engine vm|native|all] [--toolchain <name>] [--fire <fire>]
+                    [--cases <ordner>] [--cache <ordner>] [--list] [--no-retry] [--keep]
+```
+
+Entscheidungen: jeder Fall läuft in **Prozessen** - `forge-c bytecode` bzw. `forge-c build --engine native` im Ordner des Falls (die Stacks nennen die Datei
+relativ dazu), dann `fire` bzw. das Programm -, nicht in diesem Prozess: forge-c hat Zustand je Prozess (Phase D 7 baut ihn ab), und ein Fall, der abstürzt oder
+hängt, nimmt nur sich selbst mit (Timeouts: Übersetzen 120 s, die VM 20 s wie `VM_TIMEOUT`, ein nativer Build 1200 s, ein natives Programm 120 s; getötet wird die
+Prozessgruppe). Die Jobs sind Threads, die Prozesse starten (Pipes mit close-on-exec, unter einer Sperre angelegt und geforkt), Vorgabe die Hälfte der Kerne,
+höchstens 4. Ein falscher Fall läuft am Ende noch einmal allein (wie `run-cases.sh`). Die VM: `--fire`, `FIRE_VM_EXE`, sonst die sechs Varianten aus den Quellen
+dieses forge-c im Cache des Benutzers (derselbe Ordner wie `forge-c run`, `CVm.CacheFolder/<schlüssel>`), gebaut mit `forge-c build-vm`, wo eine fehlt. Den
+Prozessen gibt forge-c `FIRE_TABLES`, `FIRE_PACKAGES`, `FIRE_NATIVE_ROOT` als volle Pfade, `FIRE_SYSTEM_THEME=off` und `FIRE_PKG_PATH` mit seinem Ordner (die
+Bibliotheken der Pakete aus `Packages/` und `Prebuilt/`, wie das Skript). Abweichungen vom Skript: die Zeilen `//# ` am Ende werden wie in `TestCases.Load`
+gelesen (statt `tail -n 12`), `.error` ist ein Teil der ganzen Meldung (wie `Contains` in C#; `grep -F` nähme jede Zeile als eigenes Muster - kein Fall hat mehrere
+Zeilen), zu jedem falschen Fall steht die erste Zeile, die abweicht.
+
+Gemessen mit forge-c (gebaut neben dem C#-forge, Stand 5ed7c1c7 von `clippy`): `forge-c conformance -j 2` **1173 von 1173** Fällen richtig (3 min 30 s),
+`tests/run-cases-vm.sh <forge-c> -j 2 --list` mit derselben VM ebenso - dieselben Urteile Fall für Fall; an einer Kopie mit drei verdorbenen Fällen (eine
+`.expected`, eine `.diagnostics`, eine `.error`) melden beide dieselben drei. Nativ (`--engine native`, die Toolchain, die forge wählt: hier tcc) **515 von 517**:
+`native/1370` (inline c: `bool` aus C - mit tcc `2` statt `1`; mit `--toolchain gcc` richtig) und `native/4440` (Library.Load einer `.fireplugin`-Datei: das native
+Programm mit linkage `source` meldet "cannot load fire plugins", der Fall erwartet die Meldung der VM - der Fall gehört nach `vm-*` oder bekommt eine Regel;
+gemeldet, nicht geändert). Nicht portiert vom nativen Teil des Testprogramms: die Sanitizer (ASan/UBSan, ThreadSanitizer), `-Wall -Wextra` mit einer Warnung als
+Fehler, die Sonderläufe nach Titel (FreeRTOS, ESP32, Fenster, Wine, Debugger). Unter Windows hat `cfSpawn` noch keinen Timeout (`fwRun`).
+
+**`forge-c package-dist <ordner> [--dry-run]`** (`tools/dist.c`) und `native/forge/package-dist.sh <ordner>` (baut forge-c mit `cc`, dann `package-dist`): der Teil
+forge/VM einer Installation ohne .NET-Werkzeuge - was die Veröffentlichung von `fire.Compiler` mit `FireVm.targets` und `StandardSources.targets` neben spark legt:
+
+```
+<ordner>/forge[.exe]                dieses forge-c (--name: ein anderer Name; forge, damit spark es findet)
+<ordner>/fire[.exe], fire-i32, ...  die VM in C und ihre fünf Varianten mit .key (build-vm --all)
+<ordner>/native/                    tables/, runtime/, abi/, platform/ (.h .hpp .asm), vm/ (.c .h), base/ - was forge-c zur Laufzeit liest
+<ordner>/Source/                    die Standardpakete (packages/ ohne bin/obj - dieselben 323 Dateien wie Source/ des C#-forge)
+<ordner>/Prebuilt/<paket>/<rid>/    ihre Bibliotheken für diese Maschine (prebuild-standard)
+```
+
+Die VM und `Prebuilt/` baut das forge des Ordners selbst (ohne `FIRE_TABLES`/`FIRE_PACKAGES`/`FIRE_NATIVE_ROOT`) und prüft damit den Aufbau; dafür sucht forge-c die
+Tabellen jetzt auch in `native/tables` neben sich (`fcFindPrelude`, nach `../tables`). Gebaut wird für die Maschine, auf der es läuft - eine Distribution für Windows
+entsteht unter Windows (forge-c.exe mit MinGW/w64devkit). `setup.iss` nimmt sie mit `iscc /DForgeDist=<ordner>`: forge, fire, `native\`, `Source\`, `Prebuilt\` aus
+dem Ordner, spark und ember wie bisher aus dem Veröffentlichungsordner von spark (mit `-p:PublishForge=false` ohne das C#-forge: `fire.Editor.csproj`, `PublishTools`).
+Ohne `/DForgeDist` bleibt der Installer, wie er war.
+
+Gemessen unter Linux: `native/forge/package-dist.sh <ordner>` in 5 Minuten (ein Compiler nach dem anderen) - 395 Dateien kopiert (20 MB), die sechs VMs, 25
+Bibliotheken in `Prebuilt/` (dieselben 25 wie im `Prebuilt/` des C#-forge), der Ordner 30 MB. Das forge des Ordners ohne `FIRE_*`: es installiert die
+Standardpakete nach `Packages/`, `run`, `build` (Engine vm, die VM daneben) und `build --engine native` eines Programms mit `hash` und `compression` laufen,
+`conformance` nimmt die VMs daneben. `--dry-run` zeigt den Aufbau, ohne zu schreiben:
+
+```
+would make /tmp/dist (for linux-x64)
+  forge                              this forge-c (.../forge-c)
+  native/tables/                        5 files,    135 KB (from .../native/tables)
+  native/runtime/                       9 files,    932 KB (from .../native/runtime)
+  native/abi/                           4 files,     45 KB (from .../native/abi)
+  native/platform/                     36 files,    170 KB (from .../native/platform)
+  native/vm/                           16 files,    513 KB (from .../native/vm)
+  native/base/                          1 files,      8 KB (from .../native/base)
+  Source/                             323 files,  15521 KB (from .../packages)
+  395 files, 19974 KB copied (dry run: nothing written)
+  fire, fire-i32, ... (the VM)       /tmp/dist/forge build-vm /tmp/dist --all
+  Prebuilt/<package>/linux-x64/      /tmp/dist/forge prebuild-standard /tmp/dist/Source /tmp/dist/Prebuilt
+```
+
+Für Windows ist der Aufbau derselbe (mit `.exe`, `win-x64`); `forge-c.exe` baut mit MinGW, die neuen Dateien ohne Warnung. Gebaut und installiert ist er hier nicht:
+kein Inno Setup, kein Compiler unter Windows, und Wine startet in dieser Umgebung nicht (`free(): invalid pointer` schon bei `wine forge-c.exe help`).
+
+**Was in `fire.Testing` bleibt** (C#, nicht als Daten):
+
+| Teil | warum C# | später Daten? |
+| --- | --- | --- |
+| `TestCasesVm`, `TraceTests`, die VM-Seite von "nativ == VM" | - | ersetzt durch `conformance` |
+| die native Seite von "nativ == VM" | Sanitizer, Warnungen als Fehler, Resume/Shards | die Läufe ja (`--engine native`); Sanitizer als Option von `conformance` |
+| die rund 12 Fälle aus `Program.cs`, deren Quelle zur Laufzeit entsteht (libc-`extern`, ohne IPv6, MySQL/SQL Server/Postgres, `Data/Model`, Ressourcen, Schriften, Scene3D, AI) | brauchen Zertifikate, Server, Ordner des Laufs | zum Teil: mit `//# needs: <server>` und Platzhaltern |
+| die Prüfungen des erzeugten C (`readonly static`, `defined`-Rechnen, `inline c`, Teilen, Weglassen) und ThreadSanitizer, FreeRTOS, ESP32, tcc, Fenster/Xvfb/Wayland, Wine | sehen in den Text des Generators oder brauchen Werkzeuge | die C-Muster als Daten (`.cgen-contains`) |
+| `DiagnosticTests`, `TypeTests`, `SyntaxTests` | die Absicht (Code, Zeile) in C#; die Aufnahmen `.diagnostics` sind schon Daten | ja: die erwarteten Codes als `//# expect: W7 E2001` |
+| `LinkageTests` (static/shared/plugin, Caches, Wine), `DebuggerPluginTests` | mehrere Builds nacheinander, Dateien dazwischen | die Läufe ja (Projekt + `.expected`), die Cache-Prüfungen nein |
+| `NativeDebugTests`, `DebuggerTests`, `CVmRunTests`, `CVmWindowsTests`, `CVmSanitized`, `BiosTests` (QEMU) | treiben Prozesse über Protokolle | als Mitschnitte von Anfrage/Antwort |
+| `ServeTests` | das Protokoll von `forge serve` | ja: Mitschnitte |
+| `TestingTests` (`forge test`), `ProgramFileTests` (`dump` hin und zurück), `TablesTests` | C#-Seite | ja (`forge test`-Ausgabe als `.expected`); `TablesTests` entfällt mit dem C#-forge |
+| `ProjectTests`, `PublishTests`, `StartProjectTests`, `BlockModelTests`, `MeshModelTests`, `CircuitEditorTests` | das C#-Modell (spark) | die Seite von forge ist schon gemessen (`compare-frontend.sh project`, `model`) |
+| spark, ember und ihre Bibliotheken: `Completion`, `BackgroundCheck`, `Explorer*`, `Git*`, `Notes`, `Preview`, `SetupWizard`, `ForgeReport`, `DriverAgent`, `McpServer`, `Registry*`, `Image`, `AiModels` | gehören zu spark/ember (C#) oder brauchen einen Server in C# | nein, bleiben bei spark |
+| `TestResume`, `TestTempFolders`, `TestUtils` | die Maschine des Testprogramms | - |
 
 ## Nachziehen
 

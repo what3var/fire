@@ -1483,6 +1483,8 @@ static int tcReportMain(int argc, char** argv, const char* prelude, const char* 
 static bool tcWantsReport(int argc, char** argv);
 
 /* the commands forge-c takes here (CommandLineRunner.Run and the rest of Program.cs); -1: the caller's (the measures and the commands of the earlier steps) */
+static int cfConformanceMain(int argc, char** argv, const char* prelude, const char* storeRoot);   /* (tools/conformance.c, Phase D 6) */
+static int pdPackageDistMain(int argc, char** argv);   /* (tools/dist.c, Phase D 6) */
 static int tcMain(int argc, char** argv, const char* prelude, const char* storeRoot) {
     FcCtx ctx;
     FcCtx* c = &ctx;
@@ -1496,6 +1498,8 @@ static int tcMain(int argc, char** argv, const char* prelude, const char* storeR
     if (tcWantsReport(argc, argv)) return tcReportMain(argc, argv, prelude, storeRoot);
     if (streq0(cmd, "tables") && argc == 3) return tcTables(argv[2], prelude);
     if (streq0(cmd, "prebuild-standard") && argc >= 4) return tcPrebuildStandard(argv[2], argv[3], prelude);
+    if (streq0(cmd, "conformance")) return cfConformanceMain(argc, argv, prelude, storeRoot);   /* Phase D 6 (tools/conformance.c) */
+    if (streq0(cmd, "package-dist")) return pdPackageDistMain(argc, argv);   /* Phase D 6 (tools/dist.c) */
     {
         /* (BackgroundWork.WriteLines: with FIRE_PROGRESS_LINES the work without a build window on the error output - spark shows it in its status bar) */
         const char* lines = getenv("FIRE_PROGRESS_LINES");

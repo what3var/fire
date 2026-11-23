@@ -24,7 +24,7 @@ gibt, gehört dem Handle. `fire_embed_version()` ist 1.
 
 | Funktion | |
 |---|---|
-| `fire_forge_new(tables, packages, native)` | ein Compiler: der Ordner mit `prelude.fire`, der Store der Pakete, `native/` (für die Bibliotheken der Pakete, die er baut); `NULL`: `FIRE_TABLES`, `FIRE_PACKAGES`, `FIRE_NATIVE_ROOT`, sonst neben der Bibliothek (`<ordner>/../tables`, `<ordner>/Packages`, `<tables>/..`) |
+| `fire_forge_new(tables, packages, native)` | ein Compiler: der Ordner mit `prelude.fire`, der Store der Pakete, `native/` (für die Bibliotheken der Pakete, die er baut); `NULL`: `FIRE_TABLES`, `FIRE_PACKAGES`, `FIRE_NATIVE_ROOT`, sonst neben der Bibliothek (`<ordner>/../tables` oder `<ordner>/native/tables` einer Distribution, `<ordner>/Packages`, `<tables>/..`) |
 | `fire_forge_compile(f, path, source, length, mode)` | übersetzt wie `forge run` vor dem Start: eine Datei oder ein Projekt (`source` NULL) oder `source` als Text einer Datei `path`; die Bibliotheken der Pakete werden für die VM gebaut. `mode`: `FIRE_MODE_DEFAULT`/`DEBUG`/`RELEASE`/`PERFORMANCE` |
 | `fire_compilation_ok`, `_program`, `_package_path` | ob es ein Programm gibt, die Programmdatei (die Bytes von `forge bytecode`), die Ordner ihrer Paketbibliotheken (wie `FIRE_PKG_PATH`) |
 | `fire_compilation_diagnostic_count`, `_diagnostic(c, i, FIRE_DIAG_*)`, `_line`, `_column` | die Warnungen, wie sie kamen, dann die Fehler: Schwere, Code (`E4022`, `TC005`), Datei, Meldung und die Zeile, wie forge sie druckt (`Diagnostic.ToLogLine`). Was kein Übersetzungsfehler ist (ein Projekt, das nicht zu lesen ist, ein Paket, das nicht baut), ist ein Fehler ohne Code |
@@ -117,6 +117,8 @@ anders konfigurierte Runtime ist, die nicht in dieselbe C-Datei wie das Programm
   als Shared Library neben sich. Für "baut sich selbst für andere Ziele" müssen die Quellen von forge als Natives in den Build - dafür braucht der
   Mechanismus der Paket-Natives Header mit Unterordnern (oder forge eine Amalgamation als eine Datei), und `fire_forge_main` schreibt noch auf die
   Ströme des Prozesses (kein Rückruf). Dazu die Toolchains und die Standard-Packages als Quellen im Ziel (siehe Plan).
+* Eine Distribution (`forge-c package-dist`, Schritt 6) trägt `native/forge` nicht: dort kann forge libforge nicht selbst bauen - `package-dist` sollte
+  `build-embed <ordner>` ausführen (die Bibliotheken neben forge) oder `native/forge` mitnehmen.
 * Ein gepacktes Programm (`forge build --engine vm`) trägt libforge/libfirevm nicht im Payload; es findet sie über `FIRE_EMBED_PATH` oder daneben.
 * `fcLinkClassMeta` in den Kontext; Übersetzungen nebeneinander (heute nacheinander unter `feLock`).
 * Abbruch eines laufenden Skripts, Zeitlimit, stdin für ein Skript; Windows und macOS ungeprüft (`fopencookie` nur unter Linux; die Brücken laden mit
