@@ -159,6 +159,24 @@ static class CompletionTests
         CheckOrder("eigene Klasse vor gleich gut passender Bibliotheksklasse", "class Bolt { }\nvar x = new B|", "Bolt", "Bits");
         CheckOrder("Mitglied der Klasse vor Schluesselwort", "class A { int retries\n M() { re| } }", "retries", "return");
 
+        // ---- the contextual words is, of, from, under, where: names elsewhere, offered only where they mean something ----
+        Check("kontextuelle Woerter: nicht am Anfang einer Anweisung", "var a = 1\n|", "if,var", "is,of,from,under,where");
+        Check("kontextuelle Woerter: nicht nach einem Schluesselwort", "var a = 1\nreturn i|", "", "is");
+        Check("kontextuelle Woerter: eine Variable 'where' ist ein Name", "string where = \"x\"\nprint(wh|", "where,while");
+        Check("is nach einem Operanden", "var a = 1\nvar b = a i|", "is,in");
+        Check("of, from, under nach is", "var a = 1\nvar b = a is |", "of,from,under", "is,where");
+        Check("from nach coerce, nicht of", "unit Foot: ft\ncoerce |", "from", "of,under");
+        Check("where nach dem Kopf einer generischen Klasse", "class A { }\nclass Box<T> wh|", "where");
+        {
+            // the syntax colours follow the same rule (SyntaxHighlighter.IsContextKeyword): a word where it means something, a name elsewhere
+            string colored = "string where = \"x\"\nbool is = where is of string\nclass Box<T> where T is of A { }\nunit Foot: ft\ncoerce from m => 0.3048\nstring from = where\n";
+            var words = fire.Editor.SyntaxHighlighter.Highlight(colored).Where(s => s.Category == fire.Editor.HighlightCategory.Keyword)
+                .Select(s => colored.Substring(s.Start, s.Length) + "@" + s.Start).Where(w => w.Split('@')[0] is "is" or "of" or "from" or "under" or "where").ToList();
+            int line2 = colored.IndexOf("bool is", StringComparison.Ordinal), line3 = colored.IndexOf("class Box", StringComparison.Ordinal), line5 = colored.IndexOf("coerce", StringComparison.Ordinal);
+            var want = new[] { $"is@{line2 + 16}", $"of@{line2 + 19}", $"where@{line3 + 13}", $"is@{line3 + 21}", $"of@{line3 + 24}", $"from@{line5 + 7}" };
+            Report("Syntaxfarben: is, of, from, where nur als Woerter, wo sie etwas bedeuten (Namen sonst)", words.SequenceEqual(want), $"  bekommen: {string.Join(" ", words)}\n  erwartet: {string.Join(" ", want)}");
+        }
+
         // ---- markup: the code-behind sees the generated class and the library it imports ----
         string markup = """
             <Window Class="Greeter" Title="Greeter" Width="360" Height="200">
