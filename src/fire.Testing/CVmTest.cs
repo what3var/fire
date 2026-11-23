@@ -59,10 +59,20 @@ static class CVmTest
                 workingDirectory != null && Directory.Exists(workingDirectory) ? workingDirectory : Directory.GetCurrentDirectory());
             using var process = new Process { StartInfo = info };
             var errors = new StringBuilder();
-            process.OutputDataReceived += (_, e) => { if (e.Data != null) lock (result.Printed) result.Printed.Add(e.Data.Replace('\x1F', '\n')); };   // (a line break of a print came as \x1F)
             process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errors) errors.Append(e.Data).Append('\n'); };
             process.Start();
-            process.BeginOutputReadLine();
+            // (the records split at '\n' only: a '\r' in a print stays in it, as the C# VM handed it over; a line break of a print came as \x1F)
+            var reader = System.Threading.Tasks.Task.Run(() =>
+            {
+                var line = new StringBuilder();
+                int ch;
+                while ((ch = process.StandardOutput.Read()) >= 0)
+                {
+                    if (ch == '\n') { lock (result.Printed) result.Printed.Add(line.ToString().Replace('\x1F', '\n')); line.Clear(); }
+                    else line.Append((char)ch);
+                }
+                if (line.Length > 0) lock (result.Printed) result.Printed.Add(line.ToString().Replace('\x1F', '\n'));
+            });
             process.BeginErrorReadLine();
             try
             {
@@ -76,6 +86,7 @@ static class CVmTest
                 try { process.Kill(entireProcessTree: true); } catch (Exception) { }
             }
             process.WaitForExit();
+            reader.Wait();
             result.ExitCode = process.ExitCode;
             lock (errors) result.Errors = errors.ToString();
             return result;

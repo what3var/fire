@@ -11147,7 +11147,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "callbacks") return
         print(d.IsConnected)
         """, new[] { "True" }, shared: false, after: m =>
         {
-            if (m.DeviceCount != 0) throw new Exception("Manager nicht abgebaut");
+            // (the C# VM disposed a manager of its own after the run; a program in `fire` takes the host's manager over FIRE_DEVICE_HOST and never disposes it - M1)
+            if (DotnetVm.Enabled && m.DeviceCount != 0) throw new Exception("Manager nicht abgebaut");
         });
 
     CheckDev("Paketverfolgung: gesendete und empfangene Pakete werden mitgeschnitten", """

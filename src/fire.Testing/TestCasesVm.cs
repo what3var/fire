@@ -47,7 +47,8 @@ static class TestCasesVm
             if (c.Error != null) return errors.Contains(c.Error) ? null : $"  erwartet im Fehler: {c.Error}\n  erhalten: {errors}";
             return "  WIRD NICHT UEBERSETZT: " + errors;
         }
-        if (c.Error != null) return $"  erwartet: ein Fehler beim Uebersetzen ({c.Error}), das Programm lief: {run.Text}";
+        // (`.error`, as tests/run-cases.sh: the program does not end well and its error output names that text - when compiling or when it runs)
+        if (c.Error != null) return run.ExitCode != 0 && run.Errors.Contains(c.Error) ? null : $"  erwartet: ein Fehler ({c.Error}), das Programm lief: {run.Text}{run.Errors}";
         if (run.TimedOut) return "  das Programm endete nicht (120 s)";
         string actual = run.Text + (run.ExitCode != 0 && run.UnhandledMessage is { } m ? "UNBEHANDELT: " + m + "\n" : "");
         if (run.ExitCode != 0 && run.UnhandledMessage == null && run.Errors.Trim().Length > 0) actual += "UNBEHANDELT: " + run.Errors.Trim() + "\n";

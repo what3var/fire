@@ -131,6 +131,32 @@ liest `fire` den Fuß seiner eigenen Datei (`fire_plat_programPath`): ist ein Pa
   nichts, eine beschädigte Bibliothek wird ersetzt), `#intwidth 32` mit `fire-i32`, `fire run`/`help`/`version`/Exitcodes der Befehlszeile; die Prüfungen
   der .NET-Einzeldatei (`Packer` direkt) nur noch mit `FIRE_TESTS_DOTNET_VM=1`.
 
+## forge run, test und data in der C-VM (M1)
+
+Seit dem 22.11.2026 führt auch das C#-forge Programme nur noch in `fire` aus ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md), M1 (5)), so wie forge-c
+(`native/forge/tools/commands.c` `tcRunInVm`, `testrunner.c` `trRunInVm`, `tcRunDriver`): `CVmRun` (`src/fire.Compiler/CVmRun.cs`) linkt mit
+`Linker { PackageLibraries }` (die Bibliotheken der Pakete werden gebaut), schreibt die `.fbc` mit Zeilentabellen nach `<temp>/fire-run-<guid>`
+(`fire-test-`, `fire-data-`) und startet `fire run <datei> [-- <argumente>]` - die VM der Breiten des Programms (`CVm.Locate`), `FIRE_PKG_PATH` mit den
+Ordnern der Bibliotheken; der Ordner geht, wenn das Programm endet.
+
+* **`forge run`**: das Programm erbt die Konsole von forge (stdin, stdout, stderr; `CommandLineRunner.WritersAreConsole`, gesetzt von `Program.cs`); wer
+  `CommandLineRunner.Run` mit eigenen Writern ruft (die Tests), bekommt die Ausgabe dort hinein (`CVmRun.RunToWriters`). Exitcode: der von `fire` - 0, 1
+  bei einer unbehandelten Ausnahme (ihr Bericht mit Stack-Trace auf stderr), `terminate(n)`: n.
+* **`forge test`** (`TestRunner.RunInVm`, auch der Test-Explorer von spark): die Zeilen des Treibers kommen, während sie geschrieben werden
+  (`FIRE_STDOUT_LINES`); `Cancel` beendet den Prozess; endet das Programm vor dem Ende der Tests, ist die Zeile `Unhandled exception of type ...` von
+  stderr die Meldung des laufenden Tests.
+* **`forge data`** (`DataCommand.RunDriver`, auch der Designer von spark): der Treiber mit den Klassen der Quellen, seine Ausgabe, eine unbehandelte
+  Ausnahme als Fehler.
+* Die Natives von graphics, windows und reflection kennt der Übersetzer jetzt aus `native/tables/bridges.def` (`BridgeNatives`, die Ressource
+  `cvm/tables/bridges.def`), nicht mehr aus den C#-Bridges; die Host-Natives der Pakete sind beim Übersetzen nur Namen.
+* `FIRE_VM_ENGINE=dotnet` (die .NET-Einzeldatei, `fire.Runtime.Packer`) ist weg: `forge build --engine vm` packt nur noch `fire`.
+* **Geändert**: `Environment.ProgramPath` ist bei `forge run` der Pfad von `fire` (wie bei forge-c), in der C#-VM war es die letzte Quelle.
+* **Tests**: `tests/compare-commands.sh` gegen forge-c 100 von 103 gleich (die drei: Dateien nativer Builds und die gepackte Datei von `-m debug`, die
+  schon vorher abwichen - das C#-forge vor dieser Änderung schreibt dieselben, die gepackte Datei ist von Lauf zu Lauf verschieden); im Testprogramm
+  laufen die Programme der Prüfungen in `fire` (`CVmTest`: übersetzt im Testprogramm, `fire run` mit `FIRE_PRINT_RECORDS`; `CVmTest.Debug` unter dem
+  Debugger wie in spark; `TestCasesVm`: smoke und die Familien vm-* nach den Regeln von `tests/run-cases.sh`); was nur die C#-VM prüft, läuft nur mit
+  `FIRE_TESTS_DOTNET_VM=1` ([testing.md](../tools/testing.md)).
+
 ## spark auf der C-VM (Schritt 9)
 
 spark führt Programme der Engine `vm` nicht mehr in seinem Prozess aus (L4), sondern als Kindprozess `fire`. Den Schalter `FIRE_SPARK_VM=dotnet` (die C#-VM in
