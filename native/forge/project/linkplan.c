@@ -127,36 +127,38 @@ static void pjLinkDirective(FcCtx* c, void* state, const char* name, FcList* arg
     }
     fcLinkerDirective(c, &P->L, name, args, line, importNamespaces);
 }
+/* ProjectNativeOverlay.Register for one native part: the package it stands for (also `forge serve`, serve_diag.c) */
+static FcPkgImport* pjOverlayImport(FcCtx* c, const PjNativePart* part, const char* version) {
+    FcPkgImport* pi = (FcPkgImport*)fcAlloc(c, sizeof *pi);
+    int k;
+    pi->name = part->importName;
+    pi->requires = fcListNew(c);
+    pi->hasNative = true;
+    pi->functions = fcListNew(c);
+    pi->returns = fcListNew(c);
+    pi->hosts = fcListNew(c);
+    for (k = 0; k < part->native->m.functions->count; k++) {
+        const FgPkgFn* fn = (const FgPkgFn*)part->native->m.functions->items[k];
+        fcListAdd(c, pi->functions, (void*)fn->name);
+        fcListAdd(c, pi->returns, (void*)fn->returns);
+        fcListAdd(c, pi->hosts, FC_IVAL(fn->host));
+    }
+    pi->dir = part->directory;
+    pi->packageName = fcFmt(c, "project:%s", part->projectName);
+    pi->packageVersion = version;
+    pi->overlay = true;
+    pi->overlayNative = &part->native->m;
+    pi->overlayBuildDir = nbCombine(c, nbCombine(c, part->directory, "obj"), "native");
+    pi->overlayFile = part->projectFile;
+    return pi;
+}
 /* ProjectNativeOverlay.Register: the native parts of the plan stand for packages that are not installed (before the installed ones) */
 static void pjOverlayRegister(FcCtx* c, FcStore* store, const PjPlan* plan) {
     FcList* parts = pjNativeParts(c, plan);
     FcList* merged = fcListNew(c);
-    int i, k;
+    int i;
     if (!store->loaded) fcStoreLoad(c, store);
-    for (i = 0; i < parts->count; i++) {
-        const PjNativePart* part = (const PjNativePart*)parts->items[i];
-        FcPkgImport* pi = (FcPkgImport*)fcAlloc(c, sizeof *pi);
-        pi->name = part->importName;
-        pi->requires = fcListNew(c);
-        pi->hasNative = true;
-        pi->functions = fcListNew(c);
-        pi->returns = fcListNew(c);
-        pi->hosts = fcListNew(c);
-        for (k = 0; k < part->native->m.functions->count; k++) {
-            const FgPkgFn* fn = (const FgPkgFn*)part->native->m.functions->items[k];
-            fcListAdd(c, pi->functions, (void*)fn->name);
-            fcListAdd(c, pi->returns, (void*)fn->returns);
-            fcListAdd(c, pi->hosts, FC_IVAL(fn->host));
-        }
-        pi->dir = part->directory;
-        pi->packageName = fcFmt(c, "project:%s", part->projectName);
-        pi->packageVersion = pjPackageVersion(c, plan->settings->version);
-        pi->overlay = true;
-        pi->overlayNative = &part->native->m;
-        pi->overlayBuildDir = nbCombine(c, nbCombine(c, part->directory, "obj"), "native");
-        pi->overlayFile = part->projectFile;
-        fcListAdd(c, merged, pi);
-    }
+    for (i = 0; i < parts->count; i++) fcListAdd(c, merged, pjOverlayImport(c, (const PjNativePart*)parts->items[i], pjPackageVersion(c, plan->settings->version)));
     for (i = 0; i < store->imports->count; i++) fcListAdd(c, merged, store->imports->items[i]);
     store->imports = merged;
 }

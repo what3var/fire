@@ -631,7 +631,7 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    in eigenen Prozessen (`forge-c bytecode`, dann `fire`; mit `--engine native` die Gruppe native als native Programme), nach den Regeln von `run-cases.sh`,
    `run-cases-vm.sh`, `TestCasesVm` und `NatVerdict`; Filter nach Gruppe, Fall und Titel, `-j` (Vorgabe: die Hälfte der Kerne, höchstens 4), ein falscher Fall noch
    einmal allein, Zusammenfassung je Gruppe, Exitcode. Maß: **1173 von 1173** Fällen in der VM, dieselben Urteile wie `tests/run-cases-vm.sh` mit forge-c (auch an
-   drei absichtlich verdorbenen Fällen); nativ (tcc) 515 von 517 - `native/1370` ist tcc (mit gcc richtig), `native/4440` erwartet die Meldung der VM, wo ein natives
+   drei absichtlich verdorbenen Fällen); nativ (tcc) 515 von 517 - `native/1370` war `#if defined(__GNUC__)` im Fall, das tcc nicht setzt (seit dem 23.11.2026 behoben: `INT32_MAX`), `native/4440` erwartet die Meldung der VM, wo ein natives
    Programm keine fire-Plugins laden kann (seither `vm-rf/0190`). `forge-c package-dist <ordner>` (`tools/dist.c`, `native/forge/package-dist.sh`): forge-c als `forge`, die
    VM mit ihren fünf Varianten, `native/`, `Source/` und `Prebuilt/` - nur mit einem C-Compiler und forge-c; `setup.iss` nimmt den Ordner mit `/DForgeDist=<ordner>`
    (spark und ember dann mit `-p:PublishForge=false`, ohne das C#-forge). Was in `fire.Testing` C# bleibt und was Daten werden kann: die Tabelle in FORGE_C.md.
@@ -666,7 +666,7 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    mit gcc und tcc und als Programm der VM - `bytecode` über jeden 10. Fall des Korpus, alle Projekte und Tests der Pakete (191) byte-gleich mit forge-c,
    `tests/compare-commands.sh <forge-c> <forge aus fire>`, Fixpunkt (das gebaute forge baut sich wieder, mit `SOURCE_DATE_EPOCH` byte-gleich), für Windows mit
    MinGW gebaut und unter Wine geprüft. Offen: libfirevm (Paket `script`) für andere Ziele - ihre Runtime passt nicht neben die des Programms, sie bleibt eine
-   Shared Library der Maschine; `units` mit linkage static/shared/plugin; `libforge.c` muss nach jeder Änderung an forge neu geschrieben werden.
+   Shared Library der Maschine; `libforge.c` muss nach jeder Änderung an forge neu geschrieben werden. (`units` mit linkage static/shared/plugin: seit dem 23.11.2026, [EMBED.md](spec/EMBED.md#offen); Open Watcom und `custom` lehnen ein Paket mit `units` weiter ab.)
 
 **M3:** forge und die VM sind C-Programme und C-Bibliotheken; wer nur sie braucht, braucht kein .NET. Der Bau von fire selbst braucht nur einen
 C-Compiler. `fire`, `fire.Compiler`, `fire.Native` und der Kern von `fire.Testing` verlassen die Solution; .NET steckt nur noch in spark und ember.
@@ -766,9 +766,11 @@ Fensterprogramm gebaut und gestartet, Vervollständigung und Diagnosen beim Tipp
 gelaufen), der Package Manager (Liste, Suche, Installieren aus einem lokalen `PackageSource/`); `forge conformance` 1176 von 1176 Fällen (mit `Prebuilt/`);
 `fire.Testing` 1168 Prüfungen, offen danach 2 (unten); ember in fire allein mit seinen Hauptbefehlen.
 
-**Offen:** zwei Lücken von forge-c, die die Prüfungen von spark zeigen: die Meldung einer falschen Bau-Reihenfolge der Natives im nativen Build ist noch
-`unported: PackageException` ohne die Zeile des `#include` (`gen/packages.c`), und `forge serve` kennt die Natives von Bibliotheksprojekten nicht (in
-`Packages.firesln` zeigt die Analyse `Unknown identifier '__GRPH...'` - der Weg im eigenen Prozess konnte das); die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
+**Offen:** (Behoben sind die beiden Lücken von forge-c, die die Prüfungen von spark zeigten: `forge serve` kannte die Natives von Bibliotheksprojekten nicht -
+in `Packages.firesln` zeigte die Analyse `Unknown identifier '__GRPH...'`; jetzt liest der Server sie aus `projectFile` wie `build`, mit den Brücken
+einer Standardbibliothek, [FORGE_SERVE.md](spec/FORGE_SERVE.md#dokumente-und-kontext) -; die Meldung einer falschen Bau-Reihenfolge der Natives war
+`unported: PackageException` ohne die Zeile des `#include` - jetzt die `PackageException` des C# mit Datei und Zeile je `#include`, `gen/packages.c`,
+ebenso die beiden anderen `PackageException`s dort.) Die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
 `conformance`, die Fälle mit Servern, die Linkages und Debug-Protokolle als Daten); `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
 fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows mit `ForgeDist.targets` (gcc von w64devkit) und der Installer sind nicht geprüft; spark ohne forge (kein
 C-Compiler) hat keine Sprachdienste mehr.
@@ -835,7 +837,10 @@ Was der Härtetest an der Sprache und den Packages gefunden hat (nichts davon ge
   Anweisung: Deklaration oder Umbinden), `word` und die anderen Typnamen (`word * p`, `word[n]`) und `and`/`or`.
 * Besitz: die Warnung **TC036**, wenn ein neuer Wert eines Blocks (`var x = new ...`) ohne `take` in einem Feld landet, das den Block überlebt (nicht
   bei `take x`, `x.TakeTo(...)`, `return x`, x als Argument eines Aufrufs, einer Property, einem Halter aus demselben Block, auf oberster Ebene des
-  Programms). Sie fand einen echten Fehler in `packages/net.channel` (der vergrößerte Puffer von `Feed`).
+  Programms). Sie fand einen echten Fehler in `packages/net.channel` (der vergrößerte Puffer von `Feed`). Seit dem 23.11.2026 auch für `var x = M(...)`,
+  wenn die Deklaration von M entscheidet, dass der Aufrufer den Wert besitzt (jedes `return` gibt einen neuen Wert oder einen eigenen Lokalen, den M
+  nicht weggibt; keine Überschreibung gibt anderes zurück - [13-ownership.md](language/13-ownership.md)). Offen: `packages/devices` meldet TC036 für
+  `this.pending = fresh`/`joined`/`rest` (`Append`, `CutThrough`: neue Puffer ohne `take` im Feld) - gemeldet, nicht geändert.
 * Lambdas fangen Kopien: das ist die dokumentierte Regel (12-lambdas.md); dazu jetzt die Redewendung für eine Sortierung nach einer Liste
   (`func (int a, int b) on orders => this[a] - this[b]`, keine Kopie) und was die Kopie kostet.
 * `json`: `JsonNode` (strikt, oder mit `JsonReadOptions(true)` Kommentare und Komma am Ende, auch für `Json.Parse`/`Json.Deserialize`), Schreiben

@@ -152,7 +152,17 @@ mit `--quick` mit der Optimierung der Toolchain, wie die Natives der Pakete - un
 `-DFIRE_PKG_UNITS_<IMPORT>`. Die Bibliothek des Pakets für die VM bekommt das Objekt (`-fPIC`, `-fvisibility=hidden`) und den Define ebenso; ihr Stand
 (`Locate`) nimmt die Zeit der Einheit, der Hash von `Prebuilt/` ihre Bytes dazu. Das C#-forge kennt `units` nicht: es lässt den Define weg, und die
 Brücke lädt libforge dann wie in Schritt 7 (`build-embed`). Die Brücke von `forge` ruft mit dem Define die Funktionen von `fire_embed.h` direkt.
-Mit Open Watcom und `custom` wird ein Paket mit `units` abgelehnt; linkage `static`/`shared`/`plugin` nehmen `units` nicht (offen).
+**Mit linkage `static`/`shared`** (`build/linkage.c`, seit dem 23.11.2026): die Einheit wird **einmal** mit der Bibliothek des Moduls des Pakets
+(`pkg:<import>`) übersetzt - wenn diese nicht im Cache ist - und in sie gelegt: `static` legt das Objekt mit dem des Moduls in dieselbe `.a`, `shared` linkt
+es in die `.so` (`-fPIC`, `-fvisibility=hidden` außer mit tcc), unter Windows in die DLL des Moduls; das C des Moduls (dort steht die Brücke, die Natives in
+C eines Moduls liegen in seiner Datei) und das des Programms bekommen `-DFIRE_PKG_UNITS_<IMPORT>`. Der Schlüssel des Moduls im Cache nimmt die Bytes der
+Einheit dazu (`NativeSourcesHash`), eine geänderte Einheit baut die Bibliothek neu; ein zweites Programm nimmt sie aus dem Cache. Ein Paket, dessen
+Natives in der Datei des Programms stehen (ohne eigenes Modul), bekommt seine Einheit wie mit `source` ins Programm. **`plugin`**: ein Plugin ruft die
+Natives in C seines Programms (des Wirts mit `shared`), die Einheit ist also die des Wirts - das Plugin selbst braucht sie nicht. Prüfung:
+`tests/package-units-linkage.sh <forge> [gcc|tcc]` (ein Programm mit `#import "forge"` mit `static` und `shared`, ein Plugin mit `forge` in einem Wirt
+mit `shared`; mit gcc und tcc - tcc baut `shared` als `static`). **Open Watcom und `custom`** lehnen ein Paket mit `units` weiter ab
+("... has a unit of its own (`native.units`), which the toolchain '...' does not build"): `custom` baut mit einem fremden Befehl, der nur die Dateien des
+Programms kennt (`{cpp}`, `{natives}`), und Open Watcom (16/32 Bit, DOS) übersetzt keine Einheit wie libforge - ein Paket für diese Ziele hat keine.
 
 **Die Ströme von `fire_forge_main`** (`fire_forge_set_output`): in der Bibliothek nennt jedes `stdout`/`stderr` von forge die Ströme des Aufrufs
 (`g_feOut`, `g_feErr` in `forge.c`; `printf`, `puts`, `putchar` schreiben auf `stdout`) - unter Linux mit `fopencookie`, BSD/macOS `funopen`, sonst eine
@@ -175,7 +185,7 @@ Fixpunkt: das mit gcc gebaute forge baut `tools/forge.fire` wieder, mit `SOURCE_
 
 ## Offen
 
-* `units` mit linkage `static`/`shared`/`plugin`, Open Watcom und `custom`; libfirevm für ein anderes Ziel (ein natives Programm, das `script` importiert,
+* `units` mit Open Watcom und `custom` (abgelehnt, siehe oben); libfirevm für ein anderes Ziel (ein natives Programm, das `script` importiert,
   findet libfirevm nur auf der Maschine, für die forge sie baut: `FIRE_EMBED_PATH`, daneben); `script` für andere Ziele braucht libfirevm für das Ziel.
 * `libforge.c` nach jeder Änderung an forge neu schreiben (`forge-c amalgamate packages/forge/native/libforge.c`); ein Test, der `--check` ausführt.
 * `fcLinkClassMeta` in den Kontext; Übersetzungen nebeneinander (heute nacheinander unter `feLock`).

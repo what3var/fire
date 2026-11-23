@@ -304,6 +304,16 @@ static const char* NativeSourcesHash(FgGen* g, const char* module) {
     texts = fgReadNativeSources(g->c, g->instImports, g->store, imp, fgPlatformKeys(g));
     fcBufStr(&b, "");
     for (i = 0; i < texts->count; i++) { FgNamedText* t = (FgNamedText*)texts->items[i]; fcBufFmt(&b, "%s\n%s\n", t->name, t->text); }
+    /* (the units, `native.units`: linkage static/shared compiles them into the library of the module - their bytes, as pkglib.c's stamp has them) */
+    for (i = 0; imp->native->units && i < imp->native->units->count; i++) {
+        size_t n = 0;
+        uint8_t* data = fbReadFile(fgPkgFile(g->c, imp->dir, (const char*)imp->native->units->items[i]), &n);
+        FcSha256 h;
+        fcShaInit(&h);
+        if (data && n) fcShaUpdate(&h, data, n);
+        free(data);
+        fcBufFmt(&b, "unit %s %s\n", fgFileNameOf(g->c, (const char*)imp->native->units->items[i]), fcShaHex(g->c, &h));
+    }
     return fcSha256OfText(g->c, fcBufDone(g->c, &b));
 }
 

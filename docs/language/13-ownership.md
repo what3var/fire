@@ -251,13 +251,37 @@ class Holder {
 }
 ```
 
-It is reported when the variable is declared with a new value (`new ...`, `new T[n]`, `new byte[n]`, `[...]`) and assigned plainly to a field
+It is reported when the variable is declared with a new value (`new ...`, `new T[n]`, `new byte[n]`, `[...]`, or a call that surely hands back a value
+of its own - below) and assigned plainly to a field
 of `this`, of a parameter, of a variable declared outside the block or of a class (a static field), or to an element of such a field's array.
 Not reported: when the variable is given away anywhere in the block (`take x`, `x.TakeTo(...)`, `x.TakeUpwards()`, `x.TakeGlobal()`, `return x`),
 handed to a call or a constructor (which may take it: `panel.Add(x)` makes the panel its owner) or gets another value; when the member is a property (its setter may take the value); when the object that holds the field is declared in the
-same block (both end together); at the top level of the program (its variables live as long as the program). The check is syntactic: a value
-that a method hands back (`var list = Make()`) is not looked at, and a container's `Add` is not followed (a list made with `Owns.Values` takes what
-it gets).
+same block (both end together); at the top level of the program (its variables live as long as the program). The check is syntactic, and a
+container's `Add` is not followed (a list made with `Owns.Values` takes what it gets).
+
+A value that a method hands back (`var list = Maker.Make()`) counts as new when the declaration of the method decides it: every `return` of the
+method gives `new ...`, an array, a buffer, such a call, or a local made with `new` that the method keeps to itself (only its own members are used:
+`l.Add(7)` - a local it gives away with `take`, `TakeTo`, as an argument of a call or by storing it comes back as a reference, its owner stays); and
+for a method that is not static, every method of a derived class that overrides it does the same (the call may land there). A method of an
+interface, a method of a library in C and anything else that cannot be decided from the declaration is not looked at - no warning rather than a
+wrong one.
+
+```fire
+class Maker {
+    static List<int> Make() {
+        var l = new List<int>()
+        l.Add(7)
+        return l                    // the caller owns the list
+    }
+}
+class Holder {
+    List<int> items
+    construct() {
+        var list = Maker.Make()
+        this.items = list           // TC036, as with `new List<int>()`
+    }
+}
+```
 
 What the rules forbid and only the run time can see is a catchable exception - the same class and text in the VM and natively - and nothing has
 moved when it is caught:
