@@ -123,19 +123,22 @@ namespace fire.Compiler
 
         /// <summary>Writes the sources of the VM in the layout of the repository (vm/, base/, tables/, runtime/, platform/, abi/) into <paramref name="folder"/> and a
         /// file that includes vm/fire.c with the defines of the widths; returns that file.</summary>
-        public static string WriteSources(string folder, int intWidth = 64, int floatWidth = 64)
+        public static string WriteSources(string folder, int intWidth = 64, int floatWidth = 64, TargetProfile? target = null)
         {
+            // (another machine's: the tests build the VM of Windows with MinGW - its platform package and its libraries)
+            target ??= TargetProfile.Host;
+            bool windows = target.Native.Platform == TargetProfile.Windows.Native.Platform;
             Directory.CreateDirectory(folder);
             foreach (var (path, resource) in Sources())
             {
-                string target = Path.Combine(folder, path.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                string written = Path.Combine(folder, path.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(written)!);
                 using var stream = Asm.GetManifestResourceStream(resource)!;
-                using var file = File.Create(target);
+                using var file = File.Create(written);
                 stream.CopyTo(file);
             }
             string runtime = Path.Combine(folder, "runtime");
-            NativeRuntimeFiles.WriteTo(runtime, TargetProfile.Host.Native.Platform);
+            NativeRuntimeFiles.WriteTo(runtime, target.Native.Platform);
             foreach (string sub in new[] { "platform", "abi" })
             {
                 string from = Path.Combine(runtime, sub), to = Path.Combine(folder, sub);
@@ -146,7 +149,7 @@ namespace fire.Compiler
             var sb = new StringBuilder();
             sb.AppendLine("/* The program fire (native/vm/fire.c), built by forge (src/fire.Compiler/CVm.cs). */");
             // (the libraries the VM links: CompilerCommand reads them from here)
-            if (OperatingSystem.IsWindows()) sb.AppendLine("// fire-link: ws2_32");
+            if (windows) sb.AppendLine("// fire-link: ws2_32");
             else
             {
                 sb.AppendLine("// fire-link: pthread");

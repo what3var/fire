@@ -367,9 +367,15 @@ static class LinkageTests
         string placed = Path.Combine(built, "fire_gfx.dll");
         File.Copy(dll, placed, true);
         File.SetLastWriteTimeUtc(placed, DateTime.UtcNow.AddDays(1));   // (newer than the sources and the compiler: taken as it is)
+        // (and built against the runtime of that forge: the stamp it wants, as it says itself - `forge pkglibplan`)
+        string plan = RunWine($"\"{Path.Combine(winForge, "forge.exe")}\" pkglibplan graphics+windows");
+        string stamp = plan.Split('\n').FirstOrDefault(l => l.StartsWith("runtime ", StringComparison.Ordinal))?.Substring(8).Trim() ?? PackageLibrary.GraphicsRuntimeKey(graphics, windows, TargetProfile.Windows);
+        File.WriteAllText(placed + ".runtime", stamp);
         string shown = RunWine($"\"{Path.Combine(winForge, "forge.exe")}\" run window.fire");
-        Check("VM unter Wine (forge.exe win-x64): ein ui-Fenster oeffnet (Tick True) mit der Bibliothek von MinGW", shown.Contains("open True\nend"), shown);
+        Check("VM unter Wine (forge.exe win-x64): ein ui-Fenster oeffnet (Tick True) mit der Bibliothek von MinGW", shown.Contains("open True\nend"),
+            $"{shown}\n(placed {placed}, stamp {File.ReadAllText(placed + ".runtime")} - `forge.exe pkglibplan graphics+windows` names the stamp it wants)");
         File.Delete(placed);
+        File.Delete(placed + ".runtime");
         string missing = RunWine($"\"{Path.Combine(winForge, "forge.exe")}\" run window.fire");
         Check("VM unter Wine ohne C-Compiler: new Window sagt, warum kein Fenster kommt (die Bibliothek kann nicht gebaut werden)",
             missing.Contains("caught: No display") && missing.Contains("C compiler") && missing.Contains("end"), missing);

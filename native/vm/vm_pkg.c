@@ -306,22 +306,27 @@ static const char* vmPkgRid(void) {
 #endif
 }
 
-static bool vmPkgExists(const char* path) { FILE* f = fopen(path, "rb"); if (f) fclose(f); return f != NULL; }
+static bool vmPkgExists(const char* path) { FILE* f = vmFopen(path, "rb"); if (f) fclose(f); return f != NULL; }
 
 /* `dir/sub/<package>/tail/file` for every package folder of dir/sub; true with the path in `out`. */
 static bool vmPkgScan(const char* dir, const char* sub, const char* tail, const char* file, char* out, size_t cap) {
 #if defined(_WIN32)
-    char pattern[1024];
-    WIN32_FIND_DATAA fd;
+    /* (UTF-8 paths: the wide functions) */
+    char pattern[1024], name[1024];
+    WIN32_FIND_DATAW fd;
     HANDLE h;
+    wchar_t* wide;
     snprintf(pattern, sizeof pattern, "%s/%s%s*", dir, sub, *sub ? "/" : "");
-    h = FindFirstFileA(pattern, &fd);
+    wide = fire_plat_toWide(pattern);
+    h = wide ? FindFirstFileW(wide, &fd) : INVALID_HANDLE_VALUE;
+    free(wide);
     if (h == INVALID_HANDLE_VALUE) return false;
     do {
-        if (fd.cFileName[0] == '.' || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-        snprintf(out, cap, "%s/%s%s%s/%s/%s", dir, sub, *sub ? "/" : "", fd.cFileName, tail, file);
+        if (fd.cFileName[0] == L'.' || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        fire_plat_toUtf8(fd.cFileName, -1, name, sizeof name);
+        snprintf(out, cap, "%s/%s%s%s/%s/%s", dir, sub, *sub ? "/" : "", name, tail, file);
         if (vmPkgExists(out)) { FindClose(h); return true; }
-    } while (FindNextFileA(h, &fd));
+    } while (FindNextFileW(h, &fd));
     FindClose(h);
     return false;
 #else
@@ -355,7 +360,8 @@ static bool vmPkgFindIn(const char* dir, const char* file, char* out, size_t cap
 }
 
 static bool vmPkgFind(const char* file, char* out, size_t cap) {
-    const char* path = getenv("FIRE_PKG_PATH");
+    char given[8192];
+    const char* path = vmGetenv("FIRE_PKG_PATH", given, sizeof given);
 #if defined(_WIN32)
     const char sep = ';';
     bool absolute = file[0] == '/' || file[0] == '\\' || (file[0] && file[1] == ':');
@@ -375,6 +381,30 @@ static bool vmPkgFind(const char* file, char* out, size_t cap) {
         path = end ? end + 1 : NULL;
     }
     return g_vmPkgProgramDir && vmPkgFindIn(g_vmPkgProgramDir, file, out, cap);
+}
+
+/* The name of a library in the way of this system: a program file names the libraries of its packages as the machine that compiled it calls them
+ * (PackageLibrary.FileNameFor: libfire_pkg_x.so, libfire_pkg_x.dylib, fire_pkg_x.dll) - the same program file runs on another system with its library
+ * there. False when `file` is no such name or already this system's. */
+static bool vmPkgLocalName(const char* file, char* out, size_t cap) {
+    size_t n = strlen(file), stem;
+    const char* start = file;
+    bool lib = false;
+#if defined(_WIN32)
+    const char *prefix = "", *ext = ".dll";
+#elif defined(__APPLE__)
+    const char *prefix = "lib", *ext = ".dylib";
+#else
+    const char *prefix = "lib", *ext = ".so";
+#endif
+    if (strchr(file, '/') || strchr(file, '\\')) return false;
+    if (n > 3 && strcmp(file + n - 3, ".so") == 0) { stem = n - 3; lib = true; }
+    else if (n > 6 && strcmp(file + n - 6, ".dylib") == 0) { stem = n - 6; lib = true; }
+    else if (n > 4 && (strcmp(file + n - 4, ".dll") == 0 || strcmp(file + n - 4, ".DLL") == 0)) stem = n - 4;
+    else return false;
+    if (lib && stem > 3 && strncmp(file, "lib", 3) == 0) { start += 3; stem -= 3; }
+    snprintf(out, cap, "%s%.*s%s", prefix, (int)stem, start, ext);
+    return strcmp(out, file) != 0;
 }
 
 static void* vmPkgSym(void* h, const char* name) {
@@ -405,13 +435,13 @@ static VmPkgLib* vmPkgLoad(const char* file) {
     lib->next = g_vmLibs;
     g_vmLibs = lib;
     if (!*file) { lib->failure = vmPkgDup("the package has no native library"); return lib; }
-    if (!vmPkgFind(file, path, sizeof path)) {
+    if (!vmPkgFind(file, path, sizeof path) && !(vmPkgLocalName(file, why, sizeof why) && vmPkgFind(why, path, sizeof path))) {
         snprintf(why, sizeof why, "it is not in the folders of FIRE_PKG_PATH, nor next to the program (build it with `forge run` of a program that imports the package, or `forge prebuild-standard`)");
         lib->failure = vmPkgDup(why);
         return lib;
     }
 #if defined(_WIN32)
-    lib->handle = (void*)LoadLibraryA(path);
+    lib->handle = fire_plat_dlopen(path);   /* (UTF-8: LoadLibraryW) */
     if (!lib->handle) { snprintf(why, sizeof why, "%s cannot be loaded (error %lu)", path, (unsigned long)GetLastError()); lib->failure = vmPkgDup(why); return lib; }
 #else
     lib->handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);

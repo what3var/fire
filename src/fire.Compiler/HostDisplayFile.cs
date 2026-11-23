@@ -38,7 +38,10 @@ namespace fire.Compiler
             _capacity = capacity;
             _frameOffset = HeaderSize + (long)slots * SlotSize;
             long total = _frameOffset + capacity;
-            var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite);
+            // (Windows: the program maps the same file - CreateFileMapping/MapViewOfFile, its views and these are coherent; the program opens it with FILE_SHARE_DELETE,
+            // so the file goes when the last handle closes - also when spark ends without Dispose; File.Delete would fail while the program still maps it)
+            var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | (OperatingSystem.IsWindows() ? FileShare.Delete : FileShare.None),
+                4096, OperatingSystem.IsWindows() ? FileOptions.DeleteOnClose : FileOptions.None);
             stream.SetLength(total);
             _file = MemoryMappedFile.CreateFromFile(stream, null, total, MemoryMappedFileAccess.ReadWrite, HandleInheritability.None, leaveOpen: false);
             _view = _file.CreateViewAccessor(0, total, MemoryMappedFileAccess.ReadWrite);

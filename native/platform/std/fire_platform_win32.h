@@ -156,13 +156,12 @@ static inline wchar_t* fire_plat_toWide(const char* utf8) {
 
 /* The arguments without the program's name, split from the command line by the rules of the C runtime (quotes, backslashes before quotes). `main`'s argv
  * is in the ANSI code page, the command line is not. */
-static inline void fire_plat_eachArg(int argc, char** argv, void (*fn)(const char* utf8, void* ctx), void* ctx) {
+static inline void fire_plat_eachCommandLineArg(void (*fn)(const char* utf8, void* ctx), void* ctx) {
     const wchar_t* p = GetCommandLineW();
     size_t len = wcslen(p);
     wchar_t* arg = (wchar_t*)malloc(sizeof(wchar_t) * (len + 1));
     char* utf8 = (char*)malloc(len * 4 + 4);
     int index = 0;
-    (void)argc; (void)argv;
     if (arg == NULL || utf8 == NULL) { free(arg); free(utf8); return; }
     while (*p) {
         size_t n = 0;
@@ -199,6 +198,18 @@ static inline void fire_plat_eachArg(int argc, char** argv, void (*fn)(const cha
     free(arg);
     free(utf8);
 }
+#if defined(FIRE_ARGS_UTF8)
+/* The entry point handed over UTF-8 arguments it split from the wide command line itself (the VM: `fire run x.fbc a` gives the program only `a`, fire.c). */
+static inline void fire_plat_eachArg(int argc, char** argv, void (*fn)(const char* utf8, void* ctx), void* ctx) {
+    int i;
+    for (i = 1; i < argc && argv != NULL; i++) fn(argv[i], ctx);
+}
+#else
+static inline void fire_plat_eachArg(int argc, char** argv, void (*fn)(const char* utf8, void* ctx), void* ctx) {
+    (void)argc; (void)argv;
+    fire_plat_eachCommandLineArg(fn, ctx);
+}
+#endif
 
 static inline int fire_plat_programPath(char* out, size_t cap) {
     wchar_t buf[4096];
@@ -294,8 +305,11 @@ static inline void fire_plat_envEach(void (*fn)(const char* name, size_t nameLen
 static inline void* fire_plat_dlopen(const char* path) {
     wchar_t* wide = fire_plat_toWide(path);
     HMODULE h;
+    wchar_t* c;
     if (wide == NULL) return NULL;
-    h = LoadLibraryW(wide);
+    for (c = wide; *c; c++) if (*c == L'/') *c = L'\\';   /* (LoadLibrary wants backslashes) */
+    /* a full path: what the DLL needs is looked for next to it first (a package's DLL with the DLLs it brings; undefined for a relative one) */
+    h = ((wide[0] && wide[1] == L':' && wide[2] == L'\\') || (wide[0] == L'\\' && wide[1] == L'\\')) ? LoadLibraryExW(wide, NULL, LOAD_WITH_ALTERED_SEARCH_PATH) : LoadLibraryW(wide);
     free(wide);
     return (void*)h;
 }

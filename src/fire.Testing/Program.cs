@@ -25,6 +25,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "publish") { Enviro
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "forgereport") { Environment.ExitCode = TestResume.Group("ForgeReportTests", ForgeReportTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=cvmrun: spark on the VM in C - Run/Debug as a child process `fire run x.fbc` against a fake fire and with the real forge and fire (CVmRunTests.cs; seconds)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmrun") { Environment.ExitCode = TestResume.Group("CVmRunTests", CVmRunTests.Run, 0) == 0 ? 0 : 1; return; }
+// FIRE_TESTS_ONLY=cvmwin: the VM in C on Windows - fire.exe built with MinGW, run under Wine: the command line, a sample of the corpus, packed programs, FIRE_DISPLAY_SHM, __HostCommand, FIRE_DEVICE_HOST (CVmWindowsTests.cs; minutes)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmwin") { Environment.ExitCode = TestResume.Group("CVmWindowsTests", CVmWindowsTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=explorer: the filter, Sync and Show All Files of spark's solution explorer (ExplorerTests.cs; seconds, nothing installed)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "explorer") { Environment.ExitCode = TestResume.Group("ExplorerTests", ExplorerTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=editorchecks: how spark checks the documents in the background while typing - debounce, cancellation, stale results, the gate of the analyses (BackgroundCheckTests.cs; seconds)
