@@ -208,7 +208,8 @@ static Value vmHostCommand(OwnList* list) {
 }
 
 /* CallExtern: a function of a C library (`#extern "lib"` + `extern int f(int)`, SPEC 8.1) - by its signature, like Library (VM.ResolveDynamicExtern). An
- * `inline c` function needs a C compiler while the program runs: not in this VM. */
+ * `inline c` function's body is C that only a native build has (ROADMAP 13.2): its call is a catchable ArgumentException, as the call of an `extern` without a
+ * library - the texts of the C# VM (its InvalidOperationException, which that VM made an ArgumentException). */
 static Value vmCallExtern(VmProgram* p, const char* name, int argc, const Value* args, OwnList* list) {
     VmExtern* e = NULL;
     uint32_t i;
@@ -216,7 +217,15 @@ static Value vmCallExtern(VmProgram* p, const char* name, int argc, const Value*
     for (i = 0; i < p->nexterns; i++) if (p->externs[i].name == name) e = &p->externs[i];
     if (!e) { snprintf(text, sizeof text, "The extern function '%s' is not declared.", name); fatal(text); }
     if (!e->lib && !e->inlineC && argc == 0 && strcmp(name, "__HostCommand") == 0) return vmHostCommand(list);
-    if (e->inlineC || !e->lib) { snprintf(text, sizeof text, "the inline C function %s", name); vmUnsupported(text, NULL); }
+    if (e->inlineC) {
+        snprintf(text, sizeof text, "'%s' is an inline C function: it runs only in a native build (give the virtual machine an alternative with '#if native ... #else ... #endif').",
+            e->displayName ? e->displayName : name);
+        return fireError("ArgumentException", text);
+    }
+    if (!e->lib) {
+        snprintf(text, sizeof text, "'%s' is declared extern, but neither linked manually (ExternRegistry.Register in the host) nor assigned to a native library with '#extern \"libName\"'.", name);
+        return fireError("ArgumentException", text);
+    }
 #ifdef VM_LIB_CALLS
     if (!e->fn) {
         void* h = fire_plat_dlopen(e->lib);

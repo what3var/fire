@@ -12253,6 +12253,10 @@ else
         string vmInline = vmOutput("inline c int Add(int a, int b) {\n#if defined(X)\n  return 0;\n#endif\n  return a + b; }\nprint(1)\ntry { print(Add(1, 2)) } catch (e) { print(e.message) }\nvar inline = 3\nprint(inline)");
         string vmInlineMethod = vmOutput("class M {\n  static inline c int Add(int a, int b) { return a + b; }\n}\ntry { print(M.Add(1, 2)) } catch (e) { print(e.message) }");
         CheckNat("inline c als Methode in der VM: der Aufruf ist ein Fehler, der die Methode nennt (M.Add)", vmInlineMethod.StartsWith("'M.Add' is an inline C function"), vmInlineMethod);
+        // (the class and the texts of the C# VM: its InvalidOperationException became a catchable ArgumentException - also for an `extern` without a library)
+        string vmInlineClass = vmOutput("inline c int Add(int a, int b) { return a + b; }\ntry { Add(1, 2) } catch (ArgumentException e) { print(\"caught\") }\nextern int NoLib(int a)\ntry { NoLib(1) } catch (ArgumentException e) { print(e.message) }\nprint(\"end\")");
+        CheckNat("inline c in der VM: eine abfangbare ArgumentException; ein extern ohne Bibliothek ebenso",
+            vmInlineClass == "caught\n'NoLib' is declared extern, but neither linked manually (ExternRegistry.Register in the host) nor assigned to a native library with '#extern \"libName\"'.\nend\n", vmInlineClass);
         CheckNat("inline c in der VM: der Aufruf ist ein Fehler, #if im C-Rumpf gehoert C, 'inline' bleibt ein Name",
             vmInline.StartsWith("1\n'Add' is an inline C function: it runs only in a native build") && vmInline.EndsWith("\n3\n"), vmInline);
         string InlineError(string source) { try { new Linker().CompileAndLink(new[] { source }); return ""; } catch (Exception ex) { return ex.Message; } }

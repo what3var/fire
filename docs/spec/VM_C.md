@@ -149,8 +149,8 @@ Ordnern der Bibliotheken; der Ordner geht, wenn das Programm endet.
   `cvm/tables/bridges.def`), nicht mehr aus den C#-Bridges; die Host-Natives der Pakete sind beim Übersetzen nur Namen.
 * `FIRE_VM_ENGINE=dotnet` (die .NET-Einzeldatei, `fire.Runtime.Packer`) ist weg: `forge build --engine vm` packt nur noch `fire`.
 * **Geändert**: `Environment.ProgramPath` ist bei `forge run` der Pfad von `fire` (wie bei forge-c), in der C#-VM war es die letzte Quelle.
-* **Offen** (gefunden dabei): der Aufruf einer `inline c`-Funktion beendet ein Programm in `fire` (`fire runtime error: the VM in C does not support the inline
-  C function ... yet`), die C#-VM warf eine abfangbare Ausnahme (`'M.Add' is an inline C function: it runs only in a native build`).
+* **Behoben** (gefunden dabei): der Aufruf einer `inline c`-Funktion beendete ein Programm in `fire`; jetzt ist er wie in der C#-VM eine abfangbare
+  `ArgumentException` (`'M.Add' is an inline C function: it runs only in a native build ...`).
 * **Tests**: `tests/compare-commands.sh` gegen forge-c 100 von 103 gleich (die drei: Dateien nativer Builds und die gepackte Datei von `-m debug`, die
   schon vorher abwichen - das C#-forge vor dieser Änderung schreibt dieselben, die gepackte Datei ist von Lauf zu Lauf verschieden); im Testprogramm
   laufen die Programme der Prüfungen in `fire` (`CVmTest`: übersetzt im Testprogramm, `fire run` mit `FIRE_PRINT_RECORDS`; `CVmTest.Debug` unter dem
@@ -455,7 +455,8 @@ Eine ABI, in der die Bibliothek die `Value`s der VM direkt benutzt (Roadmap: "sp
 ganze Zahlen (Zeiger, bool, char, int jeder Breite - auf 64 Bit erweitert) und Floats (ein `float[32]` als die Bits eines float in der unteren Hälfte des
 Registers) werden getrennt gezählt, die Funktion wird als eine mit 8 ganzzahligen und 8 Float-Parametern gerufen. Das gilt für die Aufrufkonventionen,
 in denen beide eigene Register der Reihe nach haben (System V x86-64, AArch64) - unter Windows x64 ist eine Signatur "nicht bekannt" (Get sagt es).
-`extern` mit `#extern "lib"` geht denselben Weg (CallExtern); `inline c` braucht einen C-Compiler zur Laufzeit und fehlt. Fire-Plugins
+`extern` mit `#extern "lib"` geht denselben Weg (CallExtern); `inline c` läuft nur nativ - sein Aufruf ist wie in der C#-VM eine abfangbare
+`ArgumentException` (ebenso ein `extern` ohne Bibliothek). Fire-Plugins
 (`.fireplugin`, `__LibCall(1)`/`__LibCall(5)`): siehe [Plugins](#plugins).
 
 ## Plugins
