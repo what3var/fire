@@ -13,7 +13,7 @@ namespace fire.Editor
 {
     /// <summary>
     /// Encapsulates one compile+execute run of a script for the
-    /// thread-capable step debugger: takes an IDebugTarget (fire.Debugging - a native program or `fire`, the VM in C: NativeDebugTarget; the C# VM's VmDebugTarget only in the tests, DebugSessionVm.cs),
+    /// thread-capable step debugger: takes an IDebugTarget (fire.Debugging - a native program or `fire`, the VM in C: NativeDebugTarget),
     /// afterwards holds the main thread PLUS every thread created at runtime via `fire`
     /// as one DebugThreadContext instance each (see
     /// there - EACH of them runs on its OWN background thread, NEVER on
@@ -61,12 +61,11 @@ namespace fire.Editor
 
         /// <summary>Source index (see Bytecode.Chunk.MarkLine/VM.CurrentLocation),
         /// from which the first OWN source of the caller (the `sources` that
-        /// went to Compile()) begins in the compiled program - forwarding
-        /// of Runtime.RuntimeSession.FirstUserSourceIndex (see there), only valid
-        /// after a successful Compile() call (0 before).</summary>
+        /// went to the target) begins in the program - from the target, only valid
+        /// once a target is attached (0 before).</summary>
         public int FirstUserSourceIndex { get; private set; }
 
-        /// <summary>The file of each source by source index (see RuntimeSession.SourceFiles); empty before the first successful Compile().</summary>
+        /// <summary>The file of each source by source index (the sources the target reports); empty before a target is attached.</summary>
         public IReadOnlyList<string?> SourceFiles { get; private set; } = Array.Empty<string?>();
 
         /// <summary>The host's shared DeviceManager that scripts with `#import "devices"` use (null: every script

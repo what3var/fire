@@ -93,19 +93,6 @@ static class ProgramFileTests
         print(9223372036854775807)
         """;
 
-    private static List<string> Output(Func<Func<Value[], Value>, Action> build)
-    {
-        var lines = new List<string>();
-        try
-        {
-            build(args => { lock (lines) lines.Add(args.Length > 0 ? args[0].ToString()! : ""); return Value.MakeUndefined(); })();
-        }
-        catch (Exception ex) { lines.Add("AUSNAHME " + ex.GetType().Name + ": " + ex.Message); }
-        VM.ResetTerminateForTests();
-        Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
-        return lines;
-    }
-
     /// <summary>What must hold for every program: the text and the bytes survive the file.</summary>
     private static void RoundTrip(string title, Func<LinkedProgram> link)
     {

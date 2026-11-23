@@ -191,11 +191,7 @@ static class BiosTests
             }
             string BiosVm(string source)
             {
-                var linked = new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, bios16);
-                var lines = new List<string>();
-                try { fire.Runtime.Session.Build(linked, VmExecutionMode.Release, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run(); }
-                finally { Value.WordBits = 64; Value.Ints32 = false; Value.Ints16 = false; Value.SingleFloats = false; }
-                return string.Concat(lines.Select(l => l + "\n"));
+                return CVmTest.TargetOutput(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, bios16));
             }
             string biosVm = BiosVm(dosSource);
             var biosRun = RunBios16(dosSource, "bios16");

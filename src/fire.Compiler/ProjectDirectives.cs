@@ -4,8 +4,7 @@ using fire.Values;
 
 namespace fire.Compiler
 {
-    /// <summary>The directives of a program the compiler knows beyond the built-in ones (`#import`) - for the Linker and the live diagnostics of spark alike (it was
-    /// RuntimeSession.CreateProjectDirectiveRegistry before M1).</summary>
+    /// <summary>The directives of a program the compiler knows beyond the built-in ones (`#import`) - for the Linker and the live diagnostics of spark alike.</summary>
     public static class ProjectDirectives
     {
         /// <summary>Builds the DirectiveRegistry that real programs (see

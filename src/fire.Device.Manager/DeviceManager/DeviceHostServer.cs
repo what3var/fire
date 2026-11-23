@@ -16,7 +16,7 @@ namespace fire.Device.Manager.DeviceManager
     /// The devices of the host for programs in another process (docs/spec/VM_C.md, "Das geteilte Gerät"; M1 (3)): a program that spark runs in `fire` (the VM in C) asks the
     /// `dev_*` of its host (native/abi/fire_pkg_abi.h) over a local connection - FIRE_DEVICE_HOST=tcp:127.0.0.1:PORT;token=T (<see cref="EnvironmentValue"/>), the other
     /// side is native/vm/vm_devhost.c - and this server answers with the shared <see cref="DeviceManager"/> of the editor: its drivers (also those of the driver
-    /// agent), its sharing, its packet trace - as the C# VM in spark's process did (src/fire.Runtime/Host/PackageHost.Devices.cs). One connection per program;
+    /// agent), its sharing, its packet trace - as the C# VM in spark's process did (its PackageHost.Devices.cs, gone since M1). One connection per program;
     /// what a device receives waits in a queue per device and connection until the program polls it; when the connection ends (the program ends), its hooks go.
     /// The protocol: vm_devhost.c (binary, little-endian; a request, its answer).
     /// </summary>

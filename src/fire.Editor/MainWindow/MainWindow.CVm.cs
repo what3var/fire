@@ -13,7 +13,7 @@ namespace fire.Editor
     // (`forge bytecode ... --report json`, with the text of the editor as overlays; its report names the libraries of the packages and the `fire` of the program's widths),
     // then spark starts `fire run x.fbc` - Release/Performance: its output in the Output panel, a line below it is its input, the exit code in the status bar, Stop kills it;
     // Debug: with FIRE_DEBUG (TCP; its input still through the pipe), debugged by NativeDebugTarget as a native program is (the same panels, without the operand stack; its hello says engine
-    // "vm"). (M1: the C# VM in spark's process - FIRE_SPARK_VM=dotnet, DebugSession.CompileAsync, VmDebugTarget - is gone; every run is a child process.)
+    // "vm"). (Every run is a child process.)
     public partial class MainWindow
     {
         /// <summary>The plain run in _nativeRun is a program of the VM (not a native build).</summary>

@@ -2,7 +2,7 @@
  * (its drivers, the sharing of a device between the IDE and a program, the packet trace) and starts a program in `fire` with
  * FIRE_DEVICE_HOST=tcp:127.0.0.1:PORT;token=T. Then the `dev_*` of fire_host (native/abi/fire_pkg_abi.h) - what the library of the package devices asks the host
  * (fire_bridge_devices.h: a device of the host is forwarded to the host's manager) - are calls over that connection instead of the C# delegates the C# VM
- * gives the library (src/fire.Runtime/Host/PackageHost.Devices.cs). Without the variable, or when nobody answers, the `dev_*` stay NULL: the library takes
+ * gives the library (PackageHost.Devices.cs of the C# VM, gone since M1). Without the variable, or when nobody answers, the `dev_*` stay NULL: the library takes
  * the devices of the platform itself (loopback, serial ports), as before.
  *
  * The protocol (little-endian; one call at a time - a lock - and the answer before the next; src/fire.Device.Manager/DeviceManager/DeviceHostServer.cs):

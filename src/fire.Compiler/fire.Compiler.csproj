@@ -19,9 +19,6 @@
 </ItemGroup>
 	
   <ItemGroup>
-    <!-- The C# VM: since M1 only for code nothing of forge or spark runs any more - RuntimeSession.cs, Debugging/VmDebugTarget.cs, HostRenderer.cs,
-         GraphicsLibrary.InProcess.cs, PackageImports.InProcess.cs, Tables.Bridges.cs (docs/ROADMAP_C_PORT.md, M1); removing it is deleting those files and this line. -->
-    <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
     <ProjectReference Include="..\fire.Device.Manager\fire.Device.Manager.csproj" />   <!-- spark's devices (PackageDriverAgent, DeviceHostServer) -->
 
     <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />

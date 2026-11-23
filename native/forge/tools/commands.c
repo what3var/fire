@@ -341,7 +341,7 @@ static PjPlan* tcFilesPlan(FcCtx* c, const TcOptions* o, FcList* paths, FcList* 
     plan->baseFolder = baseFolder;
     return plan;
 }
-/* the files of `forge test` (RuntimeSession.Build/NativeBuilder.Build with their paths, as `forge build <file>`: each `#include` from the folder of its file, a
+/* the files of `forge test` (the Linker/NativeBuilder.Build with their paths, as `forge build <file>`: each `#include` from the folder of its file, a
  * message names its file) - each File.ReadAllText */
 static PjPlan* tcTestFilesPlan(FcCtx* c, FcList* paths, FcList* defines, int types) {
     TcOptions o;

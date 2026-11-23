@@ -4,8 +4,8 @@ using System.Collections.Generic;
 namespace fire.Debugging
 {
     /// <summary>
-    /// A program under the debugger, independent of the engine that runs it (docs/ROADMAP.md section 8): the virtual machine in this process
-    /// (<see cref="VmDebugTarget"/>) or a native debug build that talks to spark over the debug protocol (<see cref="NativeDebugTarget"/>,
+    /// A program under the debugger, independent of the engine that runs it (docs/ROADMAP.md section 8): `fire`, the VM in C, or a native debug build -
+    /// both talk to spark over the debug protocol (<see cref="NativeDebugTarget"/>,
     /// docs/spec/NATIVE_DEBUG_PROTOCOL.md). spark's DebugSession, its thread contexts and the debugger panels only see this interface,
     /// <see cref="IDebugThread"/> and <see cref="DebugValue"/> - never VM, Value or ObjectInstance.
     ///

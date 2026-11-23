@@ -514,20 +514,10 @@ static partial class NativeDebugTests
 
     static string Loc(int src, int line, int firstUser) => src >= firstUser ? $"{line}" : $"p{src}:{line}";
 
-    static string VmDisplay(Value v) => v.Kind switch
-    {
-        ValueKind.Class => ((ObjectInstance)v.AsObjectRef()).ClassName,
-        ValueKind.Array => $"Array[{v.AsArray().Length}]",
-        _ => v.ToString(),
-    };
-
     static string NatDisplay(JsonElement v) => v.GetProperty("display").GetString()!;
 
-    static readonly object VmLock = new();
-
-    /// <summary>The VM: runs the plan (or every step), the stops as text. (One at a time: `terminate` and the handlers are state of the process.)</summary>
     /// <summary>The reference of the plans: the VM - the VM in C (M1), `fire` (beside the tests) under the debugger over the protocol, the same plan as for a native
-    /// program (RunNative). The C# VM (RunCsVm) is the reference only with FIRE_TESTS_DOTNET_VM=1 (RunVmEngine: the VM in C against it).</summary>
+    /// program (RunNative).</summary>
     static (List<string> Stops, List<string> Output) RunVm(string script, int[] bps, IEnumerable<Op> plan, bool details, Func<Op?>? stepAll = null)
     {
         string dir = Path.Combine(Path.GetTempPath(), "fire-vmref-" + Guid.NewGuid().ToString("N"));
@@ -540,84 +530,6 @@ static partial class NativeDebugTests
             return (stops, output);
         }
         finally { try { Directory.Delete(dir, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
-    }
-
-    /// <summary>The same plan in the C# VM of this process (fire.Runtime - it goes with it, M1).</summary>
-    static (List<string> Stops, List<string> Output) RunCsVm(string script, int[] bps, IEnumerable<Op> plan, bool details, Func<Op?>? stepAll = null)
-    {
-        lock (VmLock) return RunVmLocked(script, bps, plan, details, stepAll);
-    }
-
-    static (List<string> Stops, List<string> Output) RunVmLocked(string script, int[] bps, IEnumerable<Op> plan, bool details, Func<Op?>? stepAll)
-    {
-        VM.ResetTerminateForTests();
-        GlobalHandlers.ResetForTests();
-        var lines = new List<string>();
-        var session = RuntimeSession.Build(new[] { script }, VmExecutionMode.Debug, args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
-        var vm = session.VirtualMachine!;
-        vm.CaptureErrorTrace = true;
-        vm.PauseOnUnhandled = true;
-        int first = session.FirstUserSourceIndex;
-        var set = new HashSet<(int, int)>(bps.Select(l => (first, l)));
-        var stops = new List<string>();
-        string Describe(string reason)
-        {
-            if (reason == "unhandled" && vm.UnhandledTrace is { Count: > 0 } thrown)
-            {
-                // (paused at the throw: the position and the call stack are those of the throw site)
-                string message = "";
-                foreach (var (fieldName, fieldValue) in vm.UnhandledException!.Fields) if (fieldName == "message") message = fieldValue.ToString();
-                var top = thrown[0];
-                return $"unhandled {Loc(top.SourceIndex, top.Line, first)} d{vm.DebugCallDepth}" + (details ? $" trace[{string.Join(",", thrown.Select(t => Loc(t.SourceIndex, t.Line, first)))}] exc={vm.UnhandledException.ClassName}:{message}" : "");
-            }
-            var (src, line) = vm.CurrentLocation;
-            var sb = new StringBuilder($"{reason} {Loc(src, line, first)} d{vm.DebugCallDepth}");
-            if (!details || src < first) return sb.ToString();
-            sb.Append(" trace[").Append(string.Join(",", vm.CurrentTrace().Select(t => Loc(t.SourceIndex, t.Line, first)))).Append(']');
-            foreach (var level in vm.DebugScopeChain())
-                sb.Append(" {").Append(level.Depth).Append(level.IsFunctionTopLevel ? "T" : "").Append(':').Append(string.Join(",", level.Variables.Select(v => $"{v.Name}={VmDisplay(v.Value)}"))).Append('}');
-            sb.Append(" this=").Append(vm.DebugThisValue is Value t ? VmDisplay(t) : "-");
-            sb.Append(" g[").Append(string.Join(",", vm.DebugGlobals().Select(g => $"{g.Name}={VmDisplay(g.Value)}"))).Append(']');
-            if (vm.IsPausedOnUnhandled && vm.UnhandledException is { } ex)
-            {
-                string message = "";
-                foreach (var (fieldName, fieldValue) in ex.Fields) if (fieldName == "message") message = fieldValue.ToString();
-                sb.Append(" exc=").Append(ex.ClassName).Append(':').Append(message);
-            }
-            return sb.ToString();
-        }
-        bool Do(Op op) => op switch
-        {
-            Op.Continue => vm.RunUntilBreakpoint(set, () => false),
-            Op.StepInto => vm.StepInto(),
-            Op.StepOver => vm.StepLine(),
-            Op.StepOut => vm.StepOut(),
-            _ => vm.TryResumeUnhandled(),
-        };
-        int guard = 0;
-        foreach (var op in stepAll != null ? Repeat(stepAll) : plan)
-        {
-            if (op == Op.Resume)
-            {
-                stops.Add(vm.TryResumeUnhandled() ? "resumed" : "no-resume");
-                continue;
-            }
-            if (op == Op.StepOut && vm.DebugCallDepth == 0) { stops.Add("out-at-0"); continue; }
-            // (stopped at an unhandled exception that is not ignored: the thread is finished for the debugger - natively the exception goes on and ends the program)
-            if (vm.IsPausedOnUnhandled) { stops.Add("end"); break; }
-            bool more = Do(op);
-            if (vm.IsPausedOnUnhandled) stops.Add(Describe("unhandled"));
-            else if (!more) { stops.Add("end"); break; }
-            else stops.Add(Describe(op == Op.Continue ? "bp" : "step"));
-            if (++guard > 5000) { stops.Add("too many"); break; }
-        }
-        if (!vm.IsHalted && !vm.IsPausedOnUnhandled && (stops.Count == 0 || stops[^1] != "end"))
-        {
-            // the rest of the plan ran out: run to the end
-            vm.RunUntilEnd(() => false);
-        }
-        VM.ResetTerminateForTests();
-        lock (lines) return (stops, lines.ToList());
     }
 
     static IEnumerable<Op> Repeat(Func<Op?> next) { while (next() is Op op) yield return op; }

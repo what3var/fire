@@ -1,14 +1,12 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using fire.Benchmarks;
-using fire.Bytecode;
 using fire.Compiler;
-using fire.Parsing;
-using fire.Resolving;
 using fire.Runtime;
-using fire.Values;
 
-// Micro-benchmarks for the VM.
+// Micro-benchmarks for the VM - `fire`, the VM in C (docs/spec/VM_C.md); the programs are compiled here with the C# forge.
 //
 //   dotnet run -c Release --project src/fire.Benchmarks -- [Optionen]
 //
@@ -20,7 +18,8 @@ using fire.Values;
 //   --save FILE                             save the results (name=output) as a reference
 //   --check FILE                            check the results against a reference (exit code 1 on a difference)
 //
-// Only `VM.Run()` is measured (compiling does not count); shown: the shortest and the mean time.
+// Only running the program is measured (`fire --time`: "ran in"; compiling, starting the process, loading and taking down do not count); shown: the
+// shortest and the mean time. (Until M1 it measured the C# VM, `VM.Run()` - it went with fire.Runtime.)
 
 var options = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 for (int i = 0; i < args.Length; i++)
@@ -63,18 +62,24 @@ foreach (var mode in modes)
     {
         if (filter != null && !script.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
 
-        var times = new List<double>();
-        string output = string.Empty;
-        for (int run = 0; run <= runs; run++) // Run 0 = warm-up (JIT), does not count
+        var linked = new Linker { BasePath = Directory.GetCurrentDirectory(), PackageLibraries = true }.CompileAndLink(new[] { script.Source }, null, null, mode);
+        var (folder, file) = CVmRun.Write(linked, "fire-bench-");
+        try
         {
-            var (ms, text) = RunOnce(script.Source, mode);
-            output = text;
-            if (run > 0) times.Add(ms);
+            var times = new List<double>();
+            string output = string.Empty;
+            for (int run = 0; run <= runs; run++) // Run 0 = warm-up (caches of the machine), does not count
+            {
+                var (ms, text) = RunOnce(linked, file);
+                output = text;
+                if (run > 0) times.Add(ms);
+            }
+            double min = times.Min();
+            totals[mode] = totals.GetValueOrDefault(mode) + min;
+            results[script.Name] = output;
+            Console.WriteLine($"{script.Name,-8} {mode,-12} {min,9:F1} {times.Average(),10:F1}  {output}");
         }
-        double min = times.Min();
-        totals[mode] = totals.GetValueOrDefault(mode) + min;
-        results[script.Name] = output;
-        Console.WriteLine($"{script.Name,-8} {mode,-12} {min,9:F1} {times.Average(),10:F1}  {output}");
+        finally { try { Directory.Delete(folder, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
     }
 }
 foreach (var (mode, total) in totals)
@@ -104,25 +109,19 @@ if (options.TryGetValue("check", out var checkPath) && checkPath != null)
 }
 return 0;
 
-static (double Milliseconds, string Output) RunOnce(string source, VmExecutionMode mode)
+// One run of the program in `fire` with --time: the time of "ran in" and what it printed (an exception nobody caught: its line).
+static (double Milliseconds, string Output) RunOnce(LinkedProgram linked, string file)
 {
-    var output = new StringBuilder();
-    var sources = new[] { fire.Standard.Prelude.Source, source }
-        .Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), new HashSet<string>())).ToList();
-    var program = Parser.ParseMultiple(sources);
-    var natives = new NativeRegistry();
-    natives.Register("print", a => { output.Append(a[0].ToString()); return Value.MakeUndefined(); });
-    natives.RegisterBaseTypeNatives();
-    var resolved = Resolver.Resolve(program, natives.Names);
-    var compiled = Compiler.Compile(program, resolved, natives);
-    var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, executionMode: mode);
-
-    GC.Collect();
-    GC.WaitForPendingFinalizers();
-    var sw = Stopwatch.StartNew();
-    vm.Run();
-    sw.Stop();
-    if (vm.UnhandledException != null)
-        output.Append("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
-    return (sw.Elapsed.TotalMilliseconds, output.ToString());
+    var info = CVmRun.StartInfo(linked, file, Array.Empty<string>(), redirect: true);
+    info.ArgumentList.Insert(1, "--time");   // (fire run --time x.fbc)
+    using var process = Process.Start(info)!;
+    process.StandardInput.Close();
+    var errors = process.StandardError.ReadToEndAsync();
+    string output = process.StandardOutput.ReadToEnd().TrimEnd('\n', '\r');
+    process.WaitForExit();
+    string err = errors.Result;
+    var time = Regex.Match(err, @"ran in ([0-9.]+) ms");
+    if (CVmRun.UnhandledLine(err) is { } unhandled) output += "UNBEHANDELT: " + unhandled;
+    else if (process.ExitCode != 0) output += $"EXITCODE {process.ExitCode}: " + err.Trim();
+    return (time.Success ? double.Parse(time.Groups[1].Value, CultureInfo.InvariantCulture) : double.NaN, output);
 }
