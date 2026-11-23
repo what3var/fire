@@ -790,7 +790,7 @@ static int nbCmpObj(const void* a, const void* b) {
 }
 /* The commands of a split program: each unit to an object file (in the order of units), then the command that links them. */
 static FcList* nbSplitCommands(FcCtx* c, const NbToolchain* t, const FgTarget* target, FcList* units, const char* headerName, const char* nativesFile, const char* workDir,
-    const char* exe, bool gui, const NbToolchain* nativesToolchain) {
+    const char* exe, bool gui, const NbToolchain* nativesToolchain, FcList* extraObjects) {
     const char* header = nbCombine(c, workDir, headerName);
     FcList* commands = fcListNew(c);
     FcList* pairs = fcListNew(c);
@@ -810,6 +810,7 @@ static FcList* nbSplitCommands(FcCtx* c, const NbToolchain* t, const FgTarget* t
     /* (the objects in the order of the files, not of the compiles: the same program for the same units) */
     if (pairs->count > 1) qsort(pairs->items, (size_t)pairs->count, sizeof(void*), nbCmpObj);   /* (OrderBy is stable; the names differ) */
     for (i = 0; i < pairs->count; i++) fcListAdd(c, ordered, (void*)((NbObj*)pairs->items[i])->obj);
+    if (extraObjects) for (i = 0; i < extraObjects->count; i++) fcListAdd(c, ordered, extraObjects->items[i]);   /* (the units of packages, `native.units`) */
     if (nativesFile) fcListAdd(c, commands, nbCompilerCommand(c, nativesToolchain ? nativesToolchain : t, target, nativesFile, workDir, exe, false, NULL, gui, "c++", false, ordered, header, NULL, false));
     else {
         rest = fcListNew(c);
@@ -1245,6 +1246,56 @@ static void nbStableSort(FcList* l, int (*cmp)(const void*, const void*)) {
         l->items[k] = x;
     }
 }
+/* ---- `native.units` of packages (forge-c, Phase D 8): C files compiled on their own and linked into the program ----
+ * A package names in `units` C files that are no part of the generated program (packages/forge: libforge as one file, `forge amalgamate`): each is
+ * compiled to an object of its own (with the C compiler and the options of the program - its own macros and names stay in it) and linked in; the program
+ * gets the define FIRE_PKG_UNITS_<IMPORT> (upper case, letters and digits), so its bridge knows that the unit is there. In the order of the imports' keys. */
+typedef struct NbPkgUnit { const char* import; const char* file; const char* name; } NbPkgUnit;
+static const char* nbUnitName(FcCtx* c, const char* import, int index, bool upper) {
+    char* r = (char*)fcStr(c, import);
+    char* p;
+    for (p = r; *p; p++) {
+        if (*p >= 'a' && *p <= 'z') { if (upper) *p = (char)(*p - 32); }
+        else if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9'))) *p = '_';
+    }
+    return index > 0 ? fcFmt(c, "%s_%d", r, index + 1) : r;
+}
+static FcList* nbPackageUnits(FcCtx* c, FcStore* store, FcDict* instImports, const FcLinked* linked) {
+    FcList* r = fcListNew(c);
+    FcList* keys = fcListNew(c);
+    int i, k;
+    FC_DICT_EACH(linked->nativeImports, e) if (fcStartsWith((const char*)e->key, "pkg:")) fcListAdd(c, keys, (void*)e->key);
+    if (keys->count > 1) qsort(keys->items, (size_t)keys->count, sizeof(void*), fcCmpOrdinal);
+    for (i = 0; i < keys->count; i++) {
+        FcPkgImport* pi = fcStoreFindKey(c, store, (const char*)keys->items[i]);
+        FgInstImport* x = pi ? fgInstalledImport(c, instImports, pi) : NULL;
+        if (!x || !x->native || !x->native->units) continue;
+        for (k = 0; k < x->native->units->count; k++) {
+            NbPkgUnit* u = (NbPkgUnit*)fcAlloc(c, sizeof *u);
+            u->import = x->name;
+            u->file = fgPkgFile(c, x->dir, (const char*)x->native->units->items[k]);
+            u->name = fcFmt(c, "fire_unit_%s.c", nbUnitName(c, x->name, k, false));
+            fcListAdd(c, r, u);
+        }
+    }
+    return r;
+}
+/* the toolchain with the defines FIRE_PKG_UNITS_<IMPORT> of the units (a copy) */
+static NbToolchain* nbWithUnitDefines(FcCtx* c, NbToolchain* t, FcList* units) {
+    NbToolchain* r;
+    int i;
+    if (!units || units->count == 0) return t;
+    r = (NbToolchain*)fcAlloc(c, sizeof *r);
+    *r = *t;
+    r->args = t->args ? fcListCopy(c, t->args) : fcListNew(c);
+    for (i = 0; i < units->count; i++) {
+        const NbPkgUnit* u = (const NbPkgUnit*)units->items[i];
+        const char* flag = fcFmt(c, "%sFIRE_PKG_UNITS_%s", streq0(nbKind(t), "msvc") ? "/D" : "-D", nbUnitName(c, u->import, 0, true));
+        if (!fcListHasStr(r->args, flag)) fcListAdd(c, r->args, (void*)flag);
+    }
+    return r;
+}
+
 /* NativeBuilder.Build for linkage "source": translate and build. output is the program, or the folder for a toolchain that only writes files. */
 static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output) {
     NbResult r = { false, output, "", NULL };
@@ -1331,6 +1382,9 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
         NbToolchain* provided = NULL;
         bool gui = linked->asmInfo && linked->asmInfo->gui;   /* (program.Gui: #noconsole) */
         FcList* units = NULL;
+        FcList* pkgUnits = nbPackageUnits(c, &store, instImports, linked);
+        FcList* unitObjects = NULL;
+        FcList* unitCommands = NULL;
         FcList* sourceCommands;
         int sideBySide = 0, i;
         const char* cacheKey;
@@ -1348,11 +1402,31 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
             return r;
         }
         if (provided) { toolchain = provided; kind = nbKind(toolchain); }
+        toolchain = nbWithUnitDefines(c, toolchain, pkgUnits);
         /* (a quick build: the C of the program with the level of `--quick`; the natives of the packages in units of their own keep the toolchain's optimisation) */
         if (config->quick >= 0) {
             nativesToolchain = toolchain;
             toolchain = nbQuickApply(c, toolchain, config->quick);
             fcBufFmt(&log, "%s\n", nbQuickLogLine(c, config->quick, nbKind(toolchain)));
+        }
+        /* (the units of packages: copied next to the program, each compiled to an object of its own before the link - with the toolchain's optimisation) */
+        if (pkgUnits->count > 0) {
+            /* (without warnings: the unit is the package's code, not the program's - its compiler's options otherwise) */
+            NbToolchain* ut = (NbToolchain*)fcAlloc(c, sizeof *ut);
+            *ut = nativesToolchain ? *nativesToolchain : *toolchain;
+            ut->args = ut->args ? fcListCopy(c, ut->args) : fcListNew(c);
+            fcListAdd(c, ut->args, (void*)(streq0(kind, "msvc") ? "/w" : "-w"));
+            unitObjects = fcListNew(c);
+            unitCommands = fcListNew(c);
+            if (nbIsWatcom(kind) || streq0(kind, "custom")) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: the package '%s' has a unit of its own (`native.units`), which the toolchain '%s' does not build.", ((NbPkgUnit*)pkgUnits->items[0])->import, kind));
+            for (i = 0; i < pkgUnits->count; i++) {
+                const NbPkgUnit* u = (const NbPkgUnit*)pkgUnits->items[i];
+                const char* file = nbCombine(c, workDir, u->name);
+                const char* obj = nbChangeExtension(c, file, streq0(kind, "msvc") ? ".obj" : ".o");
+                if (!nbCopyFile(c, u->file, file)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: the unit '%s' of the package '%s' cannot be read.", u->file, u->import));
+                fcListAdd(c, unitObjects, (void*)obj);
+                fcListAdd(c, unitCommands, nbCompilerCommand(c, ut, target, file, workDir, obj, false, NULL, gui, "c", true, NULL, NULL, NULL, false));
+            }
         }
         /* (a split program: every unit compiled on its own, side by side - the costly ones first -, then one command links) */
         if (program.units) {
@@ -1360,9 +1434,16 @@ static NbResult nbBuild(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTa
             for (i = 0; i < program.units->count; i++) if (((FgSplitUnit*)program.units->items[i])->kind != SUK_Header) fcListAdd(c, units, program.units->items[i]);
             nbUnitOrderNatives = nativesToolchain != NULL;
             nbStableSort(units, nbUnitOrderCmp);
-            sourceCommands = nbSplitCommands(c, toolchain, target, units, ((FgSplitUnit*)program.units->items[0])->name, nativesFile, workDir, exe, gui, nativesToolchain);
+            sourceCommands = nbSplitCommands(c, toolchain, target, units, ((FgSplitUnit*)program.units->items[0])->name, nativesFile, workDir, exe, gui, nativesToolchain, unitObjects);
             sideBySide = units->count;
-        } else sourceCommands = nbBuildCommands(c, toolchain, target, cppFile, nativesFile, workDir, exe, gui, NULL);
+        } else sourceCommands = nbBuildCommands(c, toolchain, target, cppFile, nativesFile, workDir, exe, gui, unitObjects);
+        /* (the units of packages before the link) */
+        if (unitCommands) {
+            NbCommand* link = (NbCommand*)sourceCommands->items[sourceCommands->count - 1];
+            sourceCommands->count--;
+            for (i = 0; i < unitCommands->count; i++) fcListAdd(c, sourceCommands, unitCommands->items[i]);
+            fcListAdd(c, sourceCommands, link);
+        }
         if (config->stats && sourceCommands->count > 0 && (mapOptions = nsMapOptions(c, nbKind(toolchain), nsMapFileOf(c, exe))) != NULL) {
             NbCommand* last = (NbCommand*)sourceCommands->items[sourceCommands->count - 1];
             NbCommand* with = (NbCommand*)fcAlloc(c, sizeof *with);

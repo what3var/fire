@@ -341,6 +341,12 @@ word buffers as `FIRE_WORDS` and words as `FIRE_WORD`).
     "headers": [ "native/sensor_select.h", "native/sensor_linux.h", "native/sensor_mac.h", "native/sensor_common.h" ]
   }
   ```
+* **Units: C files compiled on their own** (forge in C only). `native.units` lists C files that are **not** put into the program's file: each is compiled as
+  a translation unit of its own (with the C compiler and options of the build, without warnings) and linked into the program - and into the library of the
+  package for the VM (position-independent, with hidden symbols). Its macros, `static` functions and system headers stay in it; what the bridge calls must
+  be an external function with a name of its own. The build defines `FIRE_PKG_UNITS_<IMPORT>` (upper case) for the program, so a bridge can tell that the
+  unit is there (a forge that does not know `units` leaves it out). The package forge is the example: `"units": [ "native/libforge.c" ]` - the whole
+  compiler as one C file (`forge amalgamate`, [forge](forge.md)). Not with Open Watcom, `custom` and the linkages `static`/`shared`/`plugin`.
 * **Using the platform layer of another package**: `native.uses` names imports whose `platformSources` this package needs as well - the layer of the other package
   is put before the own sources (its include guards keep it to one copy when both packages are imported). `graphics` reads its fonts and images through the file system of `io`:
 

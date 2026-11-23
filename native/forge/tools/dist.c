@@ -1,7 +1,7 @@
 /* native/forge/tools/dist.c - `forge-c package-dist` (docs/ROADMAP_C_PORT.md, Phase D step 6): the forge/VM part of a distribution of fire without .NET -
  * what the publish of fire.Compiler (forge.exe, FireVm.targets, StandardSources.targets) puts next to spark, made with a C compiler and forge-c only.
  *
- *   forge-c package-dist <folder> [--dry-run] [--name <program>] [--packages <folder>] [--no-vm] [--no-prebuilt]
+ *   forge-c package-dist <folder> [--dry-run] [--name <program>] [--packages <folder>] [--no-vm] [--no-prebuilt] [--no-embed]
  *
  * The layout (flat, as setup.iss installs the publish folder into {app}; spark starts forge from its own folder):
  *   <folder>/forge[.exe]          this forge-c (--name: another name; default forge, so that spark finds it)
@@ -10,6 +10,9 @@
  *                                 builds), vm/ and base/ (the sources of the VM, built on a machine without one next to forge)
  *   <folder>/Source/              the standard packages as projects (packages/ of the repository: StandardSources.EnsureInstalled installs them)
  *   <folder>/Prebuilt/<package>/<rid>/   the libraries of their natives for this machine (`prebuild-standard`)
+ *   <folder>/libfireforge.so, libfirevm.so (+ .key; fireforge.dll, firevm.dll)   libforge and libfirevm (`build-embed`, Phase D 8): the package script loads
+ *                                 libfirevm, a C host may link both. Built here from the sources of this forge-c (native/forge is not in the folder) and
+ *                                 stamped with the key the forge of the folder computes, so that it takes them as they are.
  * Packages/ (the store) and Toolchain/ are made by forge at run time. The VM and Prebuilt/ are built by the forge of the folder itself (it finds its
  * tables in native/tables next to it - forge.c), which checks the layout on the way. They are built for this machine: a distribution for Windows is made on
  * Windows (forge-c.exe from MinGW/w64devkit or cl), one for Linux on Linux. */
@@ -84,10 +87,10 @@ static int pdRunForge(const char* forge, char* const* argv) {
 }
 
 static const char* const pdUsage =
-    "usage: forge-c package-dist <folder> [--dry-run] [--name <program>] [--packages <folder>] [--no-vm] [--no-prebuilt]\n"
+    "usage: forge-c package-dist <folder> [--dry-run] [--name <program>] [--packages <folder>] [--no-vm] [--no-prebuilt] [--no-embed]\n"
     "Puts the forge/VM part of fire into <folder> without .NET: this forge-c (as forge), the VM in C with its variants, native/ (tables, runtime, VM\n"
     "sources), Source/ (the standard packages) and Prebuilt/ (the libraries of their natives for this machine) - the files setup.iss installs next to\n"
-    "spark. --dry-run lists the layout and builds nothing. --packages: the standard packages (default: packages/ of the repository of native/, else\n"
+    "spark, and libforge/libfirevm (build-embed; --no-embed: not). --dry-run lists the layout and builds nothing. --packages: the standard packages (default: packages/ of the repository of native/, else\n"
     "Source/ next to forge-c).\n";
 
 static int pdPackageDistMain(int argc, char** argv) {
@@ -96,7 +99,7 @@ static int pdPackageDistMain(int argc, char** argv) {
     const char* folder = NULL;
     const char* name = "forge";
     const char* packages = NULL;
-    bool dry = false, vm = true, prebuilt = true;
+    bool dry = false, vm = true, prebuilt = true, embed = true;
     const char* self = NULL;
     char selfBuf[4096];
     const char* forge;
@@ -115,6 +118,7 @@ static int pdPackageDistMain(int argc, char** argv) {
         if (streq0(a, "--dry-run")) dry = true;
         else if (streq0(a, "--no-vm")) vm = false;
         else if (streq0(a, "--no-prebuilt")) prebuilt = false;
+        else if (streq0(a, "--no-embed")) embed = false;
         else if (streq0(a, "--name") && i + 1 < argc) name = argv[++i];
         else if (streq0(a, "--packages") && i + 1 < argc) packages = argv[++i];
         else if (streq0(a, "--help") || streq0(a, "-h")) { fputs(pdUsage, stdout); fcCtxFree(c); return 0; }
@@ -190,6 +194,24 @@ static int pdPackageDistMain(int argc, char** argv) {
         printf("  %-34s %s prebuild-standard %s %s\n", fcFmt(c, "Prebuilt/<package>/%s/", nlRid()), forge, source, to);
         fflush(stdout);
         if (!dry && pdRunForge(forge, args) != 0) { fprintf(stderr, "package-dist: the libraries of the standard packages were not built.\n"); fcCtxFree(c); return 1; }
+    }
+    if (embed) {
+        /* libforge and libfirevm next to forge (build/embedlib.c): built from the sources of this forge-c, stamped with the key of the folder's native/ */
+        const char* own = nbNativeRoot;
+        const char* key;
+        const char* text = NULL;
+        FcBuf log = {0};
+        printf("  %-34s build-embed %s\n", fcFmt(c, "%s, %s", neLibName(c, 0), neLibName(c, 1)), folder);
+        fflush(stdout);
+        if (!dry) {
+            nbNativeRoot = nbCombine(c, folder, "native");
+            key = neKey(c);
+            nbNativeRoot = own;
+            fcBufStr(&log, "");
+            if (!neBuild(c, folder, key, &log, &text)) { fputs(log.p, stderr); fprintf(stderr, "package-dist: libforge and libfirevm were not built: %s\n", text); fcBufFree(&log); fcCtxFree(c); return 1; }
+            fputs(log.p, stdout);
+            fcBufFree(&log);
+        }
     }
     if (!dry) printf("done: %s\n", folder);
     fcCtxFree(c);

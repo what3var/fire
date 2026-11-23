@@ -8,11 +8,14 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The library 'forge' of fire: the compiler in the program - fire source or a project to a program file, its diagnostics as data (libforge, fire_embed.h)."
+    "description": "The library 'forge' of fire: the compiler in the program - fire source or a project to a program file, its diagnostics as data, the command line of forge (libforge as one C file, linked in; fire_embed.h)."
   },
   "native": {
     "sources": [
       "native/fire_bridge_forge.h"
+    ],
+    "units": [
+      "native/libforge.c"
     ],
     "discover": false,
     "functions": [
@@ -95,6 +98,20 @@
         "returns": "int",
         "arguments": 1,
         "c": "fire_forge_Main"
+      },
+      {
+        "name": "__ForgeRun",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_forge_Run"
+      },
+      {
+        "name": "__ForgeRunText",
+        "returns": "string",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_forge_RunText"
       }
     ],
     "reset": "fire_forge_reset",
@@ -105,7 +122,9 @@
     ],
     "linkLibraries": {
       "posix": [
-        "dl"
+        "dl",
+        "pthread",
+        "m"
       ]
     }
   }

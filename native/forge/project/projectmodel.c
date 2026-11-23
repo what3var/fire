@@ -25,6 +25,7 @@ typedef struct PjNative {
     FgSrcList* sources; const char* language; FcList* platformSources /* FgKeyed (FgSrcList*) */; FcList* platforms; FcList* linkLibraries /* FgKeyed (FcList*) */;
     FcList* functions /* FgPkgFn* */; FcList* bridge; FcList* exceptions; int threadSafe /* -1: not set */; const char* reset; FcList* uses /* FgNativeUse* */;
     FgSrcList* headers; int discover /* -1: not set */;
+    FgSrcList* units;   /* (`units`: C files compiled on their own - forge-c, D8) */
 } PjNative;
 
 typedef struct PjPublish { bool enabled; FcList* targets; const char* engine; const char* mode; const char* target; const char* toolchain; int clean /* -1 */; } PjPublish;
@@ -580,6 +581,7 @@ static PjProject* pjProjectParse(FcCtx* c, const char* text, const char* full) {
         n->reset = pjStr(&j, v, "reset", "$.native");
         n->uses = pjUses(&j, pjProp(v, "uses"), "$.native.uses");
         n->headers = pjSrcList(&j, pjProp(v, "headers"), "$.native.headers");
+        n->units = pjSrcList(&j, pjProp(v, "units"), "$.native.units");
         n->discover = pjBool(&j, v, "discover", "$.native", -1);
         p->native = n;
     }

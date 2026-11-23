@@ -36,6 +36,7 @@ static PkNative* pkNativeNew(FcCtx* c) {
     n->m.exceptions = fcListNew(c);
     n->m.uses = fcListNew(c);
     n->m.headers = fcListNew(c);
+    n->m.units = fcListNew(c);
     n->libraries = fcListNew(c);
     return n;
 }
@@ -150,6 +151,7 @@ static void pkWNative(FcCtx* c, PkW* w, const PkNative* n) {
     }
     pkWEnd(w, ']');
     pkWName(w, "headers"); pkWStrList(w, n->m.headers);
+    if (n->m.units->count > 0) { pkWName(w, "units"); pkWStrList(w, n->m.units); }   /* (forge-c only, D8: written only when there are some) */
     pkWEnd(w, '}');
 }
 /* PackageManifest.ToJson */
@@ -310,6 +312,7 @@ static PkNative* pkNativeParse(FcCtx* c, const FjValue* v) {
             fcListAdd(c, n->m.uses, u);
         }
     n->m.headers = pkStrList(c, v, "headers", false);
+    n->m.units = pkStrList(c, v, "units", false);
     return n;
 }
 static PkManifest* pkManifestParse(FcCtx* c, const char* json) {
@@ -421,6 +424,7 @@ static FcList* pkValidate(FcCtx* c, const PkManifest* m, PkExists exists, void* 
             for (k = 0; k < n->m.platformSources->count; k++) { const FgSrcList* l = (const FgSrcList*)((FgKeyed*)n->m.platformSources->items[k])->value; int f; for (f = 0; f < l->files->count; f++) fcListAdd(c, all, l->files->items[f]); }
             for (k = 0; k < n->libraries->count; k++) fcListAdd(c, all, ((FgKeyed*)n->libraries->items[k])->value);
             for (k = 0; k < n->m.headers->count; k++) fcListAdd(c, all, n->m.headers->items[k]);
+            for (k = 0; k < n->m.units->count; k++) fcListAdd(c, all, n->m.units->items[k]);
             for (k = 0; k < all->count; k++) if (exists && !exists(state, (const char*)all->items[k])) fcListAdd(c, problems, (void*)fcFmt(c, "%sthe file '%s' does not exist.", where, (const char*)all->items[k]));
             if (n->m.language && !streq0(n->m.language, "c") && !streq0(n->m.language, "c++")) fcListAdd(c, problems, (void*)fcFmt(c, "%s'native.language' is '%s' (c or c++).", where, n->m.language));
             for (k = 0; k < n->m.functions->count; k++) {

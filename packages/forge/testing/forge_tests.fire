@@ -54,4 +54,15 @@ class ForgeTests {
         Testing.Assert.IsTrue(release.Succeeded)
         Testing.Assert.AreNotEqual(debug.Program.Length, release.Program.Length)
     }
+
+    [Test "The command line of forge runs in the program, its output collected"]
+    undefined CommandLine() {
+        var r = Forge.Compiler.Run(["no-such-command"])
+        Testing.Assert.AreEqual(2, r.ExitCode)
+        Testing.Assert.AreEqual("", r.Output)
+        Testing.Assert.Contains("Unknown command 'no-such-command'", r.Errors)
+        var again = Forge.Compiler.Run(["no-such-command", "x"])
+        Testing.Assert.AreEqual(2, again.ExitCode)
+        Testing.Assert.Contains("Unknown command", again.Errors)
+    }
 }
