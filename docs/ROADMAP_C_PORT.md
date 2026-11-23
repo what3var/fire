@@ -666,7 +666,7 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    mit gcc und tcc und als Programm der VM - `bytecode` über jeden 10. Fall des Korpus, alle Projekte und Tests der Pakete (191) byte-gleich mit forge-c,
    `tests/compare-commands.sh <forge-c> <forge aus fire>`, Fixpunkt (das gebaute forge baut sich wieder, mit `SOURCE_DATE_EPOCH` byte-gleich), für Windows mit
    MinGW gebaut und unter Wine geprüft. Offen: libfirevm (Paket `script`) für andere Ziele - ihre Runtime passt nicht neben die des Programms, sie bleibt eine
-   Shared Library der Maschine; `units` mit linkage static/shared/plugin; `libforge.c` muss nach jeder Änderung an forge neu geschrieben werden.
+   Shared Library der Maschine; `libforge.c` muss nach jeder Änderung an forge neu geschrieben werden. (`units` mit linkage static/shared/plugin: seit dem 23.11.2026, [EMBED.md](spec/EMBED.md#offen); Open Watcom und `custom` lehnen ein Paket mit `units` weiter ab.)
 
 **M3:** forge und die VM sind C-Programme und C-Bibliotheken; wer nur sie braucht, braucht kein .NET. Der Bau von fire selbst braucht nur einen
 C-Compiler. `fire`, `fire.Compiler`, `fire.Native` und der Kern von `fire.Testing` verlassen die Solution; .NET steckt nur noch in spark und ember.

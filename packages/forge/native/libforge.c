@@ -43909,6 +43909,16 @@ static const char* NativeSourcesHash(FgGen* g, const char* module) {
     texts = fgReadNativeSources(g->c, g->instImports, g->store, imp, fgPlatformKeys(g));
     fcBufStr(&b, "");
     for (i = 0; i < texts->count; i++) { FgNamedText* t = (FgNamedText*)texts->items[i]; fcBufFmt(&b, "%s\n%s\n", t->name, t->text); }
+    /* (the units, `native.units`: linkage static/shared compiles them into the library of the module - their bytes, as pkglib.c's stamp has them) */
+    for (i = 0; imp->native->units && i < imp->native->units->count; i++) {
+        size_t n = 0;
+        uint8_t* data = fbReadFile(fgPkgFile(g->c, imp->dir, (const char*)imp->native->units->items[i]), &n);
+        FcSha256 h;
+        fcShaInit(&h);
+        if (data && n) fcShaUpdate(&h, data, n);
+        free(data);
+        fcBufFmt(&b, "unit %s %s\n", fgFileNameOf(g->c, (const char*)imp->native->units->items[i]), fcShaHex(g->c, &h));
+    }
     return fcSha256OfText(g->c, fcBufDone(g->c, &b));
 }
 
@@ -48027,6 +48037,34 @@ static FcList* nbPackageUnits(FcCtx* c, FcStore* store, FcDict* instImports, con
     }
     return r;
 }
+/* the units of one library module of linkage static/shared (build/linkage.c): those of its import when the module is a package (`pkg:<import>`) */
+static FcList* nbModuleUnits(FcCtx* c, FcStore* store, FcDict* instImports, const char* module) {
+    FcList* r = fcListNew(c);
+    FcPkgImport* pi = module && fcStartsWith(module, "pkg:") ? fcStoreFindKey(c, store, module) : NULL;
+    FgInstImport* x = pi ? fgInstalledImport(c, instImports, pi) : NULL;
+    int k;
+    if (!x || !x->native || !x->native->units) return r;
+    for (k = 0; k < x->native->units->count; k++) {
+        NbPkgUnit* u = (NbPkgUnit*)fcAlloc(c, sizeof *u);
+        u->import = x->name;
+        u->file = fgPkgFile(c, x->dir, (const char*)x->native->units->items[k]);
+        u->name = fcFmt(c, "fire_unit_%s.c", nbUnitName(c, x->name, k, false));
+        fcListAdd(c, r, u);
+    }
+    return r;
+}
+/* the toolchain that compiles units: the options of the build without warnings (the package's code); for a shared library position-independent and with
+ * hidden symbols where the compiler has them (as pkglib.c builds them into the library of the package for the VM) */
+static NbToolchain* nbUnitToolchain(FcCtx* c, const NbToolchain* t, bool shared) {
+    NbToolchain* ut = (NbToolchain*)fcAlloc(c, sizeof *ut);
+    const char* kind = nbKind(t);
+    *ut = *t;
+    ut->args = t->args ? fcListCopy(c, t->args) : fcListNew(c);
+    if (!fcListHasStr(ut->args, streq0(kind, "msvc") ? "/w" : "-w")) fcListAdd(c, ut->args, (void*)(streq0(kind, "msvc") ? "/w" : "-w"));
+    if (shared && !streq0(kind, "msvc")) fcListAdd(c, ut->args, (void*)"-fPIC");
+    if (shared && !streq0(kind, "msvc") && !streq0(kind, "tcc")) fcListAdd(c, ut->args, (void*)"-fvisibility=hidden");
+    return ut;
+}
 /* the toolchain with the defines FIRE_PKG_UNITS_<IMPORT> of the units (a copy) */
 static NbToolchain* nbWithUnitDefines(FcCtx* c, NbToolchain* t, FcList* units) {
     NbToolchain* r;
@@ -48328,7 +48366,8 @@ static FgStaticPlan* nbGenerateStatic(FcCtx* c, FcLinked* linked, FcNatives* reg
 }
 
 /* Linkage "shared" on Windows: links the DLLs that are not in the cache from their object files, in the order of the plan. NULL: done, else the failure. */
-static const char* nbLinkDlls(FcCtx* c, const NbToolchain* toolchain, const FgTarget* target, FcList* all, FcList* missing, FcList* objects, const char* programFile, const char* workDir, FcBuf* log) {
+static const char* nbLinkDlls(FcCtx* c, const NbToolchain* toolchain, const FgTarget* target, FcList* all, FcList* missing, FcList* objects, FcList* unitObjects, const char* programFile,
+    const char* workDir, FcBuf* log) {
     const char* found = nbFindC(c, toolchain);
     const char* cc = found ? found : nbEffectiveCCompiler(c, toolchain);
     FcList* libs = fcListNew(c);
@@ -48360,6 +48399,7 @@ static const char* nbLinkDlls(FcCtx* c, const NbToolchain* toolchain, const FgTa
             NbRunResult run;
             nbMkdirs(c, tempDir);
             fcBufFmt(&args, "-shared -static-libgcc -o \"%s\" \"%s\"", temp, (const char*)objects->items[at]);
+            for (k = 0; k < ((FcList*)unitObjects->items[at])->count; k++) fcBufFmt(&args, " \"%s\"", (const char*)((FcList*)unitObjects->items[at])->items[k]);   /* (its units, `native.units`) */
             for (k = 0; k < before->count; k++) fcBufFmt(&args, " \"%s\"", (const char*)before->items[k]);
             fcBufFmt(&args, " -Wl,--export-all-symbols -s %s", fgJoin(c, libs, " "));
             fcBufFmt(log, "%s %s\n", cc, args.p);
@@ -48377,6 +48417,14 @@ static const char* nbLinkDlls(FcCtx* c, const NbToolchain* toolchain, const FgTa
     return NULL;
 }
 
+/* the object of a library and those of its units for nbArchiveCommand, which puts its argument in quotes: `a.o" "u.o` */
+static const char* nbObjectsArg(FcCtx* c, const char* obj, const FcList* more) {
+    FcBuf b = {0};
+    int i;
+    fcBufStr(&b, obj);
+    for (i = 0; more && i < more->count; i++) fcBufFmt(&b, "\" \"%s", (const char*)more->items[i]);
+    return fcBufDone(c, &b);
+}
 /* the commands of a library that is not in the cache (the dry run prints them, BuildLibrary runs them) */
 static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output, bool shared) {
     NbResult r = { false, output, "", NULL };
@@ -48399,6 +48447,8 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
     bool dll = shared && streq0(target->platform, "windows");
     const char* ext;
     FcList* missing;
+    FcList* unitObjects;          /* per library of `missing`: the objects of its units (`native.units`) */
+    NbToolchain* programToolchain;
     FcList* objects;
     FcList* libraries;
     FcList* commands;
@@ -48440,6 +48490,8 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
     objects = fcListNew(c);
     for (i = 0; i < plan->libraries->count; i++) if (!((FgStaticLibrary*)plan->libraries->items[i])->cached) fcListAdd(c, missing, plan->libraries->items[i]);
     commands = fcListNew(c);
+    unitObjects = fcListNew(c);
+    programToolchain = toolchain;
     /* the libraries that are not in the cache: each its C (the generator wrote it there) to an object file, that into the library, then its interface */
     for (i = 0; i < missing->count; i++) {
         FgStaticLibrary* library = (FgStaticLibrary*)missing->items[i];
@@ -48447,11 +48499,41 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
         const char* temp = nbCombine(c, library->directory, b->dryRun ? fcFmt(c, "TEMP%s", ext) : fcFmt(c, "%s%s", nbGuid(c), ext));
         FcBuf libLog = {0};
         long long libraryWatch = nbNowMs();
+        /* (the units of the package of the module, `native.units`: compiled once - with the library, which the cache keeps - and put into it; the module's C gets
+         * FIRE_PKG_UNITS_<IMPORT>, so the bridge calls them directly) */
+        FcList* units = nbModuleUnits(c, &store, instImports, library->module);
+        FcList* libUnitObjects = fcListNew(c);
+        NbToolchain* lt = nbWithUnitDefines(c, programToolchain, units);
         fcBufStr(&libLog, "");
         fcListAdd(c, objects, (void*)obj);
+        fcListAdd(c, unitObjects, libUnitObjects);
+        if (units->count > 0) {
+            NbToolchain* ut = nbUnitToolchain(c, programToolchain, shared && !dll);
+            if (nbIsWatcom(kind))
+                fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: the package '%s' has a unit of its own (`native.units`), which the toolchain '%s' does not build.", ((NbPkgUnit*)units->items[0])->import, kind));
+            for (k = 0; k < units->count; k++) {
+                const NbPkgUnit* u = (const NbPkgUnit*)units->items[k];
+                const char* file = nbCombine(c, workDir, fcFmt(c, "%s_%s", library->libraryName, u->name));
+                const char* unitObj = nbChangeExtension(c, file, streq0(kind, "msvc") ? ".obj" : ".o");
+                NbCommand* compile;
+                NbRunResult run;
+                if (!nbCopyFile(c, u->file, file)) { r.error = fcFmt(c, "native-config: the unit '%s' of the package '%s' cannot be read.", u->file, u->import); goto failed; }
+                compile = nbCompilerCommand(c, ut, target, file, workDir, unitObj, false, NULL, false, "c", true, NULL, NULL, NULL, false);
+                fcListAdd(c, libUnitObjects, (void*)unitObj);
+                if (b->dryRun) { fcListAdd(c, commands, compile); continue; }
+                fcBufFmt(&libLog, "%s %s\n", compile->exe, compile->args);
+                run = nbRun(compile->exe, compile->args, workDir);
+                nbAppendRun(&libLog, &run);
+                if (!run.ok || !nbFileExists(unitObj)) {
+                    fcBufPut(&log, libLog.p, libLog.len);
+                    r.error = fcFmt(c, "The C compiler reported errors in the unit '%s' of the package '%s' (see the build log).", fgFileNameOf(c, u->file), u->import);
+                    goto failed;
+                }
+            }
+        }
         if (dll) {
             /* a DLL: here only its object file - it is linked below, after the DLLs it imports from */
-            NbCommand* compile = nbCompilerCommand(c, toolchain, target, library->cFile, workDir, obj, false, NULL, false, "c", true, NULL, NULL, NULL, false);
+            NbCommand* compile = nbCompilerCommand(c, lt, target, library->cFile, workDir, obj, false, NULL, false, "c", true, NULL, NULL, NULL, false);
             if (b->dryRun) { fcListAdd(c, commands, compile); continue; }
             fcBufFmt(&libLog, "%s %s\n", compile->exe, compile->args);
             {
@@ -48466,7 +48548,7 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
         if (shared) {
             /* a shared library: position-independent, its own name inside; what it needs of the program the program exports (-rdynamic) */
             const char* so = fgLibraryFile(c, library, ext);
-            NbCommand* link = nbCompilerCommand(c, toolchain, target, library->cFile, workDir, temp, true, NULL, false, "c", false, NULL, NULL, NULL, false);
+            NbCommand* link = nbCompilerCommand(c, lt, target, library->cFile, workDir, temp, true, NULL, false, "c", false, libUnitObjects->count > 0 ? libUnitObjects : NULL, NULL, NULL, false);
             const char* args = fcFmt(c, "%s -Wl,-soname,%s -lm", link->args, fcBaseName(so));
             NbRunResult run;
             if (b->dryRun) { NbCommand* k2 = (NbCommand*)fcAlloc(c, sizeof *k2); k2->exe = link->exe; k2->args = args; fcListAdd(c, commands, k2); continue; }
@@ -48481,11 +48563,11 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
             continue;
         }
         {
-            NbCommand* compile = nbCompilerCommand(c, toolchain, target, library->cFile, workDir, obj, false, NULL, false, "c", true, NULL, NULL, NULL, true);
+            NbCommand* compile = nbCompilerCommand(c, lt, target, library->cFile, workDir, obj, false, NULL, false, "c", true, NULL, NULL, NULL, true);
             NbCommand* archive;
             NbRunResult run;
             const char* lib = fgLibraryFile(c, library, ext);
-            archive = nbArchiveCommand(c, toolchain, temp, obj);
+            archive = nbArchiveCommand(c, lt, temp, nbObjectsArg(c, obj, libUnitObjects));
             if (b->dryRun) { fcListAdd(c, commands, compile); fcListAdd(c, commands, archive); continue; }
             fcBufFmt(&libLog, "%s %s\n", compile->exe, compile->args);
             run = nbRun(compile->exe, compile->args, workDir);
@@ -48502,16 +48584,47 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
         }
     }
     if (dll && !b->dryRun) {
-        const char* failure = nbLinkDlls(c, toolchain, target, plan->libraries, missing, objects, cFile, workDir, &log);
+        const char* failure = nbLinkDlls(c, toolchain, target, plan->libraries, missing, objects, unitObjects, cFile, workDir, &log);
         if (failure) { r.error = failure; goto failed; }
     }
     /* (a library before the ones it needs: the linker resolves in that order) */
     libraries = fcListNew(c);
     watch = nbNowMs();
+    {
+        /* (the units of a package whose natives are in the program's file - no module of its own: compiled with the program and linked into it, as with
+         * linkage "source") */
+        FcList* all = nbPackageUnits(c, &store, instImports, linked);
+        NbToolchain* ut = NULL;
+        for (i = 0; i < all->count; i++) {
+            const NbPkgUnit* u = (const NbPkgUnit*)all->items[i];
+            const char* key = fcFmt(c, "pkg:%s", fcAsciiLower(c, u->import));
+            const char* file;
+            const char* unitObj;
+            NbCommand* compile;
+            NbRunResult run;
+            bool inModule = false;
+            for (k = 0; k < plan->libraries->count; k++) if (streq0(((FgStaticLibrary*)plan->libraries->items[k])->module, key)) inModule = true;
+            if (inModule) continue;
+            if (nbIsWatcom(kind))
+                fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: the package '%s' has a unit of its own (`native.units`), which the toolchain '%s' does not build.", u->import, kind));
+            if (!ut) ut = nbUnitToolchain(c, toolchain, false);
+            file = nbCombine(c, workDir, u->name);
+            unitObj = nbChangeExtension(c, file, streq0(kind, "msvc") ? ".obj" : ".o");
+            if (!nbCopyFile(c, u->file, file)) { r.error = fcFmt(c, "native-config: the unit '%s' of the package '%s' cannot be read.", u->file, u->import); goto failed; }
+            compile = nbCompilerCommand(c, ut, target, file, workDir, unitObj, false, NULL, gui, "c", true, NULL, NULL, NULL, false);
+            fcListAdd(c, libraries, (void*)unitObj);
+            if (b->dryRun) { fcListAdd(c, commands, compile); continue; }
+            fcBufFmt(&log, "%s %s\n", compile->exe, compile->args);
+            run = nbRun(compile->exe, compile->args, workDir);
+            nbAppendRun(&log, &run);
+            if (!run.ok || !nbFileExists(unitObj)) { r.error = fcFmt(c, "The C compiler reported errors in the unit '%s' of the package '%s' (see the build log).", fgFileNameOf(c, u->file), u->import); goto failed; }
+        }
+    }
     for (i = plan->libraries->count - 1; i >= 0; i--) fcListAdd(c, libraries, (void*)fgLibraryFile(c, (FgStaticLibrary*)plan->libraries->items[i], ext));
     if (config->stats && !shared && nsMapOptions(c, kind, "x")) statsMap = nsMapFileOf(c, exe);
     {
-        FcList* programCommands = nbBuildCommands(c, toolchain, target, cFile, nativesFile, workDir, exe, gui, libraries);
+        /* (the program gets the defines of the units its packages have, as with linkage "source") */
+        FcList* programCommands = nbBuildCommands(c, nbWithUnitDefines(c, toolchain, nbPackageUnits(c, &store, instImports, linked)), target, cFile, nativesFile, workDir, exe, gui, libraries);
         for (k = 0; k < programCommands->count; k++) {
             NbCommand* cmd = (NbCommand*)programCommands->items[k];
             const char* args = cmd->args;

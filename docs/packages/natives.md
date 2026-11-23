@@ -346,7 +346,8 @@ word buffers as `FIRE_WORDS` and words as `FIRE_WORD`).
   package for the VM (position-independent, with hidden symbols). Its macros, `static` functions and system headers stay in it; what the bridge calls must
   be an external function with a name of its own. The build defines `FIRE_PKG_UNITS_<IMPORT>` (upper case) for the program, so a bridge can tell that the
   unit is there (a forge that does not know `units` leaves it out). The package forge is the example: `"units": [ "native/libforge.c" ]` - the whole
-  compiler as one C file (`forge amalgamate`, [forge](forge.md)). Not with Open Watcom, `custom` and the linkages `static`/`shared`/`plugin`.
+  compiler as one C file (`forge amalgamate`, [forge](forge.md)). With the linkages `static` and `shared` the unit is compiled once with the library of the
+  package's module (kept in the cache) and linked into it; a plugin uses the unit of its host program. Not with Open Watcom and `custom` (the build says so).
 * **Using the platform layer of another package**: `native.uses` names imports whose `platformSources` this package needs as well - the layer of the other package
   is put before the own sources (its include guards keep it to one copy when both packages are imported). `graphics` reads its fonts and images through the file system of `io`:
 

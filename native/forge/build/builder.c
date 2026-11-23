@@ -1280,6 +1280,34 @@ static FcList* nbPackageUnits(FcCtx* c, FcStore* store, FcDict* instImports, con
     }
     return r;
 }
+/* the units of one library module of linkage static/shared (build/linkage.c): those of its import when the module is a package (`pkg:<import>`) */
+static FcList* nbModuleUnits(FcCtx* c, FcStore* store, FcDict* instImports, const char* module) {
+    FcList* r = fcListNew(c);
+    FcPkgImport* pi = module && fcStartsWith(module, "pkg:") ? fcStoreFindKey(c, store, module) : NULL;
+    FgInstImport* x = pi ? fgInstalledImport(c, instImports, pi) : NULL;
+    int k;
+    if (!x || !x->native || !x->native->units) return r;
+    for (k = 0; k < x->native->units->count; k++) {
+        NbPkgUnit* u = (NbPkgUnit*)fcAlloc(c, sizeof *u);
+        u->import = x->name;
+        u->file = fgPkgFile(c, x->dir, (const char*)x->native->units->items[k]);
+        u->name = fcFmt(c, "fire_unit_%s.c", nbUnitName(c, x->name, k, false));
+        fcListAdd(c, r, u);
+    }
+    return r;
+}
+/* the toolchain that compiles units: the options of the build without warnings (the package's code); for a shared library position-independent and with
+ * hidden symbols where the compiler has them (as pkglib.c builds them into the library of the package for the VM) */
+static NbToolchain* nbUnitToolchain(FcCtx* c, const NbToolchain* t, bool shared) {
+    NbToolchain* ut = (NbToolchain*)fcAlloc(c, sizeof *ut);
+    const char* kind = nbKind(t);
+    *ut = *t;
+    ut->args = t->args ? fcListCopy(c, t->args) : fcListNew(c);
+    if (!fcListHasStr(ut->args, streq0(kind, "msvc") ? "/w" : "-w")) fcListAdd(c, ut->args, (void*)(streq0(kind, "msvc") ? "/w" : "-w"));
+    if (shared && !streq0(kind, "msvc")) fcListAdd(c, ut->args, (void*)"-fPIC");
+    if (shared && !streq0(kind, "msvc") && !streq0(kind, "tcc")) fcListAdd(c, ut->args, (void*)"-fvisibility=hidden");
+    return ut;
+}
 /* the toolchain with the defines FIRE_PKG_UNITS_<IMPORT> of the units (a copy) */
 static NbToolchain* nbWithUnitDefines(FcCtx* c, NbToolchain* t, FcList* units) {
     NbToolchain* r;
