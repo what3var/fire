@@ -1,0 +1,23 @@
+#import "compression"
+#import "hash"
+#import "filesystem"
+var gz = Hash.Hex.Decode("1f8b08000000000002ffedd8cb4ac3401406e059fb14075c9bcc4c26c94a50b02018417c83b199d6d0340d490a01f1cddcf9624e23161aa4c54526d4fcdfa2e96d51f8732ed3ca949b2bfd32f7d970b815876177b5fad7eeb950a15471ccd5ee7dc12311300a9903dbbad195fd293ad547bf77eaf33355fde4ff3cbbbd7b9c79eb7498fc23a58ee41ff5f2973c8a1871e43fb84b5a65cd058389dad77f5dcd7d7b2b788bac32aeeb5ff4eb3fe04188fa77619eebbaa687aca1377a471f986efde759b11a70ff3b3efffbfb9f8c15672407dc4950ffdf3cdff36f924db14c86cdff97dcf7f94b111fdc0bf6b4b03b2e50e2acff134dbefe5363cad11e16596ebca66dd08fff63fe7fdeff02c163ee72ffb3f53fd1febf2cb694dbf64f855e1bec7f93d3cdff27ddde1b9d9a6aa4f92fe5e1fc177625108c5a97e7bf89e62f5444a56e5eaff783a01c89fff9b15b01d083c699ff03267b7afe8bdefcb72ff0ff8f13a56ebbfa47d9010000000000000000000000000000009ca72f77c4b507003c0000")
+var a = Tar.Archive.FromBytes(gz)
+print(a.Count)
+foreach (e in a.Entries) { print(e.Type + " " + e.FullName.Length + " " + e.Name + " " + e.Length + " " + e.Mode + " " + e.LinkName) }
+print(a.GetEntry("repo-abc/README.md").ReadAllText().Trim())
+print(a.Entries[0].LastWriteTime.Year + " " + a.Entries[0].UnixTime)
+var plain = Tar.Archive.FromBytes(Compression.GZip.Decompress(gz))
+print(plain.Count + " " + plain.Entries[5].ReadAllText().Trim())
+var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire-case-tar-4490")
+if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+a.ExtractTo(dir)
+print(IO.File.ReadAllText(IO.Path.Combine(dir, "repo-abc/src/kit.fire")).Trim())
+print(IO.File.Exists(IO.Path.Combine(dir, "repo-abc/link")))
+IO.Directory.Delete(dir, true)
+var bad = Compression.GZip.Decompress(gz)
+bad[148] = 49
+try { Tar.Archive.FromBytes(bad) } catch (Tar.TarException e) { print(e.message) }
+try { Tar.Archive.FromBytes(Compression.GZip.Decompress(gz).Slice(0, 512 + 515)) } catch (Tar.TarException e) { print(e.message) }
+try { Tar.Archive.FromBytes(gz.Slice(0, 100)) } catch (Compression.InvalidDataException e) { print("gzip: " + e.message) }
+//# name: compression: Tar.Archive reads ustar (prefix), pax (path), GNU long names, folders and symbolic links, plain or gzipped; ExtractTo writes files and folders (not links); a wrong check sum, an archive cut off, broken gzip
