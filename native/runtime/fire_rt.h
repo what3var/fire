@@ -4944,6 +4944,20 @@ FIRE_FN Value stringCall(int64_t method, Value text, int argc, Value a0, Value a
                 if (s[i] != charsPtr(&v)[i]) return Int(s[i] < charsPtr(&v)[i] ? -1 : 1);
             return Int(len < v.n ? -1 : (len > v.n ? 1 : 0));
         }
+        case 23: case 24: {  /* CompareIgnoreCase(other), EqualsIgnoreCase(other): ordinal, every character as its upper case (OrdinalIgnoreCase) */
+            Chars v;
+            uint32_t n, i;
+            if (method == 24 && a0.kind == K_Undefined) return Bool(false);
+            v = charsOf(a0);
+            n = len < v.n ? len : v.n;
+            if (method == 24 && len != v.n) return Bool(false);
+            for (i = 0; i < n; i++) {
+                uint32_t x = toUpperC(s[i]), y = toUpperC(charsPtr(&v)[i]);
+                if (x != y) return method == 24 ? Bool(false) : Int(x < y ? -1 : 1);
+            }
+            if (method == 24) return Bool(true);
+            return Int(len < v.n ? -1 : (len > v.n ? 1 : 0));
+        }
         default: fatal("Unknown string method.");
     }
 }

@@ -1,0 +1,17 @@
+print("Hello".EqualsIgnoreCase("hELLO"))
+print("Hello".EqualsIgnoreCase("Hell"))
+print("straße".EqualsIgnoreCase("STRASSE"))
+print("Größe".EqualsIgnoreCase("GRÖSSE") + " " + "Größe".EqualsIgnoreCase("GRÖßE"))
+print("Ωμέγα".EqualsIgnoreCase("ΩΜΈΓΑ"))
+print("apple".CompareIgnoreCase("BANANA") + " " + "apple".CompareTo("BANANA"))
+print("Zeta".CompareIgnoreCase("alpha") + " " + "Zeta".CompareTo("alpha"))
+print("abc".CompareIgnoreCase("ABC") + " " + "ab".CompareIgnoreCase("ABC") + " " + "abcd".CompareIgnoreCase("ABC"))
+// ordinal: '_' (95) lies between the upper case (65..90) and the lower case letters (97..122) - compared as upper case it comes after them, as in .NET
+print("a_".CompareIgnoreCase("aB") + " " + "[".CompareIgnoreCase("a"))
+var names = new List<string>(["delta", "Alpha", "charlie", "Bravo"])
+names.Sort((x, y) => x.CompareIgnoreCase(y))
+print(", ".Join(names))
+string s = undefined
+print("x".EqualsIgnoreCase(s))
+try { print("x".CompareIgnoreCase(s)) } catch (Exception e) { print("undefined: " + e.message) }
+//# name: string.EqualsIgnoreCase and CompareIgnoreCase: ordinal without regard to case (each character as its upper case, as StringComparison.OrdinalIgnoreCase), ß stays ß
