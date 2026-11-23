@@ -155,6 +155,8 @@ static bool fcStrictTag(const char* path);
 #include "tools/commands.c"   /* the rest of the command line: run, bytecode of projects, ... (Phase D 4) */
 #include "tools/report.c"     /* build|publish|bytecode --report json (Phase D 4) */
 #include "tools/setup.c"      /* the toolchains forge downloads (Phase D 5) */
+#include "tools/conformance.c" /* `conformance`: the cases of tests/cases without .NET (Phase D 6) */
+#include "tools/dist.c"        /* `package-dist`: the forge/VM part of a distribution without .NET (Phase D 6) */
 
 /* `ui|biscuit|fdata <file>` (Program.cs: MarkupFiles.GenerateScript, the script on stdout, the diagnostics of a MarkupException on stderr) and
  * `falstad <file>` (FalstadImport.Convert: the warnings on stderr, the schematic on stdout); `out` and `err` get what forge writes there */
@@ -383,7 +385,7 @@ static int fcDump(const char* command, const char* path, FILE* out, const char* 
 }
 
 /* where the prelude (native/tables/prelude.fire) and the installed packages are: FIRE_TABLES / FIRE_PACKAGES, else next to the program
- * (<dir>/../tables, <dir>/Packages), else native/tables of the working directory */
+ * (<dir>/../tables or <dir>/native/tables, <dir>/Packages), else native/tables of the working directory */
 static const char* fcFindPrelude(const char* exe, char* buf, size_t n) {
     const char* env = getenv("FIRE_TABLES");
     const char* slash = strrchr(exe, '/');
@@ -391,6 +393,9 @@ static const char* fcFindPrelude(const char* exe, char* buf, size_t n) {
     if (env) { snprintf(buf, n, "%s/prelude.fire", env); return buf; }
     if (slash) {
         snprintf(buf, n, "%.*s/../tables/prelude.fire", (int)(slash - exe), exe);
+        if ((f = fopen(buf, "rb")) != NULL) { fclose(f); return buf; }
+        /* (a distribution, `package-dist`: native/ next to the program) */
+        snprintf(buf, n, "%.*s/native/tables/prelude.fire", (int)(slash - exe), exe);
         if ((f = fopen(buf, "rb")) != NULL) { fclose(f); return buf; }
     }
     snprintf(buf, n, "native/tables/prelude.fire");
