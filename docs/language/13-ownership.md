@@ -253,8 +253,8 @@ class Holder {
 
 It is reported when the variable is declared with a new value (`new ...`, `new T[n]`, `new byte[n]`, `[...]`) and assigned plainly to a field
 of `this`, of a parameter, of a variable declared outside the block or of a class (a static field), or to an element of such a field's array.
-Not reported: when the variable is given away anywhere in the block (`take x`, `x.TakeTo(...)`, `x.TakeUpwards()`, `x.TakeGlobal()`, `return x`)
-or gets another value; when the member is a property (its setter may take the value); when the object that holds the field is declared in the
+Not reported: when the variable is given away anywhere in the block (`take x`, `x.TakeTo(...)`, `x.TakeUpwards()`, `x.TakeGlobal()`, `return x`),
+handed to a call or a constructor (which may take it: `panel.Add(x)` makes the panel its owner) or gets another value; when the member is a property (its setter may take the value); when the object that holds the field is declared in the
 same block (both end together); at the top level of the program (its variables live as long as the program). The check is syntactic: a value
 that a method hands back (`var list = Make()`) is not looked at, and a container's `Add` is not followed (a list made with `Owns.Values` takes what
 it gets).
