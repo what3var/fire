@@ -41,6 +41,15 @@ namespace fire.Debugging
             IReadOnlyDictionary<string, string>? environment) =>
             NativeLaunch.Start(fire, Arguments(programFile, arguments), workingDirectory, output, exited, environment);
 
+        /// <summary>The line of an exception nobody caught in what `fire` wrote to stderr - "Unhandled exception of type 'X': message" -, else null.</summary>
+        public static string? UnhandledLine(string errors)
+        {
+            int at = errors.IndexOf("Unhandled exception of type ", StringComparison.Ordinal);
+            if (at < 0) return null;
+            int end = errors.IndexOf('\n', at);
+            return end < 0 ? errors.Substring(at) : errors.Substring(at, end - at);
+        }
+
         /// <summary>A line for the standard input of a plain run. false: it has ended or its input is closed.</summary>
         public static bool WriteInput(Process process, string line)
         {

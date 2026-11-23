@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace fire.Editor
 {
-    /// <summary>The result of a profiled run (spark's Profile switch, fire.Runtime.LineProfile): for each own source file every line with code - how often a thread
+    /// <summary>The result of a profiled run (spark's Profile switch, fire.Tooling.LineProfile): for each own source file every line with code - how often a thread
     /// came into it and how many instructions of the VM ran in it; a line with code that never ran is "fallow". Kept as JSON in the Profile tab.</summary>
     public sealed record ProfileReport(string What, double Seconds, long Instructions, IReadOnlyList<ProfileFile> Files)
     {

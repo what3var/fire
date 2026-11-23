@@ -1,9 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Projects.Mcp;
-using fire.Runtime;
-using fire.Values;
 
 /// <summary>The MCP server of C# (fire.Project/Mcp/McpServer.cs - the one of spark, docs/tools/spark-mcp.md) with the client of the fire package `mcp` in the VM: Streamable
 /// HTTP, the token, sessions, tools, resources, a subscription and the stream of notifications (GET), errors.</summary>

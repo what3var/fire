@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace fire.Native
+namespace fire.Tooling
 {
     /// <summary>The phases of a build, in the order they come (docs/spec/NATIVE_BACKEND.md "Fortschritt und Abbrechen"): a phase that a build does not have is left out.</summary>
     public enum BuildPhase

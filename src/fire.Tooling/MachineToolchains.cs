@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace fire.Native
+namespace fire.Tooling
 {
     /// <summary>What a native build is for: <see cref="Build"/> (spark's Build, Run, Debug, Build Solution, `forge build`, native tests) or <see cref="Publish"/>
     /// (Publish in spark, `forge publish`). The machine chooses a compiler for each (<see cref="MachineToolchains"/>); Debug and Release stay build modes.</summary>

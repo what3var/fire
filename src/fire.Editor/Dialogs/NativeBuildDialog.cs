@@ -9,8 +9,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using fire.Native;
-using fire.Runtime;
+using fire.Tooling;
 using static fire.Editor.SettingsLayout;
 
 namespace fire.Editor
@@ -267,7 +266,7 @@ namespace fire.Editor
             txtPlatformPath.Text = t.Native.PlatformPath ?? "";
             segFloat.SelectedIndex = t.FloatWidth == 32 ? 0 : 1;
             txtStack.Text = t.DefaultStackBytes.ToString();
-            segTargetOptimize.SelectedIndex = t.Optimize == fire.Runtime.OptimizeFor.Size ? 1 : 0;
+            segTargetOptimize.SelectedIndex = t.Optimize == fire.Tooling.OptimizeFor.Size ? 1 : 0;
             chkThreads.IsChecked = t.Native.SupportsThreads;
             chkEmbedded.IsChecked = t.IsEmbedded;
             txtEntryName.Text = t.Native.Entry.Name;
@@ -454,8 +453,8 @@ namespace fire.Editor
         {
             var def = ToolchainFromFields();
             Cursor = new Cursor(StandardCursorType.Wait);
-            fire.Compiler.NativeBuildResult result;
-            try { result = await Task.Run(() => fire.Compiler.NativeBuilder.TestToolchain(def)); }
+            NativeBuildResult result;
+            try { result = await Task.Run(() => NativeBuilder.TestToolchain(def)); }   // (forge toolchaintest)
             finally { Cursor = null; }
             await Dialogs.Message(this, (result.Ok ? "The toolchain works.\n\n" : "The toolchain does not work.\n\n") + result.Log, "Test toolchain");
         }

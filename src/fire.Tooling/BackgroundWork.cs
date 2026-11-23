@@ -1,4 +1,4 @@
-namespace fire.Native
+namespace fire.Tooling
 {
     /// <summary>
     /// Long work that a program waits for without a build window: the standard packages installed, the natives of a package or the library of graphics and windows built for the VM

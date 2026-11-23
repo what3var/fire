@@ -107,7 +107,7 @@ namespace fire.Editor
         }
 
         // The profiler (Profile switch): a debug run of a native program counts its lines; when it has ended, the Profile tab shows them (ProfileReport). (The line counts
-        // of the C# VM, fire.Runtime.LineProfile, went with M1; the VM in C does not count yet.)
+        // of the C# VM, fire.Tooling.LineProfile, went with M1; the VM in C does not count yet.)
         private fire.Debugging.NativeDebugTarget? _profileNative;   // a native debug run that counts its lines (its counts come with `exited`)
         private string _profileWhat = "";
         private System.Diagnostics.Stopwatch _profileClock = new();
@@ -188,15 +188,15 @@ namespace fire.Editor
 
         private void UpdateExecutionModeSelection(DebugSession session)
         {
-            mnuRunDebug.IsChecked = session.ExecutionMode == Runtime.VmExecutionMode.Debug;
-            mnuRunRelease.IsChecked = session.ExecutionMode == Runtime.VmExecutionMode.Release;
-            mnuRunPerformance.IsChecked = session.ExecutionMode == Runtime.VmExecutionMode.Performance;
+            mnuRunDebug.IsChecked = session.ExecutionMode == VmExecutionMode.Debug;
+            mnuRunRelease.IsChecked = session.ExecutionMode == VmExecutionMode.Release;
+            mnuRunPerformance.IsChecked = session.ExecutionMode == VmExecutionMode.Performance;
 
             _updatingModeUi = true;
             cmbMode.SelectedIndex = session.ExecutionMode switch
             {
-                Runtime.VmExecutionMode.Debug => 0,
-                Runtime.VmExecutionMode.Release => 1,
+                VmExecutionMode.Debug => 0,
+                VmExecutionMode.Release => 1,
                 _ => 2,
             };
             _updatingModeUi = false;
@@ -209,7 +209,7 @@ namespace fire.Editor
         {
             if (_updatingModeUi || cmbMode.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
 
-            _session.ExecutionMode = Enum.Parse<Runtime.VmExecutionMode>(tag);
+            _session.ExecutionMode = Enum.Parse<VmExecutionMode>(tag);
             UpdateExecutionModeSelection(_session);
         }
 
@@ -546,7 +546,7 @@ namespace fire.Editor
             if (file == null) return $"   at {function} (prelude)";
             var files = _session.SourceFiles;
             string? first = files.Skip(Math.Max(0, _session.FirstUserSourceIndex)).FirstOrDefault(p => p != null);
-            string shown = first != null && Path.GetDirectoryName(first) is { } dir ? fire.Runtime.ExceptionTrace.Relative(dir, file) : Path.GetFileName(file);
+            string shown = first != null && Path.GetDirectoryName(first) is { } dir ? fire.Tooling.ExceptionTrace.Relative(dir, file) : Path.GetFileName(file);
             return loc.Line > 0 ? $"   at {function} ({shown}:{loc.Line})" : $"   at {function} ({shown})";
         }
 
@@ -616,11 +616,11 @@ namespace fire.Editor
             }
         }
 
-        private void mnuRunDebug_Click(object? sender, RoutedEventArgs e) => SetMode(Runtime.VmExecutionMode.Debug);
-        private void mnuRunRelease_Click(object? sender, RoutedEventArgs e) => SetMode(Runtime.VmExecutionMode.Release);
-        private void mnuRunPerformance_Click(object? sender, RoutedEventArgs e) => SetMode(Runtime.VmExecutionMode.Performance);
+        private void mnuRunDebug_Click(object? sender, RoutedEventArgs e) => SetMode(VmExecutionMode.Debug);
+        private void mnuRunRelease_Click(object? sender, RoutedEventArgs e) => SetMode(VmExecutionMode.Release);
+        private void mnuRunPerformance_Click(object? sender, RoutedEventArgs e) => SetMode(VmExecutionMode.Performance);
 
-        private void SetMode(Runtime.VmExecutionMode mode)
+        private void SetMode(VmExecutionMode mode)
         {
             _session.ExecutionMode = mode;
             UpdateExecutionModeSelection(_session);

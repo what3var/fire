@@ -1,7 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using fire.Native;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>Asked when a native build or a package with native code needs a C++ toolchain and there is none: install it automatically (the portable w64devkit, Windows), change the

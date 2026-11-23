@@ -4,7 +4,7 @@ using System.IO.MemoryMappedFiles;
 using System.Text;
 using System.Threading;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     /// <summary>
     /// The host's side of the display of a program in another process (docs/ROADMAP_C_PORT.md, phase B step 9; the program's side: native/abi/fire_gfx_host.h,

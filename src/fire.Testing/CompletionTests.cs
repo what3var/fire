@@ -1,4 +1,4 @@
-/// <summary>The completion of the editor (fire.Editor CompletionEngine on ScriptSymbolIndex): what `x.` and a name being typed offer - only what the
+/// <summary>The completion of the editor (forge serve, `completion`: native/forge/serve_complete.c): what `x.` and a name being typed offer - only what the
 /// code at the cursor may use (`private` in the class itself, `protected` also in derived classes, docs/language/08-classes.md), static members only
 /// on the class and instance members only on objects, the receiver's type also when it comes from `var`, a global variable or a lambda - and the order
 /// (the program's own names and exact prefixes first, the internals of the libraries last). Alone: FIRE_TESTS_ONLY=completion.</summary>
@@ -9,19 +9,12 @@ static class CompletionTests
     private static int _document;
 
     /// <summary>The suggestions at `|` in `source`, the best first (as the editor sorts them); `projectFiles` are the other files of the project. Over the protocol
-    /// (`forge serve`, docs/spec/FORGE_SERVE.md) unless FIRE_SPARK_LANG=inproc; then in this process (ScriptSymbolIndex, CompletionEngine).</summary>
+    /// (`forge serve`, docs/spec/FORGE_SERVE.md).</summary>
     private static List<fire.Editor.CompletionItem> Items(string source, IEnumerable<(string, string)>? projectFiles = null)
     {
         int cursor = source.IndexOf('|');
         source = source.Remove(cursor, 1);
-        if (!fire.Editor.ServeClient.InProcess) return Served(source, cursor, projectFiles);
-        return InProcess(source, cursor, projectFiles);
-    }
-
-    private static List<fire.Editor.CompletionItem> InProcess(string source, int cursor, IEnumerable<(string, string)>? projectFiles)
-    {
-        var index = fire.Editor.ScriptSymbolIndex.Build(source, Array.Empty<string>(), projectFiles ?? Array.Empty<(string, string)>());
-        return fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).OrderByDescending(i => i.Score).ToList();
+        return Served(source, cursor, projectFiles);
     }
 
     private static List<fire.Editor.CompletionItem> Served(string source, int cursor, IEnumerable<(string, string)>? projectFiles)
@@ -32,19 +25,7 @@ static class CompletionTests
         serve.Open(path, 1, source, includes: (projectFiles ?? Array.Empty<(string, string)>()).Select(f => new fire.Editor.ServeFile(f.Item1, f.Item2)));
         try
         {
-            var items = serve.Completion(path, cursor, out _);
-            // the port is 1:1: the same items (text, kind, score, detail) in the same order as in this process
-            var own = InProcess(source, cursor, projectFiles);
-            static string Show(fire.Editor.CompletionItem i) => $"{i.Text}|{i.Kind}|{i.Score:R}|{i.Detail}";
-            if (!items.Select(Show).SequenceEqual(own.Select(Show)))
-            {
-                _differences++;
-                int at = 0;
-                while (at < items.Count && at < own.Count && Show(items[at]) == Show(own[at])) at++;
-                Console.WriteLine($"FEHLER: Vervollstaendigung: Protokoll und eigener Prozess verschieden ({items.Count} / {own.Count} Vorschlaege), ab {at}:"
-                    + $"\n  Protokoll:        {string.Join(", ", items.Skip(at).Take(6).Select(Show))}\n  eigener Prozess: {string.Join(", ", own.Skip(at).Take(6).Select(Show))}");
-            }
-            return items;
+            return serve.Completion(path, cursor, out _);
         }
         finally { serve.Close(path); }
     }
@@ -97,7 +78,7 @@ static class CompletionTests
     {
         Console.WriteLine();
         Console.WriteLine("=== Editor: Vervollstaendigung (Sichtbarkeit, Empfaengertyp, Reihenfolge) ===");
-        Console.WriteLine(fire.Editor.ServeClient.InProcess ? "(im eigenen Prozess: FIRE_SPARK_LANG=inproc)" : "(ueber das Protokoll: forge serve, verglichen mit dem eigenen Prozess)");
+        Console.WriteLine("(ueber das Protokoll: forge serve)");
         _failures = 0;
         _differences = 0;
         string bank = Bank.Replace("other.|", "other.balance").Replace("this.| }", "this.rate }");

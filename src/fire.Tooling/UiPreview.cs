@@ -1,13 +1,11 @@
-using fire.Bytecode;
 using fire.UI.Markup;
-using fire.Values;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     /// <summary>Where an element of the markup ended up in the picture (<paramref name="Index"/>: its place in <see cref="MarkupDocument.AllElements"/> without the parts that have no object).</summary>
     public sealed record PreviewRect(int Index, int X, int Y, int Width, int Height);
@@ -79,7 +77,7 @@ namespace fire.Compiler
             }
             catch (Exception ex)
             {
-                return new UiPreviewResult { Error = CompileErrors.Describe(ex), Engine = "c" };
+                return new UiPreviewResult { Error = ex.Message, Engine = "c" };
             }
         }
     }

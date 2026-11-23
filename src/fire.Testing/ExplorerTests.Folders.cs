@@ -1,4 +1,4 @@
-using fire.Compiler;
+using fire.Tooling;
 using fire.Editor;
 using fire.Projects;
 
@@ -109,7 +109,9 @@ static partial class ExplorerTests
         Check("Ordner/Build: eine Quelle im ausgeschlossenen Ordner wird nicht kompiliert", project.Files.Contains(main) && !project.Files.Contains(broken), string.Join(",", project.Files));
         var plan = BuildPlan.Create(ws, project);
         bool compiles;
-        try { ProjectBuilder.Check(plan); compiles = true; } catch (Exception e) { compiles = false; Console.WriteLine(e.Message); }
+        var check = Forge.CompileFiles(new[] { project.FilePath }, Path.Combine(dir, "bin", "check.fbc"));   // (forge compiles it)
+        compiles = check.Ok;
+        if (!compiles) Console.WriteLine(check.Errors);
         Check("Ordner/Build: das Projekt kompiliert ohne den ausgeschlossenen (kaputten) Ordner", plan.IsValid && compiles, string.Join("\n", plan.Errors));
         var copies = ProjectContent.ItemsOf(plan).Select(c => c.RelativePath).ToList();
         Check("Ordner/Build: Copy im unentschiedenen Ordner zaehlt, im ausgeschlossenen nie", copies.Contains("assets/keep.txt") && !copies.Contains("broken/data.txt"), string.Join(",", copies));

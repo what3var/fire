@@ -1,8 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using fire.Runtime;
-
-namespace fire.Native
+using fire.Tooling;
+namespace fire.Tooling
 {
     /// <summary>
     /// The native build configuration (<c>fire.native.json</c>): which engine <c>build</c> uses, the default target and toolchain, own targets (a board, a

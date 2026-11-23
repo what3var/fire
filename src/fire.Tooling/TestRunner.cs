@@ -1,11 +1,17 @@
 using System.Diagnostics;
 using System.Text;
-using fire.Bytecode;
-using fire.Runtime;
+using System.Text.Json.Nodes;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     public enum TestStatus { Passed, Failed, Error }
+
+    /// <summary>A test found in a source file without running anything (the Test Explorer of the editor; forge serve, `tests`): its class, method, title, file and line.</summary>
+    public sealed record DiscoveredTest(string Class, string Method, string Title, string Description, string File, int Line, bool HasParameters)
+    {
+        /// <summary>The key of the test for <see cref="TestFilter"/>: `Class.Method`.</summary>
+        public string Key => Class + "." + Method;
+    }
 
     /// <summary>One test that ran (a test with parameters: one per set of values).</summary>
     public sealed class TestResult
@@ -27,335 +33,129 @@ namespace fire.Compiler
         public required string Title { get; init; }
         public List<TestResult> Results { get; } = new();
         public List<string> Problems { get; } = new();
+        /// <summary>The run could not be compiled: forge's errors (null: it ran).</summary>
+        public string? CompileErrors { get; set; }
         public TimeSpan Duration { get; set; }
         public int Passed => Results.Count(r => r.Status == TestStatus.Passed);
         public int Failed => Results.Count(r => r.Status == TestStatus.Failed);
         public int Errors => Results.Count(r => r.Status == TestStatus.Error);
-        public bool Ok => Failed == 0 && Errors == 0 && Problems.Count == 0;
-    }
-
-    /// <summary>Reads the lines of the test driver (see <see cref="TestDriver"/>) into a <see cref="TestRun"/>; other lines are the output of the running test.</summary>
-    public sealed class TestProtocol
-    {
-        private readonly TestRun _run;
-        private TestResult? _current;
-        public bool Done { get; private set; }
-        /// <summary>A test started (for the live display).</summary>
-        public event Action<TestResult>? Started;
-        /// <summary>A test finished.</summary>
-        public event Action<TestResult>? Finished;
-
-        public TestProtocol(TestRun run) { _run = run; }
-
-        public void Line(string line)
-        {
-            if (!line.StartsWith(TestDriver.Marker, StringComparison.Ordinal))
-            {
-                if (_current != null) _current.Output.AppendLine(line);
-                return;
-            }
-            var parts = line.Substring(TestDriver.Marker.Length).Split('|');
-            string Part(int i) => i < parts.Length ? parts[i].Replace("\\n", "\n") : "";
-            switch (parts[0])
-            {
-                case "S":
-                    Close();
-                    _current = new TestResult { Class = Part(1), Method = Part(2), Name = Part(1) + "." + Part(3), Description = Part(4) };
-                    _run.Results.Add(_current);
-                    Started?.Invoke(_current);
-                    break;
-                case "P":
-                    if (_current != null) { _current.Status = TestStatus.Passed; _current.Finished = true; }
-                    break;
-                case "F":
-                case "E":
-                    if (_current != null) { _current.Status = parts[0] == "F" ? TestStatus.Failed : TestStatus.Error; _current.Message = WithTrace(Rest(parts, 1)); _current.Finished = true; }
-                    break;
-                case "C":
-                    if (_current != null && _current.Status != TestStatus.Error)
-                    {
-                        _current.Message = (_current.Status == TestStatus.Failed ? _current.Message + "; " : "") + "[CleanTest] threw: " + Rest(parts, 1);
-                        _current.Status = TestStatus.Error;
-                    }
-                    break;
-                case "X":
-                    Close();
-                    _run.Problems.Add(Part(2) switch
-                    {
-                        "construct" => $"{Part(1)}: the test object could not be made (new {Part(1)}()): {Rest(parts, 3)}",
-                        _ => $"{Part(1)}: [{Part(2)}] threw: {Rest(parts, 3)}",
-                    });
-                    break;
-                case "D":
-                    Close();
-                    Done = true;
-                    break;
-            }
-        }
-
-        /// <summary>The program stopped (an exception nobody caught, a crash): the running test is an error with this message.</summary>
-        public void Stopped(string message)
-        {
-            if (_current != null && !_current.Finished) { _current.Status = TestStatus.Error; _current.Message = message; _current.Finished = true; Close(); }
-            else _run.Problems.Add("The test run stopped: " + message);
-        }
-
-        private void Close()
-        {
-            if (_current == null) return;
-            if (!_current.Finished && _current.Message == "") _current.Message = "the test did not finish";
-            Finished?.Invoke(_current);
-            _current = null;
-        }
-
-        /// <summary>The message of a failed test with the stack trace below it - up to the test: without the frames of `Testing.Assert` and of the driver
-        /// (OutputLocations.WithoutTestDriver, docs/spec/STACKTRACE.md).</summary>
-        private static string WithTrace(string text)
-        {
-            int at = text.IndexOf("\n   at ", StringComparison.Ordinal);
-            if (at < 0) return text;
-            string trace = OutputLocations.WithoutTestDriver(text.Substring(at + 1));
-            return trace.Length == 0 ? text.Substring(0, at) : text.Substring(0, at) + "\n" + trace.TrimEnd('\n');
-        }
-
-        private static string Rest(string[] parts, int from) => string.Join("|", parts.Skip(from)).Replace("\\n", "\n");
+        public bool Ok => Failed == 0 && Errors == 0 && Problems.Count == 0 && CompileErrors == null;
     }
 
     /// <summary>
-    /// `forge test` (docs/tools/testing.md): compiles a program with its tests (the top level of its files does not run), runs the generated driver in the VM in C (`fire`) or as a native program and reports.
-    /// While it runs, a console that is not redirected shows a spinner (`\ - / |`) with the running test; at the end a list of the tests and the sums.
+    /// The tests of a file or a project, run by forge (docs/tools/testing.md; M3: forge compiles the driver and runs it in `fire`): `forge test &lt;file|project&gt; --report json
+    /// [--filter ...] [--overlay source=file]...` as a child process, its events (native/forge/tools/testrunner.c: `run`, `start`, `result`, `problem`, `error`, `done`, `end`)
+    /// read as they come - <see cref="TestStarted"/> and <see cref="TestFinished"/> on the reader's thread. <see cref="Cancel"/> ends forge with its children.
     /// </summary>
     public sealed class TestRunner
     {
-        private readonly TextWriter _out;
-        private readonly bool _live;
         private readonly object _lock = new();
-        private int _spin;
-        private string _status = "";
-        private int _shownWidth;
-
-        private volatile bool _cancelled;
         private Process? _process;
-
-        public TestRunner(TextWriter output, bool live)
-        {
-            _out = output;
-            _live = live;
-        }
+        private volatile bool _cancelled;
 
         /// <summary>Only these tests run (null: all).</summary>
         public TestFilter? Filter { get; set; }
 
-        /// <summary>A test started (on the thread of the run - the editor posts it to its UI thread).</summary>
+        /// <summary>A test started / finished (for the live display).</summary>
         public event Action<TestResult>? TestStarted;
-
-        /// <summary>A test finished (its status, message and output are complete).</summary>
         public event Action<TestResult>? TestFinished;
 
-        /// <summary>Was the run stopped with <see cref="Cancel"/>?</summary>
-        public bool Cancelled => _cancelled;
-
-        /// <summary>Stops the run from another thread: the program of the tests (in `fire` or native) is killed. The running test ends as an error "cancelled".</summary>
+        /// <summary>Ends the running tests (forge and the program it runs).</summary>
         public void Cancel()
         {
             _cancelled = true;
             lock (_lock)
             {
-                try { if (_process is { HasExited: false }) _process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) { }
-                catch (System.ComponentModel.Win32Exception) { }
+                try { if (_process is { HasExited: false } p) p.Kill(entireProcessTree: true); }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
             }
         }
 
-        /// <summary>Runs the tests of <paramref name="sources"/> in the VM - the VM in C: the program file of the tests as `fire run tests.fbc` (CVmRun, as forge-c does it), its
-        /// lines read as they come.</summary>
-        /// <param name="files">The names of the files of <paramref name="sources"/> (for the messages), when there is no plan.</param>
-        /// <param name="basePath">The folder `#include` of a file without a plan starts from (else the current folder).</param>
-        /// <param name="sourcePaths">The files of <paramref name="sources"/>, when there is no plan: each `#include` is relative to the file that has it and a message names its file
-        /// (as `forge build &lt;file&gt;`).</param>
-        public TestRun RunInVm(string title, IReadOnlyList<string> sources, VmExecutionMode? mode = null, int? floatWidth = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null,
-            IReadOnlyList<string>? files = null, string? basePath = null, IReadOnlyList<string?>? sourcePaths = null)
+        /// <summary>Runs the tests of <paramref name="file"/> (a source, a project or a solution) to their end. <paramref name="overlays"/>: texts of sources that are not
+        /// saved (path -> text; written to temporary files for `--overlay`). <paramref name="engine"/>: vm or native.</summary>
+        public TestRun Run(string title, string file, IReadOnlyDictionary<string, string>? overlays = null, string? workingDirectory = null, string engine = "vm",
+            IEnumerable<string>? extraArgs = null)
         {
             var run = new TestRun { Title = title };
-            var protocol = Attach(run);
             var watch = Stopwatch.StartNew();
-            using var spinner = StartSpinner();
-            LinkedProgram linked;
-            int tests = 0;
-            Linker.TestDriver = (program, first) => Driver(program, first, plan, files, run, out tests);
+            var temps = new List<string>();
             try
             {
-                linked = new Linker { BasePath = basePath, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, PackageLibraries = true }
-                    .CompileAndLink(sources, null, null, mode, floatWidth);
-            }
-            finally { Linker.TestDriver = null; }
-            if (tests > 0 && !_cancelled)
-            {
-                // (FIRE_STDOUT_LINES: the lines of the driver as they come - the live display, spark's test explorer)
-                var (_, errors, code) = CVmRun.RunCaptured(linked, "fire-test-", line => { lock (_lock) protocol.Line(line); }, process => { lock (_lock) _process = process; },
-                    new Dictionary<string, string> { ["FIRE_STDOUT_LINES"] = "1" });
-                if (_cancelled && !protocol.Done) protocol.Stopped("cancelled");
-                else if (!protocol.Done)
-                    // (the VM in C reports an exception nobody caught as UncaughtScriptException does: "Unhandled exception of type 'X': message")
-                    protocol.Stopped(code != 0 && CVmRun.UnhandledLine(errors) is { } unhandled ? unhandled : "the program ended before the tests were done (`leave`/`terminate`?)");
-            }
-            run.Duration = watch.Elapsed;
-            return run;
-        }
-
-        /// <summary>Runs the tests of <paramref name="sources"/> as a native program for this machine (built with the toolchain of the configuration).</summary>
-        /// <param name="basePath">As in <see cref="RunInVm"/>.</param>
-        /// <param name="sourcePaths">As in <see cref="RunInVm"/>.</param>
-        public TestRun RunNative(string title, IReadOnlyList<string> sources, fire.Native.NativeConfig config, string? toolchainName, VmExecutionMode? mode = null, int? floatWidth = null,
-            IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string>? files = null, string? basePath = null, IReadOnlyList<string?>? sourcePaths = null)
-        {
-            var run = new TestRun { Title = title };
-            var protocol = Attach(run);
-            var watch = Stopwatch.StartNew();
-            using var spinner = StartSpinner();
-            Status("building the native test program ...");
-            var target = config.ResolveTarget(null);
-            var toolchain = config.ResolveToolchain(target, toolchainName, fire.Native.ToolchainPurpose.Build);
-            string dir = Path.Combine(Path.GetTempPath(), "fire-test-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(dir);
-            try
-            {
-                string exe = Path.Combine(dir, OperatingSystem.IsWindows() ? "tests.exe" : "tests");
-                int tests = 0;
-                Linker.TestDriver = (program, first) => Driver(program, first, plan, files, run, out tests);
-                NativeBuildResult result;
-                try { result = NativeBuilder.Build(sources, config, target, toolchain, exe, mode, floatWidth, basePath: basePath, defines: defines, plan: plan, sourcePaths: sourcePaths); }
-                finally { Linker.TestDriver = null; }
-                if (!result.Ok) { run.Problems.Add("The native build of the tests failed:" + Environment.NewLine + result.Log.TrimEnd()); return run; }
-                if (tests == 0 || _cancelled) return run;
-
-                var psi = new ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Directory.GetCurrentDirectory() };
-                fire.Debugging.ChildProcesses.Prepare(psi);
-                using var process = fire.Debugging.ChildProcesses.Add(Process.Start(psi)!);
-                lock (_lock) _process = process;
+                var args = new List<string> { "test", file, "--report", "json" };
+                if (engine != "vm") { args.Add("--engine"); args.Add(engine); }
+                if (Filter is { IsEmpty: false } f) { args.Add("--filter"); args.Add(f.Text); }
+                foreach (var (path, text) in overlays ?? new Dictionary<string, string>())
+                {
+                    string temp = Path.Combine(Path.GetTempPath(), $"fire-test-overlay-{Environment.ProcessId}-{Guid.NewGuid():N}.fire");
+                    File.WriteAllText(temp, text, new UTF8Encoding(false));
+                    temps.Add(temp);
+                    args.Add("--overlay");
+                    args.Add(Path.GetFullPath(path) + "=" + temp);
+                }
+                if (extraArgs != null) args.AddRange(extraArgs);
+                var info = Forge.StartInfo(args, workingDirectory ?? Path.GetDirectoryName(Path.GetFullPath(file)));
                 var errors = new StringBuilder();
+                TestResult? current = null;
+                bool ended = false;
+                using var process = new Process { StartInfo = info };
                 process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errors) errors.AppendLine(e.Data); };
+                lock (_lock)
+                {
+                    if (_cancelled) { run.Problems.Add("cancelled"); return run; }
+                    process.Start();
+                    _process = process;
+                }
+                fire.Debugging.ChildProcesses.Add(process);
+                process.StandardInput.Close();
                 process.BeginErrorReadLine();
                 string? line;
-                while ((line = process.StandardOutput.ReadLine()) != null) lock (_lock) protocol.Line(line);
+                while ((line = process.StandardOutput.ReadLine()) != null)
+                {
+                    JsonObject? ev;
+                    try { ev = JsonNode.Parse(line) as JsonObject; } catch (System.Text.Json.JsonException) { ev = null; }
+                    if (ev == null) continue;
+                    string S(string key) => ev[key]?.GetValue<string>() ?? "";
+                    switch (S("type"))
+                    {
+                        case "start":
+                            current = new TestResult { Class = S("class"), Method = S("method"), Name = S("name"), Description = S("description") };
+                            run.Results.Add(current);
+                            TestStarted?.Invoke(current);
+                            break;
+                        case "result":
+                        {
+                            var r = current != null && current.Name == S("name") && !current.Finished ? current
+                                : new TestResult { Class = S("class"), Method = S("method"), Name = S("name"), Description = S("description") };
+                            if (!run.Results.Contains(r)) run.Results.Add(r);
+                            r.Status = S("status") switch { "passed" => TestStatus.Passed, "failed" => TestStatus.Failed, _ => TestStatus.Error };
+                            r.Message = S("message");
+                            r.Output.Append(S("output"));
+                            r.Finished = S("message") != "the test did not finish";
+                            current = null;
+                            TestFinished?.Invoke(r);
+                            break;
+                        }
+                        case "problem": run.Problems.Add(S("text")); break;
+                        case "error": run.CompileErrors = (run.CompileErrors == null ? "" : run.CompileErrors + Environment.NewLine) + S("text"); break;
+                        case "end": ended = true; break;
+                    }
+                }
                 process.WaitForExit();
                 lock (_lock) _process = null;
-                if (_cancelled && !protocol.Done) protocol.Stopped("cancelled");
-                else if (!protocol.Done) protocol.Stopped($"the program ended with code {process.ExitCode} before the tests were done" + (errors.Length > 0 ? ": " + errors.ToString().Trim() : ""));
+                if (_cancelled) { if (current != null) { current.Status = TestStatus.Error; current.Message = "cancelled"; TestFinished?.Invoke(current); } else run.Problems.Add("The test run was cancelled."); }
+                else if (!ended && run.CompileErrors == null)
+                {
+                    string text;
+                    lock (errors) text = errors.ToString().Trim();
+                    run.CompileErrors = text.Length > 0 ? text : $"forge ended with exit code {process.ExitCode}.";
+                }
             }
             finally
             {
-                try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                foreach (var t in temps) try { File.Delete(t); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
                 run.Duration = watch.Elapsed;
             }
             return run;
-        }
-
-        private string Driver(IReadOnlyList<Ast.Stmt> program, int first, fire.Projects.BuildPlan? plan, IReadOnlyList<string>? files, TestRun run, out int tests)
-        {
-            string? FileOf(int source)
-            {
-                int i = source - first;
-                if (plan != null) return i >= 0 && i < plan.Sources.Count ? Path.GetRelativePath(plan.Project.Directory, plan.Sources[i].Path).Replace('\\', '/') : null;
-                return files != null && i >= 0 && i < files.Count ? files[i] : null;
-            }
-            return TestDriver.Generate(program, first, FileOf, run.Problems, out tests, Filter);
-        }
-
-        private TestProtocol Attach(TestRun run)
-        {
-            var protocol = new TestProtocol(run);
-            protocol.Started += r => { Status($"{run.Passed} ok, {run.Failed + run.Errors} failed - {r.Name}"); TestStarted?.Invoke(r); };
-            protocol.Finished += r => TestFinished?.Invoke(r);
-            return protocol;
-        }
-
-        // ---- live display ----------------------------------------------------------------------------------------------
-
-        private static readonly char[] Frames = { '\\', '-', '/', '|' };
-
-        private IDisposable StartSpinner()
-        {
-            if (!_live) return new Stop(null, this);
-            var timer = new Timer(_ => Draw(advance: true), null, 100, 100);
-            return new Stop(timer, this);
-        }
-
-        private void Status(string text)
-        {
-            if (!_live) return;
-            lock (_lock) { _status = text; }
-            Draw(advance: true);
-        }
-
-        private void Draw(bool advance)
-        {
-            lock (_lock)
-            {
-                if (advance) _spin = (_spin + 1) % Frames.Length;
-                int width = 79;
-                try { if (Console.WindowWidth > 20) width = Console.WindowWidth - 1; } catch (IOException) { } catch (PlatformNotSupportedException) { }
-                string text = $"[{Frames[_spin]}] {_status}";
-                if (text.Length > width) text = text.Substring(0, width);
-                _out.Write("\r" + text.PadRight(Math.Max(_shownWidth, text.Length)));
-                _shownWidth = text.Length;
-                _out.Flush();
-            }
-        }
-
-        private void Clear()
-        {
-            lock (_lock)
-            {
-                if (_shownWidth > 0) _out.Write("\r" + new string(' ', _shownWidth) + "\r");
-                _shownWidth = 0;
-                _out.Flush();
-            }
-        }
-
-        private sealed class Stop : IDisposable
-        {
-            private readonly Timer? _timer;
-            private readonly TestRunner _owner;
-            public Stop(Timer? timer, TestRunner owner) { _timer = timer; _owner = owner; }
-            public void Dispose()
-            {
-                if (_timer == null) return;
-                using var done = new ManualResetEvent(false);
-                _timer.Dispose(done);
-                done.WaitOne(1000);
-                _owner.Clear();
-            }
-        }
-
-        // ---- summary ---------------------------------------------------------------------------------------------------
-
-        /// <summary>The list of the tests and the sums.</summary>
-        public static void WriteSummary(TestRun run, TextWriter output)
-        {
-            output.WriteLine($"Tests of {run.Title}:");
-            foreach (var r in run.Results)
-            {
-                string tag = r.Status switch { TestStatus.Passed => "  ok    ", TestStatus.Failed => "  FAILED", _ => "  ERROR " };
-                output.WriteLine($"{tag}  {r.Name}");
-                if (r.Status == TestStatus.Passed) continue;
-                if (r.Description != "") output.WriteLine($"          ({r.Description})");
-                foreach (var line in r.Message.Split('\n')) output.WriteLine($"          {line}");
-                if (r.Output.Length > 0)
-                {
-                    output.WriteLine("          output:");
-                    foreach (var line in r.Output.ToString().TrimEnd().Split('\n')) output.WriteLine($"            {line.TrimEnd('\r')}");
-                }
-            }
-            foreach (var p in run.Problems)
-            {
-                var lines = p.Split('\n');
-                output.WriteLine($"  PROBLEM {lines[0].TrimEnd('\r')}");
-                foreach (var line in lines.Skip(1)) output.WriteLine($"          {line.TrimEnd('\r')}");
-            }
-            if (run.Results.Count == 0 && run.Problems.Count == 0) output.WriteLine("  no tests (a test is a method with [Test], see docs/tools/testing.md)");
-            output.WriteLine($"{run.Results.Count} test{(run.Results.Count == 1 ? "" : "s")}: {run.Passed} passed, {run.Failed} failed, {run.Errors} error{(run.Errors == 1 ? "" : "s")}"
-                + (run.Problems.Count > 0 ? $", {run.Problems.Count} problem{(run.Problems.Count == 1 ? "" : "s")}" : "") + $" ({run.Duration.TotalSeconds:0.00} s)");
         }
     }
 }

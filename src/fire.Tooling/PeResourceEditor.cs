@@ -5,7 +5,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace fire.Utilities
+namespace fire.Tooling
 {
     /// <summary>
     /// Changes icon and version metadata (product name, company, version, ...)

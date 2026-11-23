@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     /// <summary>The preview of spark's model editors (the block editor, the CAD editor; the window is fire.Editor's BlockPreviewWindow): scene3d itself draws the model
     /// (from the model file forge makes - .f3d) on a floor, lit by the sun, a PNG per frame of the animation. The script runs in `fire` (the VM in C, <see cref="CVmScript"/>).</summary>
@@ -77,7 +77,7 @@ namespace fire.Compiler
                 }
                 return (list, said, engine, compileMs, runMs);
             }
-            catch (Exception ex) { return (null, CompileErrors.Describe(ex), "", 0, 0); }
+            catch (Exception ex) { return (null, ex.Message, "", 0, 0); }
             finally { try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
         }
 

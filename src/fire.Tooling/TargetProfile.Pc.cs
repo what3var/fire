@@ -1,4 +1,4 @@
-namespace fire.Runtime
+namespace fire.Tooling
 {
     /// <summary>The targets of the old PC (ROADMAP 13): DOS in real mode and with DPMI, without an operating system (BIOS, UEFI), Windows 3.x and the old
     /// 32-bit Windows. Each one is a platform package of its own (native/platform/&lt;name&gt;/) built with its toolchain; none of them has fire threads.</summary>

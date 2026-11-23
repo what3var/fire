@@ -3,7 +3,7 @@ using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
-namespace fire.Native
+namespace fire.Tooling
 {
     /// <summary>
     /// Finding and providing a C++ toolchain on the machine of the user (docs/packages/natives.md): native builds and the natives of packages need one. The compiler looks for it
@@ -105,71 +105,13 @@ namespace fire.Native
             File.WriteAllText(MachineFile, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
 
-        // -------------------------------------------------------------------------------------------------------------
-        // w64devkit
-        // -------------------------------------------------------------------------------------------------------------
-        private const string LatestReleaseApi = "https://api.github.com/repos/skeeto/w64devkit/releases/latest";
-        private const string FallbackUrl = "https://github.com/skeeto/w64devkit/releases/download/v2.0.0/w64devkit-x64-2.0.0.7z.exe";
-
-        private static string FindDownloadUrl(HttpClient http)
-        {
-            try
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseApi);
-                request.Headers.UserAgent.ParseAdd("fire-toolchain-setup");
-                request.Headers.Accept.ParseAdd("application/vnd.github+json");
-                using var response = http.Send(request);
-                response.EnsureSuccessStatusCode();
-                using var doc = JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
-                foreach (var asset in doc.RootElement.GetProperty("assets").EnumerateArray())
-                {
-                    string name = asset.GetProperty("name").GetString() ?? "";
-                    if (name.StartsWith("w64devkit-x64-", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".7z.exe", StringComparison.OrdinalIgnoreCase))
-                        return asset.GetProperty("browser_download_url").GetString()!;
-                }
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or KeyNotFoundException or InvalidOperationException) { /* the pinned release below */ }
-            return FallbackUrl;
-        }
-
         /// <summary>Downloads the portable w64devkit (a self-extracting archive of GCC for Windows) and unpacks it to <see cref="W64devkitDirectory"/>. Returns the compiler.
         /// <paramref name="log"/> gets progress lines. A failure is an <see cref="InvalidOperationException"/> with the reason.
         /// <paramref name="progress"/> gets the bytes of the download (done, total); <paramref name="token"/> stops it (an <see cref="OperationCanceledException"/>, nothing is kept).</summary>
         public static string InstallW64devkit(Action<string>? log = null, Action<long, long>? progress = null, CancellationToken token = default)
         {
             if (!CanInstall) throw new InvalidOperationException("The portable toolchain (w64devkit) can only be downloaded on Windows (x64). Install a C++ compiler with your system's package manager.");
-            Directory.CreateDirectory(Root);
-            string temp = Path.Combine(Path.GetTempPath(), "fire-w64devkit-" + Guid.NewGuid().ToString("N") + ".7z.exe");
-            try
-            {
-                using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(15) };
-                string url = FindDownloadUrl(http);
-                log?.Invoke($"Downloading {url} ...");
-                DownloadTransfer.Fetch(http, url, temp, progress, log, token);
-                token.ThrowIfCancellationRequested();
-                log?.Invoke($"Unpacking to {Root} ...");
-                if (Directory.Exists(W64devkitDirectory)) Directory.Delete(W64devkitDirectory, recursive: true);
-                var psi = new ProcessStartInfo(temp, $"-y -o\"{Root}\"") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-                using (var p = Process.Start(psi)!)
-                {
-                    p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd();
-                    p.WaitForExit();
-                    if (p.ExitCode != 0) throw new InvalidOperationException($"Unpacking the toolchain failed (exit code {p.ExitCode}).");
-                }
-                string gpp = Path.Combine(W64devkitDirectory, "bin", "g++.exe");
-                if (!File.Exists(gpp)) throw new InvalidOperationException($"The toolchain was unpacked, but '{gpp}' is not there.");
-                SaveMachineToolchain(Gcc(gpp));
-                log?.Invoke("The toolchain is ready: " + gpp);
-                return gpp;
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
-            {
-                throw new InvalidOperationException("Installing the toolchain failed: " + ex.Message, ex);
-            }
-            finally
-            {
-                try { File.Delete(temp); } catch (IOException) { }
-            }
+            return ToolchainInstall.Run("w64devkit", log, progress, DownloadBytes, token, () => Path.Combine(W64devkitDirectory, "bin", "g++.exe"));
         }
     }
 
@@ -194,86 +136,8 @@ namespace fire.Native
         public static string Install(Action<string>? log = null, Action<long, long>? progress = null, CancellationToken token = default)
         {
             if (!CanInstall) throw new InvalidOperationException("The portable Open Watcom can only be downloaded on Windows or Linux (x64). Install Open Watcom v2 yourself and set WATCOM.");
-            System.IO.Directory.CreateDirectory(ToolchainSetup.Root);
-            string temp = Path.Combine(Path.GetTempPath(), "fire-watcom-" + Guid.NewGuid().ToString("N"));
-            string zip = temp + ".zip";
-            try
-            {
-                using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(20) })
-                {
-                    log?.Invoke($"Downloading {DownloadUrl} ...");
-                    DownloadTransfer.Fetch(http, DownloadUrl, zip, progress, log, token);
-                }
-                token.ThrowIfCancellationRequested();
-                return Unpack(zip, log);
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                throw new InvalidOperationException("Installing Open Watcom failed: " + ex.Message, ex);
-            }
-            finally
-            {
-                try { File.Delete(zip); } catch (IOException) { }
-                try { if (System.IO.Directory.Exists(temp)) System.IO.Directory.Delete(temp, true); } catch (IOException) { }
-            }
+            return ToolchainInstall.Run("watcom", log, progress, DownloadBytes, token, () => Directory);
         }
-
-        /// <summary>Unpacks the archive (as <see cref="Install"/> downloads it) to <paramref name="directory"/> (default: <see cref="Directory"/>): the folder of the archive
-        /// that holds h\ and the compilers becomes it. Returns it.</summary>
-        public static string Unpack(string zip, Action<string>? log = null, string? directory = null)
-        {
-            string Directory = directory ?? WatcomSetup.Directory;
-            // (unpacked next to the target: a move between file systems would fail)
-            string temp = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(Directory))!, ".watcom-unpack-" + Guid.NewGuid().ToString("N"));
-            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(temp)!);
-            try
-            {
-                log?.Invoke($"Unpacking to {Directory} ...");
-                ZipFile.ExtractToDirectory(zip, temp, overwriteFiles: true);
-                // the WATCOM folder of the archive: the one with h\ and the compilers (the zip may hold it directly or in a folder of its own)
-                string root = FindRoot(temp) ?? throw new InvalidOperationException("The archive holds no Open Watcom (no folder with h and binnt64/binnt/binl64/binl).");
-                if (System.IO.Directory.Exists(Directory)) System.IO.Directory.Delete(Directory, recursive: true);
-                System.IO.Directory.Move(root, Directory);
-
-                if (!OperatingSystem.IsWindows())
-                    foreach (string bin in new[] { "binl64", "binl" })
-                    {
-                        string dir = Path.Combine(Directory, bin);
-                        if (!System.IO.Directory.Exists(dir)) continue;
-                        foreach (string f in System.IO.Directory.GetFiles(dir))
-                            File.SetUnixFileMode(f, File.GetUnixFileMode(f) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
-                    }
-
-                // the compilers for this machine: 64-bit if the archive has them, else the 32-bit ones (the portable archive has only binnt/binl)
-                string owcc = WatcomToolchain.CompilerIn(Directory)
-                    ?? throw new InvalidOperationException($"Open Watcom was unpacked to '{Directory}', but owcc is in none of {string.Join(", ", WatcomToolchain.CompilerFolders)}.");
-                log?.Invoke("Compiler: " + owcc);
-                log?.Invoke("Open Watcom is ready: " + Directory);
-                return Directory;
-            }
-            catch (InvalidDataException ex) { throw new InvalidOperationException("The archive of Open Watcom is damaged: " + ex.Message, ex); }
-            finally
-            {
-                try { if (System.IO.Directory.Exists(temp)) System.IO.Directory.Delete(temp, true); } catch (IOException) { }
-            }
-        }
-
-        private static string? FindRoot(string dir)
-        {
-            for (int depth = 0; depth < 3; depth++)
-            {
-                if (System.IO.Directory.Exists(Path.Combine(dir, "h")) && (System.IO.Directory.Exists(Path.Combine(dir, "binnt64")) || System.IO.Directory.Exists(Path.Combine(dir, "binl64")) || System.IO.Directory.Exists(Path.Combine(dir, "binnt")) || System.IO.Directory.Exists(Path.Combine(dir, "binl")))) return dir;
-                var subs = System.IO.Directory.GetDirectories(dir);
-                string? found = subs.Select(s => FindRoot1(s)).FirstOrDefault(r => r != null);
-                if (found != null) return found;
-                if (subs.Length != 1) return null;
-                dir = subs[0];
-            }
-            return null;
-        }
-
-        private static string? FindRoot1(string dir) =>
-            System.IO.Directory.Exists(Path.Combine(dir, "h")) && (System.IO.Directory.Exists(Path.Combine(dir, "binnt64")) || System.IO.Directory.Exists(Path.Combine(dir, "binl64")) || System.IO.Directory.Exists(Path.Combine(dir, "binnt")) || System.IO.Directory.Exists(Path.Combine(dir, "binl"))) ? dir : null;
     }
 
     /// <summary>What the user is asked when a C++ toolchain is needed and there is none.</summary>

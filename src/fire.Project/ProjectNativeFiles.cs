@@ -1,5 +1,4 @@
-using fire.Package.Manager;
-
+using fire.Projects;
 namespace fire.Projects
 {
     /// <summary>Where a C/C++ file of a project stands in its native build (see <see cref="ProjectNativeFiles.Describe"/>).</summary>

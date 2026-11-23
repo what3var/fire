@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     /// <summary>
     /// Makes fire's model file (.f3d, docs/graphics/models.md; read by packages/scene3d/native/s3d_model.h) from glTF 2.0 (.gltf with its buffers - data URIs or files next to

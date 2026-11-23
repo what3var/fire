@@ -8,10 +8,8 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Projects;
-using fire.Utilities;
-
 namespace fire.Editor
 {
     // Build settings, native build, package manager, toolchain questions.
@@ -32,7 +30,7 @@ namespace fire.Editor
             }
 
             var buildSettings = new AssemblyInfoDialog();
-            var model = Linker.ExtractAssemblyInfo(new[] { script.GetText() }, basePath: script.BaseDirectory);
+            var model = AssemblyInfo.FromSource(script.GetText());   // (the directives of the text; the build takes what forge reads)
             buildSettings.DataContext = model;
 
             if (await buildSettings.ShowDialog<bool?>(this) != true) return;
@@ -43,12 +41,12 @@ namespace fire.Editor
                 ("noconsole", model.Subsystem == SubsystemType.GUI ? "" : null),
             };
 
-            if (model.ExecutionMode == Runtime.VmExecutionMode.Debug)
+            if (model.ExecutionMode == VmExecutionMode.Debug)
             {
                 directives.Add(("debug", ""));
                 directives.Add(("performance", null));
             }
-            else if (model.ExecutionMode == Runtime.VmExecutionMode.Performance)
+            else if (model.ExecutionMode == VmExecutionMode.Performance)
             {
                 directives.Add(("debug", null));
                 directives.Add(("performance", ""));
@@ -131,16 +129,16 @@ namespace fire.Editor
 
         /// <summary>The native build configuration that applies to `project` (null: the project of the active document, else the active script) - the nearest fire.native.json, else the
         /// defaults - and where it is saved.</summary>
-        private fire.Native.NativeConfig LoadNativeConfig(out string savePath, LoadedProject? project = null)
+        private fire.Tooling.NativeConfig LoadNativeConfig(out string savePath, LoadedProject? project = null)
         {
             string? file = (project ?? ContextProject())?.FilePath ?? ActiveScript?.FilePath;
             if (file == null)
             {
-                savePath = Path.Combine(Directory.GetCurrentDirectory(), fire.Native.NativeConfig.FileName);
-                return new fire.Native.NativeConfig();
+                savePath = Path.Combine(Directory.GetCurrentDirectory(), fire.Tooling.NativeConfig.FileName);
+                return new fire.Tooling.NativeConfig();
             }
-            var config = fire.Native.NativeConfig.FindFor(file);
-            savePath = config.Path ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file))!, fire.Native.NativeConfig.FileName);
+            var config = fire.Tooling.NativeConfig.FindFor(file);
+            savePath = config.Path ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file))!, fire.Tooling.NativeConfig.FileName);
             return config;
         }
 
@@ -163,10 +161,10 @@ namespace fire.Editor
         /// remembered for the whole machine (the natives of packages are compiled with it, too).</summary>
         private async Task<bool> ShowNativeBuildSettings(bool toolchainPage, Window? owner = null)
         {
-            fire.Native.NativeConfig config;
+            fire.Tooling.NativeConfig config;
             string savePath;
             try { config = LoadNativeConfig(out savePath); }
-            catch (fire.Native.NativeConfigException ex) { await Dialogs.Message(owner ?? this, ex.Message, "Toolchain Settings"); return false; }
+            catch (fire.Tooling.NativeConfigException ex) { await Dialogs.Message(owner ?? this, ex.Message, "Toolchain Settings"); return false; }
             var dialog = new NativeBuildDialog(config, savePath, _settings.IdfPath);
             if (toolchainPage) dialog.SelectToolchainTab();
             if (await dialog.ShowDialog<bool?>(owner ?? this) != true) return false;
@@ -178,8 +176,8 @@ namespace fire.Editor
             try
             {
                 var chosen = dialog.Result.ResolveToolchain(dialog.Result.ResolveTarget());
-                if (chosen.EffectiveKind is not ("files" or "custom") && fire.Native.ToolchainDetector.Find(chosen) is { } compilerPath)
-                    fire.Native.ToolchainSetup.SaveMachineToolchain(new fire.Native.ToolchainDef { Extends = chosen.EffectiveKind, Kind = chosen.EffectiveKind, Compiler = compilerPath, Std = chosen.Std, Optimization = chosen.Optimization, Args = chosen.Args });
+                if (chosen.EffectiveKind is not ("files" or "custom") && fire.Tooling.ToolchainDetector.Find(chosen) is { } compilerPath)
+                    fire.Tooling.ToolchainSetup.SaveMachineToolchain(new fire.Tooling.ToolchainDef { Extends = chosen.EffectiveKind, Kind = chosen.EffectiveKind, Compiler = compilerPath, Std = chosen.Std, Optimization = chosen.Optimization, Args = chosen.Args });
                 dialog.Result.Save(savePath);
                 RefreshTargetCombo();
                 foreach (var doc in _documents) doc.Script?.InvalidateConditionalSymbols();   // the `#if` branches that are greyed out depend on the engine, the target and the defines
@@ -211,20 +209,20 @@ namespace fire.Editor
         /// answers are given on the interface thread. The text says why a toolchain is needed, so that a download or a compiler is no surprise.</summary>
         private void RegisterToolchainPrompts()
         {
-            fire.Native.ToolchainProvider.Ask = request => OnUiThread(async () =>
+            fire.Tooling.ToolchainProvider.Ask = request => OnUiThread(async () =>
             {
                 var dialog = new ToolchainPromptDialog(request);
                 await dialog.ShowDialog(this);
                 return dialog.Choice;
             });
-            fire.Native.ToolchainProvider.ChangeToolchain = () => OnUiThread(() => ShowNativeBuildSettings(toolchainPage: true));
-            fire.Native.ToolchainProvider.RunInstall = work => OnUiThread(async () =>
+            fire.Tooling.ToolchainProvider.ChangeToolchain = () => OnUiThread(() => ShowNativeBuildSettings(toolchainPage: true));
+            fire.Tooling.ToolchainProvider.RunInstall = work => OnUiThread(async () =>
             {
                 var dialog = new ToolchainProgressDialog(work);
                 await dialog.ShowDialog(this);
                 return dialog.Succeeded;
             });
-            fire.Native.ToolchainProvider.Log = message => Dispatcher.UIThread.Post(() => { UpdateStatus(message); _buildLog.AppendLine(message); });
+            fire.Tooling.ToolchainProvider.Log = message => Dispatcher.UIThread.Post(() => { UpdateStatus(message); _buildLog.AppendLine(message); });
         }
 
         // -----------------------------------------------------------
@@ -242,12 +240,12 @@ namespace fire.Editor
             _updatingTargetUi = true;
             try
             {
-                fire.Native.NativeConfig config;
+                fire.Tooling.NativeConfig config;
                 try { config = LoadNativeConfig(out _); }
-                catch (fire.Native.NativeConfigException) { config = new fire.Native.NativeConfig(); }
+                catch (fire.Tooling.NativeConfigException) { config = new fire.Tooling.NativeConfig(); }
                 string defaultName;
                 try { defaultName = config.ResolveTarget(ProjectTargetSetting()).Name; }
-                catch (fire.Native.NativeConfigException) { defaultName = "?"; }
+                catch (fire.Tooling.NativeConfigException) { defaultName = "?"; }
                 var items = new List<ComboBoxItem> { new() { Content = $"Default ({TargetTitle(config, defaultName)})", Tag = "" } };
                 items.AddRange(TargetTreeItems(config));
                 cmbTarget.ItemsSource = items;
@@ -259,10 +257,10 @@ namespace fire.Editor
 
         /// <summary>The targets as a tree: a heading per group (OS, Native, Embedded; not selectable), under it the targets with their display names (the name of a target
         /// as its tooltip). Tag: the name of the target (null for a heading).</summary>
-        internal static IEnumerable<ComboBoxItem> TargetTreeItems(fire.Native.NativeConfig config)
+        internal static IEnumerable<ComboBoxItem> TargetTreeItems(fire.Tooling.NativeConfig config)
         {
             var targets = config.TargetProfiles.ToList();
-            foreach (var group in new[] { (fire.Runtime.TargetCategory.Os, "OS"), (fire.Runtime.TargetCategory.Native, "Native"), (fire.Runtime.TargetCategory.Embedded, "Embedded") })
+            foreach (var group in new[] { (fire.Tooling.TargetCategory.Os, "OS"), (fire.Tooling.TargetCategory.Native, "Native"), (fire.Tooling.TargetCategory.Embedded, "Embedded") })
             {
                 var members = targets.Where(t => t.Category == group.Item1).ToList();
                 if (members.Count == 0) continue;
@@ -277,10 +275,10 @@ namespace fire.Editor
         }
 
         /// <summary>The display name of a target (its name when it has none or is unknown).</summary>
-        internal static string TargetTitle(fire.Native.NativeConfig config, string name)
+        internal static string TargetTitle(fire.Tooling.NativeConfig config, string name)
         {
             try { return config.ResolveTarget(name).Title; }
-            catch (fire.Native.NativeConfigException) { return name; }
+            catch (fire.Tooling.NativeConfigException) { return name; }
         }
 
         /// <summary>The target that the settings of the project of the active file name (null: none).</summary>
@@ -343,16 +341,16 @@ namespace fire.Editor
                 return;
             }
             else script = active;
-            fire.Native.NativeConfig config;
-            fire.Runtime.TargetProfile target;
-            fire.Native.ToolchainDef toolchain;
+            fire.Tooling.NativeConfig config;
+            fire.Tooling.TargetProfile target;
+            fire.Tooling.ToolchainDef toolchain;
             try
             {
                 config = LoadNativeConfig(out _, project);
                 target = config.ResolveTarget(_nativeTargetChoice ?? plan?.Settings.Target);   // the tool strip goes before the settings of the project, which go before the configuration file
-                toolchain = config.ResolveToolchain(target, plan?.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
+                toolchain = config.ResolveToolchain(target, plan?.Settings.Toolchain, fire.Tooling.ToolchainPurpose.Build);
             }
-            catch (fire.Native.NativeConfigException ex)
+            catch (fire.Tooling.NativeConfigException ex)
             {
                 await Dialogs.Message(this, ex.Message, "Build Native");
                 return;
@@ -376,7 +374,7 @@ namespace fire.Editor
             else
             {
                 // (the extension of the target - `.exe` also for Windows 3.x and DOS; a program for this machine on Windows has one too)
-                string extension = target.ProgramExtension.Length > 0 ? target.ProgramExtension : OperatingSystem.IsWindows() && target.Name == fire.Runtime.TargetProfile.Host.Name ? ".exe" : "";
+                string extension = target.ProgramExtension.Length > 0 ? target.ProgramExtension : OperatingSystem.IsWindows() && target.Name == fire.Tooling.TargetProfile.Host.Name ? ".exe" : "";
                 var path = await PickSavePath("Build Native", "program" + extension, extension.TrimStart('.'));
                 if (path == null) return;
                 output = path;

@@ -7,9 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using fire.Compiler;
-using fire.Native;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>What a run of forge reported (<see cref="ForgeProcess.Run"/>): how it ended, its errors and warnings, what it wrote, the projects of `--all` and publish, its log.</summary>
@@ -62,7 +60,8 @@ namespace fire.Editor
         /// <summary>How long forge may take to end after it was asked to.</summary>
         public static TimeSpan CancelGrace { get; set; } = TimeSpan.FromSeconds(10);
 
-        /// <summary>The forge that spark runs: <see cref="ForgeVariable"/>, else the one beside spark (the program, else forge.dll with dotnet). Null: none was found.</summary>
+        /// <summary>The forge that spark runs: <see cref="ForgeVariable"/>, else the one beside <paramref name="baseDirectory"/> when one is given, else <see cref="Forge.Locate"/>
+        /// (beside spark, or forge-c built from the repository's sources). Null: none was found.</summary>
         public static (string Program, IReadOnlyList<string> Prefix)? Locate(string? baseDirectory = null)
         {
             static (string, IReadOnlyList<string>)? Of(string path)
@@ -73,8 +72,8 @@ namespace fire.Editor
                 return (path, Array.Empty<string>());
             }
             if (Environment.GetEnvironmentVariable(ForgeVariable) is { Length: > 0 } own) return Of(Path.GetFullPath(own));
-            string dir = baseDirectory ?? AppContext.BaseDirectory;
-            return Of(Path.Combine(dir, OperatingSystem.IsWindows() ? "forge.exe" : "forge")) ?? Of(Path.Combine(dir, "forge.dll"));
+            if (baseDirectory != null) return Of(Path.Combine(baseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge"));
+            return Forge.Locate(out _) is { } found ? Of(found) : null;
         }
 
         /// <summary>
@@ -96,6 +95,7 @@ namespace fire.Editor
             foreach (string a in args) info.ArgumentList.Add(a);
             if (!args.Any(a => a.StartsWith("--report", StringComparison.OrdinalIgnoreCase))) { info.ArgumentList.Add("--report"); info.ArgumentList.Add("json"); }
             info.Environment.Remove(BackgroundWork.LinesVariable);   // (the report says it)
+            if (f.Program == Forge.Locate(out _)) foreach (var (k, v) in Forge.Environment()) info.Environment[k] = v;   // (a forge built from the repository's sources: its native/)
 
             var diagnostics = new List<Diagnostic>();
             var outputs = new List<(string, string, string?)>();

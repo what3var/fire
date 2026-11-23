@@ -12,7 +12,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
-using fire.Compiler;
+using fire.Tooling;
 using Pen = Avalonia.Media.Pen;
 
 namespace fire.Editor

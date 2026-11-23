@@ -1,4 +1,4 @@
-namespace fire.Runtime
+namespace fire.Tooling
 {
     /// <summary>
     /// When the main program processes its queue by itself - the `fire global` jobs, the sections of the fire threads and the host callbacks

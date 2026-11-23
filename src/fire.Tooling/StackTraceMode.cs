@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace fire.Runtime
+namespace fire.Tooling
 {
     /// <summary>
     /// What an exception shows of the stack it was thrown on (docs/spec/STACKTRACE.md section 7): `#stacktrace off | calls | lines`, `"stackTrace"` of the project,

@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     /// <summary>
     /// The lines of a stack trace (docs/spec/STACKTRACE.md section 2) in what a program writes: `   at Store.Find (main.fire:16)` names a place (the file relative to

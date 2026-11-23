@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using fire.Runtime;
-
-namespace fire.Compiler
+using fire.Tooling;
+namespace fire.Tooling
 {
     /// <summary>
     /// Conditional compilation for the preprocessor (SPEC 8.1.6): `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef`, `#define`, `#undef`, `#error`.

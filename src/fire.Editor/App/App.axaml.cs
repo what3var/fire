@@ -53,7 +53,7 @@ namespace fire.Editor
             Task.Run(() =>
             {
                 bool changed = false;
-                try { changed = fire.Compiler.StandardSources.EnsureInstalled().Count > 0; } catch (Exception) { }
+                try { changed = fire.Tooling.StandardSources.EnsureInstalled().Count > 0; } catch (Exception) { }
                 main.OnStandardPackagesReady(changed);
             });
 

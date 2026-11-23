@@ -1,8 +1,5 @@
-using fire.Compiler;
+using fire.Tooling;
 using fire.Debugging;
-using fire.Parsing;
-using fire.Resolving;
-using fire.Runtime;
 using System;
 using System.Collections.Generic;
 using System.IO;

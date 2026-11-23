@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     /// <summary>
     /// A model of blocks (`.fblocks`, docs/graphics/models.md): what the block editor of spark draws and forge turns into fire's model file (.f3d). A grid of

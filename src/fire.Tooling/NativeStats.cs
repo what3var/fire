@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace fire.Native
+namespace fire.Tooling
 {
     /// <summary>What the generator made of one fire function (`forge build --stats`, docs/ROADMAP.md section 16): where it comes from, and what of it is a C type and
     /// what a Value.</summary>

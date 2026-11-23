@@ -80,7 +80,7 @@ static class TestResume
 
     static string? _cases;
     /// <summary>The files of tests/cases (what the groups read at run time).</summary>
-    public static string CasesHash { get { lock (_gate) return _cases ??= HashTree(TestCases.Root(), _ => true); } }
+    public static string CasesHash { get { lock (_gate) return _cases ??= ""; } }   // (M3: the cases run with forge conformance, not here)
 
     static readonly string[] KeyVariables =
     {

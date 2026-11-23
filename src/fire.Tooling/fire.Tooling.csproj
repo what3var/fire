@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What spark keeps in C# without a compiler (docs/ROADMAP_C_PORT.md, M3): the way to forge and to `fire` (the C programs next to spark), the data of their
+    reports, the clients of the debug protocol, the child processes of the views (design view, block preview, circuit editor, device drivers), the models of
+    the editors (block and mesh models, assembly info, build stats), the data of toolchains and targets for the dialogs, and the lexer for the syntax colours.
+    Compiling, linking, generating C and building are forge's (native/forge) - spark runs it as a process.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>fire.Tooling</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
+    <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
+    <ProjectReference Include="..\fire.Device.Manager\fire.Device.Manager.csproj" />   <!-- spark's devices (PackageDriverAgent) -->
+  </ItemGroup>
+
+</Project>

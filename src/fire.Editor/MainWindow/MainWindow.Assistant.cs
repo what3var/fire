@@ -119,7 +119,7 @@ namespace fire.Editor
                 return;
             }
             string script = Path.Combine(AppContext.BaseDirectory, "Assistant", "assistant.fire");
-            string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+            string forge = Forge.Locate(out _) ?? Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
             if (!File.Exists(script) || !File.Exists(forge))
             {
                 UpdateStatus("The assistant is not installed with this spark (Assistant/assistant.fire, forge).");
@@ -156,7 +156,7 @@ namespace fire.Editor
             _assistantBuildCancel = cancel;
             Task.Run(() =>
             {
-                using var work = fire.Native.BackgroundWork.Begin("Building the assistant as a native program - it starts when the build is done");
+                using var work = fire.Tooling.BackgroundWork.Begin("Building the assistant as a native program - it starts when the build is done");
                 return AssistantNative.Build(forge, script, folder, key, p => _assistantBuild = p, null, cancel.Token, AssistantNative.BuildToolchain());
             }).ContinueWith(t => Dispatcher.UIThread.Post(() =>
             {
@@ -197,7 +197,7 @@ namespace fire.Editor
             try
             {
                 var info = new ProcessStartInfo(file) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-                info.Environment[fire.Native.BackgroundWork.LinesVariable] = "1";   // (forge builds the packages at the first start: the status bar shows it)
+                info.Environment[fire.Tooling.BackgroundWork.LinesVariable] = "1";   // (forge builds the packages at the first start: the status bar shows it)
                 foreach (string a in arguments) info.ArgumentList.Add(a);
                 var p = Process.Start(info);
                 if (p == null) return false;

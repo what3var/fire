@@ -1,8 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
-using fire.Compiler;
-using fire.Runtime;
-using fire.Values;
+using fire.Tooling;
 
 /// <summary>The package ai.models (docs/ai/models.md) without the internet: the catalog, the folder (FIRE_MODELS), the choice, and the installer against a small
 /// HTTP server of C# as the mirror - a download that goes on from a ".part" file (Range), the SHA-256 check, a wrong file that is removed.</summary>

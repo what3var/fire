@@ -1,7 +1,5 @@
-using fire.Compiler;
-using fire.Runtime;
+using fire.Tooling;
 using fire.UI.Markup;
-using fire.Values;
 
 /// <summary>The editors of circuits (docs/circuits/README.md): the generator of `.biscuit` files, the import of Falstad circuits, the CircuitView of the package circuits.ui
 /// (driven with mouse and keys in the virtual machine) and the live session that spark runs it in.</summary>
@@ -31,7 +29,7 @@ static class CircuitEditorTests
             lines.AddRange(run.Printed);
             if (run.Unhandled is { } unhandled) lines.Add("UNHANDLED: " + unhandled);
         }
-        catch (Exception ex) { lines.Add("AUSNAHME: " + CompileErrors.Describe(ex)); }
+        catch (Exception ex) { lines.Add("AUSNAHME: " + ex.Message); }
         return lines;
     }
 

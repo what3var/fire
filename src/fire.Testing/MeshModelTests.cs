@@ -1,6 +1,5 @@
 using System.Text;
-using fire.Compiler;
-
+using fire.Tooling;
 /// <summary>The mesh models of spark's CAD editor (`.fmesh`, docs/graphics/models.md): the text, the bodies to start from, extruding, mirroring, deleting,
 /// welding, the ray that picks a face, and the model file forge makes of them. FIRE_TESTS_ONLY=mesh.</summary>
 static class MeshModelTests

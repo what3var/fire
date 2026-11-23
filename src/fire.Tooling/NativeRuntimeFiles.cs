@@ -1,136 +1,25 @@
-using System.Reflection;
-using System.Text.RegularExpressions;
-
-namespace fire.Native
+namespace fire.Tooling
 {
-    /// <summary>The files the generated code needs (embedded in this assembly): the runtime <c>fire_rt.h</c> (and <c>fire_rt_cpp.hpp</c>, <c>fire_json.h</c>) and the platform package it was generated for.</summary>
+    /// <summary>The files of the runtime as far as the dialogs of spark need them: the platform packages (`native/platform/&lt;name&gt;`) a target can name. forge has the
+    /// runtime (native/ next to it - the folder of `forge package-dist` -, or native/ of the repository a forge built from its sources reads).</summary>
     public static class NativeRuntimeFiles
     {
-        private static readonly Assembly Asm = typeof(NativeRuntimeFiles).Assembly;
-
-        /// <summary>The resource names as `/`-separated paths, each with the name it has in the assembly. MSBuild's `%(RecursiveDir)` (in the LogicalName of the csproj) is
-        /// `windows\` on Windows, so a name there reads `platform/windows\fire_platform.hpp`: the lookup normalises `\` to `/`, or no platform package would be found.</summary>
-        private static readonly Dictionary<string, string> Resources =
-            Asm.GetManifestResourceNames().ToDictionary(n => n.Replace('\\', '/'), n => n, StringComparer.Ordinal);
-
-        private static IEnumerable<string> Names() => Resources.Keys;
-        private static Stream Open(string name) => Asm.GetManifestResourceStream(Resources[name])!;
-
-        /// <summary>Writes <c>fire_rt.h</c> (with <c>fire_rt_cpp.hpp</c> and <c>fire_json.h</c>) and - with <paramref name="platform"/> - the platform package <c>platform/&lt;platform&gt;/</c> (and the packages it
-        /// includes, like <c>std</c> under <c>posix</c>) into <paramref name="directory"/>; existing files are replaced. Without a platform name every package is written.</summary>
-        public static void WriteTo(string directory, string? platform = null)
+        /// <summary>The folder native/ forge reads (null: not found).</summary>
+        public static string? NativeRoot()
         {
-            Directory.CreateDirectory(directory);
-            WriteResource("fire_rt.h", directory);
-            WriteResource("fire_rt_cpp.hpp", directory);
-            WriteResource("fire_json.h", directory);
-            WriteResource("fire_debug.h", directory);   // (the debugger of a debug build)
-            foreach (string name in Names().Where(n => n.StartsWith("cc/", StringComparison.Ordinal)))
-                WriteResource(name, directory);   // (the dialect of the C compiler, cc/fire_cc.h)
-            foreach (string name in Names().Where(n => n.StartsWith("abi/", StringComparison.Ordinal)))
-                WriteResource(name, directory);
-            fire.Package.Manager.PackageHeaders.WriteTo(directory);   // (the headers of the installed packages: pkg/<import>/, ROADMAP 13.3b)
-            var wanted = platform == null ? AllPackages() : PackageClosure(platform);
-            foreach (string package in wanted)
-                foreach (string name in Names().Where(n => n.StartsWith($"platform/{package}/", StringComparison.Ordinal)))
-                    WriteResource(name, directory);
-        }
-
-        private static readonly Dictionary<string, string> FingerprintCache = new(StringComparer.Ordinal);
-
-        /// <summary>A hash of what <see cref="WriteTo"/> writes from this assembly for <paramref name="platform"/> (the runtime, the compiler dialects, the ABI, the platform
-        /// package): something built against these files has to be built again only when it changes - not with every new build of this assembly.</summary>
-        public static string Fingerprint(string? platform = null)
-        {
-            string key = platform ?? "";
-            lock (FingerprintCache)
-            {
-                if (FingerprintCache.TryGetValue(key, out var known)) return known;
-                var names = new List<string> { "fire_rt.h", "fire_rt_cpp.hpp", "fire_json.h", "fire_debug.h" };
-                names.AddRange(Names().Where(n => n.StartsWith("cc/", StringComparison.Ordinal) || n.StartsWith("abi/", StringComparison.Ordinal)));
-                var wanted = platform == null ? AllPackages() : PackageClosure(platform);
-                foreach (string package in wanted) names.AddRange(Names().Where(n => n.StartsWith($"platform/{package}/", StringComparison.Ordinal)));
-                using var sha = System.Security.Cryptography.SHA256.Create();
-                foreach (string name in names.Distinct().OrderBy(n => n, StringComparer.Ordinal))
-                {
-                    if (!Resources.ContainsKey(name)) continue;
-                    byte[] title = System.Text.Encoding.UTF8.GetBytes(name + "\n");
-                    sha.TransformBlock(title, 0, title.Length, null, 0);
-                    using var stream = Open(name);
-                    byte[] body;
-                    using (var ms = new MemoryStream()) { stream.CopyTo(ms); body = ms.ToArray(); }
-                    sha.TransformBlock(body, 0, body.Length, null, 0);
-                }
-                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                string hash = Convert.ToHexString(sha.Hash!);
-                FingerprintCache[key] = hash;
-                return hash;
-            }
-        }
-
-        /// <summary>Writes the FreeRTOS simulator (<c>FreeRTOS.h</c>, <c>task.h</c>, <c>semphr.h</c>, also under <c>freertos/</c>) into <paramref name="directory"/>: tasks and semaphores on
-        /// top of pthreads, so that a FreeRTOS build can be tried on a PC.</summary>
-        public static void WriteSimulatorTo(string directory)
-        {
-            Directory.CreateDirectory(directory);
-            foreach (string name in Names().Where(n => n.StartsWith("sim/", StringComparison.Ordinal)))
-            {
-                string target = Path.Combine(directory, name.Substring("sim/".Length).Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                using var stream = Open(name);
-                using var file = File.Create(target);
-                stream.CopyTo(file);
-            }
+            if (Forge.Environment().TryGetValue("FIRE_NATIVE_ROOT", out var root)) return root;
+            if (Environment.GetEnvironmentVariable("FIRE_NATIVE_ROOT") is { Length: > 0 } env) return env;
+            if (Forge.Locate(out _) is { } forge && Path.Combine(Path.GetDirectoryName(forge)!, "native") is var beside && Directory.Exists(beside)) return beside;
+            string here = Path.Combine(AppContext.BaseDirectory, "native");
+            return Directory.Exists(here) ? here : null;
         }
 
         /// <summary>The names of the platform packages the runtime carries.</summary>
-        public static IReadOnlyList<string> AllPackages() =>
-            Names().Where(n => n.StartsWith("platform/", StringComparison.Ordinal))
-                .Select(n => n.Split('/')[1]).Distinct().OrderBy(n => n, StringComparer.Ordinal).ToList();
-
-        /// <summary>The package and the packages its header includes (`#include "../std/..."`), recursively.</summary>
-        private static IEnumerable<string> PackageClosure(string platform)
+        public static IReadOnlyList<string> AllPackages()
         {
-            var result = new List<string>();
-            var work = new Stack<string>();
-            work.Push(platform);
-            while (work.Count > 0)
-            {
-                string package = work.Pop();
-                if (result.Contains(package)) continue;
-                var names = Names().Where(n => n.StartsWith($"platform/{package}/", StringComparison.Ordinal)).ToList();
-                if (names.Count == 0) continue;   // a package of your own, supplied by the target configuration
-                result.Add(package);
-                foreach (string name in names)
-                {
-                    using var reader = new StreamReader(Open(name));
-                    foreach (Match m in Regex.Matches(reader.ReadToEnd(), @"#include\s+""\.\./([A-Za-z0-9_\-]+)/"))
-                        work.Push(m.Groups[1].Value);
-                }
-            }
-            return result;
-        }
-
-        /// <summary>The resource names (`bridges/...`, `platform/...`) that start with <paramref name="prefix"/>.</summary>
-        public static IReadOnlyList<string> ResourceNames(string prefix) =>
-            Names().Where(n => n.StartsWith(prefix, StringComparison.Ordinal)).OrderBy(n => n, StringComparer.Ordinal).ToList();
-
-        /// <summary>The text of an embedded runtime file (e.g. `bridges/fire_bridge_time.hpp`), or null.</summary>
-        public static string? ReadText(string resourceName)
-        {
-            using var stream = Resources.TryGetValue(resourceName.Replace('\\', '/'), out var actual) ? Asm.GetManifestResourceStream(actual) : null;
-            if (stream == null) return null;
-            using var reader = new StreamReader(stream);
-            return reader.ReadToEnd();
-        }
-
-        private static void WriteResource(string name, string directory)
-        {
-            string target = Path.Combine(directory, name.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            using var stream = Open(name);
-            using var file = File.Create(target);
-            stream.CopyTo(file);
+            string? root = NativeRoot();
+            if (root == null || !Directory.Exists(Path.Combine(root, "platform"))) return Array.Empty<string>();
+            return Directory.GetDirectories(Path.Combine(root, "platform")).Select(Path.GetFileName).OfType<string>().OrderBy(n => n, StringComparer.Ordinal).ToList();
         }
     }
 }

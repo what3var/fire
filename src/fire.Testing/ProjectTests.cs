@@ -1,8 +1,6 @@
 using System.Text;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Projects;
-using fire.Runtime;
-using fire.Values;
 
 /// <summary>Projects and solutions (docs/tools/projects.md): the model, the files, the workspace, the build plan, the settings precedence, libraries and their packing.</summary>
 static class ProjectTests
@@ -25,88 +23,8 @@ static class ProjectTests
 
     private static string RunPlan(BuildPlan plan, string? textFor = null)
     {
-        // (in the VM in C, M1)
-        return CVmTest.Run(plan.SourceTexts, null, plan: plan).Text;
-    }
-
-    /// <summary>spark's build window for a run in the VM: the natives of the libraries (PackageLibrary) are a phase of their own, counted per package; cancelled while gcc
-    /// compiles one, the run stops (OperationCanceledException) and no library - whole or half - is left in the cache; the next run builds both.</summary>
-    private static void PackageNativesPhase(string s)
-    {
-        foreach (var name in new[] { "PnA", "PnB" })
-        {
-            string low = name.ToLowerInvariant();
-            Write(s, $"{name}/{name}.fireproj", "{ \"name\": \"" + name + "\", \"type\": \"library\", \"native\": { \"language\": \"c\" } }");
-            Write(s, $"{name}/native/{low}.h", $"static inline Value {low}_twice(Value a) {{ return Int(a.i * 2); }}\n");
-            Write(s, $"{name}/{low}.fire", $"namespace {name} {{\n    class N {{\n        static int Twice(int a) {{ return __{low}_twice(a) }}\n    }}\n}}\n");
-        }
-        Write(s, "PnApp/PnApp.fireproj", """{ "name": "PnApp", "references": [ { "project": "../PnA/PnA.fireproj" }, { "project": "../PnB/PnB.fireproj" } ] }""");
-        Write(s, "PnApp/main.fire", "#import \"PnA\"\n#import \"PnB\"\nprint(PnA.N.Twice(2) + PnB.N.Twice(10))\n");
-        string sln = Write(s, "Pn.firesln", """{ "name": "Pn", "projects": ["PnA/PnA.fireproj", "PnB/PnB.fireproj", "PnApp/PnApp.fireproj"], "startup": "PnApp" }""");
-        var ws = Workspace.Open(sln);
-        var plan = BuildPlan.Create(ws, ws.FindByName("PnApp")!);
-        // where a library of the two could be: next to the project (obj/native) or in the temporary files
-        string tempPackages = Path.Combine(Path.GetTempPath(), "fire-packages");
-        List<string> Left() => new[] { "PnA", "PnB" }.SelectMany(n => Directory.Exists(Path.Combine(s, n, "obj")) ? Directory.EnumerateFiles(Path.Combine(s, n, "obj"), "*", SearchOption.AllDirectories) : Array.Empty<string>())
-            .Concat(Directory.Exists(tempPackages) ? Directory.EnumerateFiles(tempPackages, "*", SearchOption.AllDirectories).Where(f => f.Contains("project_pna_") || f.Contains("project_pnb_")) : Array.Empty<string>()).ToList();
-        string output = "";
-        Exception? Run(fire.Native.BuildMonitor monitor) => CatchException(() =>
-        {
-            var o = new StringBuilder();
-            using (fire.Native.BuildMonitor.Use(monitor))
-            {
-                o.Append(CVmTest.Run(plan.SourceTexts, null, plan: plan).Text);   // (in the VM in C: the libraries are built for it while linking)
-            }
-            output = o.ToString().Trim();
-        });
-
-        // cancelled while gcc compiles the first library
-        using (var cancel = new CancellationTokenSource())
-        {
-            var compiling = new ManualResetEventSlim();
-            var phases = new List<fire.Native.BuildProgress>();
-            var monitor = new fire.Native.BuildMonitor(cancel.Token, p => { lock (phases) phases.Add(p); }, l => { if (l.Contains("wrapper.c")) compiling.Set(); });
-            var running = Task.Run(() => Run(monitor));
-            bool started = compiling.Wait(TimeSpan.FromSeconds(60));
-            Thread.Sleep(200);   // (gcc runs now)
-            // (Linux: the compiler of this build is a process whose command line names its folder fire-pkgbuild-..., its output fire_pkg_project_pn...)
-            static bool CompilerRuns()
-            {
-                if (!OperatingSystem.IsLinux()) return true;
-                foreach (var dir in Directory.EnumerateDirectories("/proc"))
-                    try { if (File.ReadAllText(Path.Combine(dir, "cmdline")).Contains("fire-pkgbuild-") && File.ReadAllText(Path.Combine(dir, "cmdline")).Contains("fire_pkg_project_pn")) return true; }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-                return false;
-            }
-            bool gccRan = CompilerRuns();
-            var watch = System.Diagnostics.Stopwatch.StartNew();
-            cancel.Cancel();
-            var error = running.Wait(TimeSpan.FromSeconds(30)) ? running.Result : new TimeoutException("the run did not stop");
-            bool gccGone = !OperatingSystem.IsLinux() || !CompilerRuns();
-            var left = Left();
-            Check("Natives (Build-Fenster): abgebrochen, waehrend gcc die Natives einer Bibliothek uebersetzt, endet der Lauf bald (OperationCanceledException), keine Bibliothek (auch keine halbe, kein .partial, kein .failed) bleibt",
-                started && gccRan && gccGone && error is OperationCanceledException && watch.Elapsed < TimeSpan.FromSeconds(15) && left.All(f => !Path.GetFileName(f).Contains("fire_pkg_")) && phases.Any(p => p.Phase == fire.Native.BuildPhase.PackageNatives),
-                $"started {started}, gcc ran {gccRan}, gone {gccGone}, {watch.Elapsed}, {error?.GetType().Name}: {error?.Message}\nleft: {string.Join(", ", left)}");
-        }
-
-        // the next run: both libraries are built, each a step of the phase
-        {
-            var phases = new List<fire.Native.BuildProgress>();
-            var lines = new List<string>();
-            var error = Run(new fire.Native.BuildMonitor(default, p => phases.Add(p), l => lines.Add(l)));
-            var natives = phases.Where(p => p.Phase == fire.Native.BuildPhase.PackageNatives).ToList();
-            int firstNative = phases.FindIndex(p => p.Phase == fire.Native.BuildPhase.PackageNatives);
-            Check("Natives (Build-Fenster): die Natives der Pakete sind eine eigene Phase nach dem Uebersetzen von fire, je Paket gezaehlt (1/2, 2/2), das Log hat die Befehle",
-                error == null && output == "24" && natives.Count >= 3 && natives.All(p => p.Total == 2) && natives[0].Done == 0 && natives[^1].Done == 2
-                && natives.Any(p => p.Text.Contains("PnA") && p.Text.Contains("(1/2)")) && natives.Any(p => p.Text.Contains("PnB") && p.Text.Contains("(2/2)"))
-                && firstNative > 0 && phases.Take(firstNative).All(p => p.Phase == fire.Native.BuildPhase.CompileFire) && lines.Count(l => l.Contains("wrapper.c")) == 2,
-                $"{error}\n{output}\n" + string.Join(" // ", lines) + "\n" + string.Join(" | ", phases.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
-            phases.Clear();
-            var errorAgain = Run(new fire.Native.BuildMonitor(default, p => phases.Add(p)));
-            Check("Natives (Build-Fenster): gebaute Bibliotheken sind keine Phase mehr", errorAgain == null && output == "24" && phases.All(p => p.Phase != fire.Native.BuildPhase.PackageNatives),
-                $"{errorAgain}\n" + string.Join(" | ", phases.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
-        }
-        Value.SingleFloats = false;
+        // (in the VM in C, M1; compiled by forge, M3 - the project on the disk)
+        return CVmTest.Run(Array.Empty<string>(), null, project: plan.Project.FilePath).Text;
     }
 
     private static Exception? CatchException(Action action)
@@ -131,10 +49,10 @@ static class ProjectTests
         string cleared = File.ReadAllText(project.FilePath!);
         Check("Board: auto (kein Wert) laesst die Schluessel weg", !cleared.Contains("\"port\"") && !cleared.Contains("\"baud\""), cleared);
 
-        string configPath = Path.Combine(s, fire.Native.NativeConfig.FileName);
-        var config = fire.Native.NativeConfig.Parse("""{ "targets": { "esp32": { "port": "COM5", "baud": 460800 } } }""");
+        string configPath = Path.Combine(s, fire.Tooling.NativeConfig.FileName);
+        var config = fire.Tooling.NativeConfig.Parse("""{ "targets": { "esp32": { "port": "COM5", "baud": 460800 } } }""");
         config.Save(configPath);
-        var again = fire.Native.NativeConfig.FindFor(Path.Combine(s, "Board.fireproj"));
+        var again = fire.Tooling.NativeConfig.FindFor(Path.Combine(s, "Board.fireproj"));
         var esp = again.ResolveTarget("esp32");
         string configText = File.ReadAllText(configPath);
         Check("Board: port und baud eines Ziels in fire.native.json bleiben (targets.esp32.port/baud)",
@@ -164,7 +82,7 @@ static class ProjectTests
         Check("Board: die ueblichen Baudraten beginnen mit 115200", fire.Debugging.Esp32Launch.CommonBauds[0] == 115200 && fire.Debugging.Esp32Launch.CommonBauds.Contains(921600));
     }
 
-    private static string Describe(Exception ex) => ex is ProjectException ? ex.Message : CompileErrors.Describe(ex);
+    private static string Describe(Exception ex) => ex.Message;
 
     public static void Run()
     {
@@ -217,7 +135,7 @@ static class ProjectTests
                     var circuitWs = new Workspace();
                     circuitWs.Load(Path.Combine(sample.Folder, sample.ProjectFile));
                     var circuitPlan = BuildPlan.Create(circuitWs, circuitWs.Projects[0]);
-                    var circuitRun = CVmTest.Run(circuitPlan.SourceTexts, null, plan: circuitPlan);
+                    var circuitRun = CVmTest.Run(Array.Empty<string>(), null, project: circuitPlan.Project.FilePath);
                     lines.AddRange(circuitRun.Printed);
                     if (circuitRun.ExitCode != 0) lines.Add("AUSNAHME " + circuitRun.Errors.Trim());
                 }
@@ -233,7 +151,7 @@ static class ProjectTests
                     var s3dWs = new Workspace();
                     s3dWs.Load(Path.Combine(sample.Folder, sample.ProjectFile));
                     var s3dPlan = BuildPlan.Create(s3dWs, s3dWs.Projects[0]);
-                    new Linker { Plan = s3dPlan, SourcePaths = s3dPlan.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(s3dPlan.SourceTexts, null, null, null, null);
+                    ForgeCheck.Check(s3dPlan);
                 }
                 catch (Exception ex) { error = Describe(ex); }
                 Check($"Beispiele: {sample.Title} wird uebersetzt", error == "", error);
@@ -337,29 +255,23 @@ static class ProjectTests
         var jobsWs = Workspace.Open(Path.Combine(s, "Jobs", "Jobs.fireproj"));
         string jobsRan = RunPlan(BuildPlan.Create(jobsWs, jobsWs.Projects[0]));
         Check("Einstellungen: globalJobs des Projekts geht vor #globaljobs im Quelltext", jobsRan == "loop 0\nloop 1\njob\nn 1\n", jobsRan);
-        Linker.ProcessGlobalJobs = GlobalJobsMode.Safepoints;
-        try { jobsRan = RunPlan(BuildPlan.Create(jobsWs, jobsWs.Projects[0])); }
-        finally { Linker.ProcessGlobalJobs = null; }
-        Check("Einstellungen: --global-jobs geht vor globalJobs des Projekts", jobsRan == "loop 0\njob\nloop 1\nn 0\n", jobsRan);
         Check("Einstellungen: globalJobs - ungueltig gemeldet, die Mappe erbt das Projekt", new ProjectSettings { GlobalJobs = "often" }.Validate().Count == 1 && new ProjectSettings { GlobalJobs = "Sleep" }.Validate().Count == 0
             && ProjectSettings.Merge(new ProjectSettings(), new ProjectSettings { GlobalJobs = "sleep" }).GlobalJobs == "sleep" && !new ProjectSettings { GlobalJobs = "sleep" }.IsEmpty);
-        var info = Linker.ExtractAssemblyInfo(new[] { "#debug\n#name \"FromTag\"\n#author \"tag\"\n" }, null, new ProjectSettings { Name = "FromProject", Mode = "performance" });
-        Check("Einstellungen: im Dialog gilt, was das Projekt festlegt, sonst das Tag", info.ProductName == "FromProject" && info.ExecutionMode == VmExecutionMode.Performance && info.CompanyName == "tag");
         var noTagLib = BuildPlan.Create(ws, ws.FindByName("Util")!);
-        Check("Bibliothek: sie uebersetzt, wenn sie nur Deklarationen hat", Ok(() => ProjectBuilder.Check(noTagLib)), "");
+        Check("Bibliothek: sie uebersetzt, wenn sie nur Deklarationen hat", Ok(() => ForgeCheck.Check(noTagLib)), "");
 
         // ---- errors -------------------------------------------------------------------------------------------------------------------------
         Write(s, "Bad/Bad.fireproj", """{ "name": "Bad", "type": "library" }""");
         Write(s, "Bad/bad.script", "class A { }\nprint(\"top level\")\nvar x = 1\n");
         var bad = Workspace.Open(Write(s, "Bad.firesln", """{ "projects": ["Bad/Bad.fireproj"] }"""));
-        string badMessage = Catch(() => ProjectBuilder.Check(BuildPlan.Create(bad, bad.Projects[0])));
+        string badMessage = Catch(() => ForgeCheck.Check(BuildPlan.Create(bad, bad.Projects[0])));
         Check("Bibliothek: Anweisungen auf oberster Ebene sind ein Fehler mit Datei und Zeile", badMessage.Contains("bad.script:2") && badMessage.Contains("bad.script:3") && badMessage.Contains("no entry point"), badMessage);
 
         Write(s, "Syntax/Syntax.fireproj", """{ "name": "Syntax" }""");
         Write(s, "Syntax/a.script", "print(1)\n");
         Write(s, "Syntax/b.script", "class Broken {\n");
         var syn = Workspace.Open(Path.Combine(s, "Syntax", "Syntax.fireproj"));
-        string synMessage = Catch(() => ProjectBuilder.Check(BuildPlan.Create(syn, syn.Projects[0])));
+        string synMessage = Catch(() => ForgeCheck.Check(BuildPlan.Create(syn, syn.Projects[0])));
         Check("Fehler: ein Syntaxfehler nennt die Datei", synMessage.Contains("b.script"), synMessage);
 
         Write(s, "Prog/Prog.fireproj", """{ "name": "Prog" }""");
@@ -381,14 +293,14 @@ static class ProjectTests
         Write(s, "Pkg/Pkg.fireproj", """{ "name": "Pkg", "references": [ { "package": "no-such-package-xyz" } ] }""");
         Write(s, "Pkg/p.script", "print(1)\n");
         var pkg = Workspace.Open(Path.Combine(s, "Pkg", "Pkg.fireproj"));
-        string pkgMessage = Catch(() => ProjectBuilder.Check(BuildPlan.Create(pkg, pkg.Projects[0])));
+        string pkgMessage = Catch(() => ForgeCheck.Check(BuildPlan.Create(pkg, pkg.Projects[0])));
         Check("Verweis: ein Paket, das nicht installiert ist, wird gemeldet", pkgMessage.Contains("no-such-package-xyz") && pkgMessage.Contains("ember install"), pkgMessage);
         {
             // forge build: a diagnostic (E6000) and exit code 1, not an exception of the tool
             var pkgOut = new StringWriter();
             int pkgCode = -1;
             string pkgCrash = "";
-            try { pkgCode = CommandLineRunner.Run(new[] { "build", Path.Combine(s, "Pkg", "Pkg.fireproj"), "-o", Path.Combine(s, "Pkg", "p.out") }, pkgOut, pkgOut); }
+            try { pkgCode = ForgeCheck.Run(new[] { "build", Path.Combine(s, "Pkg", "Pkg.fireproj"), "-o", Path.Combine(s, "Pkg", "p.out") }, pkgOut, pkgOut); }
             catch (Exception ex) { pkgCrash = ex.ToString(); }
             Check("Verweis: forge build mit einem fehlenden Paket ist error E6000, Exitcode 1", pkgCode == 1 && pkgOut.ToString().Contains("error E6000: The project 'Pkg' references the package 'no-such-package-xyz'"), pkgCrash + pkgOut);
             // a VM that cannot be had (FIRE_VM_EXE names nothing): its message and exit code 1, for a file and for a project
@@ -404,7 +316,7 @@ static class ProjectTests
                     var vmOut = new StringWriter();
                     int vmCode = -1;
                     string vmCrash = "";
-                    try { vmCode = CommandLineRunner.Run(new[] { "build", input, "-o", Path.Combine(s, "vm.out") }, vmOut, vmOut); }
+                    try { vmCode = ForgeCheck.Run(new[] { "build", input, "-o", Path.Combine(s, "vm.out") }, vmOut, vmOut); }
                     catch (Exception ex) { vmCrash = ex.ToString(); }
                     Check($"forge build ({what}): eine VM, die es nicht gibt, ist eine Meldung mit Exitcode 1", vmCode == 1 && vmOut.ToString().Contains("FIRE_VM_EXE names") && vmOut.ToString().Contains("which does not exist"), vmCrash + vmOut);
                 }
@@ -418,7 +330,7 @@ static class ProjectTests
         Write(s, "NoRef/NoRef.fireproj", """{ "name": "NoRef" }""");
         Write(s, "NoRef/n.script", "#import \"Core\"\nprint(Core.Greeter.Hello(\"x\"))\n");
         var noref = Workspace.Open(Path.Combine(s, "NoRef", "NoRef.fireproj"));
-        Check("Import: ohne Verweis ist eine Bibliothek des Projekts unbekannt", Catch(() => ProjectBuilder.Check(BuildPlan.Create(noref, noref.Projects[0]))).Contains("not a known extension"));
+        Check("Import: ohne Verweis ist eine Bibliothek des Projekts unbekannt", Catch(() => ForgeCheck.Check(BuildPlan.Create(noref, noref.Projects[0]))).Contains("not a known extension"));
         Write(s, "Dotted/Raser.Core/Raser.Core.fireproj", """{ "name": "Raser.Core", "type": "library" }""");
         Write(s, "Dotted/Raser.Core/core.script", "namespace Raser.Core {\n    class Info {\n        static string Name() { return \"core\" }\n    }\n}\n");
         Write(s, "Dotted/Tool/Tool.fireproj", """{ "name": "Tool", "references": [ { "project": "../Raser.Core/Raser.Core.fireproj" } ] }""");
@@ -427,7 +339,7 @@ static class ProjectTests
         string dottedRan = RunPlan(BuildPlan.Create(dotted, dotted.Projects[0]));
         Check("Import: eine Bibliothek mit Punkt im Namen wird unter diesem Namen importiert", dottedRan == "core\n", dottedRan);
         Write(s, "Dotted/Tool/t.script", "#import \"Raser_Core\"\nprint(1)\n");
-        string wrongName = Catch(() => ProjectBuilder.Check(BuildPlan.Create(Workspace.Open(Path.Combine(s, "Dotted", "Tool", "Tool.fireproj")), Workspace.Open(Path.Combine(s, "Dotted", "Tool", "Tool.fireproj")).Projects[0])));
+        string wrongName = Catch(() => ForgeCheck.Check(BuildPlan.Create(Workspace.Open(Path.Combine(s, "Dotted", "Tool", "Tool.fireproj")), Workspace.Open(Path.Combine(s, "Dotted", "Tool", "Tool.fireproj")).Projects[0])));
         Check("Import: ein unbekannter Name nennt die Importnamen der referenzierten Bibliotheken", wrongName.Contains("not a known extension") && wrongName.Contains("\"Raser.Core\""), wrongName);
         // two libraries with the same names at the top level: the import name qualifies them (docs/tools/projects.md)
         Write(s, "Twin/LibA/LibA.fireproj", """{ "name": "LibA", "type": "library" }""");
@@ -440,7 +352,7 @@ static class ProjectTests
         string twinRan = RunPlan(BuildPlan.Create(twin, twin.Projects[0]));
         Check("Importname: zwei Bibliotheken mit derselben Klasse auf oberster Ebene - voll qualifiziert getrennt, kurze Namen innen und aus nur einer Bibliothek", twinRan == "Aa BbAa\n3 Fast tool True\n", twinRan);
         Write(s, "Twin/App/main.script", "#import \"LibA\"\n#import \"LibB\"\nprint(Parser.Name())\n");
-        string twinAmbiguous = Catch(() => ProjectBuilder.Check(BuildPlan.Create(Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")), Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")).Projects[0])));
+        string twinAmbiguous = Catch(() => ForgeCheck.Check(BuildPlan.Create(Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")), Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")).Projects[0])));
         Check("Importname: ein kurzer Name aus zwei Bibliotheken ist mehrdeutig (E4075) und nennt beide", twinAmbiguous.Contains("'LibA.Parser', 'LibB.Parser'"), twinAmbiguous);
         Write(s, "Twin/App/main.script", "#import \"LibA\"\nvar p = new Parser()\nprint(Parser.Name() + \" \" + (p is of LibA.Parser))\n");
         string twinShort = RunPlan(BuildPlan.Create(Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")), Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")).Projects[0]));
@@ -456,7 +368,7 @@ static class ProjectTests
         created.SetStartup(prog);
         var reopened = Workspace.Open(Path.Combine(c, "New.firesln"));
         Check("Aenderungen: Verweis und Startprojekt sind gespeichert", reopened.Startup?.Name == "Prog" && reopened.FindByName("Prog")!.Project.References.Count == 1);
-        Check("Aenderungen: die neue Bibliothek und das neue Programm laufen zusammen", Ok(() => ProjectBuilder.Check(BuildPlan.Create(reopened, reopened.FindByName("Prog")!))));
+        Check("Aenderungen: die neue Bibliothek und das neue Programm laufen zusammen", Ok(() => ForgeCheck.Check(BuildPlan.Create(reopened, reopened.FindByName("Prog")!))));
         string extra = Write(root, "elsewhere/extra.script", "class Extra { }\n");
         created.AddFile(prog, extra);
         Check("Aenderungen: eine Datei ausserhalb wird namentlich aufgenommen, die Muster bleiben", prog.Contains(extra) && prog.Contains(Path.Combine(c, "Prog", "main.fire")));
@@ -470,40 +382,26 @@ static class ProjectTests
 
         // ---- packing a library -----------------------------------------------------------------------------------------------------------------
         string outDir = Path.Combine(root, "packed");
-        string fpk = ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Util")!), outDir);
-        var manifest = fire.Package.Manager.Fpk.ReadManifest(fpk);
+        string fpk = ForgeCheck.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Util")!), outDir);
+        var manifest = fire.Projects.Fpk.ReadManifest(fpk);
         Check("Pack: eine Bibliothek wird ein Paket mit Importname, Version und Abhaengigkeiten", Path.GetFileName(fpk) == "Util-1.0.0.fpk" && manifest.Name == "Util" && manifest.Imports[0].Name == "Util" && manifest.Dependencies.Contains("Core") && manifest.Imports[0].Requires.Contains("Core"), fpk);
-        string corePack = ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Core")!), outDir);
-        var coreManifest = fire.Package.Manager.Fpk.ReadManifest(corePack);
+        string corePack = ForgeCheck.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Core")!), outDir);
+        var coreManifest = fire.Projects.Fpk.ReadManifest(corePack);
         Check("Pack: Version und Autor kommen aus den Einstellungen des Projekts (vor denen der Mappe)", Path.GetFileName(corePack) == "Core-2.1.0.fpk" && coreManifest.Version == "2.1.0" && coreManifest.Author == "core team", corePack + " " + coreManifest.Author);
-        Check("Pack: ein Programm kann nicht gepackt werden", Throws(() => ProjectBuilder.PackLibrary(plan, outDir)));
+        Check("Pack: ein Programm kann nicht gepackt werden", Throws(() => ForgeCheck.PackLibrary(plan, outDir)));
         {
-            // spark's build window: the phases of packing arrive in order (compile fire in its steps, then pack); a cancelled packing stops and leaves no package behind
-            var phases = new List<fire.Native.BuildProgress>();
-            var lines = new List<string>();
-            string watchedDir = Path.Combine(root, "packed-watched");
-            string watched = ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Util")!), watchedDir, new fire.Native.BuildMonitor(default, p => phases.Add(p), l => lines.Add(l)));
-            var compileSteps = phases.Where(x => x.Phase == fire.Native.BuildPhase.CompileFire).Select(x => x.Done).ToList();
-            Check("Pack: der Fortschritt kommt in Reihenfolge (fire uebersetzen in Schritten, dann packen) und das Protokoll nennt das Paket",
-                File.Exists(watched) && phases.Count >= 5 && phases[0].Phase == fire.Native.BuildPhase.CompileFire && phases[^1].Phase == fire.Native.BuildPhase.Pack
-                && phases.Zip(phases.Skip(1)).All(z => z.First.Phase <= z.Second.Phase) && compileSteps[0] == 0 && compileSteps.Contains(3) && compileSteps.Zip(compileSteps.Skip(1)).All(z => z.First <= z.Second)
-                && lines.Any(l => l.Contains(watched)), string.Join(" | ", phases.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
-            string cancelledDir = Path.Combine(root, "packed-cancelled");
-            using var cancel = new CancellationTokenSource();
-            cancel.Cancel();
-            bool stopped = false;
-            try { ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Util")!), cancelledDir, new fire.Native.BuildMonitor(cancel.Token)); }
-            catch (OperationCanceledException) { stopped = true; }
-            Check("Pack: abgebrochen wird nicht gepackt (OperationCanceledException, kein .fpk)", stopped && (!Directory.Exists(cancelledDir) || !Directory.EnumerateFiles(cancelledDir, "*.fpk", SearchOption.AllDirectories).Any()));
+            // (the phases of packing and cancelling are forge's report - ForgeReportTests)
+            string watched = ForgeCheck.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Util")!), Path.Combine(root, "packed-watched"));
+            Check("Pack: forge packt die Bibliothek", File.Exists(watched), watched);
         }
-        Check("Pack: eine Bibliothek mit Anweisungen oben wird nicht gepackt", Throws(() => ProjectBuilder.PackLibrary(BuildPlan.Create(bad, bad.Projects[0]), outDir)));
+        Check("Pack: eine Bibliothek mit Anweisungen oben wird nicht gepackt", Throws(() => ForgeCheck.PackLibrary(BuildPlan.Create(bad, bad.Projects[0]), outDir)));
         Write(s, "Inc/Inc.fireproj", """{ "name": "Inc", "type": "library", "files": ["inc.script"] }""");
         Write(s, "Inc/inc.script", "#include \"part.script\"\nclass Whole { static int Two() { return Part.One() + 1 } }\n");
         Write(s, "Inc/part.script", "class Part { static int One() { return 1 } }\n");
         var inc = Workspace.Open(Path.Combine(s, "Inc", "Inc.fireproj"));
-        string incPack = ProjectBuilder.PackLibrary(BuildPlan.Create(inc, inc.Projects[0]), outDir);
+        string incPack = ForgeCheck.PackLibrary(BuildPlan.Create(inc, inc.Projects[0]), outDir);
         string extracted = Path.Combine(root, "extracted");
-        fire.Package.Manager.Fpk.Extract(incPack, extracted);
+        ForgeCheck.Extract(incPack, extracted);
         string prelude = Directory.EnumerateFiles(extracted, "*.fire", SearchOption.AllDirectories).First();
         string preludeText = File.ReadAllText(prelude);
         Check("Pack: ein #include wird beim Packen eingesetzt", !preludeText.Contains("#include") && preludeText.Contains("class Part") && preludeText.Contains("class Whole"), preludeText);
@@ -522,15 +420,15 @@ static class ProjectTests
         Write(licDir, "Lic/lic.script", "namespace Lic { class A { static int One() { return 1 } } }\n");
         var lic = Workspace.Open(Path.Combine(licDir, "Lic", "Lic.fireproj"));
         var licPlan = BuildPlan.Create(lic, lic.Projects[0]);
-        string licPack = ProjectBuilder.PackLibrary(licPlan, Path.Combine(licDir, "out"));
+        string licPack = ForgeCheck.PackLibrary(licPlan, Path.Combine(licDir, "out"));
         Check("Pack: der Dateiname kommt aus Name und Version", licPack == ProjectBuilder.PackagePathFor(licPlan, Path.Combine(licDir, "out")) && Path.GetFileName(licPack) == "Lic-3.1.4.fpk", licPack);
-        var licManifest = fire.Package.Manager.Fpk.ReadManifest(licPack);
+        var licManifest = fire.Projects.Fpk.ReadManifest(licPack);
         Check("Pack: Lizenz, Beschreibung, Autor und Version stehen im Manifest", licManifest.License == "MIT" && licManifest.Description == "d" && licManifest.Author == "a" && licManifest.Version == "3.1.4", licManifest.License);
 
         // ---- templates: a solution of its own folder, the project in a folder of its own ------------------------------------------------
         string t = Path.Combine(root, "templates");
         // the templates that ship with fire (the Templates folder next to the program), without the user's own and without installed packages
-        var catalog = TemplateCatalog.Load(userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        var catalog = TemplateCatalog.Load(userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Projects.PackageStore(Path.Combine(root, "no-packages")));
         FireTemplate Tpl(TemplateScope scope, string title) => catalog.Find(scope, title) ?? throw new InvalidOperationException("no template " + title);
         Check("Vorlagen: Namen werden geprueft", ProjectTemplates.CheckName("Ok Name") == null && ProjectTemplates.CheckName("") != null && ProjectTemplates.CheckName("a/b") != null && ProjectTemplates.CheckName(".x") != null);
         Check("Vorlagen: der vorgeschlagene Ordner ist $HOME/spark/{Name}", ProjectTemplates.DefaultSolutionFolder("Demo") == Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "spark", "Demo"));
@@ -545,15 +443,15 @@ static class ProjectTests
         Check("Vorlagen: Terminal gibt Hello, World! aus", RunPlan(BuildPlan.Create(terminal, terminal.Projects[0])).Trim() == "Hello, World!");
 
         // Desktop comes with the package fire-windows (Source/windows/templates, packed with the project); the folder has the same layout as a Templates folder
-        var windowsTemplates = TemplateCatalog.Load(builtinRoot: Path.Combine(StandardSources.DefaultFolder, "windows", "templates"), userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        var windowsTemplates = TemplateCatalog.Load(builtinRoot: Path.Combine(StandardSources.DefaultFolder, "windows", "templates"), userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Projects.PackageStore(Path.Combine(root, "no-packages")));
         Check("Vorlagen: Desktop gehoert zum Paket fire-windows, nicht zu den eingebauten", catalog.Find(TemplateScope.Project, "Desktop") == null && windowsTemplates.Find(TemplateScope.Project, "Desktop") != null);
         var desktop = Workspace.CreateSolution(windowsTemplates.Find(TemplateScope.Project, "Desktop") ?? throw new InvalidOperationException("no template Desktop"), Path.Combine(t, "D"), "D");
         var desktopPlan = BuildPlan.Create(desktop, desktop.Projects[0]);
-        Check("Vorlagen: Desktop ist ein Programm ohne Konsole und uebersetzt", desktop.Projects[0].Project.Settings.Subsystem == "gui" && desktopPlan.IsValid && Ok(() => ProjectBuilder.Check(desktopPlan)), string.Join("\n", desktopPlan.Errors) + Catch(() => ProjectBuilder.Check(desktopPlan)));
+        Check("Vorlagen: Desktop ist ein Programm ohne Konsole und uebersetzt", desktop.Projects[0].Project.Settings.Subsystem == "gui" && desktopPlan.IsValid && Ok(() => ForgeCheck.Check(desktopPlan)), string.Join("\n", desktopPlan.Errors) + Catch(() => ForgeCheck.Check(desktopPlan)));
 
         var library = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Library"), Path.Combine(t, "L"), "L");
         var libraryPlan = BuildPlan.Create(library, library.Projects[0]);
-        Check("Vorlagen: Library ist eine Bibliothek ohne Einsprung und uebersetzt", library.Projects[0].Project.Type == OutputType.Library && libraryPlan.IsValid && Ok(() => ProjectBuilder.Check(libraryPlan)), Catch(() => ProjectBuilder.Check(libraryPlan)));
+        Check("Vorlagen: Library ist eine Bibliothek ohne Einsprung und uebersetzt", library.Projects[0].Project.Type == OutputType.Library && libraryPlan.IsValid && Ok(() => ForgeCheck.Check(libraryPlan)), Catch(() => ForgeCheck.Check(libraryPlan)));
 
         var nativeLib = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Native Library (C++)"), Path.Combine(t, "N"), "N");
         Check("Vorlagen: Native Library (C++) legt das C++ in den Ordner native/", nativeLib.Projects[0].Project.Native != null && File.Exists(Path.Combine(t, "N", "N", "native", "n.hpp")) && File.ReadAllText(Path.Combine(t, "N", "N", "N.fireproj")).Contains("\"native\""));
@@ -581,7 +479,7 @@ static class ProjectTests
         // the same program as a native build: the C++ of the library goes into the generated file
         string nativeExe = Path.Combine(t, "N", "app-native");
         var nativeBuildOut = new StringWriter(); var nativeBuildErr = new StringWriter();
-        int nativeBuildCode = CommandLineRunner.Run(new[] { "build", Path.Combine(nativeApp, "N.firesln"), "-p", "App", "--engine", "native", "-o", nativeExe }, nativeBuildOut, nativeBuildErr);
+        int nativeBuildCode = ForgeCheck.Run(new[] { "build", Path.Combine(nativeApp, "N.firesln"), "-p", "App", "--engine", "native", "-o", nativeExe }, nativeBuildOut, nativeBuildErr);
         string nativeRun = "";
         if (nativeBuildCode == 0 && File.Exists(nativeExe))
         {
@@ -591,9 +489,9 @@ static class ProjectTests
         }
         Check("Natives: ein nativer Build uebernimmt das C++ der Bibliothek", nativeRun.Trim() == "5\n42\nabc", nativeBuildErr.ToString() + nativeBuildOut + nativeRun);
         var nativeLibPlan = BuildPlan.Create(nativeSolution, nativeSolution.FindByName("N")!);
-        Check("Natives: die Bibliothek selbst uebersetzt (die Natives sind bekannt)", Ok(() => ProjectBuilder.Check(nativeLibPlan)), Catch(() => ProjectBuilder.Check(nativeLibPlan)));
-        string nativePack = ProjectBuilder.PackLibrary(nativeLibPlan, Path.Combine(t, "N", "out"));
-        var nativeManifest = fire.Package.Manager.Fpk.ReadManifest(nativePack);
+        Check("Natives: die Bibliothek selbst uebersetzt (die Natives sind bekannt)", Ok(() => ForgeCheck.Check(nativeLibPlan)), Catch(() => ForgeCheck.Check(nativeLibPlan)));
+        string nativePack = ForgeCheck.PackLibrary(nativeLibPlan, Path.Combine(t, "N", "out"));
+        var nativeManifest = fire.Projects.Fpk.ReadManifest(nativePack);
         var nativeImport = nativeManifest.Imports[0];
         Check("Natives: das Paket enthaelt das C++ und die Funktionen", nativeImport.Native != null && nativeImport.Native.Functions.Count == 3 && nativeImport.Native.Sources.Count == 1 && nativeImport.Prelude != null, nativeImport.Native?.Sources.Count.ToString());
         // the same with the template in C: native/{name}.h, "language": "c"; the functions are `static inline Value name(...)`; the VM, a native build (also TinyCC) and the package
@@ -619,7 +517,7 @@ static class ProjectTests
             if (toolchain == "tcc" && !File.Exists("/usr/bin/tcc")) { Console.WriteLine("(uebersprungen - TinyCC fehlt: Natives (C) mit tcc)"); continue; }
             string cExe = Path.Combine(t, "NC", "app-" + toolchain);
             var bo = new StringWriter(); var be = new StringWriter();
-            int code = CommandLineRunner.Run(new[] { "build", Path.Combine(t, "NC", "NC.firesln"), "-p", "App", "--engine", "native", "--toolchain", toolchain, "-o", cExe }, bo, be);
+            int code = ForgeCheck.Run(new[] { "build", Path.Combine(t, "NC", "NC.firesln"), "-p", "App", "--engine", "native", "--toolchain", toolchain, "-o", cExe }, bo, be);
             string run = "";
             if (code == 0 && File.Exists(cExe))
             {
@@ -629,9 +527,8 @@ static class ProjectTests
             Check($"Natives (C): ein nativer Build ({toolchain}) uebernimmt das C der Bibliothek", run.Trim() == "5\n42\nabc", be.ToString() + bo + run);
         }
         var cLibPlan = BuildPlan.Create(cSolution, cSolution.FindByName("NC")!);
-        var cImport = fire.Package.Manager.Fpk.ReadManifest(ProjectBuilder.PackLibrary(cLibPlan, Path.Combine(t, "NC", "out"))).Imports[0];
+        var cImport = fire.Projects.Fpk.ReadManifest(ForgeCheck.PackLibrary(cLibPlan, Path.Combine(t, "NC", "out"))).Imports[0];
         Check("Natives (C): das Paket enthaelt das C, die Sprache und die Funktionen", cImport.Native != null && cImport.Native.IsC && cImport.Native.Functions.Count == 3 && cImport.Native.Sources.Count == 1, cImport.Native?.Language ?? "(none)");
-        PackageNativesPhase(Path.Combine(t, "PN"));
         BoardSettingsRoundTrip(Path.Combine(t, "Board"));
         var noSources = new FireProject { Name = "Empty", Type = OutputType.Library, Native = new ProjectNative(), FilePath = Path.Combine(t, "Empty", "Empty.fireproj") };
         Directory.CreateDirectory(Path.Combine(t, "Empty")); noSources.Save();
@@ -674,7 +571,7 @@ static class ProjectTests
         foreach (var f in winFiles.Concat(viewFiles)) terminal.AddFile(winProject, f);
         var winPlan = BuildPlan.Create(terminal, terminal.Projects[0]);
         string winMarkup = winFiles.First(f => f.EndsWith(".fxml")), viewMarkup = viewFiles.First(f => f.EndsWith(".fxml"));
-        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winMarkup).Contains("<Window Class=\"Main\"") && File.ReadAllText(viewMarkup).Contains("<View Class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
+        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ForgeCheck.Check(winPlan)) && File.ReadAllText(winMarkup).Contains("<Window Class=\"Main\"") && File.ReadAllText(viewMarkup).Contains("<View Class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ForgeCheck.Check(winPlan)));
         Check("Vorlagen: FXML-Fenster und -View bringen den Code-behind gleichen Namens mit (class Name : NameBase), geoeffnet wird das Markup",
             winFiles.Count == 2 && viewFiles.Count == 2 && File.ReadAllText(Path.ChangeExtension(winMarkup, ".fire")).Contains("class Main : MainBase {") && File.ReadAllText(Path.ChangeExtension(viewMarkup, ".fire")).Contains("class SettingsView : SettingsViewBase {")
             && TemplateInstaller.FilesToOpen(Tpl(TemplateScope.Code, "FXML Window"), winProject.Directory, new TemplateValues("Main", winProject.Name), winFiles).SequenceEqual(new[] { winMarkup }), string.Join(", ", winFiles.Concat(viewFiles)));
@@ -691,7 +588,7 @@ static class ProjectTests
         Write(userRoot, "Project/Bare/main.script", "print(\"$name$\")\n");                                       // a project template without a project file
         Write(userRoot, "Project/Lib/template.json", """{ "type": "library" }""");
         Write(userRoot, "Project/Lib/lib.script", "namespace $ident$ { class A { } }\n");
-        var userCatalog = TemplateCatalog.Load(userRoot: userRoot, store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        var userCatalog = TemplateCatalog.Load(userRoot: userRoot, store: new fire.Projects.PackageStore(Path.Combine(root, "no-packages")));
         var plain = userCatalog.Find(TemplateScope.Code, "Plain Thing")!;
         Check("Vorlagen: ohne template.json gilt der Ordnername, ein Standardsymbol, kein Text", plain.Description == null && plain.IconPath == null && plain.IconKey == "file" && plain.Extension == ".txt" && plain.DefaultName == "PlainThing" && plain.Source == "Local");
         var many = userCatalog.Find(TemplateScope.Code, "Many Files")!;
@@ -715,7 +612,7 @@ static class ProjectTests
         string pkgRoot = Path.Combine(t, "pkg-root");
         Write(pkgRoot, "package/Demo_1.2.3.4/code/Gadget/$name$.script", "class $class$ { }\n");             // the case of the folder names does not matter
         Write(pkgRoot, "package/Demo_1.2.3.4/Projekt/Starter/main.script", "print(1)\n");
-        var pkgCatalog = TemplateCatalog.Load(builtinRoot: pkgRoot, userRoot: Path.Combine(root, "nope"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        var pkgCatalog = TemplateCatalog.Load(builtinRoot: pkgRoot, userRoot: Path.Combine(root, "nope"), store: new fire.Projects.PackageStore(Path.Combine(root, "no-packages")));
         var gadget = pkgCatalog.Find(TemplateScope.Code, "Gadget");
         var starter = pkgCatalog.Find(TemplateScope.Project, "Starter");
         Check("Vorlagen: Templates/Package/Name_Version/... - Quelle und Version stehen am Template", gadget != null && gadget.Source == "From Demo 1.2.3.4" && gadget.PackageName == "Demo" && gadget.PackageVersion == "1.2.3.4" && starter != null && starter.Source == "From Demo 1.2.3.4" && pkgCatalog.All.Count == 2, string.Join(",", pkgCatalog.All.Select(x => x.Display)));
@@ -729,10 +626,10 @@ static class ProjectTests
         Write(forgeDir, "templates/Project/Starter App/template.json", """{ "title": "Starter App", "description": "From the package", "open": [ "main.script" ] }""");
         Write(forgeDir, "templates/Project/Starter App/main.script", "print(\"$name$ starts\")\n");
         Write(forgeDir, "templates/Code/Tpkg Thing/$name$.script", "class $class$ : TpkgThing { }\n");
-        var forged = fire.Package.Manager.Fpk.Forge(Path.Combine(forgeDir, "package.json"), Path.Combine(forgeDir, "out"));
+        var forged = ForgeCheck.EmberForge(Path.Combine(forgeDir, "package.json"), Path.Combine(forgeDir, "out"));
         Check("Vorlagen: ein Paket nimmt den Ordner templates/ mit", forged.Manifest.Templates == "templates" && System.IO.Compression.ZipFile.OpenRead(forged.PackagePath).Entries.Select(e => e.FullName).Contains("templates/Project/Starter App/main.script"));
-        var store = new fire.Package.Manager.PackageStore(Path.Combine(t, "store"));
-        store.Install(forged.PackagePath);
+        var store = new fire.Projects.PackageStore(Path.Combine(t, "store"));
+        ForgeCheck.Install(store.Root, forged.PackagePath);
         var installedCatalog = TemplateCatalog.Load(builtinRoot: Path.Combine(root, "nope1"), userRoot: Path.Combine(root, "nope2"), store: store);
         var starterApp = installedCatalog.Find(TemplateScope.Project, "Starter App");
         Check("Vorlagen: die Templates eines installierten Pakets stehen in der Liste", starterApp != null && starterApp.Source == "From tpkg 1.0.0" && starterApp.AddPackageReference && installedCatalog.Find(TemplateScope.Code, "Tpkg Thing") != null && installedCatalog.All.Count == 2, string.Join(",", installedCatalog.All.Select(x => x.Display)));
@@ -747,9 +644,9 @@ static class ProjectTests
         Write(tlibDir, "TLib/templates/Code/Tl Class/$name$.script", "class $class$ { not valid fire code at all }\n");
         var tlibWs = Workspace.Open(Path.Combine(tlibDir, "TLib", "TLib.fireproj"));
         var tlibPlan = BuildPlan.Create(tlibWs, tlibWs.Projects[0]);
-        Check("Vorlagen: der Ordner templates/ eines Projekts ist kein Code des Projekts", tlibPlan.SourcePaths.Count == 1 && Ok(() => ProjectBuilder.Check(tlibPlan)) && tlibWs.Projects[0].ContentFiles.Any(f => f.EndsWith("$name$.script")), Catch(() => ProjectBuilder.Check(tlibPlan)));
-        string tlibPack = ProjectBuilder.PackLibrary(tlibPlan, Path.Combine(tlibDir, "out"));
-        Check("Vorlagen: das gepackte Projekt bringt seine Templates mit", fire.Package.Manager.Fpk.ReadManifest(tlibPack).Templates == "templates" && System.IO.Compression.ZipFile.OpenRead(tlibPack).Entries.Select(e => e.FullName).Contains("templates/Code/Tl Class/$name$.script"));
+        Check("Vorlagen: der Ordner templates/ eines Projekts ist kein Code des Projekts", tlibPlan.SourcePaths.Count == 1 && Ok(() => ForgeCheck.Check(tlibPlan)) && tlibWs.Projects[0].ContentFiles.Any(f => f.EndsWith("$name$.script")), Catch(() => ForgeCheck.Check(tlibPlan)));
+        string tlibPack = ForgeCheck.PackLibrary(tlibPlan, Path.Combine(tlibDir, "out"));
+        Check("Vorlagen: das gepackte Projekt bringt seine Templates mit", fire.Projects.Fpk.ReadManifest(tlibPack).Templates == "templates" && System.IO.Compression.ZipFile.OpenRead(tlibPack).Entries.Select(e => e.FullName).Contains("templates/Code/Tl Class/$name$.script"));
 
         // ---- the list of the last projects and the settings of the editor ---------------------------------------------------------------------------------
         string recentFile = Path.Combine(root, "recent", "recent.json");
@@ -801,28 +698,28 @@ static class ProjectTests
         Write(m0, "ResLib/assets/more/second.txt", "second file");
         Write(m0, "ResLib/code/reslib.script", "class ResLib {\n    static string Greeting() { return new Resource(\"../assets/greeting.txt\").Text() }\n    // new Resource(\"in a comment stays\")\n    static string Second() { return new Resource(\"../assets/more/second.txt\").Text() }\n}\n");
         var resLibWs = Workspace.Open(Path.Combine(m0, "ResLib", "ResLib.fireproj"));
-        string resLibPack = ProjectBuilder.PackLibrary(BuildPlan.Create(resLibWs, resLibWs.Projects[0]), Path.Combine(m0, "out"));
-        var resLibManifest = fire.Package.Manager.Fpk.ReadManifest(resLibPack);
+        string resLibPack = ForgeCheck.PackLibrary(BuildPlan.Create(resLibWs, resLibWs.Projects[0]), Path.Combine(m0, "out"));
+        var resLibManifest = fire.Projects.Fpk.ReadManifest(resLibPack);
         var resLibEntries = System.IO.Compression.ZipFile.OpenRead(resLibPack).Entries.Select(e => e.FullName).ToList();
         Check("Paket-Ressourcen: die Dateien gehen ins Paket, neben das Prelude", resLibManifest.Imports[0].Resources is { Count: 2 } r2 && r2["assets/greeting.txt"] == "ResLib/assets/greeting.txt"
             && resLibEntries.Contains("ResLib/assets/greeting.txt") && resLibEntries.Contains("ResLib/assets/more/second.txt"), string.Join(", ", resLibEntries));
         string resLibExtracted = Path.Combine(m0, "extracted");
-        fire.Package.Manager.Fpk.Extract(resLibPack, resLibExtracted);
+        ForgeCheck.Extract(resLibPack, resLibExtracted);
         string resLibPrelude = File.ReadAllText(Path.Combine(resLibExtracted, "ResLib", "ResLib.fire"));
         Check("Paket-Ressourcen: das Prelude nennt die Pfade relativ zum Projekt, Kommentare bleiben", resLibPrelude.Contains("new Resource(\"assets/greeting.txt\")") && resLibPrelude.Contains("new Resource(\"assets/more/second.txt\")") && resLibPrelude.Contains("new Resource(\"in a comment stays\")"), resLibPrelude);
-        var storeBefore = fire.Package.Manager.PackageStore.Default;
+        var storeBefore = fire.Projects.PackageStore.Default;
         try
         {
-            storeBefore.Install(resLibPack);
+            ForgeCheck.Install(storeBefore.Root, resLibPack);
             var usesOutput = new StringBuilder(CVmTest.Run(new[] { "#import \"ResLib\"\nprint(ResLib.Greeting())\nprint(ResLib.Second())\n" }, null).Text);
             Check("Paket-Ressourcen: ein Programm, das das installierte Paket importiert, bekommt dessen Dateien eingebettet", usesOutput.ToString().Replace("\r\n", "\n") == "hello from a package\nsecond file\n", usesOutput.ToString());
         }
         catch (Exception ex) { Check("Paket-Ressourcen: ein Programm, das das installierte Paket importiert, bekommt dessen Dateien eingebettet", false, Describe(ex)); }
-        finally { storeBefore.Remove("ResLib"); }
+        finally { ForgeCheck.Remove(storeBefore.Root, "ResLib"); }
         Write(m0, "BadRes/BadRes.fireproj", """{ "name": "BadRes", "type": "library" }""");
         Write(m0, "BadRes/bad.script", "class BadRes { static string T() { return new Resource(\"missing.txt\").Text() } }\n");
         var badResWs = Workspace.Open(Path.Combine(m0, "BadRes", "BadRes.fireproj"));
-        Check("Paket-Ressourcen: eine fehlende Datei ist ein Fehler", Throws(() => ProjectBuilder.PackLibrary(BuildPlan.Create(badResWs, badResWs.Projects[0]), Path.Combine(m0, "out"))));
+        Check("Paket-Ressourcen: eine fehlende Datei ist ein Fehler", Throws(() => ForgeCheck.PackLibrary(BuildPlan.Create(badResWs, badResWs.Projects[0]), Path.Combine(m0, "out"))));
 
         // ---- live diagnostics of the editor in a project: the other files are compiled along, only the errors of the open file are shown ---------------------
         string nsDir = Path.Combine(root, "ns");
@@ -833,14 +730,14 @@ static class ProjectTests
         var nsWs = Workspace.Open(Path.Combine(nsDir, "NsLib", "NsLib.fireproj"));
         var nsPlan = BuildPlan.Create(nsWs, nsWs.Projects[0]);
         List<(string Path, string Text)> OthersOf(string self) => nsPlan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
-        var bDiag = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsB), OthersOf(nsB), Path.GetDirectoryName(nsB), nsPlan);
+        var bDiag = ForgeCheck.Analyze(File.ReadAllText(nsB), OthersOf(nsB), Path.GetDirectoryName(nsB), nsPlan);
         Check("Editor: Namespaces, Basisklassen und Enums aus anderen Dateien des Projekts sind bekannt; Fehler anderer Dateien erscheinen nicht", bDiag.Count(d => d.IsError) == 0, string.Join("\n", bDiag.Select(d => d.Line + ": " + d.Message)));
-        var bBroken = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsB).Replace("this.area +", "this.area + notThere +"), OthersOf(nsB), Path.GetDirectoryName(nsB), nsPlan);
+        var bBroken = ForgeCheck.Analyze(File.ReadAllText(nsB).Replace("this.area +", "this.area + notThere +"), OthersOf(nsB), Path.GetDirectoryName(nsB), nsPlan);
         Check("Editor: ein Fehler in der offenen Datei wird mit Zeile gemeldet", bBroken.Any(d => d.IsError && d.Line == 3 && d.Message.Contains("notThere")), string.Join("\n", bBroken.Select(d => d.Line + ": " + d.Message)));
-        var cDiag = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsC), OthersOf(nsC), Path.GetDirectoryName(nsC), nsPlan);
+        var cDiag = ForgeCheck.Analyze(File.ReadAllText(nsC), OthersOf(nsC), Path.GetDirectoryName(nsC), nsPlan);
         Check("Editor: der Fehler der anderen Datei steht in ihr selbst", cDiag.Any(d => d.IsError && d.Line == 3 && d.Message.Contains("missingInOtherFile")), string.Join("\n", cDiag.Select(d => d.Line + ": " + d.Message)));
         File.WriteAllText(nsC, "namespace Geo { class Broken { int X( { } }\n");
-        var bWithUnparsable = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsB), OthersOf(nsB), Path.GetDirectoryName(nsB), BuildPlan.Create(nsWs, nsWs.Projects[0]));
+        var bWithUnparsable = ForgeCheck.Analyze(File.ReadAllText(nsB), OthersOf(nsB), Path.GetDirectoryName(nsB), BuildPlan.Create(nsWs, nsWs.Projects[0]));
         Check("Editor: eine andere Datei, die gerade nicht lesbar ist, macht in der offenen keine Fehler", !bWithUnparsable.Any(d => d.IsError && d.Message.Contains("Broken")), string.Join("\n", bWithUnparsable.Select(d => d.Line + ": " + d.Message)));
         // the standard libraries themselves (the solution packages/Packages.firesln): a file of `ui` knows the namespace UI of the other files
         string uiSource = Path.Combine(StandardSources.DefaultFolder, "ui", "ui.fireproj");
@@ -849,7 +746,7 @@ static class ProjectTests
             var uiWs = Workspace.Open(uiSource);
             var uiLibPlan = BuildPlan.Create(uiWs, uiWs.Projects[0]);
             string controls = uiLibPlan.Sources.First(f => Path.GetFileName(f.Path) == "30_controls.fire").Path;
-            var uiDiag = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(controls), uiLibPlan.Sources.Where(f => f.Path != controls).Select(f => (f.Path, f.Text)).ToList(), Path.GetDirectoryName(controls), uiLibPlan);
+            var uiDiag = ForgeCheck.Analyze(File.ReadAllText(controls), uiLibPlan.Sources.Where(f => f.Path != controls).Select(f => (f.Path, f.Text)).ToList(), Path.GetDirectoryName(controls), uiLibPlan);
             Check("Editor: packages/ui/30_controls.fire ohne Fehler (UI aus den anderen Dateien bekannt)", uiDiag.Count(d => d.IsError) == 0, string.Join("\n", uiDiag.Take(10).Select(d => d.Line + ": " + d.Message)));
         }
         else Check("Editor: die Quellen der Standardbibliotheken liegen neben dem Programm", false, uiSource);
@@ -867,7 +764,7 @@ static class ProjectTests
                     if (!files.Any(f => ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), Path.GetFullPath(testFile)))) files.Add((testFile, File.ReadAllText(testFile)));
                 foreach (var (file, text) in files)
                 {
-                    var diag = fire.Editor.LiveDiagnostics.AnalyzeInProject(text, files.Where(f => f.Path != file).ToList(), Path.GetDirectoryName(file), pkgPlan);
+                    var diag = ForgeCheck.Analyze(text, files.Where(f => f.Path != file).ToList(), Path.GetDirectoryName(file), pkgPlan);
                     foreach (var d in diag.Where(d => d.IsError).Take(3)) problems.Add($"{project.Name}/{Path.GetFileName(file)}:{d.Line}: {d.Message}");
                 }
             }
@@ -899,10 +796,10 @@ static class ProjectTests
     private static bool CommandLine(string slnPath, string outDir)
     {
         var o = new StringWriter(); var e = new StringWriter();
-        int code = CommandLineRunner.Run(new[] { "build", slnPath, "-p", "Core", "-o", outDir }, o, e);
+        int code = ForgeCheck.Run(new[] { "build", slnPath, "-p", "Core", "-o", outDir }, o, e);
         if (code != 0 || !o.ToString().Contains("Core-2.1.0.fpk")) return false;
         var o2 = new StringWriter(); var e2 = new StringWriter();
-        int code2 = CommandLineRunner.Run(new[] { "build", slnPath, "-o", Path.Combine(outDir, "app.out") }, o2, e2);
+        int code2 = ForgeCheck.Run(new[] { "build", slnPath, "-o", Path.Combine(outDir, "app.out") }, o2, e2);
         return code2 == 0 && File.Exists(Path.Combine(outDir, "app.out"));
     }
 
@@ -920,31 +817,31 @@ static class ProjectTests
             json.Contains("{ \"file\": \"native/b.h\", \"order\": -5 }") && json.Contains("\"native/a.h\",") && again.Native!.Sources!.SequenceEqual(ns) && again.Native.Sources!.OrderOf("native/b.h") == -5
             && again.Native.PlatformSources!["posix"].OrderOf("native/p.h") == 3 && again.ToJson() == json, json);
         Check("Bau-Reihenfolge: ein falscher Eintrag ist ein ProjectException", Throws(() => FireProject.Parse("""{ "name": "O", "native": { "sources": [ { "order": 1 } ] } }""")) && Throws(() => FireProject.Parse("""{ "name": "O", "native": { "sources": [ { "file": "x.h", "order": "1" } ] } }""")));
-        var pn = new fire.Package.Manager.PackageNative();
+        var pn = new fire.Projects.PackageNative();
         foreach (var f in new[] { "a", "b", "c" }) pn.Sources.Add(f);
         pn.Sources.SetOrder("b", -5);
-        pn.PlatformSources["posix"] = new fire.Package.Manager.NativeSourceList { "p", "q" };
+        pn.PlatformSources["posix"] = new fire.Projects.NativeSourceList { "p", "q" };
         pn.PlatformSources["posix"].SetOrder("p", 3);
-        string posix = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "posix" }));
-        string common = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "windows" }));
+        string posix = string.Join(",", fire.Projects.PackageNativeExtensions.SourcesFor(pn, new[] { "posix" }));
+        string common = string.Join(",", fire.Projects.PackageNativeExtensions.SourcesFor(pn, new[] { "windows" }));
         Check("Bau-Reihenfolge: sortiert nach order, stabil (ohne order 0, Plattformquellen zuerst)", posix == "b,q,a,c,p" && common == "b,a,c", posix + " | " + common);
         // `vm`: the library of the VM gets only that layer; `default`: a platform without a key of its own (ROADMAP 13.3b - console, machine, dos, xms)
-        var layered = new fire.Package.Manager.PackageNative();
+        var layered = new fire.Projects.PackageNative();
         layered.Sources.Add("bridge");
-        layered.PlatformSources["dos16"] = new fire.Package.Manager.NativeSourceList { "real" };
-        layered.PlatformSources["posix"] = new fire.Package.Manager.NativeSourceList { "term" };
-        layered.PlatformSources["vm"] = new fire.Package.Manager.NativeSourceList { "none" };
-        layered.PlatformSources["default"] = new fire.Package.Manager.NativeSourceList { "none" };
-        string Layer(params string[] keys) => string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(layered, keys));
-        string withoutVm = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "vm", "posix" }));
+        layered.PlatformSources["dos16"] = new fire.Projects.NativeSourceList { "real" };
+        layered.PlatformSources["posix"] = new fire.Projects.NativeSourceList { "term" };
+        layered.PlatformSources["vm"] = new fire.Projects.NativeSourceList { "none" };
+        layered.PlatformSources["default"] = new fire.Projects.NativeSourceList { "none" };
+        string Layer(params string[] keys) => string.Join(",", fire.Projects.PackageNativeExtensions.SourcesFor(layered, keys));
+        string withoutVm = string.Join(",", fire.Projects.PackageNativeExtensions.SourcesFor(pn, new[] { "vm", "posix" }));
         Check("Plattformquellen: `vm` allein fuer die Bibliothek der VM, `default` fuer eine Plattform ohne eigenen Schluessel, ohne `vm`-Eintrag die Plattform",
             Layer("vm", "posix", "linux") == "none,bridge" && Layer("posix", "linux") == "term,bridge" && Layer("dos16", "dos16") == "real,bridge" && Layer("esp32", "esp32") == "none,bridge"
-            && withoutVm == posix && fire.Package.Manager.PackageNativeExtensions.SupportsAny(layered, new[] { "wasm" }),
+            && withoutVm == posix && fire.Projects.PackageNativeExtensions.SupportsAny(layered, new[] { "wasm" }),
             $"{Layer("vm", "posix", "linux")} | {Layer("posix", "linux")} | {Layer("esp32", "esp32")} | {withoutVm}");
-        string used(params string[] keys) => string.Join(",", fire.Package.Manager.PackageNativeExtensions.PlatformLayerFor(layered, keys));
+        string used(params string[] keys) => string.Join(",", fire.Projects.PackageNativeExtensions.PlatformLayerFor(layered, keys));
         Check("native.uses: ein anderes Package bekommt nur die Plattformschicht (ohne die eigenen Quellen)", used("dos16") == "real" && used("esp32") == "none" && used("vm", "posix") == "none",
             $"{used("dos16")} | {used("esp32")} | {used("vm", "posix")}");
-        var uses = System.Text.Json.JsonSerializer.Deserialize<List<fire.Package.Manager.NativeUse>>("[ \"io\", { \"import\": \"audio\", \"platforms\": [ \"posix\", \"vm\" ] } ]")!;
+        var uses = System.Text.Json.JsonSerializer.Deserialize<List<fire.Projects.NativeUse>>("[ \"io\", { \"import\": \"audio\", \"platforms\": [ \"posix\", \"vm\" ] } ]")!;
         string usesBack = System.Text.Json.JsonSerializer.Serialize(uses);
         Check("native.uses: ein Eintrag als Name (ueberall) oder mit Plattformen (nur dort), und zurueck geschrieben", uses.Count == 2 && uses[0].AppliesTo(new[] { "esp32" })
             && !uses[1].AppliesTo(new[] { "esp32", "esp32" }) && uses[1].AppliesTo(new[] { "vm", "posix", "linux" }) && uses[1].AppliesTo(new[] { "POSIX" })
@@ -957,44 +854,21 @@ static class ProjectTests
                 ["/h/b.h"] = "#ifndef B_H\n#define B_H\n#include \"c.h\"\nint b;\n#endif\n" };
             var headers = new Dictionary<string, string> { ["c.h"] = "/h/c.h", ["a.h"] = "/h/a.h", ["b.h"] = "/h/b.h", ["src.h"] = "/h/src.h" };
             var placed = new HashSet<string>();
-            string sel = fire.Package.Manager.NativeHeaders.Inline("#ifndef S_H\n#define S_H\n#if X\n#include \"a.h\"\n#else\n#include \"b.h\"\n#endif\n#include \"src.h\"\n#endif\n",
+            string sel = fire.Projects.NativeHeaders.Inline("#ifndef S_H\n#define S_H\n#if X\n#include \"a.h\"\n#else\n#include \"b.h\"\n#endif\n#include \"src.h\"\n#endif\n",
                 headers, new HashSet<string> { "src.h" }, f => files[f], placed);
-            string bridge = fire.Package.Manager.NativeHeaders.Inline("#include \"c.h\"\n#include \"c.h\"\nint bridge;\n", headers, new HashSet<string> { "src.h" }, f => files[f], placed);
+            string bridge = fire.Projects.NativeHeaders.Inline("#include \"c.h\"\n#include \"c.h\"\nint bridge;\n", headers, new HashSet<string> { "src.h" }, f => files[f], placed);
             int Count(string t, string w) => (t.Length - t.Replace(w, "").Length) / w.Length;
             Check("native.headers: eingesetzt, wo sie eingebunden werden (auch in #if), oben nur einmal, eine Quelle des Builds nicht",
                 sel.Contains("int a;") && sel.Contains("int b;") && Count(sel, "int common;") == 2 && sel.Contains("#include \"src.h\"") && !sel.Contains("#include \"a.h\"")
                 && Count(bridge, "int common;") == 1 && bridge.Contains("// (in this file already) #include \"c.h\""), sel + "\n----\n" + bridge);
         }
         {
-            string pointed = fire.Package.Manager.NativeHeaders.Point("#if A\n#include \"x11.h\"  /* why */\n#endif\n#include \"src.h\"\n#include <stdio.h>\n",
+            string pointed = fire.Projects.NativeHeaders.Point("#if A\n#include \"x11.h\"  /* why */\n#endif\n#include \"src.h\"\n#include <stdio.h>\n",
                 new Dictionary<string, string> { ["x11.h"] = "pkg/windows/x11.h", ["src.h"] = "pkg/windows/src.h" }, new HashSet<string> { "src.h" });
             Check("native.headers eines installierten Pakets: das #include nennt die Datei im Build (pkg/<import>/), eine Quelle des Builds bleibt", pointed.Contains("#include \"pkg/windows/x11.h\"  /* why */")
                 && pointed.Contains("#include \"src.h\"") && pointed.Contains("<stdio.h>"), pointed);
         }
-        {
-            // a header of a project put in where it is included, which includes a header of an installed import it uses (`tls` and `fire_net_c.h` of `net`):
-            // that include names the file in the build too (pkg/net/), else a compiler without the folder of the package (tcc) does not find it
-            string un = Path.Combine(t, "UN");
-            Write(un, "UsesNet/native/un_c.h", "#ifndef UN_C_H\n#define UN_C_H\n#include \"fire_net_c.h\"\n#endif\n");
-            Write(un, "UsesNet/native/un.h", "#include \"un_c.h\"\nstatic int un_value(void) { return 1; }\n");
-            Write(un, "UsesNet/un.fire", "namespace UsesNet {\n    class Info { }\n}\n");
-            Write(un, "UsesNet/UsesNet.fireproj", """{ "name": "UsesNet", "type": "library", "native": { "language": "c", "sources": [ "native/un.h" ], "headers": [ "native/un_c.h" ], "uses": [ "net" ], "discover": false } }""");
-            Write(un, "App/App.fireproj", """{ "name": "App", "references": [ { "project": "../UsesNet/UsesNet.fireproj" } ] }""");
-            Write(un, "App/main.script", "#import \"UsesNet\"\nprint(1)\n");
-            Write(un, "UN.firesln", """{ "projects": [ "App/App.fireproj", "UsesNet/UsesNet.fireproj" ], "startup": "App" }""");
-            var unWs = Workspace.Open(Path.Combine(un, "UN.firesln"));
-            string unText;
-            try
-            {
-                ProjectNativeOverlay.Register(BuildPlan.Create(unWs, unWs.FindByName("App")!));
-                unText = string.Join("\n", fire.Package.Manager.PackageStore.Default.FindKey(ProjectNativeOverlay.KeyOf("UsesNet"))!.ReadNativeSources(new[] { "posix", "linux" }).Select(s => s.Text));
-            }
-            catch (Exception ex) { unText = ex.ToString(); }
-            finally { fire.Package.Manager.PackageStore.Default.ClearOverlay(); }
-            Check("native.headers eines Projekts: ein #include eines Headers eines benutzten installierten Pakets darin nennt die Datei im Build (pkg/net/)",
-                unText.Contains("#include \"pkg/net/fire_net_c.h\"") && !unText.Contains("#include \"fire_net_c.h\"") && unText.Contains("un_value"), unText);
-        }
-        var problems = fire.Package.Manager.NativeSourceOrder.CheckIncludes(new[] { ("native/top.h", "// top\n#include \"mid.h\"\n"), ("native/mid.h", "#include <stdio.h>\n#include \"base.h\"\n"), ("native/base.h", "#include \"base.h\"\n") });
+        var problems = fire.Projects.NativeSourceOrder.CheckIncludes(new[] { ("native/top.h", "// top\n#include \"mid.h\"\n"), ("native/mid.h", "#include <stdio.h>\n#include \"base.h\"\n"), ("native/base.h", "#include \"base.h\"\n") });
         Check("Bau-Reihenfolge: die Pruefung nennt Datei und Zeile des #include, das auf eine spaetere Quelle zeigt", problems.Count == 2
             && problems[0].StartsWith("native/top.h:2: #include \"mid.h\"") && problems[0].Contains("give 'native/mid.h' a smaller build order") && problems[1].StartsWith("native/mid.h:2: #include \"base.h\""), string.Join("\n", problems));
 
@@ -1013,17 +887,11 @@ static class ProjectTests
         string projFile = Write(lib, "Ord.fireproj", ordered.Replace("{ \"file\": \"native/top.h\", \"order\": 30 }", "\"native/top.h\"").Replace("{ \"file\": \"native/mid.h\", \"order\": 20 }", "\"native/mid.h\"").Replace("{ \"file\": \"native/base.h\", \"order\": 10 }", "\"native/base.h\""));
         var ws = Workspace.Open(Path.Combine(dir, "ORD.firesln"));
         // the library of the virtual machine (built as a run would build it; a run makes the call of the native fail with this reason - and the process keeps a library it loaded)
-        var badPlan = BuildPlan.Create(ws, ws.FindByName("App")!);
-        ProjectNativeOverlay.Register(badPlan);
-        string badErr = Catch(() => PackageLibrary.Ensure(fire.Package.Manager.PackageStore.Default.FindKey(ProjectNativeOverlay.KeyOf("Ord"))!));
-        fire.Package.Manager.PackageStore.Default.ClearOverlay();
-        Check("Bau-Reihenfolge (Projekt): die Meldung nennt die Quellen relativ zum Projekt", badErr.Contains("'native/mid.h'"), badErr);
-        Check("Bau-Reihenfolge (Projekt): falsche Reihenfolge - die VM nennt Datei, Zeile und was zu tun ist", badErr.Contains("top.h:1: #include \"mid.h\"") && badErr.Contains("smaller build order"), badErr);
-        string packErr = Catch(() => ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Ord")!), Path.Combine(dir, "out2")));
+        string packErr = Catch(() => ForgeCheck.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Ord")!), Path.Combine(dir, "out2")));
         Check("Bau-Reihenfolge (Projekt): falsche Reihenfolge - Packen lehnt ab", packErr.Contains("mid.h:1: #include \"base.h\"") && packErr.Contains("top.h:1"), packErr);
         string exe = Path.Combine(dir, "app-native");
         var bo = new StringWriter(); var be = new StringWriter();
-        int code = CommandLineRunner.Run(new[] { "build", Path.Combine(dir, "ORD.firesln"), "-p", "App", "--engine", "native", "-o", exe + "2" }, bo, be);
+        int code = ForgeCheck.Run(new[] { "build", Path.Combine(dir, "ORD.firesln"), "-p", "App", "--engine", "native", "-o", exe + "2" }, bo, be);
         Check("Bau-Reihenfolge (Projekt): falsche Reihenfolge - der native Build meldet es", code != 0 && (be.ToString() + bo).Contains("top.h:1: #include \"mid.h\""), be.ToString() + bo);
 
         // ---- now with the orders: they put the sources right ----
@@ -1031,12 +899,12 @@ static class ProjectTests
         ws = Workspace.Open(Path.Combine(dir, "ORD.firesln"));
         var ord = ws.FindByName("Ord")!;
         var resolved = ProjectNatives.Resolve(ord)!;
-        Check("Bau-Reihenfolge (Projekt): die Quellen kommen in der Reihenfolge von order", string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(resolved.Native, Array.Empty<string>()).Select(Path.GetFileName)) == "base.h,mid.h,top.h");
+        Check("Bau-Reihenfolge (Projekt): die Quellen kommen in der Reihenfolge von order", string.Join(",", fire.Projects.PackageNativeExtensions.SourcesFor(resolved.Native, Array.Empty<string>()).Select(Path.GetFileName)) == "base.h,mid.h,top.h");
         string vmOut = "";
         string vmErr = Catch(() => vmOut = RunPlan(BuildPlan.Create(ws, ws.FindByName("App")!)));
         Check("Bau-Reihenfolge (Projekt): die Bibliothek der VM baut in der angegebenen Reihenfolge", vmOut.Trim() == "50", vmErr + vmOut);
         bo = new StringWriter(); be = new StringWriter();
-        code = CommandLineRunner.Run(new[] { "build", Path.Combine(dir, "ORD.firesln"), "-p", "App", "--engine", "native", "-o", exe }, bo, be);
+        code = ForgeCheck.Run(new[] { "build", Path.Combine(dir, "ORD.firesln"), "-p", "App", "--engine", "native", "-o", exe }, bo, be);
         string run = "";
         if (code == 0 && File.Exists(exe))
         {
@@ -1044,9 +912,9 @@ static class ProjectTests
             run = proc.StandardOutput.ReadToEnd().Replace("\r\n", "\n"); proc.WaitForExit();
         }
         Check("Bau-Reihenfolge (Projekt): ein nativer Build legt die Quellen in derselben Reihenfolge ab", run.Trim() == "50", be.ToString() + bo + run);
-        var packed = fire.Package.Manager.Fpk.ReadManifest(ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ord), Path.Combine(dir, "out"))).Imports[0].Native!;
+        var packed = fire.Projects.Fpk.ReadManifest(ForgeCheck.PackLibrary(BuildPlan.Create(ws, ord), Path.Combine(dir, "out"))).Imports[0].Native!;
         Check("Bau-Reihenfolge (Projekt): das Paket behaelt die Reihenfolge", packed.Sources.Count == 3 && packed.Sources.Select(s => packed.Sources.OrderOf(s)).SequenceEqual(new int?[] { 30, 20, 10 })
-            && string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(packed, Array.Empty<string>()).Select(Path.GetFileName)) == "base.h,mid.h,top.h", string.Join(",", packed.Sources));
+            && string.Join(",", fire.Projects.PackageNativeExtensions.SourcesFor(packed, Array.Empty<string>()).Select(Path.GetFileName)) == "base.h,mid.h,top.h", string.Join(",", packed.Sources));
 
         // ---- the editor's file options (Properties window) ----
         var info = ProjectNativeFiles.Describe(ord.Project, Path.Combine(lib, "native", "base.h"))!;
@@ -1088,4 +956,89 @@ static class ProjectTests
     private static bool Ok(Action action) { try { action(); return true; } catch (Exception) { return false; } }
     private static bool Throws(Action action) { try { action(); return false; } catch (Exception) { return true; } }
     private static string Catch(Action action) { try { action(); return ""; } catch (Exception ex) { return Describe(ex); } }
+}
+
+/// <summary>What the checks of projects ask of forge and ember (M3: the C# forge and the C# ember are gone - these are the programs, as spark runs them).</summary>
+static class ForgeCheck
+{
+    /// <summary>forge compiles the project of the plan (`forge bytecode`; the plan's texts that are not those of the disk as overlays); its errors are thrown.</summary>
+    public static void Check(BuildPlan plan)
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "fire-check-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var more = new List<string>();
+            int n = 0;
+            foreach (var f in plan.Sources.Concat(plan.Libraries.Values.Distinct().SelectMany(l => l.Sources)))
+            {
+                string onDisk;
+                try { onDisk = File.ReadAllText(f.Path); } catch (IOException) { onDisk = ""; }
+                if (onDisk == f.Text) continue;
+                string overlay = Path.Combine(folder, $"overlay{n++}.fire");
+                File.WriteAllText(overlay, f.Text);
+                more.Add("--overlay"); more.Add(Path.GetFullPath(f.Path) + "=" + overlay);
+            }
+            var compiled = Forge.CompileFiles(new[] { plan.Project.FilePath }, Path.Combine(folder, "check.fbc"), more: more);
+            if (!compiled.Ok) throw new InvalidOperationException(compiled.Diagnostics.Any(d => d.IsError) ? string.Join(Environment.NewLine, compiled.Diagnostics.Where(d => d.IsError).Select(d => d.Message)) : compiled.Errors);
+        }
+        finally { try { Directory.Delete(folder, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
+    }
+
+    /// <summary>forge packs the library project of the plan (`forge build &lt;project&gt; -o &lt;folder&gt;`): the package file; what forge said is thrown when it did not.</summary>
+    public static string PackLibrary(BuildPlan plan, string? outputDirectory = null)
+    {
+        string folder = Path.GetFullPath(outputDirectory ?? plan.Settings.Output ?? Path.Combine(plan.Project.Directory, "bin"));
+        var (code, output, errors) = Forge.Run(new[] { "build", plan.Project.FilePath, "-o", folder }, plan.Project.Directory);
+        string fpk = ProjectBuilder.PackagePathFor(plan, folder);
+        if (code != 0 || !File.Exists(fpk)) throw new InvalidOperationException((errors + output).Trim());
+        return fpk;
+    }
+
+    /// <summary>forge with these arguments (what `CommandLineRunner.Run` was): its exit code; its output and error output into the writers.</summary>
+    public static int Run(string[] args, TextWriter stdout, TextWriter stderr)
+    {
+        var (code, output, errors) = Forge.Run(args);
+        stdout.Write(output);
+        stderr.Write(errors);
+        return code;
+    }
+
+    /// <summary>Unpacks a package file (a zip) into a folder.</summary>
+    public static void Extract(string fpk, string folder) => System.IO.Compression.ZipFile.ExtractToDirectory(fpk, folder, overwriteFiles: true);
+
+    public sealed record Forged(string PackagePath, PackageManifest Manifest);
+
+    /// <summary>`ember forge &lt;package.json&gt; -o &lt;folder&gt;`: the package and its manifest.</summary>
+    public static Forged EmberForge(string json, string folder)
+    {
+        string output = Ember.RunOrThrow("forge", json, "-o", folder);
+        string line = output.Split('\n').First(l => l.StartsWith("Package: ", StringComparison.Ordinal));
+        string path = line.Substring(9).Trim();
+        return new Forged(path, Fpk.ReadManifest(path));
+    }
+
+    private static void EmberIn(string store, params string[] args)
+    {
+        string? before = Environment.GetEnvironmentVariable("FIRE_PACKAGES");
+        lock (typeof(ForgeCheck))
+        {
+            Environment.SetEnvironmentVariable("FIRE_PACKAGES", store);
+            try { Ember.RunOrThrow(args); }
+            finally { Environment.SetEnvironmentVariable("FIRE_PACKAGES", before); }
+        }
+    }
+
+    /// <summary>`ember install &lt;fpk&gt;` into the store <paramref name="store"/>.</summary>
+    public static void Install(string store, string fpk) => EmberIn(store, "install", fpk);
+
+    /// <summary>`ember remove &lt;name&gt;` from the store <paramref name="store"/>.</summary>
+    public static void Remove(string store, string name) => EmberIn(store, "remove", name);
+
+    /// <summary>The diagnostics of a document of a project over `forge serve` (what LiveDiagnostics.AnalyzeInProject was).</summary>
+    public static List<Diagnostic> Analyze(string text, IReadOnlyList<(string Path, string Text)> others, string? baseDirectory, BuildPlan plan)
+    {
+        string path = Path.Combine(baseDirectory ?? Path.GetTempPath(), $"document-{(uint)text.GetHashCode():x8}.fire");
+        return ServeDocuments.AnalyzeInProject(path, text, baseDirectory, plan, others) ?? new List<Diagnostic> { new(0, "forge serve did not answer") };
+    }
 }

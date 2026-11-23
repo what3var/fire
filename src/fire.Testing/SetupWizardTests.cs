@@ -2,8 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using fire.Editor.Assistant;
 using fire.Editor.Setup;
-using fire.Native;
-
+using fire.Tooling;
 /// <summary>spark's setup wizard without a window (src/fire.Editor/Setup): the catalog of ai.models read from its source, the choice for a machine, the pages and the plan for
 /// Windows and Linux, the progress of a run (states, bytes and speed, cancel, retry, a failure that does not stop the others) and the download of a model against a small HTTP
 /// server (a .part continued with Range, the SHA-256 check, a wrong file removed). FIRE_TESTS_ONLY=setupwizard; FIRE_TESTS_FILTER narrows to the checks whose title has the text.</summary>
@@ -113,8 +112,8 @@ static class SetupWizardTests
         // the compiler: GCC without optimisation (the engine of the model optimises itself), else Clang/MSVC as for publishing, TinyCC alone: the machine's
         Check("Assistent nativ: der Compiler - GCC mit -O0, sonst Clang/MSVC wie zum Veroeffentlichen, nur TinyCC: der Build-Compiler der Maschine", () =>
         {
-            var machine = new fire.Native.MachineToolchains("tcc", "gcc");
-            Func<fire.Native.ToolchainDef, string?> Only(params string[] kinds) => d => kinds.Contains(d.EffectiveKind) ? "/usr/bin/" + d.EffectiveKind : null;
+            var machine = new fire.Tooling.MachineToolchains("tcc", "gcc");
+            Func<fire.Tooling.ToolchainDef, string?> Only(params string[] kinds) => d => kinds.Contains(d.EffectiveKind) ? "/usr/bin/" + d.EffectiveKind : null;
             var gcc = AssistantNative.BuildToolchain(machine, Only("tcc", "gcc", "clang"));
             var clang = AssistantNative.BuildToolchain(machine, Only("tcc", "clang"));
             var tcc = AssistantNative.BuildToolchain(machine, Only("tcc"));
@@ -150,10 +149,10 @@ static class SetupWizardTests
             string fake = Path.Combine(root, "fake-forge-args.sh");
             File.WriteAllText(fake, "#!/bin/sh\necho \"$7 $9 ${10}\" > \"$6\"\n");
             File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            var gcc = AssistantNative.BuildToolchain(new fire.Native.MachineToolchains("tcc", "auto"), d => d.EffectiveKind == "gcc" ? "/usr/bin/gcc" : null)!;
+            var gcc = AssistantNative.BuildToolchain(new fire.Tooling.MachineToolchains("tcc", "auto"), d => d.EffectiveKind == "gcc" ? "/usr/bin/gcc" : null)!;
             var r = AssistantNative.Build(fake, main, folder, "C", toolchain: gcc);
             string config = Path.Combine(folder, "assistant.native.json");
-            var loaded = File.Exists(config) ? fire.Native.NativeConfig.Load(config).Toolchains.GetValueOrDefault(AssistantNative.ToolchainName) : null;
+            var loaded = File.Exists(config) ? fire.Tooling.NativeConfig.Load(config).Toolchains.GetValueOrDefault(AssistantNative.ToolchainName) : null;
             return r.Binary != null && File.ReadAllText(r.Binary).Trim() == "--config --toolchain " + AssistantNative.ToolchainName
                 && loaded is { EffectiveKind: "gcc", Optimization: "-O0" };
         }, () => File.Exists(Path.Combine(root, "configured", "assistant")) ? File.ReadAllText(Path.Combine(root, "configured", "assistant")) : "no binary");
@@ -361,23 +360,6 @@ static class SetupWizardTests
             && new SetupWizardModel(Linux(cpp: false) with { IsMacOS = true }, catalog).ToolchainHints.Any(h => h.Contains("brew install tcc"))
             && !new SetupWizardModel(Linux() with { Detected = new[] { new DetectedToolchain("tcc", "TinyCC", "/usr/bin/tcc") } }, catalog).ToolchainHints.Any(h => h.Contains("TinyCC"))
             && !new SetupWizardModel(Linux(), catalog).Compilers.Row("tcc")!.Installable);
-        Check("TinyCC: Entpacken (Ordner tcc mit tcc.exe) und SHA-256-Pruefung", () =>
-        {
-            string folder = EmptyFolder();
-            string zip = Path.Combine(folder, "tcc.zip");
-            using (var archive = System.IO.Compression.ZipFile.Open(zip, System.IO.Compression.ZipArchiveMode.Create))
-            {
-                using (var w = new StreamWriter(archive.CreateEntry("tcc/tcc.exe").Open())) w.Write("MZ");
-                using (var w = new StreamWriter(archive.CreateEntry("tcc/include/stdio.h").Open())) w.Write("//");
-            }
-            string sum = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(zip))).ToLowerInvariant();
-            fire.Native.TinyccSetup.Verify(zip, sum);
-            bool wrong = false;
-            try { fire.Native.TinyccSetup.Verify(zip, new string('0', 64)); } catch (InvalidDataException) { wrong = true; }
-            string target = Path.Combine(folder, "Toolchain", "tcc");
-            string exe = fire.Native.TinyccSetup.Unpack(zip, null, target);
-            return wrong && exe == Path.Combine(target, "tcc.exe") && File.Exists(Path.Combine(target, "include", "stdio.h"));
-        });
     }
 
     /// <summary>The compilers for Build and Publish (Tools > Options > Compilers, the wizard's grid; fire.Native MachineToolchains): toolchain.json read and written, the choice
@@ -444,7 +426,7 @@ static class SetupWizardTests
             string? before = File.Exists(file) ? File.ReadAllText(file) : null;
             try
             {
-                var host = fire.Runtime.TargetProfile.Host;
+                var host = fire.Tooling.TargetProfile.Host;
                 new MachineToolchains("gcc", "gcc").Save();
                 var config = new NativeConfig();
                 bool gccHere = ToolchainDetector.Find(ToolchainDef.BuiltIn["gcc"]) != null;
@@ -457,21 +439,6 @@ static class SetupWizardTests
                     && config.NamesToolchain(host, "x") && !config.NamesToolchain(host) && new NativeConfig { Toolchain = "tcc" }.NamesToolchain(host);
             }
             finally { if (before != null) File.WriteAllText(file, before); else File.Delete(file); }
-        });
-        Check("Compiler: C++-Natives mit TinyCC -> der naechste Compiler (nur fuer die Wahl der Maschine), eine Zeile im Log", () =>
-        {
-            var machine = MachineToolchains.Default;
-            var tcc = machine.Resolve(ToolchainPurpose.Build, Finder("tcc", "gcc", "clang"), windows: false).Toolchain!;
-            var fallback = fire.Compiler.NativeBuilder.CppFallback(tcc, Finder("tcc", "gcc", "clang"), machine);
-            var clangOnly = fire.Compiler.NativeBuilder.CppFallback(tcc, Finder("tcc", "clang"), machine);
-            var projectTcc = fire.Compiler.NativeBuilder.CppFallback(ToolchainDef.BuiltIn["tcc"], Finder("tcc", "gcc"), machine);
-            var gcc = fire.Compiler.NativeBuilder.CppFallback(machine.DefFor("gcc"), Finder("tcc", "gcc"), machine);
-            var none = fire.Compiler.NativeBuilder.CppFallback(tcc, Finder("tcc"), machine);
-            string note = fire.Compiler.NativeBuilder.CppFallbackNote(tcc, fallback!, "// natives\n// ---- package gui (native/gui.cpp)\nint x;\n// ---- package gui (more)\n");
-            // (a copy that keeps the mark: WithDirection makes one for the flags of the direction)
-            var directed = fire.Compiler.NativeBuilder.WithDirection(tcc, fire.Runtime.OptimizeFor.Size);
-            return fallback?.EffectiveKind == "gcc" && fallback.MachineChoice && clangOnly?.EffectiveKind == "clang" && projectTcc == null && gcc == null && none == null
-                && note == "TinyCC compiles only C and the program has natives in C++ (gui): built with gcc instead." && !note.Contains('\n') && directed.MachineChoice;
         });
         Check("Compiler: Raster unter Windows - Automatisch, TinyCC und w64devkit zum Herunterladen, der Haken an", () =>
         {
@@ -588,7 +555,7 @@ static class SetupWizardTests
         {
             var step = SetupSteps.Packages("Build the standard packages", log =>
             {
-                using (fire.Native.BackgroundWork.Begin("Installing the package io (2/5)", 1, 5)) Thread.Sleep(50);
+                using (fire.Tooling.BackgroundWork.Begin("Installing the package io (2/5)", 1, 5)) Thread.Sleep(50);
                 log("The standard package ai could not be installed: no compiler");
                 return new[] { "io" };
             });

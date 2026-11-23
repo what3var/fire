@@ -1,5 +1,4 @@
-﻿using fire.Runtime;
-using fire.Utilities;
+using fire.Tooling;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -7,7 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace fire.Compiler.Assembly
+namespace fire.Tooling
 {
     public class AssemblyInfo : INotifyPropertyChanged
     {
@@ -178,6 +177,49 @@ namespace fire.Compiler.Assembly
             info.OriginalFilename = OriginalFilename;
             info.ProductName = ProductName;
 
+            return info;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex StringDirective =
+            new(@"^\s*#(name|codename|description|author|comments|icon|version|fileversion)[ \t]+""((?:[^""\\]|\\.)*)""\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex FlagDirective =
+            new(@"^\s*#(noconsole|debug|performance)\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>The settings of the build that the directives of a script set (`#name "..."`, `#version "1.2.3.4"`, `#noconsole`, `#debug`, ...: the dialog of the build
+        /// settings shows them). Read from the lines of the text - not through the preprocessor (forge's): a directive in a branch of `#if` or in an `#include`d file counts
+        /// as written; the build itself takes what forge reads.</summary>
+        public static AssemblyInfo FromSource(string text)
+        {
+            var info = new AssemblyInfo { Subsystem = SubsystemType.Console, ExecutionMode = VmExecutionMode.Release, FileVersion = "0.0.0.0", ProductVersion = "0.0.0.0" };
+            foreach (string raw in text.Split('\n'))
+            {
+                string line = raw.TrimEnd('\r');
+                var flag = FlagDirective.Match(line);
+                if (flag.Success)
+                {
+                    switch (flag.Groups[1].Value)
+                    {
+                        case "noconsole": info.Subsystem = SubsystemType.GUI; break;
+                        case "debug": info.ExecutionMode = VmExecutionMode.Debug; break;
+                        case "performance": info.ExecutionMode = VmExecutionMode.Performance; break;
+                    }
+                    continue;
+                }
+                var m = StringDirective.Match(line);
+                if (!m.Success) continue;
+                string value = System.Text.RegularExpressions.Regex.Unescape(m.Groups[2].Value);
+                switch (m.Groups[1].Value)
+                {
+                    case "name": info.ProductName = value; break;
+                    case "codename": info.InternalName = value; break;
+                    case "description": info.FileDescription = value; break;
+                    case "author": info.CompanyName = value; break;
+                    case "comments": info.Comments = value; break;
+                    case "icon": info.IconPath = value; break;
+                    case "version": info.ProductVersion = value; break;
+                    case "fileversion": info.FileVersion = value; break;
+                }
+            }
             return info;
         }
     }

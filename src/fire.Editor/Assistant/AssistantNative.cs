@@ -66,13 +66,12 @@ namespace fire.Editor.Assistant
             return first is "bin" or "obj";
         }
 
-        /// <summary>The compiler files of forge beside spark (<paramref name="baseDirectory"/>): the assemblies that translate and build, or the single file.</summary>
+        /// <summary>The compiler files of forge beside spark (<paramref name="baseDirectory"/>): forge (a C program, M3) - else the one spark runs.</summary>
         public static IReadOnlyList<string> CompilerFiles(string baseDirectory)
         {
-            var dlls = new[] { "forge.dll", "fire.dll", "fire.Native.dll", "fire.Runtime.dll", "fire.Project.dll", "fire.Package.Manager.dll" }
-                .Select(n => Path.Combine(baseDirectory, n)).Where(File.Exists).ToList();
-            if (dlls.Count > 0) return dlls;
-            return new[] { Path.Combine(baseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge") };
+            string beside = Path.Combine(baseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+            if (File.Exists(beside)) return new[] { beside };
+            return Forge.Locate(out _) is { } found ? new[] { found } : new[] { beside };
         }
 
         private static readonly Regex ImportLine = new(@"^\s*#import\s+""([^""]+)""", RegexOptions.Multiline | RegexOptions.Compiled);
@@ -137,7 +136,7 @@ namespace fire.Editor.Assistant
             {
                 try
                 {
-                    if (fire.Native.ToolchainDef.BuiltIn.TryGetValue(kind, out var def) && fire.Native.ToolchainDetector.FindC(def) != null) return true;
+                    if (fire.Tooling.ToolchainDef.BuiltIn.TryGetValue(kind, out var def) && fire.Tooling.ToolchainDetector.FindC(def) != null) return true;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
             }
@@ -154,28 +153,28 @@ namespace fire.Editor.Assistant
         /// building when it is GCC, else a GCC that is there - without optimisation of the program (-O0, about a minute for its 400 000 lines; TinyCC takes seconds,
         /// -O2 minutes) while the engine of the model optimises itself; else Clang or MSVC with their optimisation (as for publishing). Measured (4 cores,
         /// Qwen3.5 0.8B): TinyCC reads a prompt at 2.8 tokens a second and writes 1.6 a second, GCC -O0 with the engine optimised 41 and 14, GCC -O2 40 and 13.
-        /// <paramref name="find"/> looks for a compiler (default: <see cref="fire.Native.ToolchainDetector.FindC"/>).
+        /// <paramref name="find"/> looks for a compiler (default: <see cref="fire.Tooling.ToolchainDetector.FindC"/>).
         /// </summary>
-        public static fire.Native.ToolchainDef? BuildToolchain(fire.Native.MachineToolchains? machine = null, Func<fire.Native.ToolchainDef, string?>? find = null)
+        public static fire.Tooling.ToolchainDef? BuildToolchain(fire.Tooling.MachineToolchains? machine = null, Func<fire.Tooling.ToolchainDef, string?>? find = null)
         {
-            machine ??= fire.Native.MachineToolchains.Load();
-            find ??= fire.Native.ToolchainDetector.FindC;   // (the program is C)
+            machine ??= fire.Tooling.MachineToolchains.Load();
+            find ??= fire.Tooling.ToolchainDetector.FindC;   // (the program is C)
             bool There(string kind)
             {
-                try { return fire.Native.ToolchainDef.BuiltIn.ContainsKey(kind) && find(machine.DefFor(kind)) != null; }
+                try { return fire.Tooling.ToolchainDef.BuiltIn.ContainsKey(kind) && find(machine.DefFor(kind)) != null; }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { return false; }
             }
-            fire.Native.ToolchainDef With(string kind, string? optimization, List<string>? args)
+            fire.Tooling.ToolchainDef With(string kind, string? optimization, List<string>? args)
             {
                 var def = machine.DefFor(kind);
-                var copy = new fire.Native.ToolchainDef { Extends = kind, Kind = kind }.WithBase(def);
+                var copy = new fire.Tooling.ToolchainDef { Extends = kind, Kind = kind }.WithBase(def);
                 copy.Extends = kind;
                 if (optimization != null) copy.Optimization = optimization;
                 if (args != null) copy.Args = args;
                 return copy;
             }
             if (There("gcc")) return With("gcc", "-O0", new List<string> { "-w" });
-            string publish = fire.Native.MachineToolchains.Pick(machine.Publish, fire.Native.ToolchainPurpose.Publish, There).Kind ?? "";
+            string publish = fire.Tooling.MachineToolchains.Pick(machine.Publish, fire.Tooling.ToolchainPurpose.Publish, There).Kind ?? "";
             if (publish is "clang" or "msvc") return With(publish, null, null);
             foreach (string kind in new[] { "clang", "msvc" })
                 if (There(kind)) return With(kind, null, null);
@@ -183,7 +182,7 @@ namespace fire.Editor.Assistant
         }
 
         /// <summary>What a toolchain is for the key of the build (a change builds anew): its kind, compiler and flags.</summary>
-        public static string Describe(fire.Native.ToolchainDef? toolchain) => toolchain == null ? "machine build"
+        public static string Describe(fire.Tooling.ToolchainDef? toolchain) => toolchain == null ? "machine build"
             : string.Join(" ", toolchain.EffectiveKind, toolchain.Compiler ?? "", toolchain.CCompiler ?? "", toolchain.Optimization ?? "", string.Join(" ", toolchain.Args ?? new List<string>()));
 
         /// <summary>What <see cref="Look"/> found: the key of the build that fits, the binary when it is built (null: not yet), whether that build failed before,
@@ -216,7 +215,7 @@ namespace fire.Editor.Assistant
         /// process (spark ends it when it closes), <paramref name="line"/> every line it writes. Only one build at a time (a lock file): a second one returns null at once.
         /// </summary>
         public static BuildResult Build(string forge, string script, string folder, string key, Action<Process>? started = null, Action<string>? line = null, CancellationToken token = default,
-            fire.Native.ToolchainDef? toolchain = null)
+            fire.Tooling.ToolchainDef? toolchain = null)
         {
             Directory.CreateDirectory(folder);
             FileStream gate;
@@ -231,12 +230,12 @@ namespace fire.Editor.Assistant
                 try
                 {
                     var info = new ProcessStartInfo(forge) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = folder };
-                    info.Environment[fire.Native.BackgroundWork.LinesVariable] = "1";
+                    info.Environment[fire.Tooling.BackgroundWork.LinesVariable] = "1";
                     foreach (string a in new[] { "build", script, "--engine", "native", "-o", fresh }) info.ArgumentList.Add(a);
                     if (toolchain != null)
                     {
                         // (the compiler as a toolchain of a configuration of its own: forge takes it instead of the machine's Build toolchain)
-                        var config = new fire.Native.NativeConfig();
+                        var config = new fire.Tooling.NativeConfig();
                         config.Toolchains[ToolchainName] = toolchain;
                         config.Save(ConfigIn(folder));
                         foreach (string a in new[] { "--config", ConfigIn(folder), "--toolchain", ToolchainName }) info.ArgumentList.Add(a);
@@ -248,7 +247,7 @@ namespace fire.Editor.Assistant
                     {
                         if (text == null) return;
                         line?.Invoke(text);
-                        if (!text.StartsWith(fire.Native.BackgroundWork.LinePrefix, StringComparison.Ordinal)) lock (output) output.AppendLine(text);
+                        if (!text.StartsWith(fire.Tooling.BackgroundWork.LinePrefix, StringComparison.Ordinal)) lock (output) output.AppendLine(text);
                     }
                     p.OutputDataReceived += (_, a) => Take(a.Data);
                     p.ErrorDataReceived += (_, a) => Take(a.Data);

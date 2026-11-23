@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace fire.Runtime
+namespace fire.Tooling
 {
     /// <summary>
     /// The stack an exception was thrown on (docs/spec/STACKTRACE.md section 3): the frames innermost first, taken at its first `throw` and never changed

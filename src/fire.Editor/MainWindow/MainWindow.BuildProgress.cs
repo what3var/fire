@@ -5,8 +5,7 @@ using System.Diagnostics;
 using System.Threading;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
-using fire.Native;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     // The build window (docs: the help page of spark, "Builds"): every build spark starts - Run with the VM when it compiles, a native build, a native run or debug session,

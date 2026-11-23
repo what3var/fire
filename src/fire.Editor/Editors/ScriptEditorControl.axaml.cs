@@ -1,4 +1,4 @@
-using fire.Compiler;
+using fire.Tooling;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -176,8 +176,8 @@ namespace fire.Editor
         {
             InitializeComponent();
 
-            // over `forge serve` (docs/spec/FORGE_SERVE.md) unless FIRE_SPARK_LANG=inproc or the server is not there; then in this process
-            DiagnosticsJob = source => { string? dir = BaseDirectory; string path = ServeDocuments.PathOf(FilePath, this); return _ => ServeDocuments.Analyze(path, source, dir) ?? LiveDiagnostics.Analyze(source, dir); };
+            // over `forge serve` (docs/spec/FORGE_SERVE.md); without a server no diagnostics
+            DiagnosticsJob = source => { string? dir = BaseDirectory; string path = ServeDocuments.PathOf(FilePath, this); return _ => ServeDocuments.Analyze(path, source, dir) ?? new List<Diagnostic>(); };
             void Post(Action action) => Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
             _highlight = new BackgroundCheck<(List<HighlightSpan>, long)>(Post) { DeliverSuperseded = true };
             _highlight.Completed += (r, _) => OnHighlighted(r.Spans, r.Version);
@@ -255,8 +255,6 @@ namespace fire.Editor
         private enum DocTipKind { None, Call, Rest, Hover }
         private DocTipKind _docTipKind;
         private (int ParenOffset, string Header)? _callTipKey;
-        private string? _indexedSource;
-        private ScriptSymbolIndex? _index;
 
         /// <summary>Counts the changes of any script (and of the project): the symbols that come from other files of the project are looked up again after one.</summary>
         public static int TextVersion { get; private set; }
@@ -363,28 +361,6 @@ namespace fire.Editor
             return result;
         }
 
-        /// <summary>The symbol index of `source`, reused as long as the text (and the project) does not change. What the files of the project and the
-        /// `#include`d files declare (the class generated from an `.fxml`, and the libraries they import) is known in it.</summary>
-        /// <param name="wordEdit">The caller only looks around the caret (the completion list while a word is typed, the tooltip of a call): an index of the text before the
-        /// word at the caret was changed serves as well - what lies before the word and after the caret is the same, only the word itself differs. Saves building the index
-        /// of a long file again for every letter.</param>
-        private ScriptSymbolIndex IndexFor(string source, bool wordEdit = false)
-        {
-            var others = ContextFiles(source);
-            if (_index != null && ReferenceEquals(_indexedFiles, others) && _indexedSource != null)
-            {
-                if (string.Equals(_indexedSource, source, StringComparison.Ordinal)) return _index;
-                if (wordEdit && OnlyWordAtCaretDiffers(_indexedSource, source, Editor.CaretOffset)) return _index;
-            }
-            using var timing = EditorTiming.Measure("symbol index rebuild");
-            _index = ScriptSymbolIndex.Build(source, Array.Empty<string>(), others);
-            _indexedSource = source;
-            _indexedFiles = others;
-            return _index;
-        }
-
-        private List<(string Path, string Text)>? _indexedFiles;
-
         /// <summary>`now` is `before` with only the identifier that ends at `caret` changed (typed on, shortened, replaced by another one).</summary>
         internal static bool OnlyWordAtCaretDiffers(string before, string now, int caret)
         {
@@ -404,9 +380,8 @@ namespace fire.Editor
         private bool TryGetDoc(int offset, out string header, out DocComment doc)
         {
             string source = CurrentText();
-            // over `forge serve`, else in this process
-            var (served, symbol) = ServeDocuments.Hover(ServeDocuments.PathOf(FilePath, this), source, offset, ContextFiles(source));
-            if (!served) symbol = NavigationEngine.TryResolveSymbol(source, offset, IndexFor(source));
+            // over `forge serve`
+            var (_, symbol) = ServeDocuments.Hover(ServeDocuments.PathOf(FilePath, this), source, offset, ContextFiles(source));
             if (symbol?.Documentation is { } found)
             {
                 header = symbol.Header;
@@ -462,8 +437,7 @@ namespace fire.Editor
                 return false;
             }
 
-            var (served, symbol) = ServeDocuments.Signature(ServeDocuments.PathOf(FilePath, this), source, Editor.CaretOffset, ContextFiles(source));
-            if (!served) symbol = NavigationEngine.TryResolveCall(source, call, IndexFor(source, wordEdit: true));
+            var (_, symbol) = ServeDocuments.Signature(ServeDocuments.PathOf(FilePath, this), source, Editor.CaretOffset, ContextFiles(source));
             if (symbol?.Documentation is not { } doc)
             {
                 if (_docTipKind == DocTipKind.Call) CloseDocTip();
@@ -753,13 +727,9 @@ namespace fire.Editor
             }
 
             List<CompletionItem>? items;
-            // over `forge serve` (the server keeps the document's index and the indexes of the other files), else in this process
+            // over `forge serve` (the server keeps the document's index and the indexes of the other files); without a server no suggestions
             using (EditorTiming.Measure("  suggestions (forge serve)")) items = ServeDocuments.Complete(ServeDocuments.PathOf(FilePath, this), source, offset, ContextFiles(source));
-            if (items == null)
-            {
-                var index = IndexFor(source, wordEdit: _completionWindow != null);   // (the list is open: the letters of the word typed on)
-                using (EditorTiming.Measure("  suggestions")) items = CompletionEngine.GetSuggestions(source, offset, index);
-            }
+            items ??= new List<CompletionItem>();
 
             if (items.Count == 0)
             {
@@ -809,16 +779,16 @@ namespace fire.Editor
             if (_conditionalSymbols != null) return _conditionalSymbols;
             try
             {
-                var config = FilePath != null ? fire.Native.NativeConfig.FindFor(FilePath) : new fire.Native.NativeConfig();
+                var config = FilePath != null ? fire.Tooling.NativeConfig.FindFor(FilePath) : new fire.Tooling.NativeConfig();
                 bool native = string.Equals(config.Engine, "native", StringComparison.OrdinalIgnoreCase);
                 var target = config.ResolveTarget();
                 _conditionalSymbols = native
-                    ? fire.Compiler.ConditionalSymbols.For(target, "native", target.FloatWidth, target.Native.Defines)
-                    : fire.Compiler.ConditionalSymbols.For(null, fire.Compiler.ConditionalSymbols.DefaultEngine, null, target.Native.Defines);
+                    ? fire.Tooling.ConditionalSymbols.For(target, "native", target.FloatWidth, target.Native.Defines)
+                    : fire.Tooling.ConditionalSymbols.For(null, fire.Tooling.ConditionalSymbols.DefaultEngine, null, target.Native.Defines);
             }
             catch (Exception)
             {
-                _conditionalSymbols = fire.Compiler.ConditionalSymbols.For(null);   // an unreadable configuration: the build reports it, the editor assumes the defaults
+                _conditionalSymbols = fire.Tooling.ConditionalSymbols.For(null);   // an unreadable configuration: the build reports it, the editor assumes the defaults
             }
             if (ExtraDefines?.Invoke() is { Count: > 0 } extra)
             {
@@ -833,7 +803,6 @@ namespace fire.Editor
         public void Revalidate()
         {
             LiveDiagnostics.Invalidate();
-            ScriptSymbolIndex.ForgetImports();
             ServeDocuments.Invalidate();
             _contextFiles = null;
             RequestDiagnostics(TimeSpan.FromMilliseconds(50));
@@ -1023,12 +992,9 @@ namespace fire.Editor
         private NavigationTarget? FindDefinitionAt(int offset)
         {
             string source = CurrentText();
-            // over `forge serve` (the server knows the other files of the project and the #included scripts), else in this process
-            var (served, target) = ServeDocuments.Definition(ServeDocuments.PathOf(FilePath, this), source, offset, ContextFiles(source));
-            if (served && target != null) return target;
-            var index = IndexFor(source);
-            return NavigationEngine.TryResolve(source, offset, index)
-                ?? TryResolveAcrossIncludes(source, offset, index);
+            // over `forge serve` (the server knows the other files of the project and the #included scripts)
+            var (_, target) = ServeDocuments.Definition(ServeDocuments.PathOf(FilePath, this), source, offset, ContextFiles(source));
+            return target;
         }
 
         /// <summary>Jumps to the definition of the symbol under the cursor (F12, menu "Go to definition").</summary>
@@ -1121,40 +1087,6 @@ namespace fire.Editor
         /// only ONE window per prelude, further jumps reuse it.</summary>
         private void ShowPreludeSource(string preludeName, int line) =>
             FileViewerWindow.ShowPrelude(preludeName, line, Dialogs.WindowOf(this));
-
-        /// <summary>Falls back to every file included via `#include` in THIS document
-        /// if NavigationEngine.TryResolve found nothing in the
-        /// document itself - needs a saved
-        /// file path (see FilePath) to be able to resolve relative include paths at all
-        /// (a document never saved has no
-        /// directory relative to which that would make sense).</summary>
-        private NavigationTarget? TryResolveAcrossIncludes(string source, int offset, ScriptSymbolIndex index)
-        {
-            if (FilePath == null || index.IncludeDirectives.Count == 0) return null;
-
-            var extracted = NavigationEngine.ExtractIdentifierAndReceiver(source, offset);
-            if (extracted == null) return null;
-            var (identifier, receiver) = extracted.Value;
-
-            string? dir = Path.GetDirectoryName(FilePath);
-            foreach (var inc in index.IncludeDirectives)
-            {
-                string resolved;
-                try { resolved = Path.GetFullPath(Path.Combine(dir ?? ".", inc.RelativePath)); }
-                catch { continue; }
-                if (!File.Exists(resolved)) continue;
-                if (resolved.EndsWith(".fxml", StringComparison.OrdinalIgnoreCase)) continue; // the markup of an interface: no script text to look into
-
-                string includedSource;
-                try { includedSource = File.ReadAllText(resolved); }
-                catch { continue; }
-
-                var includedIndex = ScriptSymbolIndex.Build(includedSource);
-                var line = NavigationEngine.TryResolveInOtherFile(identifier, receiver, includedIndex);
-                if (line != null) return new NavigationTarget(resolved, line.Value);
-            }
-            return null;
-        }
 
         /// <summary>Opens `pathFromTarget` (either already absolute - from the
         /// includes fallback above - or still the RAW relative path directly

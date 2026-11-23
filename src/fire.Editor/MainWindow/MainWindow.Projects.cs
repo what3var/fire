@@ -8,7 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Projects;
 
 namespace fire.Editor
@@ -167,6 +167,7 @@ namespace fire.Editor
         private Func<CancellationToken, List<Diagnostic>> AnalyzeDocumentJob(ScriptEditorControl script, string source)
         {
             string? baseDirectory = script.BaseDirectory;
+            string documentPath = ServeDocuments.PathOf(script.FilePath, script);
             if (_workspace.IsOpen && script.FilePath != null && _workspace.FindProjectOf(script.FilePath) is { } project)
             {
                 var workspace = _workspace;
@@ -183,16 +184,16 @@ namespace fire.Editor
                         return LiveDiagnostics.Remembered("document:" + self, source, others.Concat(libraries).ToList(), settings, () =>
                         {
                             using var analyze = EditorTiming.Measure($"  analyze in project ({others.Count} other files, {others.Sum(o => o.Text.Length) / 1024} KB)");
-                            // over `forge serve` (the plan's files and libraries as the project of the analysis), else in this process
-                            return ServeDocuments.AnalyzeInProject(self, source, baseDirectory, plan, others) ?? LiveDiagnostics.AnalyzeInProject(source, others, baseDirectory, plan);
+                            // over `forge serve` (the plan's files and libraries as the project of the analysis); nothing when the server is not there
+                            return ServeDocuments.AnalyzeInProject(self, source, baseDirectory, plan, others) ?? new List<Diagnostic>();
                         });
                     }
                     // the files cannot be read right now (or the workspace changed under the plan): the file alone
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException or InvalidOperationException) { }
-                    return LiveDiagnostics.Analyze(source, baseDirectory);
+                    return ServeDocuments.Analyze(self, source, baseDirectory) ?? new List<Diagnostic>();
                 };
             }
-            return _ => LiveDiagnostics.Analyze(source, baseDirectory);
+            return _ => ServeDocuments.Analyze(documentPath, source, baseDirectory) ?? new List<Diagnostic>();
         }
 
         // ---- the files that are not open: one check per project (the errors of all its files at once) ------------------------------------------------------------
@@ -227,13 +228,13 @@ namespace fire.Editor
                 if (!_workspace.IsOpen) return null;
                 var workspace = _workspace;
                 var open = OpenTexts();
-                return _ =>
+                return cancel =>
                 {
                     using var timing = EditorTiming.Measure($"project check {project.Name} (background)");
                     var plan = BuildPlan.Create(workspace, project, path => open.TryGetValue(Path.GetFullPath(path), out var text) ? text : FileTexts.Read(path));
                     var files = plan.Sources.Where(f => !FireProject.IsMarkupFile(f.Path)).Select(f => (Path.GetFullPath(f.Path), f.Text)).ToList();
                     var (libraries, settings) = LiveDiagnostics.PlanInputs(plan);
-                    var found = LiveDiagnostics.Remembered("project:" + key, "", files.Concat(libraries).ToList(), settings, () => LiveDiagnostics.AnalyzeProjectFiles(files, plan, project.Directory));
+                    var found = LiveDiagnostics.Remembered("project:" + key, "", files.Concat(libraries).ToList(), settings, () => LiveDiagnostics.AnalyzeProjectFiles(project.FilePath, files, cancel) ?? new List<Diagnostic>());
                     return ((IReadOnlyCollection<string>)files.Select(f => f.Item1).ToHashSet(ProjectFiles.PathComparer), found);
                 };
             }, delay);
@@ -360,7 +361,7 @@ namespace fire.Editor
             RefreshProjectUi();
             RefreshGit();
             ScriptEditorControl.NoteProjectChanged();
-            fire.Package.Manager.PackageStore.Default.ClearOverlay();   // the natives of the projects are put back by the next build or analysis
+            fire.Projects.PackageStore.Default.ClearOverlay();   // the natives of the projects are put back by the next build or analysis
             // what belongs to which project (and the libraries) may have changed: check the open scripts again, and the projects (their files that are not open)
             foreach (var doc in _documents) { doc.Script?.InvalidateConditionalSymbols(); doc.Script?.Revalidate(); }
             ScheduleAllProjectChecks(TimeSpan.FromSeconds(2));
@@ -566,7 +567,7 @@ namespace fire.Editor
         /// <summary>The solution of the standard libraries (Source/Packages.firesln next to the program): edit a library, then Install it.</summary>
         private async void OpenStandardSources_Click(object? sender, RoutedEventArgs e)
         {
-            string solution = Path.Combine(fire.Compiler.StandardSources.DefaultFolder, fire.Compiler.StandardSources.SolutionFile);
+            string solution = Path.Combine(fire.Tooling.StandardSources.DefaultFolder, fire.Tooling.StandardSources.SolutionFile);
             if (!File.Exists(solution)) { await Dialogs.Message(this, $"There is no '{solution}'.", "Standard Libraries"); return; }
             OpenWorkspace(solution);
         }
@@ -586,10 +587,10 @@ namespace fire.Editor
         /// <summary>Installs a package file into the store of this machine; a package of the same name and version that is installed already is replaced only when the user says so.</summary>
         private async Task<bool> InstallPackageFile(string file, string title)
         {
-            fire.Package.Manager.PackageManifest manifest;
-            try { manifest = fire.Package.Manager.Fpk.ReadManifest(file); }
-            catch (fire.Package.Manager.PackageException ex) { await Dialogs.Message(this, ex.Message, title); return false; }
-            var store = fire.Package.Manager.PackageStore.Default;
+            fire.Projects.PackageManifest manifest;
+            try { manifest = fire.Projects.Fpk.ReadManifest(file); }
+            catch (fire.Projects.PackageException ex) { await Dialogs.Message(this, ex.Message, title); return false; }
+            var store = fire.Projects.PackageStore.Default;
             if (store.Find(manifest.Name) is { } installed && installed.Version == manifest.Version
                 && await Dialogs.Ask(this, $"{manifest.Name} {manifest.Version} is installed already.\n\nReplace it with this package?", title,
                     ("Replace", Dialogs.Answer.Yes), ("Cancel", Dialogs.Answer.No)) != Dialogs.Answer.Yes)
@@ -597,8 +598,9 @@ namespace fire.Editor
             string? error = null;
             await Task.Run(() =>
             {
-                try { store.ClearOverlay(); store.Install(file); }
-                catch (Exception ex) when (ex is fire.Package.Manager.PackageException or IOException or UnauthorizedAccessException) { error = ex.Message; }
+                // (ember installs it - the same store, its checks; M3)
+                try { store.ClearOverlay(); Ember.Install(file); }
+                catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { error = ex.Message; }
             });
             if (error != null) { UpdateStatus("Installing failed."); await Dialogs.Message(this, error, title); return false; }
             UpdateStatus($"Installed {manifest.Name} {manifest.Version}.");

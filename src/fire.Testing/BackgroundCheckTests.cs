@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Editor;
 using fire.Projects;
 
@@ -390,19 +390,19 @@ static class BackgroundCheckTests
             List<(string, string)> OthersOf(BuildPlan plan, string self) => plan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
 
             var plan = BuildPlan.Create(ws, app, path => FileTexts.Read(path));
-            var clean = LiveDiagnostics.AnalyzeInProject(File.ReadAllText(main), OthersOf(plan, main), Path.GetDirectoryName(main), plan);
+            var clean = ServeDocuments.AnalyzeInProject(main, File.ReadAllText(main), Path.GetDirectoryName(main), plan, OthersOf(plan, main)) ?? new List<Diagnostic> { new(0, "no forge serve") };
             Check("project: a document that uses another file and a library has no errors", clean.All(d => !d.IsError), string.Join("; ", clean));
 
             // the library is broken (a syntax error): the error of the document's check carries the PATH of the library file, not "Core/greeter.fire"
             var broken = BuildPlan.Create(ws, app, path => ProjectFiles.PathComparer.Equals(Path.GetFullPath(path), greeter) ? "namespace Core {\n    class Greeter {\n        static string Hello(string name { return name }\n    }\n}\n" : null);
-            var found = LiveDiagnostics.AnalyzeInProject(File.ReadAllText(main), OthersOf(broken, main), Path.GetDirectoryName(main), broken);
+            var found = ServeDocuments.AnalyzeInProject(main, File.ReadAllText(main), Path.GetDirectoryName(main), broken, OthersOf(broken, main)) ?? new List<Diagnostic>();
             Check("project: an error in a library file is reported with the path of the file", found.Any(d => d.IsError && d.File != null && ProjectFiles.PathComparer.Equals(d.File, greeter) && d.Line == 3),
                 string.Join("; ", found.Select(d => $"{d.File}:{d.Line} {d.Message}")));
 
             // the check of the whole project: an error in a file that is not open, with its file
             var helperBroken = BuildPlan.Create(ws, app, path => ProjectFiles.PathComparer.Equals(Path.GetFullPath(path), helper) ? "class Helper {\n    static int Twice(int x) { return x * notThere }\n}\n" : null);
             var files = helperBroken.Sources.Select(f => (Path.GetFullPath(f.Path), f.Text)).ToList();
-            var all = LiveDiagnostics.AnalyzeProjectFiles(files, helperBroken, app.Directory);
+            var all = LiveDiagnostics.AnalyzeProjectFiles(app.FilePath, files) ?? new List<Diagnostic>();   // (forge bytecode of the project, the open texts as overlays)
             Check("project: the check of a project finds the error in a file that is not open, with its file and line",
                 all.Any(d => d.IsError && d.File != null && ProjectFiles.PathComparer.Equals(d.File, helper) && d.Line == 2 && d.Message.Contains("notThere")),
                 string.Join("; ", all.Select(d => $"{d.File}:{d.Line} {d.Message}")));

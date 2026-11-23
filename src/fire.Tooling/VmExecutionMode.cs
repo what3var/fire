@@ -1,4 +1,4 @@
-namespace fire.Runtime
+namespace fire.Tooling
 {
     /// <summary>
     /// Controls how much runtime overhead the VM affords itself - two levels

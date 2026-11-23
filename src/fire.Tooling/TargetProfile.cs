@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System;
 using System.Linq;
 
-namespace fire.Runtime
+namespace fire.Tooling
 {
     /// <summary>
     /// Describes a target a fire program is built for: the operating system or board, the defaults that depend on it
@@ -169,7 +169,7 @@ namespace fire.Runtime
     }
 }
 
-namespace fire.Runtime
+namespace fire.Tooling
 {
     /// <summary>How the program starts: a process (`int main()`) or a function that the board's startup code calls (`app_main` in ESP-IDF).</summary>
     public enum EntryKind { Process, Function }

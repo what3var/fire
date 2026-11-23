@@ -119,10 +119,10 @@ namespace fire.Debugging
 
         /// <summary>Runs <c>idf.py [-p PORT] build flash</c> (or only build) in <paramref name="projectDirectory"/> with ESP-IDF's environment; every line of its output goes to
         /// <paramref name="log"/>. Returns whether it worked and the port esptool used. <paramref name="progress"/> gets the steps of its build (ninja's `[n/m]`) and of flashing
-        /// (esptool's `(n %)`); a cancelled <paramref name="cancel"/> ends idf.py with everything it started (<see cref="fire.Native.BuildProcess.Terminate"/>: asked first, so
+        /// (esptool's `(n %)`); a cancelled <paramref name="cancel"/> ends idf.py with everything it started (<see cref="fire.Tooling.BuildProcess.Terminate"/>: asked first, so
         /// that ninja deletes the outputs it was writing) and throws <see cref="OperationCanceledException"/>.</summary>
         public static (bool Ok, string? Port) BuildAndFlash(string idfPath, string projectDirectory, string? port, bool flash, Action<string> log, CancellationToken cancel = default,
-            IProgress<fire.Native.BuildProgress>? progress = null)
+            IProgress<fire.Tooling.BuildProgress>? progress = null)
         {
             string idfArgs = (port != null ? $"-p \"{port}\" " : "") + (flash ? "build flash" : "build");
             ProcessStartInfo psi;
@@ -143,14 +143,14 @@ namespace fire.Debugging
             psi.CreateNoWindow = true;
             psi.Environment["IDF_PATH"] = idfPath;
             var all = new StringBuilder();
-            progress?.Report(new fire.Native.BuildProgress(fire.Native.BuildPhase.Flash, flash ? "idf.py build flash" : "idf.py build"));
+            progress?.Report(new fire.Tooling.BuildProgress(fire.Tooling.BuildPhase.Flash, flash ? "idf.py build flash" : "idf.py build"));
             void OnLine(string line)
             {
                 lock (all) all.AppendLine(line);
                 log(line);
                 if (progress != null && StepOf(line) is { } step) progress.Report(step);
             }
-            var (code, _, _) = fire.Native.BuildProcess.Run(psi, OnLine, cancel);
+            var (code, _, _) = fire.Tooling.BuildProcess.Run(psi, OnLine, cancel);
             string text;
             lock (all) text = all.ToString();
             return (code == 0, port ?? SerialFramedTransport.PortFromFlashLog(text));
@@ -160,14 +160,14 @@ namespace fire.Debugging
         private static readonly Regex EsptoolStep = new(@"^Writing at 0x[0-9a-fA-F]+.*\(\s*(\d+)\s*%\)", RegexOptions.Compiled);
 
         /// <summary>The progress in a line of idf.py: a step of ninja (`[12/980] Building C object ...`) or of esptool writing the flash (`Writing at 0x00010000... (12 %)`); null: none.</summary>
-        public static fire.Native.BuildProgress? StepOf(string line)
+        public static fire.Tooling.BuildProgress? StepOf(string line)
         {
             var m = NinjaStep.Match(line);
             if (m.Success && int.TryParse(m.Groups[1].Value, out int done) && int.TryParse(m.Groups[2].Value, out int total))
-                return new fire.Native.BuildProgress(fire.Native.BuildPhase.Flash, $"ESP-IDF build: {done}/{total}", done, total);
+                return new fire.Tooling.BuildProgress(fire.Tooling.BuildPhase.Flash, $"ESP-IDF build: {done}/{total}", done, total);
             m = EsptoolStep.Match(line);
             if (m.Success && int.TryParse(m.Groups[1].Value, out int percent))
-                return new fire.Native.BuildProgress(fire.Native.BuildPhase.Flash, $"Flashing: {percent} %", percent, 100);
+                return new fire.Tooling.BuildProgress(fire.Tooling.BuildPhase.Flash, $"Flashing: {percent} %", percent, 100);
             return null;
         }
 

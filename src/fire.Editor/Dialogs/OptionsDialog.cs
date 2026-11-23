@@ -4,7 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using fire.Editor.Setup;
-using fire.Native;
+using fire.Tooling;
 using fire.Projects;
 using static fire.Editor.SettingsLayout;
 

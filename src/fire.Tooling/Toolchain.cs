@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace fire.Native
+namespace fire.Tooling
 {
     /// <summary>
     /// A C++ toolchain: how the generated file is turned into a program. <c>gcc</c>, <c>clang</c> and <c>msvc</c> run the compiler; <c>custom</c> runs a command of your own;
@@ -63,7 +63,7 @@ namespace fire.Native
         /// <summary>The built-in toolchains of the drivers (Toolchains/: Open Watcom, ...) join the first ones.</summary>
         private static Dictionary<string, ToolchainDef> WithDrivers(Dictionary<string, ToolchainDef> builtIn)
         {
-            foreach (var driver in ToolchainDrivers.Each) builtIn[driver.Kind] = driver.Default;
+            builtIn["watcom"] = WatcomToolchain.Default;
             return builtIn;
         }
 
@@ -82,11 +82,11 @@ namespace fire.Native
 
         /// <summary>The compiler to run (the default of the kind when none is named).</summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        public string EffectiveCompiler => Compiler ?? ToolchainDrivers.For(EffectiveKind)?.Default.Compiler ?? EffectiveKind switch { "clang" => "clang++", "msvc" => "cl", "emscripten" => "em++", "tcc" => "tcc", _ => "g++" };
+        public string EffectiveCompiler => Compiler ?? (EffectiveKind == "watcom" ? "owcc" : null) ?? EffectiveKind switch { "clang" => "clang++", "msvc" => "cl", "emscripten" => "em++", "tcc" => "tcc", _ => "g++" };
 
         /// <summary>Whether the toolchain compiles C++ too (TinyCC does not).</summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        public bool CompilesCpp => EffectiveKind != "tcc" && (ToolchainDrivers.For(EffectiveKind)?.CompilesCpp ?? true);
+        public bool CompilesCpp => EffectiveKind is not ("tcc" or "watcom");
 
         /// <summary>The C compiler to run: <see cref="CCompiler"/>, or the one that belongs to the C++ compiler (same folder, same prefix: <c>x86_64-w64-mingw32-g++</c> ->
         /// <c>x86_64-w64-mingw32-gcc</c>).</summary>
@@ -115,7 +115,7 @@ namespace fire.Native
         public static string? Find(ToolchainDef toolchain)
         {
             if (toolchain.EffectiveKind is "files" or "custom") return null;
-            if (ToolchainDrivers.For(toolchain.EffectiveKind) is { } driver) return driver.Locate(toolchain);
+            if (toolchain.EffectiveKind == "watcom") return WatcomToolchain.Locate(toolchain);
             string name = toolchain.EffectiveCompiler;
             return ToolchainSetup.FindProgram(name);
         }
@@ -124,7 +124,7 @@ namespace fire.Native
         public static string? FindC(ToolchainDef toolchain)
         {
             if (toolchain.EffectiveKind is "files" or "custom") return null;
-            if (ToolchainDrivers.For(toolchain.EffectiveKind) is { } driver) return driver.Locate(toolchain);
+            if (toolchain.EffectiveKind == "watcom") return WatcomToolchain.Locate(toolchain);
             if (toolchain.CCompiler == null && Find(toolchain) is { } cxx)
             {
                 // next to the C++ compiler that was found (a portable toolchain is not on the PATH)

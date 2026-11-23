@@ -1,4 +1,4 @@
-namespace fire.Runtime
+namespace fire.Tooling
 {
     /// <summary>
     /// The direction a native build is optimised in (docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"): the flags of the C compiler and the choices of the generator and

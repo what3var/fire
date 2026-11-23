@@ -1,4 +1,4 @@
-namespace fire.Lexing
+namespace fire.Tooling
 {
     public enum TokenType
     {

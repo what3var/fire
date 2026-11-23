@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     /// <summary>
     /// Which tests run (`forge test --filter`, the Test Explorer of the editor): a list of patterns, each `Class.Method` or just `Class` (all its tests); `*` stands for any text.
@@ -10,8 +10,12 @@ namespace fire.Compiler
     {
         private readonly List<Regex> _patterns;
 
+        /// <summary>The patterns as `forge test --filter` takes them (separated by `,`).</summary>
+        public string Text { get; }
+
         private TestFilter(IEnumerable<string> patterns)
         {
+            Text = string.Join(",", patterns.Select(p => p.Trim()).Where(p => p.Length > 0));
             _patterns = patterns.Select(p => p.Trim()).Where(p => p.Length > 0)
                 .Select(p => new Regex("^" + Regex.Escape(p).Replace("\\*", ".*") + "$", RegexOptions.CultureInvariant)).ToList();
         }

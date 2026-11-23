@@ -3,9 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
-using fire.Native;
-
-namespace fire.Compiler
+using fire.Tooling;
+namespace fire.Tooling
 {
     /// <summary>
     /// The report of `forge build|publish --report json` (docs/tools/forge.md, "The report for tools"): what a tool that starts forge - spark - needs to show a build, as JSON lines on

@@ -1,10 +1,8 @@
-using fire.Bytecode;
-using fire.Runtime;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     /// <summary>
     /// A fire program with a user interface running INSIDE a host application (the circuit editor of spark shows the CircuitView of the package circuits.ui this way):
@@ -13,7 +11,7 @@ namespace fire.Compiler
     /// with `print` (every line arrives as <see cref="Message"/>) and gets the host's commands from the function `extern string __HostCommand()` (the next command, "" when
     /// there is none).
     /// The program runs in the VM in C, in a process of its own (docs/ROADMAP_C_PORT.md, L4 and phase B step 9; M1: the C# VM in the host's process is gone): compiled
-    /// here to a program file, run by `fire` - its windows are the host's through a file both map (<see cref="HostDisplayFile"/>,
+    /// by forge to a program file (M3), run by `fire` - its windows are the host's through a file both map (<see cref="HostDisplayFile"/>,
     /// FIRE_DISPLAY_SHM: pictures, the mouse pointer, the events), its `print` lines come on its stdout, the commands go to its stdin (`__HostCommand()` of the VM in C).
     /// A program that crashes ends its view, not the host.
     /// </summary>
@@ -65,15 +63,16 @@ namespace fire.Compiler
 
         private void StartChild(string script, string? basePath, string vm)
         {
-            var linked = new Linker { BasePath = basePath, PackageLibraries = true }.CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null);
             string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"fire-live-{Environment.ProcessId}-{Guid.NewGuid():N}");
             System.IO.Directory.CreateDirectory(folder);
             _childFolder = folder;
-            string programFile = System.IO.Path.Combine(folder, "live.fbc");
-            System.IO.File.WriteAllBytes(programFile, ProgramFile.Write(linked));
+            CompiledScript compiled;
+            try { compiled = CVmScript.Compile(script, basePath, folder); }   // (forge: the program file and the libraries of its packages)
+            catch (Exception) { try { System.IO.Directory.Delete(folder, true); } catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException) { } _childFolder = null; throw; }
+            string programFile = compiled.Program!;
             var display = HostDisplayFile.Create();
             _display = display;
-            var environment = fire.Debugging.CVmLaunch.Environment(linked.PackageLibraryFiles ?? new List<string>(),
+            var environment = fire.Debugging.CVmLaunch.Environment(compiled.Libraries,
                 new Dictionary<string, string> { [HostDisplayFile.EnvironmentVariable] = display.Path, ["FIRE_PRINT_RECORDS"] = "1" });   // (one print, one message - also one of several lines)
             var info = new System.Diagnostics.ProcessStartInfo(vm)
             {

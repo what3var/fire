@@ -1,10 +1,10 @@
-using fire.Lexing;
+using fire.Tooling;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
-namespace fire.Compiler
+namespace fire.Tooling
 {
     public sealed class LexException : Exception
     {
@@ -13,7 +13,7 @@ namespace fire.Compiler
         /// <summary>The message without the position.</summary>
         public string RawMessage { get; }
         /// <summary>The code of the message (docs/tools/errors.md).</summary>
-        public string Code => ErrorCatalog.CodeOf(ErrorArea.Lexer, RawMessage);
+
 
         public LexException(string message, int line, int column)
             : base($"{message} ({line}:{column})")
