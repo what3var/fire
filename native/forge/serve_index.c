@@ -490,7 +490,7 @@ static int svHarvestClass(SvIndex* x, int i, bool isInterface) {
     if (i < x->ntok && SVTY(x, i) == TT_Lt) i = svSkipAngleBrackets(x, i);
     if (i < x->ntok && SVTY(x, i) == TT_Colon) {
         i++;
-        while (i < x->ntok && SVTY(x, i) != TT_LBrace && SVTY(x, i) != TT_Where && SVTY(x, i) != TT_Eof) {
+        while (i < x->ntok && SVTY(x, i) != TT_LBrace && !(SVTY(x, i) == TT_Identifier && streq(SVT(x, i)->lexeme, "where")) && SVTY(x, i) != TT_Eof) {
             if (SVTY(x, i) == TT_Identifier) {
                 const char* baseName = SVT(x, i)->lexeme;
                 while (i + 2 < x->ntok && SVTY(x, i + 1) == TT_Dot && SVTY(x, i + 2) == TT_Identifier) { baseName = fcFmt(x->c, "%s.%s", baseName, SVT(x, i + 2)->lexeme); i += 2; }

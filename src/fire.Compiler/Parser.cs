@@ -811,7 +811,7 @@ namespace fire.Compiler
                         throw Error("Expected 'coerce' in the body of a unit ('coerce m => 0.0254', 'coerce to m => value * 0.0254', 'coerce from m => value / 0.0254')", Peek());
                     int coerceLine = Advance().Line;
                     var direction = CoerceDirection.Factor;
-                    if (Match(TokenType.From)) direction = CoerceDirection.From;
+                    if (MatchWord("from")) direction = CoerceDirection.From;
                     else if (Check(TokenType.Identifier) && Peek().Lexeme == "to" && PeekAt(1).Type != TokenType.Arrow) { Advance(); direction = CoerceDirection.To; }
                     if (!IsWord(Peek())) throw Error("Expected the unit to convert from or to after 'coerce'", Peek());
                     string target = UnitPowers(Advance().Lexeme + ParseCombinedUnitTail(), Previous());
@@ -1572,7 +1572,8 @@ namespace fire.Compiler
             // in a row, `Name[] Name` occurs in no valid expression.
             while (PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket)
                 offset += 2;
-            return PeekAt(offset).Type == TokenType.Identifier;
+            // (`x is of Dog` is the test, not a variable `is` of the type x)
+            return PeekAt(offset).Type == TokenType.Identifier && !IsOperatorAt(offset);
         }
 
         /// <summary>A type (keyword or name chain, optional empty brackets) directly followed by `operator`.</summary>
@@ -2760,7 +2761,7 @@ namespace fire.Compiler
         {
             var constraintsByName = new Dictionary<string, List<TypeConstraintGroup>>();
 
-            while (Match(TokenType.Where))
+            while (MatchWord("where"))
             {
                 string tpName = Expect(TokenType.Identifier, "Expected a type parameter name after 'where'").Lexeme;
                 if (!typeParamNames.Contains(tpName))
@@ -2796,8 +2797,8 @@ namespace fire.Compiler
         /// type names).</summary>
         private TypeConstraint ParseOneTypeConstraint()
         {
-            Expect(TokenType.Is, "Expected 'is' in a where condition");
-            if (Match(TokenType.Of))
+            if (!MatchWord("is")) throw Error("Expected 'is' in a where condition", Peek());
+            if (MatchWord("of"))
             {
                 // ParseTypeAnnotationName() instead of Expect(Identifier) - the
                 // target of 'is of' can be a primitive type like 'float'
@@ -3734,13 +3735,13 @@ namespace fire.Compiler
             var after = PeekAt(2);
             if (after.Type is TokenType.Colon or TokenType.RParen or TokenType.Comma or TokenType.Eof) return false;
             // `print(a: + b)`: no expression starts there - `a:` converts into the unit of the other operand
-            if (NoExpressionStart(after.Type)) return false;
+            if (NoExpressionStart(after.Type) || IsOperatorAt(2)) return false;
             // `F(a:!)`, `F(a:!, b)`, `F(a:! + b)`, `F(a:!int)`: the `!` is the conversion of `a:` - nothing it could negate follows (`F(a: !flag)` and
             // `F(a: !(x))` stay a named argument with a logical not, however they are spaced)
             if (after.Type == TokenType.Bang)
             {
                 var negated = PeekAt(3);
-                if (negated.Type is TokenType.RParen or TokenType.Comma or TokenType.Eof or TokenType.Colon or TokenType.Minus || NoExpressionStart(negated.Type)
+                if (negated.Type is TokenType.RParen or TokenType.Comma or TokenType.Eof or TokenType.Colon or TokenType.Minus || NoExpressionStart(negated.Type) || IsOperatorAt(3)
                     || TypeKeywords.Contains(negated.Type)) return false;
             }
             bool adjacent = after.Line == colon.Line && after.Column == colon.Column + 1 && !after.NewlineBefore;
@@ -3982,7 +3983,7 @@ namespace fire.Compiler
                     };
                     left = new BinaryExpr(opTok.Line, op, left, ParseRange());
                 }
-                else if (Check(TokenType.Is))
+                else if (CheckWord("is"))
                 {
                     int line = Advance().Line;
                     if (Match(TokenType.In))
@@ -3990,12 +3991,12 @@ namespace fire.Compiler
                         string unitName = IsCustomUnitWordAt(0) ? Advance().Lexeme : Expect(TokenType.Identifier, "Expected a unit name after 'is in'").Lexeme;
                         left = new IsInExpr(line, left, unitName);
                     }
-                    else if (Match(TokenType.Of))
+                    else if (MatchWord("of"))
                     {
                         string typeName = ParseTypeAnnotationName();
                         left = new IsOfExpr(line, left, new TypeRef(typeName, null, 0, Namespaces: CurrentNamespaces()));
                     }
-                    else if (Match(TokenType.From))
+                    else if (MatchWord("from"))
                     {
                         // `x is from local` / `x is from global`: the owner is a scope (a variable of that name: `x is from (local)`)
                         if (Check(TokenType.Identifier) && Peek().Lexeme is "local" or "global" && PeekAt(1).Type is not (TokenType.Dot or TokenType.LParen or TokenType.LBracket))
@@ -4005,7 +4006,7 @@ namespace fire.Compiler
                         }
                         else left = new IsFromExpr(line, left, ParseShift(), Transitive: false);
                     }
-                    else if (Match(TokenType.Under))
+                    else if (MatchWord("under"))
                     {
                         left = new IsFromExpr(line, left, ParseShift(), Transitive: true);
                     }
@@ -4828,6 +4829,21 @@ namespace fire.Compiler
             Advance();
             return true;
         }
+
+        /// <summary>A contextual word (`is`, `of`, `from`, `under`, `where`, ...): an identifier with that text, which the parser reads as a word only where it
+        /// means something - a name everywhere else.</summary>
+        private bool CheckWord(string word, int offset = 0) => PeekAt(offset) is { Type: TokenType.Identifier } t && t.Lexeme == word;
+
+        private bool MatchWord(string word)
+        {
+            if (!CheckWord(word)) return false;
+            Advance();
+            return true;
+        }
+
+        /// <summary>`is in`, `is of`, `is from`, `is under` at `offset`: the operator, not a variable `is`.</summary>
+        private bool IsOperatorAt(int offset) =>
+            CheckWord("is", offset) && (PeekAt(offset + 1).Type == TokenType.In || CheckWord("of", offset + 1) || CheckWord("from", offset + 1) || CheckWord("under", offset + 1));
 
         private Token Expect(TokenType type, string message)
         {
