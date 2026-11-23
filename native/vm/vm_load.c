@@ -580,7 +580,8 @@ static VmProgram* vmLoadWith(const uint8_t* in, size_t len, VmProgram* host, cha
             e->signature = vmName(p, full);
         }
         e->inlineC = rdStr(&r) != NULL;
-        rdOptStrList(&r, NULL); rdInt(&r); rdInt(&r); rdStr(&r);
+        rdOptStrList(&r, NULL); rdInt(&r); rdInt(&r);
+        e->displayName = rdStr(&r);   /* (`M.Add` for an `inline c` method: how the program calls it) */
     }
     n = rdCount(&r);
     p->nclasses = n;

@@ -3859,8 +3859,17 @@ namespace fire.Compiler
                 // no sensible counterpart for that here.
                 if (_refs.TryGetValue(me, out var staticTargetRef) && staticTargetRef is ResolvedRef.StaticMember sm)
                 {
-                    CompileExpr(a.Value);
-                    EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(a.Value), hoist: false);   // a static field belongs to the program (SPEC 2.1)
+                    // `C.f = take x`: x goes to the program, as the field (SPEC 2.2) - not to the scope of the running call (a plain `take`), which destroyed it at its end
+                    if (a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } staticTake)
+                    {
+                        CompileExpr(staticTake.Operand);
+                        EmitTakeToScope(0xFFFF, staticTake.Op == UnaryOp.TryTake);
+                    }
+                    else
+                    {
+                        CompileExpr(a.Value);
+                        EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(a.Value), hoist: false);   // a static field belongs to the program (SPEC 2.1)
+                    }
                     EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
@@ -3956,7 +3965,8 @@ namespace fire.Compiler
                 case ResolvedRef.StaticMember sm:
                     // SPEC "Static members" - bare name instead of
                     // 'ClassName.Name = ...' (see Resolver.
-                    // ResolveIdentifierRef/ResolveAssignTarget).
+                    // ResolveIdentifierRef/ResolveAssignTarget). A static field belongs to the program (SPEC 2.1), as with 'ClassName.Name = ...'.
+                    EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(a.Value), hoist: false);
                     EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
@@ -4087,6 +4097,14 @@ namespace fire.Compiler
                     EmitTakeToScope(0xFFFF, take.Op == UnaryOp.TryTake);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
+                    break;
+                case ResolvedRef.StaticMember sm:
+                    // (a static field of the class by its bare name: the program holds it, as `C.f = take x`)
+                    EmitTakeToScope(0xFFFF, take.Op == UnaryOp.TryTake);
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
+                    _chunk.EmitOp(OpCode.SetStaticField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
                 case ResolvedRef.ImplicitThisMember:
                     _chunk.EmitOp(OpCode.LoadThis);         // [value, this]

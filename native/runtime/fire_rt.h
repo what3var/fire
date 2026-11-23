@@ -220,6 +220,19 @@ typedef uint64_t FireUInt;
 /* `word` (SPEC 8.10): the machine word of the target, unsigned, without a unit - K_Word, its bits in `w` (zero above the width). The generator defines
  * FIRE_WORD_BITS from the target (`wordWidth`); without it (a package library for the VM) the width of a pointer. An operation on words wraps at the
  * width (wordOp). */
+#if defined(FIRE_WORD_DYNAMIC)
+/* (the VM in C: the width of the program it runs - `wordWidth` of the program file, set by fireSetWordBits before it starts, as the C# VM's Value.WordBits;
+ * a word is kept in 64 bits, its bits above the width zero) */
+typedef uint64_t FireWord;
+static int g_fireWordBits = 64;
+static uint64_t g_fireWordMask = 0xFFFFFFFFFFFFFFFFull;
+#define FIRE_WORD_BITS g_fireWordBits
+#define FIRE_WORD_MASK g_fireWordMask
+static void fireSetWordBits(int bits) {
+    g_fireWordBits = bits == 16 || bits == 32 ? bits : 64;
+    g_fireWordMask = g_fireWordBits == 64 ? 0xFFFFFFFFFFFFFFFFull : (1ull << g_fireWordBits) - 1;
+}
+#else
 #ifndef FIRE_WORD_BITS
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #define FIRE_WORD_BITS 64
@@ -238,6 +251,7 @@ typedef uint64_t FireWord;
 #define FIRE_WORD_MASK 0xFFFFFFFFFFFFFFFFull
 #else
 #error "FIRE_WORD_BITS must be 16, 32 or 64"
+#endif
 #endif
 
 /* A runtime value, trivially copyable, 16 bytes on every target: it holds whatever a variable of type `any` can hold - an int of 64 bits too (docs/spec/TYPES.md:
@@ -5897,12 +5911,14 @@ FIRE_FN void fire_traceAdd(FireTraceText* b, const char* s, size_t len) {
     b->p[b->n] = 0;
 }
 FIRE_FN void fire_traceAddS(FireTraceText* b, const char* s) { fire_traceAdd(b, s, strlen(s)); }
-/* What stands in the brackets of a frame: `main.fire:16`, `main.fire` (without lines, or line 0), `prelude`. */
+/* What stands in the brackets of a frame: `main.fire:16`, `main.fire` (without lines, or line 0), `prelude`. A negative line is a frame on entry (the code a
+ * function runs before its first line, the checks of its parameters): the first line of the function - fire_traceFormat writes `(entry)` before it. */
 FIRE_FN void fire_traceWhere(FireTraceText* b, const char* file, int32_t line, int mode) {
     char num[24];
     if (!file) { fire_traceAddS(b, "prelude"); return; }
     if (FIRE_TRACE_IS_NATIVE(file)) { fire_traceAddS(b, file + 1); return; }
     fire_traceAddS(b, file);
+    if (line < 0) line = -line;
     if (mode == FIRE_TRACE_LINES && line > 0) { snprintf(num, sizeof num, ":%ld", (long)line); fire_traceAddS(b, num); }
 }
 /* The lines of the trace, each ended by a line feed (malloc'ed; NULL: no trace, or `#stacktrace off`). */
@@ -5918,6 +5934,7 @@ FIRE_FN char* fire_traceFormat(const FireTrace* t, int mode) {
             if (s->omitted > 0 && i == FIRE_TRACE_INNER) { snprintf(num, sizeof num, "   ... %lu more frames ...\n", (unsigned long)s->omitted); fire_traceAddS(&b, num); }
             fire_traceAddS(&b, "   at ");
             fire_traceAddS(&b, s->frames[i].fn && s->frames[i].fn->name ? s->frames[i].fn->name : "?");
+            if (s->frames[i].line < 0) fire_traceAddS(&b, " (entry)");   /* (thrown on entry, before its first line: `at Runner.Execute (entry) (main.fire:3)`) */
             fire_traceAddS(&b, " (");
             fire_traceWhere(&b, s->frames[i].fn ? s->frames[i].fn->file : NULL, s->frames[i].line, mode);
             fire_traceAddS(&b, ")\n");
@@ -6066,7 +6083,7 @@ FIRE_FN Value fire_exc_frames(Value e, Value index, Value part, OwnList* list) {
     f = fire_traceFrameAt(t, (uint32_t)index.i);
     if (!f) return Undef();
     if (part.kind == K_Int && part.i == 1) return fire_traceStr(f->fn && f->fn->file ? (FIRE_TRACE_IS_NATIVE(f->fn->file) ? "(native)" : f->fn->file) : "", list);
-    if (part.kind == K_Int && part.i == 2) return Int(g_stackTrace == FIRE_TRACE_LINES && f->fn && f->fn->file && !FIRE_TRACE_IS_NATIVE(f->fn->file) ? f->line : 0);
+    if (part.kind == K_Int && part.i == 2) return Int(g_stackTrace == FIRE_TRACE_LINES && f->fn && f->fn->file && !FIRE_TRACE_IS_NATIVE(f->fn->file) ? (f->line < 0 ? -f->line : f->line) : 0);
     return fire_traceStr(f->fn && f->fn->name ? f->fn->name : "?", list);
 }
 

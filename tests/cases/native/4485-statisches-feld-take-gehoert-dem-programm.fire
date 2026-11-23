@@ -1,0 +1,22 @@
+class Item {
+    string name
+    construct(string n) { name = n }
+    destruct() { print("destroyed " + name) }
+}
+class Holder {
+    static Item shared
+    static Item other
+    static Item third
+    static undefined Keep() {
+        var g = new Item("g")
+        Holder.shared = take g
+        var h = new Item("h")
+        other = take h
+        third = new Item("t")
+        print("kept")
+    }
+}
+Holder.Keep()
+print("after: " + Holder.shared.name + " " + Holder.other.name + " " + Holder.third.name)
+print("end")
+//# name: Statisches Feld: take in ein statisches Feld (Holder.shared = take g, other = take h) und new in ein statisches Feld ueber den blossen Namen gehoeren dem Programm, nicht dem Aufruf

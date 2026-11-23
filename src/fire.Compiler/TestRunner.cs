@@ -230,7 +230,8 @@ namespace fire.Compiler
                 if (tests == 0 || _cancelled) return run;
 
                 var psi = new ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Directory.GetCurrentDirectory() };
-                using var process = Process.Start(psi)!;
+                fire.Debugging.ChildProcesses.Prepare(psi);
+                using var process = fire.Debugging.ChildProcesses.Add(Process.Start(psi)!);
                 lock (_lock) _process = process;
                 var errors = new StringBuilder();
                 process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errors) errors.AppendLine(e.Data); };

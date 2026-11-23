@@ -154,8 +154,8 @@ Ordnern der Bibliotheken; der Ordner geht, wenn das Programm endet.
   `cvm/tables/bridges.def`), nicht mehr aus den C#-Bridges; die Host-Natives der Pakete sind beim Übersetzen nur Namen.
 * `FIRE_VM_ENGINE=dotnet` (die .NET-Einzeldatei, `fire.Runtime.Packer`) ist weg: `forge build --engine vm` packt nur noch `fire`.
 * **Geändert**: `Environment.ProgramPath` ist bei `forge run` der Pfad von `fire` (wie bei forge-c), in der C#-VM war es die letzte Quelle.
-* **Offen** (gefunden dabei): der Aufruf einer `inline c`-Funktion beendet ein Programm in `fire` (`fire runtime error: the VM in C does not support the inline
-  C function ... yet`), die C#-VM warf eine abfangbare Ausnahme (`'M.Add' is an inline C function: it runs only in a native build`).
+* **Behoben** (gefunden dabei): der Aufruf einer `inline c`-Funktion beendete ein Programm in `fire`; jetzt ist er wie in der C#-VM eine abfangbare
+  `ArgumentException` (`'M.Add' is an inline C function: it runs only in a native build ...`).
 * **Tests**: `tests/compare-commands.sh` gegen forge-c 100 von 103 gleich (die drei: Dateien nativer Builds und die gepackte Datei von `-m debug`, die
   schon vorher abwichen - das C#-forge vor dieser Änderung schreibt dieselben, die gepackte Datei ist von Lauf zu Lauf verschieden); im Testprogramm
   laufen die Programme der Prüfungen in `fire` (`CVmTest`: übersetzt im Testprogramm, `fire run` mit `FIRE_PRINT_RECORDS`; `CVmTest.Debug` unter dem
@@ -226,6 +226,12 @@ MCP-Servers übersetzt mit forge (`forge bytecode`, wie Start), nicht mehr mit d
   Threads, `set`, Profil sind die des Agenten (Schritt 6); das Stack-Panel (Operandenstapel) ist wie bei nativ ausgeblendet. **Nicht** gerahmt über stdio
   (`NativeLaunch.LaunchDebugStdio` gibt es, `framed: true`): die Natives der Pakete (io) lesen stdin selbst und nähmen die Rahmen mit.
 * **`FIRE_STDOUT_LINES=1`** (setzt spark): `fire` schreibt stdout auch in eine Pipe zeilenweise (`setvbuf`), sonst käme die Ausgabe erst am Ende.
+* **Das Ende mit spark** (`fire.Debugging.ChildProcesses`): was spark startet (`fire` mit Run, Debug, Live-Sitzungen, Skripten; forge, `forge serve`, native
+  Programme, der Test-Runner) endet mit spark - bei `ProcessExit` und SIGTERM/SIGHUP tötet spark sie samt Baum. Linux, auch wenn spark getötet wird:
+  `FIRE_END_WITH_PARENT=<pid von spark>`; ist das der Elternprozess von `fire`, verlangt `fire` beim Start `prctl(PR_SET_PDEATHSIG)` mit einem Echtzeitsignal
+  und endet (Code 143), wenn der Elternprozess weg ist - der Kernel schickt es schon beim Ende des Threads, der `fire` startete (die Threads des .NET-Pools
+  enden), der Handler sieht darum nach `getppid()`. Ein Enkel, der die Variable erbt, nimmt sie nicht. Windows: jedes Kind kommt in ein Job-Objekt mit
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, das mit spark endet. Geprüft: `FIRE_TESTS_ONLY=cvmrun` ("Ende mit spark").
 * **Behoben**: der Hauptthread wartete am Einstieg mit der GIL (der Agent parkt ihn als einen ohne - ein natives Programm startet so); `scopes`/`globals`/`this`
   am Einstieg - die Panels von spark fragen sofort - hingen im Agenten für immer (`vmDbgBegin` gibt die GIL ab, solange er wartet).
 
@@ -409,7 +415,7 @@ Entschieden: **eine VM je Konfiguration aus denselben Quellen**, keine Laufzeit-
 und keine Varianten unter Präfixen in einem Binary (die Runtime hat Daten mit externer Bindung, jede Variante bräuchte eigene Namen für alles). Die
 Varianten heißen `fire-i32`, `fire-i16`, `fire-f32`, `fire-i32-f32`, `fire-i16-f32`; `fire` liest den Kopf des Programms und startet bei einem
 Programm anderer Breiten die Variante neben sich (siehe [Das Programm fire](#das-programm-fire-schritt-7); `forge build-vm --variant`/`--all` baut sie,
-`tests/run-cases-vm.sh` baut alle in seinen Cache). Die Breite von `word` (`FIRE_WORD_BITS`) folgt dem Ziel und ist für die VM die eines Zeigers. Dazu in der VM: eine Deklaration
+`tests/run-cases-vm.sh` baut alle in seinen Cache). Die Breite von `word` ist in der VM **eine Einstellung zur Laufzeit** (`FIRE_WORD_DYNAMIC`: `FIRE_WORD_BITS`/`FIRE_WORD_MASK` sind `g_fireWordBits`/`g_fireWordMask`, `fireSetWordBits` beim Start eines Programms aus `wordWidth` seiner Datei: 16, 32 oder 64 - wie `Value.WordBits` der C#-VM; vorher rechnete die VM immer mit 64 Bit). Ein Wort liegt in 64 Bit, die Bits über der Breite sind 0; ein Puffer von Wörtern (`word a[]`) hat Elemente zu 8 Bytes (die C#-VM: Breite/8). Die Operationen auf Wörtern gehen ohnehin über `wordOp`/`WordV`, die schneiden; geprüft in der Gruppe `native` ("word in der Breite des Ziels": 16 und 32 Bit in `fire` wie nativ). Dazu in der VM: eine Deklaration
 `int` (ohne `int[64]`/`int[32]`) und `x!int` schneiden ein breites int auf die Breite des Programms (`DeclaredKind.CutsWide`, `intProgram`), was ein Native
 eines Pakets zurückgibt, behält seine 64 Bit (`IntNative`, wie `FIRE_INT_U`), Zeiger der VM in einem `Value` (der Proto eines Lambdas, die Argumente
 eines Threads) sind ints mit 64 Bit (`VM_PTRV`).
@@ -461,7 +467,8 @@ Eine ABI, in der die Bibliothek die `Value`s der VM direkt benutzt (Roadmap: "sp
 ganze Zahlen (Zeiger, bool, char, int jeder Breite - auf 64 Bit erweitert) und Floats (ein `float[32]` als die Bits eines float in der unteren Hälfte des
 Registers) werden getrennt gezählt, die Funktion wird als eine mit 8 ganzzahligen und 8 Float-Parametern gerufen. Das gilt für die Aufrufkonventionen,
 in denen beide eigene Register der Reihe nach haben (System V x86-64, AArch64) - unter Windows x64 ist eine Signatur "nicht bekannt" (Get sagt es).
-`extern` mit `#extern "lib"` geht denselben Weg (CallExtern); `inline c` braucht einen C-Compiler zur Laufzeit und fehlt. Fire-Plugins
+`extern` mit `#extern "lib"` geht denselben Weg (CallExtern); `inline c` läuft nur nativ - sein Aufruf ist wie in der C#-VM eine abfangbare
+`ArgumentException` (ebenso ein `extern` ohne Bibliothek). Fire-Plugins
 (`.fireplugin`, `__LibCall(1)`/`__LibCall(5)`): siehe [Plugins](#plugins).
 
 ## Plugins

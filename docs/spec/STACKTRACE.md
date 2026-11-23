@@ -51,6 +51,12 @@ Unhandled exception of type 'NotFound': not found: b
 * **Ohne Zeilen** (ein Build mit `#stacktrace calls`, [unten](#7-empfehlung-je-modus-und-die-direktive)): `   at Store.Find (main.fire)`.
 * **Ein Native, das zurückruft**: `   at __GRPHWinTick (native)` - der Name des Natives, wie der fire-Code es aufruft (der Prelude von `windows` ruft
   `__GRPHWinTick` in `Window.Tick`), statt des Orts `native`; in `e.Frames` die Datei `"(native)"`, Zeile 0.
+* **Beim Eintritt** (eine Ausnahme, die eine Methode wirft, bevor ihre erste Zeile läuft - die Prüfungen ihrer Parameter: die Signatur eines Lambdas,
+  `lambda<int> callback` mit einem Lambda aus zwei Parametern): `   at Runner.Execute (entry) (main.fire:3)` - der Name, `(entry)` und die Datei der
+  Methode mit ihrer **ersten Zeile** (der ersten Anweisung; die Zeile der Deklaration steht nicht in der Zeilentabelle). Vorher stand dort `(prelude)`:
+  der Code vor der ersten Zeile hatte keinen Ort. In `e.Frames` der Name ohne `(entry)`, die Datei und diese Zeile. Nur mit Zeilen (`#stacktrace lines`);
+  mit `calls` wie jeder Frame `(main.fire)`. Nicht für `<main>`. Intern ist die Zeile des Frames negativ (`-3`: C-VM `vmTraceLocationEntry`, nativ
+  `TF.line = -3` aus `Chunk.EntryLocation`/`TraceLocationOf` in beiden Generatoren, `fire_traceFormat` schreibt `(entry)`). Klickbar wie jeder Frame.
 * **Ohne Trace** (`#stacktrace off`, oder ein Wurf, dessen Frames nicht bekannt sind): nur die erste Zeile, wie heute.
 
 ### Die Sprache

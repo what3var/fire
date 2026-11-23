@@ -1,0 +1,8 @@
+   at Runner.Twice (entry) (0180-ausnahme-beim-eintritt-entry.fire:5)
+   at <main> (0180-ausnahme-beim-eintritt-entry.fire:8)
+Runner.Twice | 0180-ausnahme-beim-eintritt-entry.fire | 5
+<main> | 0180-ausnahme-beim-eintritt-entry.fire | 8
+2
+UNBEHANDELT: Unhandled exception of type 'ArgumentException': The lambda has 2 parameter(s), its declaration says 1.
+   at Runner.Execute (entry) (0180-ausnahme-beim-eintritt-entry.fire:3)
+   at <main> (0180-ausnahme-beim-eintritt-entry.fire:15)

@@ -81,13 +81,19 @@ static int fgTraceIndexOf(FcList* files, const char* file) {
     for (i = 0; i < files->count; i++) if (fgTrSame((const char*)files->items[i], file)) return i;
     return -1;
 }
+/* Where an instruction is for the trace: its source and line - before the first line of a function that is not the top level (the code it runs on entry:
+ * the checks of its parameters) the source of that first line and the line negative (`(entry)`, fire_rt.h fire_traceFormat; Chunk.EntryLocation). */
+static void TraceLocationOf(FgFunc* f, const FcChunk* chunk, int addr, int* src, int* line) {
+    if (f->kind != FK_Main && chunk->lineCount > 0 && addr < chunk->lines[0].offset) { *src = chunk->lines[0].source; *line = -chunk->lines[0].line; return; }
+    fgLocation(chunk, addr, src, line);
+}
 /* The descriptors of a function: one per file its instructions are in, in the order of the code. */
-static FcList* TraceFilesOf(FgGen* g, FcChunk* chunk, FgCode code) {
+static FcList* TraceFilesOf(FgGen* g, FgFunc* f, FcChunk* chunk, FgCode code) {
     FcList* files = fcListNew(g->c);
     int i, src, line;
     for (i = 0; i < code.n; i++) {
         const char* file;
-        fgLocation(chunk, code.p[i].addr, &src, &line);
+        TraceLocationOf(f, chunk, code.p[i].addr, &src, &line);
         file = TraceFileOf(g, src);
         if (fgTraceIndexOf(files, file) < 0) fcListAdd(g->c, files, (void*)file);
     }
@@ -106,8 +112,7 @@ static void TraceBeforeInstruction(FgGen* g, FgFunc* f, FcChunk* chunk, FgInstr*
         else hi = mid - 1;
     }
     start = found < 0 ? 0 : chunk->lines[found].offset;
-    src = found < 0 ? 0 : chunk->lines[found].source;
-    line = found < 0 ? 0 : chunk->lines[found].line;
+    TraceLocationOf(f, chunk, ins->addr, &src, &line);
     if (!(i == 0 || start == ins->addr || isTarget)) return;
     file = TraceFileOf(g, src);
     fcBufStr(&text, "");

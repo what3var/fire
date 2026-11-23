@@ -241,7 +241,7 @@ namespace fire.Editor.Assistant
                         config.Save(ConfigIn(folder));
                         foreach (string a in new[] { "--config", ConfigIn(folder), "--toolchain", ToolchainName }) info.ArgumentList.Add(a);
                     }
-                    using var p = Process.Start(info) ?? throw new IOException("forge did not start.");
+                    using var p = fire.Debugging.ChildProcesses.Add(Process.Start(info) ?? throw new IOException("forge did not start."));
                     try { p.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }   // (the editor stays quick while the C compiler works)
                     started?.Invoke(p);
                     void Take(string? text)

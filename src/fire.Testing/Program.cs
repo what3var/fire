@@ -24,6 +24,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "publish") { Enviro
 // FIRE_TESTS_ONLY=forgereport: spark builds through forge - the report of `forge build --report json` written and read, spark's runner against a fake forge (cancel included), the real forge on a library (ForgeReportTests.cs; seconds)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "forgereport") { Environment.ExitCode = TestResume.Group("ForgeReportTests", ForgeReportTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=cvmrun: spark on the VM in C - Run/Debug as a child process `fire run x.fbc` against a fake fire and with the real forge and fire (CVmRunTests.cs; seconds)
+// (FIRE_TESTS_ONLY=cvmrun-child: the stand-in for spark of CVmRunTests.Ending - its children end with it)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmrun-child") { CVmRunTests.ChildHost(args); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmrun") { Environment.ExitCode = TestResume.Group("CVmRunTests", CVmRunTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=cvmwin: the VM in C on Windows - fire.exe built with MinGW, run under Wine: the command line, a sample of the corpus, packed programs, FIRE_DISPLAY_SHM, __HostCommand, FIRE_DEVICE_HOST (CVmWindowsTests.cs; minutes)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmwin") { Environment.ExitCode = TestResume.Group("CVmWindowsTests", CVmWindowsTests.Run, 0) == 0 ? 0 : 1; return; }
@@ -2942,6 +2944,10 @@ else
         string vmInline = vmOutput("inline c int Add(int a, int b) {\n#if defined(X)\n  return 0;\n#endif\n  return a + b; }\nprint(1)\ntry { print(Add(1, 2)) } catch (e) { print(e.message) }\nvar inline = 3\nprint(inline)");
         string vmInlineMethod = vmOutput("class M {\n  static inline c int Add(int a, int b) { return a + b; }\n}\ntry { print(M.Add(1, 2)) } catch (e) { print(e.message) }");
         CheckNat("inline c als Methode in der VM: der Aufruf ist ein Fehler, der die Methode nennt (M.Add)", vmInlineMethod.StartsWith("'M.Add' is an inline C function"), vmInlineMethod);
+        // (the class and the texts of the C# VM: its InvalidOperationException became a catchable ArgumentException - also for an `extern` without a library)
+        string vmInlineClass = vmOutput("inline c int Add(int a, int b) { return a + b; }\ntry { Add(1, 2) } catch (ArgumentException e) { print(\"caught\") }\nextern int NoLib(int a)\ntry { NoLib(1) } catch (ArgumentException e) { print(e.message) }\nprint(\"end\")");
+        CheckNat("inline c in der VM: eine abfangbare ArgumentException; ein extern ohne Bibliothek ebenso",
+            vmInlineClass == "caught\n'NoLib' is declared extern, but neither linked manually (ExternRegistry.Register in the host) nor assigned to a native library with '#extern \"libName\"'.\nend\n", vmInlineClass);
         CheckNat("inline c in der VM: der Aufruf ist ein Fehler, #if im C-Rumpf gehoert C, 'inline' bleibt ein Name",
             vmInline.StartsWith("1\n'Add' is an inline C function: it runs only in a native build") && vmInline.EndsWith("\n3\n"), vmInline);
         string InlineError(string source) { try { new Linker().CompileAndLink(new[] { source }); return ""; } catch (Exception ex) { return ex.Message; } }
@@ -4053,6 +4059,26 @@ else
 
         // a call through an interface (members public, E4063): its own dispatcher over the implementing classes - no caller class, no access check, not the
         // class outside the interface that has the name privately
+        // `word` in the width of the target (SPEC 8.10): 16 and 32 bits wrap in the VM in C as in the native build for that target (and as the C# VM did: Value.WordBits)
+        const string wordWidthTitle = "word in der Breite des Ziels (16, 32 Bit): Ueberlauf und Umbruch in der C-VM wie nativ";
+        if (TestSelected(wordWidthTitle))
+        {
+            const string wordScript = "word a = 65535\na = a + 1\nword b = 0\nb = b - 1\nword c = 4000000000\nc = c * 2\nword s = 1\ns = s << 20\nword h = 4294967295\nh = h + 3\n"
+                + "word d = 0\nd = d - 1\nd = d / 3\nprint(Word.Bits + \" \" + a + \" \" + b + \" \" + c + \" \" + s + \" \" + h + \" \" + d + \" \" + (b > 70000))";   // (70000 as a word of 16 bits is 4464)
+            var detail = new System.Text.StringBuilder();
+            foreach (var (bits, want) in new[] { (16, "16 0 65535 20480 0 2 21845 True\n"), (32, "32 65536 4294967295 3705032704 1048576 2 1431655765 True\n"), (64, "64 65536 18446744073709551615 8000000000 1048576 4294967298 6148914691236517205 True\n") })
+            {
+                var linked = new Linker().CompileAndLink(new[] { wordScript }, null, null, VmExecutionMode.Release, null, TargetProfile.Host with { WordWidth = bits });
+                var vmRun = CVmTest.Run(linked);
+                string vm = string.Concat(vmRun.Printed.Select(l => l + "\n"));
+                string exe = Path.Combine(workDir, $"word{bits}.bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, fire.Native.CppGenerator.GenerateSources(linked), workDir, $"word{bits}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int wordExit);
+                string nat = wordExit == 0 ? TestProcess.Run(exe, "", workDir).Stdout : "C/C++-Compiler: " + build;
+                if (vm != want || nat != want) detail.AppendLine($"{bits}: erwartet {want.TrimEnd()}, C-VM {vm.TrimEnd()} {vmRun.Errors.Trim()}, nativ {nat.TrimEnd()}");
+            }
+            CheckNat(wordWidthTitle, detail.Length == 0, detail.ToString());
+        }
+
         const string interfaceCallTitle = "Interface-Aufrufe: eigener Verteiler ohne Aufruferklasse und Zugriffspruefung (fremde private Methode gleichen Namens)";
         if (TestSelected(interfaceCallTitle))
         {
@@ -4181,7 +4207,9 @@ else
                 string linkFlags = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
                 string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"case{index}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exeFile, out int buildExit, linkFlags);
                 if (buildExit != 0 || build.Contains("warning:")) return (null, "C/C++-Compiler: " + build, 0);
-                return TestProcess.Run(exeFile, "", workDir);
+                // (stdin closed, as the VM's run has it: a case must not wait for the input of the test run; a case that does not end in NativeCaseTimeoutMs fails
+                // with the stacks of its threads instead of holding a worker - and with all of them the whole group - for ever)
+                return TestProcess.Run(exeFile, "", workDir, input: "", timeoutMs: NativeTestBuild.CaseTimeoutMs, stacksOnTimeout: true);
             }
             try { natRan[index] = Ran(); }
             catch (Exception ex) { natRan[index] = (null, "Test: " + ex, 0); }

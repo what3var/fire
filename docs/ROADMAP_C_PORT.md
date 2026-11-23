@@ -284,7 +284,8 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    der Programmdatei (`Packages/`, `Prebuilt/` eines forge). `fire_host` in C mit allem, was die Kopfdatei hat (Konsole, IO-/Netz-Regeln - alles
    erlaubt wie in der gepackten C#-Runtime -, Lambdas mit dem Aufschub ihrer Ausnahmen bis zum Ende des Natives, Aufrufe von anderen Threads am
    nächsten sicheren Punkt, Dienste, Leerlauf, Halte auf dem Ende des Programms). Dazu `Library` und `extern` über einen Aufruf nach der Signatur zur
-   Laufzeit (System V x86-64, AArch64). Offen: Regeln eines Hosts und seine Geräte (spark, Schritt 9), `inline c`, `Library`/`extern` unter Windows x64.
+   Laufzeit (System V x86-64, AArch64). Offen: Regeln eines Hosts und seine Geräte (spark, Schritt 9), `Library`/`extern` unter Windows x64 (`inline c` läuft wie in der C#-VM nur nativ:
+   sein Aufruf ist eine abfangbare `ArgumentException`).
 5. Reflection, JSON, Probes, Module und Plugins in der VM.
    **Zum größten Teil umgesetzt** ([VM_C.md](spec/VM_C.md#reflection-und-probes)): Reflection auf den Meta-Daten der Datei, die der Lader jetzt
    behält (`vm-rf` 18 von 18), Lesen/Schreiben/Aufrufen/Erzeugen nach Namen auf den Wegen des Interpreters; JSON mit der Engine des nativen Builds
@@ -429,9 +430,10 @@ Build von `fire.Compiler` ohne die Referenz und ohne die Dateien unten - es übe
   "VM: die erwartete Ausgabe" alle grün, die nativen Builds mit ASan brauchen länger als 30 min je Prozess - unberührt von diesem Schritt). Unter Xvfb
   mit spark: ein Konsolenprogramm (Ausgabe, Eingabe über die Zeile des Output-Panels), ein Haltepunkt (Halt, Scope-Panel, weiter bis zum Ende), ein
   Fensterprogramm (sein Fenster aus `fire`), der Schaltplan-Editor (Live-Sitzung in `fire`, Simulation läuft), das Werkzeug `check` des MCP-Servers über forge.
-* **Gefunden** (nicht behoben, `native/vm`): `inline c` in der C-VM beendet das Programm mit `fire runtime error: the VM in C does not support the inline C
-  function M_Add yet`, statt wie die C#-VM eine abfangbare Ausnahme `'M.Add' is an inline C function: it runs only in a native build` zu werfen - die zwei
-  Prüfungen "inline c ... in der VM" der Gruppe `native` zeigen es (rot gelassen).
+* **Gefunden** und danach behoben (`native/vm/vm_lib.c`): `inline c` in der C-VM beendete das Programm mit `fire runtime error: the VM in C does not support
+  the inline C function M_Add yet`; jetzt wirft der Aufruf wie in der C#-VM eine abfangbare `ArgumentException` `'M.Add' is an inline C function: it runs
+  only in a native build (...)` (der Name, wie das Programm ihn ruft: `DisplayName` der Signatur), ein `extern` ohne Bibliothek ebenso mit dem Text der
+  C#-VM. Den C-Rumpf in der VM auszuführen (zur Laufzeit übersetzen und laden) ist nicht vorgesehen: SPEC und Tests sagen "nur nativ".
 
 **Entfernt** (23.11.2026, nach der Liste oben):
 

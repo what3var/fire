@@ -94,12 +94,14 @@ namespace fire.Compiler
                 };
                 foreach (var a in fire.Debugging.CVmLaunch.Arguments(programFile, Array.Empty<string>())) info.ArgumentList.Add(a);
                 foreach (var (k, v) in fire.Debugging.CVmLaunch.Environment(linked.PackageLibraryFiles ?? new List<string>(), extra)) info.Environment[k] = v;
+                fire.Debugging.ChildProcesses.Prepare(info);
                 var errors = new System.Text.StringBuilder();
                 clock.Restart();
                 using var process = new Process { StartInfo = info };
                 process.OutputDataReceived += (_, e) => { if (e.Data != null) lock (result.Printed) result.Printed.Add(e.Data.Replace('\x1F', '\n')); };   // (a line break of a print came as \x1F)
                 process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errors) errors.AppendLine(e.Data); };
                 process.Start();
+                fire.Debugging.ChildProcesses.Add(process);
                 process.StandardInput.Close();   // (a script of spark reads nothing)
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();

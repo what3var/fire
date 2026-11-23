@@ -3905,7 +3905,7 @@ namespace fire.Native
 
             var dbg = DebugBuild ? DebugBegin(f, code, entry) : null;
             // (stack traces: the descriptors of the function - one per file its code is in; null: no frame, CppGenerator.Trace.cs)
-            var traceFiles = TraceOn ? TraceFilesOf(chunk, code) : null;
+            var traceFiles = TraceOn ? TraceFilesOf(f, chunk, code) : null;
             for (int i = 0; i < code.Count; i++)
             {
                 if (entry[i] == null) continue; // unreachable

@@ -200,7 +200,7 @@ struct VmProgram {
     uint32_t npackageNatives;
     const char** packageLibraries; /* per package native the file name of its library ("@host": the VM runs it) */
     uint32_t npackageLibraries;
-    struct VmExtern { const char* name; const char* lib; const char* signature; bool inlineC; void* fn; } * externs;   /* `extern` (SPEC 8.1) */
+    struct VmExtern { const char* name; const char* lib; const char* signature; bool inlineC; const char* displayName; void* fn; } * externs;   /* `extern` (SPEC 8.1) */
     uint32_t nexterns;
     struct { const char* name; const uint8_t* data; uint32_t len; } * resources;
     uint32_t nresources;

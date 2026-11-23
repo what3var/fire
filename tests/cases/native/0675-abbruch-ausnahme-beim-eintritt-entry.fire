@@ -1,0 +1,10 @@
+class Runner {
+    undefined Execute(lambda<int> callback) {
+        print(callback(1))
+    }
+}
+var r = new Runner()
+r.Execute(func (int a) => a + 1)
+r.Execute(func (int a, int b) => a + b)
+print("never")
+//# name: Abbruch: eine Ausnahme beim Eintritt in eine Methode (Signatur eines Lambda-Parameters) - der Frame (entry) mit Datei und erster Zeile der Methode

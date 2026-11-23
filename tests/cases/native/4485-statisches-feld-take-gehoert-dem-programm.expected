@@ -1,0 +1,6 @@
+kept
+after: g h t
+end
+destroyed g
+destroyed h
+destroyed t
