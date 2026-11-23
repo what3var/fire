@@ -54,7 +54,6 @@ The [language reference](language/README.md) - one page per topic, with examples
 * [Testing](tools/testing.md) (`[Test]`, `forge test`, the Test Explorer)
 * [Error codes and warnings](tools/errors.md)
 * spark: [templates](tools/templates.md), [git](tools/git.md), [notes](tools/notes.md)
-* [Embedding fire in C#](../src/fire.Editor/Help/Embedding.md)
 
 ## Inside fire
 

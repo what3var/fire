@@ -1,6 +1,6 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard` (siehe dort). Offen ist nur der Zuschnitt von ember.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); **M1 erreicht** (23.11.2026: die C#-VM ist entfernt); Phase B bis Schritt 8 umgesetzt, Phase C Schritte 1 bis 6, Phase D Schritt 1, Schritt 2 teilweise, Schritt 3 bis auf Windows, Schritt 4 bis auf `tables`/`prebuild-standard` (siehe dort). Offen ist nur der Zuschnitt von ember.
 
 Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
 C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
@@ -330,7 +330,8 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    ~~`FIRE_DISPLAY_SHM` und `__HostCommand` unter Windows~~ (unter Wine geprüft, `cvmwin`, siehe M1 (7)); "Build virtual" und `check` (MCP) übersetzen noch in spark (M2).
 
 **M1:** forge (noch C#) und spark benutzen nur noch die C-VM. `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget`
-werden entfernt.
+werden entfernt. **Erreicht** (23.11.2026) - was entfernt ist und was dabei wegfiel, steht unter "Entfernt" am Ende dieses Abschnitts; der Stand davor
+bleibt als Geschichte stehen.
 **Stand** (22.11.2026): Ausführen und Debuggen in spark und `forge build --engine vm` gehen über die C-VM. Was das Entfernen noch aufhält:
 (1) ~~die Fälle des Korpus, die die C-VM noch nicht richtig macht, und der Fehler im Schaltplan-Editor~~ - **erledigt** (22.11.2026): der Korpus
 **1149 von 1149** in der C-VM (vorher 1127 richtig, 17 falsch, 1 nicht gelaufen von 1145: veraltete `.diagnostics` seit den Stack-Traces, die GIL weckte
@@ -377,7 +378,8 @@ UTF-16-Befehlszeile (nur die des Programms), UTF-8-Pfade (`_wfopen`, `LoadLibrar
 Ansicht des Hosts mit dem Leser von spark, Befehle, das geteilte Gerät, der Korpus `native` 501 von 501 und 4 mit einer Ausgabe von Windows); offen: ein echtes
 Windows, Plugins und Debuggen der C-VM unter Windows, spark selbst unter Windows.
 
-**Was nach (5) und (6) noch auf `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget` verweist** (22.11.2026; geprüft mit einem
+**Was nach (5) und (6) noch auf `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget` verwies** (22.11.2026, der Plan für das
+Entfernen - umgesetzt am 23.11.2026, siehe "Entfernt" unten; geprüft mit einem
 Build von `fire.Compiler` ohne die Referenz und ohne die Dateien unten - es übersetzt -, und von spark ohne die Referenz und ohne transitive Referenzen - es
 übersetzt mit `fire.Terminal`). Das Entfernen ist danach mechanisch:
 
@@ -430,6 +432,42 @@ Build von `fire.Compiler` ohne die Referenz und ohne die Dateien unten - es übe
 * **Gefunden** (nicht behoben, `native/vm`): `inline c` in der C-VM beendet das Programm mit `fire runtime error: the VM in C does not support the inline C
   function M_Add yet`, statt wie die C#-VM eine abfangbare Ausnahme `'M.Add' is an inline C function: it runs only in a native build` zu werfen - die zwei
   Prüfungen "inline c ... in der VM" der Gruppe `native` zeigen es (rot gelassen).
+
+**Entfernt** (23.11.2026, nach der Liste oben):
+
+* **Die Projekte** `src/fire.Runtime` (die C#-VM mit `Packer`, `BundleWriter`, `PayloadLoader`, `PackagePlan`, `PackageNativeBinding`, `PackageHost`,
+  `HostNatives`/`TimeNatives`, `ReflectionNatives`, `LineProfile`, dem Programm `runtime`), `src/fire.Terminal.Bridge`, `src/fire.Windows.Bridge`,
+  `src/fire.Terminal.Windows`, `src/fire.Terminal` und ihre Einträge in `fire.sln`.
+* **Die Bilder von spark**: `PixelCanvas`, `ImageDecoder`/`ImageEncoder` (mit `PngDecoder`, `BmpDecoder`, `GifDecoder`), `ImageData` und was sie brauchen
+  (`Palette`, `PixelColor`) liegen jetzt in **`src/fire.Imaging`** (Namensraum `fire.Imaging`, ohne `ImageData.ToFramebuffer` - das war die Brücke zur Grafik der
+  C#-VM). Ein eigenes Projekt statt spark selbst, weil das Testprogramm die Codecs prüft (`ImageTests`, "Bilder: PNG, BMP, GIF") und spark nicht referenziert.
+  Die Lizenz von pcface (die Glyphen der eingebauten Schriften, `fire_gfx_font.h`) liegt jetzt neben der von libschrift in `packages/graphics/native`.
+* **In `src/fire.Compiler`**: `RuntimeSession.cs`, `Debugging/VmDebugTarget.cs`, `HostRenderer.cs`, `GraphicsLibrary.InProcess.cs`, `PackageImports.InProcess.cs`,
+  `Tables.Bridges.cs` und der Eintrag `bridges.def` in `Tables.cs` (**`native/tables/bridges.def` ist jetzt die Quelle**, von Hand gepflegt; `forge tables`
+  schreibt noch `opcodes.def`, `errors.def`, `natives.def` und `prelude.fire`), der Record `HostWindows`, `GraphicsLibrary.Wanted` (`FIRE_VM_GRAPHICS`) und die
+  Referenz auf `fire.Runtime` (`fire.Device.Manager` referenziert forge direkt).
+* **In spark**: die Referenz auf `fire.Terminal` (jetzt `fire.Imaging`), `Help/Embedding.md` (das Einbetten der C#-VM) mit dem Menüpunkt *Embedding fire in
+  your Application* und den Links darauf (First Steps, README, [docs/README.md](README.md)); das Einbetten der VM in C kommt mit L6 (`fire_embed.h`).
+* **In `src/fire.Testing`** alles, was nur mit `FIRE_TESTS_DOTNET_VM=1` lief (`DotnetVm` ist weg): die Abschnitte `dotnetVm1` ... `dotnetVm22` und
+  `dotnetVmUi` in `Program.cs`, im Packer die Teile 1-4 und die Single-File-Runtime (es bleiben die Importe, die VM in C, das Subsystem und die nativen
+  Ziele), `UseIoPackage`, `FakeRenderer`, `TestHostDisplay`, `PixelOnlyFont`, `ArrayTarget`, `Shp`; `DebuggerTests` `VmRun`/`TargetRun`,
+  `DebuggerPluginTests` `PluginRun` (der Plan `PluginPlan` bleibt: LinkageTests "plugindebug" in `fire` und nativ), `DebugSessionVm.cs`,
+  `NativeDebugTests` `RunCsVm`/`RunVmLocked` und die Fälle "C-VM gegen C#-VM" (`NativeDebugTests.Vm.cs` behält `fire` mit den Protokoll-Prüfungen und stdio),
+  `DialogTests.cs`, `DockingTests.cs`, `WindowManagerTests.cs` (die Gruppen `windows`, `dialogs`, `docking`), dazu die Prüfungen der C#-Grafik selbst
+  (`fire.Terminal`: "Font-Rendering", "Grafik: Farbmodi, Zeichenfunktionen, Blit", der Slicer in C#, der C#-Port von libschrift und der `FontManager`,
+  `ToFramebuffer`) - die Gruppen `graphics` und `callbacks` waren danach leer und sind weg. Die Prüfungen der Breiten eines Ziels (dos16, dos32, win16,
+  bios16), die die C#-VM als Vergleich nahmen, nehmen `fire` (`CVmTest.TargetOutput`); "word: 16/32 Bit" vergleicht das native Programm mit der Ausgabe, die
+  die C#-VM hatte.
+* **`src/fire.Benchmarks`**: misst nur noch `fire` (übersetzt mit dem C#-forge, `fire run --time`: "ran in"); der Vergleich mit der C#-VM ist weg.
+
+**Weggefallen ohne Gegenstück in der C-VM** (die Prüfungen waren die der C#-VM; was sie sonst prüften, läuft über den Korpus `tests/cases` in `fire`):
+die UI-Bibliothek mit Test-Anzeige und den Test-Natives `__TestEvent`/`__TestClose`/`__TestMillis`/`__TestDragAnswer`/`__TestCanDrag` (Textfelder,
+Zwischenablage, Drag & Drop, Touch, Joystick, Markup - es bleibt die Zeichnung "UI nativ == VM" und die Live-Sitzung), die Dialoge, das Docking und der
+WindowManager (die Fenster von `fire.Terminal.Windows`), die Rückrufe des Hosts auf dem VM-Thread, die IO- und Netz-Regeln eines Hosts (`IoPolicy`,
+`NetPolicy`: die C-VM erlaubt alles wie die gepackte C#-Runtime), `extern` über P/Invoke mit eigenen Natives, die Beispiele von `Embedding.md`, ein
+Wortpuffer eines 16-Bit-Ziels an eine Bibliothek. **Offen** dabei: die C-VM rechnet `word` immer mit 64 Bit (`FIRE_WORD_BITS`; der Lader liest `wordWidth`,
+nimmt es aber nicht) - die C#-VM nahm die Breite des Ziels; die Vergleiche dos16/bios16/win16 mit Open Watcom, DOSBox-X, QEMU und Wine (auf dieser Maschine
+nicht vorhanden, ungeprüft) weichen deshalb in der Zeile eines `word` ab, sobald die Werkzeuge da sind.
 
 Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt die `Value` der VM direkt, keine Kopien, Objekte dürfen hinüber).
 

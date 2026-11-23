@@ -98,7 +98,7 @@ listener works either way, `Host` says which. Only a port that is taken or not a
 Errors: `Net.NetException` (`message`, `code`) and its subclasses `RefusedException` (3), `TimeoutException` (4), `ClosedException` (2 handle closed, 7 reset or ended, 12 not connected), `PermissionException` (8 the host's policy, 13 the operating system), `ResolveException` (10);
 the other codes (1 invalid argument, 5 unreachable, 6 address in use, 9 not supported, 11 other) come as a plain `NetException`. `Net.NetCodes` names the numbers. A destructor closes what is left open, and so does the end of the program.
 
-The host decides with `NetPolicy` (`fire.Runtime`): `AllowAll` (default), `DenyAll`, `LoopbackOnly`, `Hosts(rules, allowListen)`; `RuntimeSession.Build(..., netPolicy: ...)` passes it, the library asks through `fire_host.net_allow` (native/abi/fire_pkg_abi.h). A native build is
+The host decides: the library asks through `fire_host.net_allow` (native/abi/fire_pkg_abi.h); `fire`, the VM in C, allows everything (the C# VM's `NetPolicy` - `AllowAll`, `DenyAll`, `LoopbackOnly`, `Hosts(rules, allowListen)` - went with it at M1). A native build is
 unrestricted unless the target defines `FIRE_NET_POLICY` (a C function `int(const char* host, int port, int access, char* reason, size_t size)`, 1 allowed). A platform without a network (`freertos` until a board package provides one) throws `NetException` with code 9 on the first call.
 
 **Byte buffers:** the methods that take `byte[]` need a byte buffer (`new byte[n]`, `"text".ToBytes()`, `IO.Utf8.GetBytes(text)`, what `Read` and

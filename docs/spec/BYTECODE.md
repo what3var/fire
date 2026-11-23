@@ -1,5 +1,9 @@
 # fire – Bytecode-ISA
 
+> **Stand M1** (23.11.2026): die C#-VM (`src/fire.Runtime`: `VM`, `RuntimeSession`, `VmDebugTarget`, der .NET-Packer) ist entfernt; die Programme laufen in
+> `fire`, der VM in C ([VM_C.md](VM_C.md)). Was dieses Dokument über die C#-VM, ihre Sitzungen und ihre Natives sagt, ist Geschichte - das Format der
+> Bytecodes und die Semantik der Instruktionen gelten weiter.
+
 Ergänzt `SPEC.md` um die konkrete Bytecode-Zielarchitektur. Stack-basierte VM,
 bewusst klein und orthogonal – jede Instruktion soll sich später ohne größere
 Umwege in eine kurze Sequenz nativer Instruktionen übersetzen lassen
@@ -1565,7 +1569,7 @@ opak 370 -> 32 ns/Zeichen, transparent 270 -> 26 ns/Zeichen. Der Test-Block "Fon
 
 **Pixel-Text.** `Renderer.DrawText/MeasureText`, `RendererManager.DrawText/GetCellWidth/GetCellHeight`, in der Bridge `Renderer.FillRect/DrawRect/DrawLine/DrawText/CellWidth/CellHeight` (inzwischen mit Brush/Pen statt rohen Farben).
 
-**Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe [fire.Terminal – Framebuffer, Zeichnen und Fenster](GRAPHICS_LAYER.md)), `Window.EnableEvents()/NextEvent()`. Die Anzeige rechnet die Mausposition von Fenster- auf
+**Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe [Grafik – Framebuffer, Zeichnen und Fenster](GRAPHICS_LAYER.md)), `Window.EnableEvents()/NextEvent()`. Die Anzeige rechnet die Mausposition von Fenster- auf
 Framebuffer-Koordinaten um und startet die Texteingabe. `WindowManager(framebuffers, runner, rendererFactory)`.
 
 **Warum Abfrage statt Callback.** `Session.CallLambda` -> `FireRuntime.CallCallback` kopiert für JEDES Ereignis alle globalen Objekte (`ObjectCopier.Take`, außerdem wird dabei auf deren Baum
