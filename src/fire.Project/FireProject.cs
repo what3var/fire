@@ -36,25 +36,25 @@ namespace fire.Projects
         public static readonly string[] DefaultSources = { "native/**/*.{h,hpp,hh,c,cc,cpp,cxx}" };
 
         /// <summary>Files and patterns relative to the project file, in this order; not set: everything in `native/` - the headers first. An entry can have a build order
-        /// (`{ "file": "native/x.h", "order": -10 }`, for a pattern: each of its files), see <see cref="fire.Package.Manager.NativeSourceList"/>.</summary>
-        public fire.Package.Manager.NativeSourceList? Sources { get; set; }
+        /// (`{ "file": "native/x.h", "order": -10 }`, for a pattern: each of its files), see <see cref="fire.Projects.NativeSourceList"/>.</summary>
+        public fire.Projects.NativeSourceList? Sources { get; set; }
         /// <summary>`c` or `c++` (the default), see PackageNative.Language.</summary>
         public string? Language { get; set; }
         /// <summary>More files for one platform or target (the key as in a package).</summary>
-        public Dictionary<string, fire.Package.Manager.NativeSourceList>? PlatformSources { get; set; }
+        public Dictionary<string, fire.Projects.NativeSourceList>? PlatformSources { get; set; }
         public List<string>? Platforms { get; set; }
         public Dictionary<string, List<string>>? LinkLibraries { get; set; }
-        public List<fire.Package.Manager.PackageNativeFunction>? Functions { get; set; }
-        /// <summary>The natives of the display (graphics, windows): see <see cref="fire.Package.Manager.PackageNative.Bridge"/>.</summary>
-        public List<fire.Package.Manager.PackageNativeFunction>? Bridge { get; set; }
+        public List<fire.Projects.PackageNativeFunction>? Functions { get; set; }
+        /// <summary>The natives of the display (graphics, windows): see <see cref="fire.Projects.PackageNative.Bridge"/>.</summary>
+        public List<fire.Projects.PackageNativeFunction>? Bridge { get; set; }
         public List<string>? Exceptions { get; set; }
         /// <summary>The natives may be called by several fire threads at once: a native build takes no lock of the package around them (PackageNative.ThreadSafe).</summary>
         public bool? ThreadSafe { get; set; }
         public string? Reset { get; set; }
         /// <summary>Imports whose platform layer the natives build on (ROADMAP 13.3b; see PackageNative.Uses).</summary>
-        public List<fire.Package.Manager.NativeUse>? Uses { get; set; }
+        public List<fire.Projects.NativeUse>? Uses { get; set; }
         /// <summary>Files (patterns) the sources include that are not sources of every build (see PackageNative.Headers).</summary>
-        public fire.Package.Manager.NativeSourceList? Headers { get; set; }
+        public fire.Projects.NativeSourceList? Headers { get; set; }
         /// <summary>false: only the `functions` named here are natives - the `inline Value` functions of the sources are not looked for (the standard libraries name all of theirs).</summary>
         public bool? Discover { get; set; }
     }
@@ -252,8 +252,8 @@ namespace fire.Projects
             if (Type == OutputType.Library)
             {
                 string import = ImportName;
-                if (!fire.Package.Manager.PackageManifest.ImportNamePattern.IsMatch(import)) problems.Add($"The import name '{import}' is not a name (letters, digits and '_', starting with a letter; parts may be joined by dots).");
-                else if (!Standard && fire.Package.Manager.PackageManifest.ReservedImportNames.Contains(import)) problems.Add($"The import name '{import}' belongs to the compiler; set 'import' to another name.");
+                if (!fire.Projects.PackageManifest.ImportNamePattern.IsMatch(import)) problems.Add($"The import name '{import}' is not a name (letters, digits and '_', starting with a letter; parts may be joined by dots).");
+                else if (!Standard && fire.Projects.PackageManifest.ReservedImportNames.Contains(import)) problems.Add($"The import name '{import}' belongs to the compiler; set 'import' to another name.");
             }
             foreach (var r in References ?? new List<ProjectReference>())
             {

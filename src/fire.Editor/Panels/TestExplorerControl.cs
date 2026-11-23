@@ -12,8 +12,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
-using fire.Compiler;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>Which tests the Test Explorer shows: those of the solution, of the project of the active document, or of the active file.</summary>
@@ -476,7 +475,7 @@ namespace fire.Editor
             int caret = Math.Clamp(_details.CaretIndex, 0, text.Length);
             int start = caret > 0 ? text.LastIndexOf('\n', caret - 1) + 1 : 0, end = text.IndexOf('\n', caret);
             string line = text.Substring(start, (end < 0 ? text.Length : end) - start).TrimEnd('\r');
-            if (fire.Compiler.OutputLocations.TraceFrame(line) is not { } at) return false;
+            if (fire.Tooling.OutputLocations.TraceFrame(line) is not { } at) return false;
             TraceLocationRequested?.Invoke(at.File, at.Line, (_tree.SelectedItem as TestNode)?.File);
             return true;
         }

@@ -86,7 +86,7 @@ A library lists the drivers it offers in its project file - the classes, each ma
 ```
 
 The list goes into the package (`drivers` of the import in `package.json`). spark loads the drivers of all installed packages when it starts: a fire program of its
-own (the *driver agent*, `fire.Compiler.PackageDriverAgent`) imports the packages, adds every driver to its `DeviceManager` and answers the device manager of spark,
+own (the *driver agent*, `fire.Tooling.PackageDriverAgent`, compiled by forge) imports the packages, adds every driver to its `DeviceManager` and answers the device manager of spark,
 whose tree then shows their devices next to the serial ports - connect, disconnect, check availability, packet trace and terminal work as for those. A driver that
 cannot be made (a class that is not there, a constructor that throws) is left out and reported in the status bar; the others go on. After installing or removing a
 package, **Reload Package Drivers** (the button with the circular arrow in the device panel, or its context menu) loads them again. The standard libraries `gpio`,

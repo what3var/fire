@@ -39,8 +39,7 @@ namespace fire.Editor
             Viewer.AddHandler(PointerPressedEvent, Viewer_PointerPressed, RoutingStrategies.Tunnel);
         }
 
-        /// <summary>Shows the built-in prelude `preludeName` (see
-        /// ScriptSymbolIndex.PreludeSourceOf) scrolled to `line` - an already
+        /// <summary>Shows the built-in prelude `preludeName` (its source from forge serve, `preludeSource`) scrolled to `line` - an already
         /// open window of the same prelude is reused.</summary>
         public static void ShowPrelude(string preludeName, int line, Window? owner = null)
         {
@@ -52,11 +51,10 @@ namespace fire.Editor
                 return;
             }
 
-            string? source = ScriptSymbolIndex.PreludeSourceOf(preludeName);
-            if (source == null) return;
+            if (ServeDocuments.PreludeSource(preludeName) is not { } prelude) return;
 
             var viewer = new FileViewerWindow();
-            viewer.LoadSource(ScriptSymbolIndex.PreludeTitleOf(preludeName), source, line, preludeName);
+            viewer.LoadSource(prelude.Title, prelude.Text, line, preludeName);
             OpenPreludes[preludeName] = viewer;
             viewer.Closed += (_, _) => OpenPreludes.Remove(preludeName);
             if (owner != null) viewer.Show(owner); else viewer.Show();
@@ -134,12 +132,13 @@ namespace fire.Editor
             if (pos == null) return;
 
             int offset = Viewer.Document.GetOffset(pos.Value.Location);
-            // An extension prelude knows the classes of its dependencies (`ui` -> `graphics`) only via `#import`.
-            var index = _preludeName is null or ScriptSymbolIndex.StandardPreludeName
-                ? ScriptSymbolIndex.Build(_source)
-                : ScriptSymbolIndex.Build(_source, new[] { _preludeName });
-            var target = NavigationEngine.TryResolve(_source, offset, index);
+            // (forge serve: the text of the window as a document of its own; an extension prelude knows the classes of its dependencies - `ui` -> `graphics` - through `#import`)
+            string path = "viewer:" + (_preludeName ?? _filePath ?? "text");
+            string text = _preludeName is null or "standard" ? _source : $"#import \"{_preludeName}\"\n" + _source;
+            int shift = text.Length - _source.Length;
+            var (_, target) = ServeDocuments.Definition(path, text, offset + shift, Array.Empty<(string, string)>());
             if (target == null) return;
+            if (target.FilePath == null && target.PreludeName == null && shift > 0) target = target with { Line = target.Line - 1 };
 
             e.Handled = true;
 

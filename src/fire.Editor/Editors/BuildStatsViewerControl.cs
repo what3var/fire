@@ -8,8 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
-using fire.Native;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>The statistics of a native build (`forge build --stats`, the `.stats.json` next to the program; the Statistics switch of the build tool strip opens it

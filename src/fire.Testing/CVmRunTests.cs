@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Debugging;
 using fire.Editor;
 
@@ -203,7 +203,6 @@ static class CVmRunTests
 
         Devices(dir, forge.Value);
         Debug(dir, forge.Value, source, env);
-        Memory(dir, forge.Value);
         if (OperatingSystem.IsLinux()) Ending(dir, forge.Value);
     }
 
@@ -323,39 +322,6 @@ static class CVmRunTests
             Check("Ende mit spark: ein Enkel mit geerbter Variable (Eltern ein anderer Prozess) laeuft weiter", runs && Alive(pid), $"pid {pid}");
             KillIfAlive(pid);
         }
-    }
-
-    // ---- several programs in one process: what each of them had is gone before the next (VM_C.md "Das Programm fire"), checked with LeakSanitizer ----
-    /// <summary>Cases of tests/cases/native that reach the tables a program leaves in the runtime and the VM - units (its table, the names and texts the runtime
-    /// makes, units from texts), arrays of classes (more entries than eight), threads, JSON, a package with arrays of classes (data.memory), an exception nothing
-    /// catches in a thread - each as a program file, all of them twice in ONE process of `fire` built with ASan: the output is that of the single runs, and
-    /// LSan finds nothing at its end.</summary>
-    private static readonly string[] MemoryCases = { "0090-", "0260-", "0250-", "4450-", "1010-", "1260-", "4120-", "0790-" };
-
-    private static void Memory(string dir, (string Program, IReadOnlyList<string> Prefix) forge)
-    {
-        if (CVmSanitized.Locate(dir, out string why) is not { } asan) { Console.WriteLine($"(spark auf der C-VM: Speicher - uebersprungen: {why})"); return; }
-        var cases = TestCases.Load("native").Where(c => MemoryCases.Any(p => Path.GetFileName(c.File).StartsWith(p, StringComparison.Ordinal))).ToList();
-        var files = new List<string>();
-        var libraries = new List<string>();
-        var expected = new System.Text.StringBuilder();
-        string problems = "";
-        foreach (var c in cases)
-        {
-            string fbc = Path.Combine(dir, "bin", "mem", Path.GetFileNameWithoutExtension(c.File) + ".fbc");
-            var built = ForgeProcess.Run(new[] { "bytecode", c.File, "-m", "RELEASE", "-o", fbc }, new ForgeSink(), CancellationToken.None, Path.GetDirectoryName(c.File), forge);
-            if (!built.Ok) { problems += $"{c.Name}: {built.Error}\n"; continue; }
-            files.Add(fbc);
-            libraries.AddRange(built.Outputs.Where(o => o.Kind == "library").Select(o => o.Path));
-            expected.Append(c.Expected);
-        }
-        var env = CVmLaunch.Environment(libraries.Distinct().ToList());
-        var (output, err, _) = CVmSanitized.Run(asan, files.Concat(files), env);
-        string reports = CVmSanitized.Reports(err);
-        string want = expected.ToString() + expected;
-        Check($"Speicher: {files.Count} Programme zweimal nacheinander in einem Prozess (fire mit ASan) - dieselbe Ausgabe wie einzeln, LeakSanitizer findet nichts",
-            problems.Length == 0 && files.Count == MemoryCases.Length && output == want && reports.Length == 0,
-            $"{problems}{reports}\n{(output == want ? "" : TestCases.Difference(want, output))}");
     }
 
     // ---- the shared device: a program in fire uses the devices of spark's manager (FIRE_DEVICE_HOST, DeviceHostServer, native/vm/vm_devhost.c) ----

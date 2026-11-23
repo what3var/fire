@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Interactivity;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Projects;
 
 namespace fire.Editor
@@ -36,7 +36,7 @@ namespace fire.Editor
         private async Task PublishSolutionAsync()
         {
             if (!_workspace.IsOpen) { UpdateStatus("Publish Solution needs an open solution or project."); return; }
-            var projects = ProjectPublisher.EnabledProjects(_workspace);
+            var projects = ProjectBuilder.EnabledProjects(_workspace);
             if (projects.Count == 0)
             {
                 UpdateStatus("No project of the solution has publishing on: turn it on in Project Properties > Publish.");

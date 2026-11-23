@@ -1,8 +1,6 @@
 using System.Diagnostics;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Editor;
-using fire.Native;
-
 /// <summary>spark builds through forge (docs/ROADMAP_C_PORT.md, L4; docs/tools/forge.md, "The report for tools"): the report of `forge build|publish --report json` written and read
 /// (every type of event, escaping, unknown types and fields, the log of a step without the lines that came already), and spark's side of it (ForgeProcess) against a fake forge - a
 /// shell script: the events into the sink and the outcome, the arguments it gets (`--report json`, the overlays), a forge that crashes, and Cancel (the line "cancel" on its input,
@@ -97,15 +95,6 @@ static class ForgeReportTests
         human.End(false, 1, summary: "Projects: 0 succeeded, 1 failed, 0 skipped.", error: "Lib: it does not compile");
         Check("Text: Log auf stdout, Fehler auf stderr", o.ToString().Contains("------ 1/2 Lib") && o.ToString().Contains("Projects: 0 succeeded")
             && e2.ToString().Contains("/x/a.fire(2): error E4022: Unknown identifier 'y'") && e2.ToString().Contains("Lib: it does not compile"), o + "\n" + e2);
-
-        // the command line
-        var parsed = CommandLineParser.Parse(new[] { "build", "App.firesln", "--all", "--report", "json", "--overlay", "/a/x.fire=/tmp/1-x.fire", "--debug-info", "--check" });
-        Check("Befehlszeile: --report json, --overlay, --debug-info, --check, --all", parsed.Error == null && parsed.Report == "json" && parsed.All && parsed.DebugInfo && parsed.CheckOnly
-            && parsed.Overlays.TryGetValue(Path.GetFullPath("/a/x.fire"), out var of) && of == Path.GetFullPath("/tmp/1-x.fire"), parsed.Error);
-        Check("Befehlszeile: --report nur json, nur bei build/publish", CommandLineParser.Parse(new[] { "build", "a.fire", "--report", "xml" }).Error != null && CommandLineParser.Parse(new[] { "run", "a.fire", "--report", "json" }).Error != null);
-        Check("Befehlszeile: --overlay braucht Quelle=Datei", CommandLineParser.Parse(new[] { "build", "a.fire", "--overlay", "nothing" }).Error != null);
-        Check("Befehlszeile: WantsReport", CommandLineRunner.WantsReport(new[] { "build", "a.fire", "--report", "json" }) && CommandLineRunner.WantsReport(new[] { "publish", "a.firesln", "--report=json" })
-            && !CommandLineRunner.WantsReport(new[] { "run", "a.fire", "--report", "json" }) && !CommandLineRunner.WantsReport(new[] { "build", "a.fire" }));
     }
 
     // ---- the text of the editor --------------------------------------------------------------------------------------------------------

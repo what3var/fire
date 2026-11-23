@@ -97,5 +97,5 @@ static class ModelTestData
     }
 
     /// <summary>The robot as an .f3d (through forge's converter).</summary>
-    public static byte[] RobotF3d() => fire.Compiler.ModelConverter.Convert(Encoding.UTF8.GetBytes(RobotGltf()), _ => throw new IOException("no external buffers"));
+    public static byte[] RobotF3d() => fire.Tooling.ModelConverter.Convert(Encoding.UTF8.GetBytes(RobotGltf()), _ => throw new IOException("no external buffers"));
 }

@@ -9,7 +9,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using fire.Compiler;
+using fire.Tooling;
 using Pen = Avalonia.Media.Pen;
 
 namespace fire.Editor

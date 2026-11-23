@@ -1,5 +1,4 @@
-using fire.Compiler;
-
+using fire.Tooling;
 /// <summary>The block models of spark's block editor (`.fblocks`, docs/graphics/models.md): the text, the faces that are seen, the greedy rectangles, the ray that
 /// picks a block, and the model file forge makes of them. FIRE_TESTS_ONLY=blocks.</summary>
 static class BlockModelTests

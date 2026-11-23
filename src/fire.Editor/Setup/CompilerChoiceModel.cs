@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using fire.Native;
-
+using fire.Tooling;
 namespace fire.Editor.Setup
 {
     /// <summary>A row of the compiler grid: a toolchain that is there (with its path and version) or one fire can download (TinyCC and w64devkit on Windows).</summary>

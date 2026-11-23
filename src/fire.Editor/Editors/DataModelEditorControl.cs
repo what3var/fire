@@ -12,7 +12,7 @@ using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
-using fire.Compiler;
+using fire.Tooling;
 using fire.UI.Markup;
 
 namespace fire.Editor

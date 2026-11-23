@@ -9,12 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The logic of the editor that has no user interface (completion, navigation, Markdown), linked in directly for the tests. -->
-    <Compile Include="..\fire.Editor\Language\ScriptSymbolIndex.cs" Link="Editor\ScriptSymbolIndex.cs" />
-    <Compile Include="..\fire.Editor\Language\ScriptSymbolIndex.Types.cs" Link="Editor\ScriptSymbolIndex.Types.cs" />
-    <Compile Include="..\fire.Editor\Language\CompletionEngine.cs" Link="Editor\CompletionEngine.cs" />
-    <Compile Include="..\fire.Editor\Language\NavigationEngine.cs" Link="Editor\NavigationEngine.cs" />
-    <Compile Include="..\fire.Editor\Language\BuiltinMembers.cs" Link="Editor\BuiltinMembers.cs" />
+    <!-- The logic of the editor that has no user interface (the types of the language services, Markdown), linked in directly for the tests. -->
+    <Compile Include="..\fire.Editor\Language\LanguageTypes.cs" Link="Editor\LanguageTypes.cs" />
     <Compile Include="..\fire.Editor\Markdown\MarkdownParser.cs" Link="Editor\MarkdownParser.cs" />
     <Compile Include="..\fire.Editor\Notes\OverviewParser.cs" Link="Editor\OverviewParser.cs" />
     <Compile Include="..\fire.Editor\Markdown\LanguageHelp.cs" Link="Editor\LanguageHelp.cs" />
@@ -44,14 +40,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
+    <ProjectReference Include="..\fire.Tooling\fire.Tooling.csproj" />
     <ProjectReference Include="..\fire.Imaging\fire.Imaging.csproj" />   <!-- the image codecs of spark (ImageTests) -->
     <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
     <ProjectReference Include="..\fire.Git\fire.Git.csproj" />
   </ItemGroup>
 
-  <!-- the standard libraries (packages/) next to the program as Source: the tests pack and install them into a store of their own; their C++ is built when it is used -->
-  <PropertyGroup><PrebuildStandard>false</PrebuildStandard><StandardSourcesPublish>false</StandardSourcesPublish></PropertyGroup>
-  <Import Project="..\StandardSources.targets" />
-  <Import Project="..\FireVm.targets" />
+  <!-- forge, the VM, native/ and Source/ (the standard libraries) next to the program (`forge package-dist`, src/ForgeDist.targets): the tests install the packages into a store
+       of their own; their C++ is built when it is used (no Prebuilt/) -->
+  <PropertyGroup><PrebuildStandard>false</PrebuildStandard></PropertyGroup>
+  <Import Project="..\ForgeDist.targets" />
 </Project>

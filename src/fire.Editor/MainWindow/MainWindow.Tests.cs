@@ -5,12 +5,13 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Projects;
 
 namespace fire.Editor
 {
-    // The Test Explorer (docs/tools/testing.md): finds the tests of the solution, the project or the file and runs them in the VM, like `forge test`.
+    // The Test Explorer (docs/tools/testing.md): finds the tests of the solution, the project or the file (forge serve, `tests`) and runs them with `forge test --report json`
+    // (in the VM; the results come as the tests run).
     public partial class MainWindow
     {
         private readonly TestExplorerControl _testExplorer = new();
@@ -98,6 +99,27 @@ namespace fire.Editor
             return targets;
         }
 
+        /// <summary>The tests of files (forge serve, `tests`: parsing only); a file the server could not look at is a problem of the group.</summary>
+        private static List<DiscoveredTest> DiscoverInFiles(IEnumerable<string> files, Func<string, string?> textOf, List<string> problems)
+        {
+            var found = new List<DiscoveredTest>();
+            foreach (string f in files)
+            {
+                if (FireProject.IsMarkupFile(f)) continue;
+                string? text = textOf(f);
+                if (text == null && !Path.IsPathRooted(f)) continue;
+                if (text != null && !text.Contains("[Test", StringComparison.Ordinal)) continue;   // (the cheap answer for most files)
+                if (text == null && File.Exists(f))
+                {
+                    try { if (!File.ReadAllText(f).Contains("[Test", StringComparison.Ordinal)) continue; } catch (IOException) { continue; }
+                }
+                if (ServeDocuments.Tests(f, text) is not { } r) { problems.Add($"{Path.GetFileName(f)}: the tests cannot be found without forge serve."); continue; }
+                found.AddRange(r.Tests);
+                problems.AddRange(r.Problems);
+            }
+            return found;
+        }
+
         /// <summary>Looks for the tests of the scope (parsing only, on a background thread) and shows them.</summary>
         private async Task DiscoverTests()
         {
@@ -113,7 +135,7 @@ namespace fire.Editor
             var groups = await Task.Run(() => targets.Select(t =>
             {
                 var problems = new List<string>();
-                var tests = TestDiscovery.InFiles(t.Files, f => texts.TryGetValue(f, out var text) ? text : null, problems);
+                var tests = DiscoverInFiles(t.Files, f => texts.TryGetValue(f, out var text) ? text : null, problems);
                 return new TestGroupInfo(t.Id, t.Title, tests, problems);
             }).ToList());
             if (version != _testDiscoveryVersion || _testExplorer.IsRunning) return;   // a newer search, or a run started meanwhile
@@ -133,31 +155,31 @@ namespace fire.Editor
             if (selection.Count == 0) { UpdateStatus(kind == TestRunKind.Failed ? "No failed tests." : kind == TestRunKind.Selected ? "Select a test, a class or a project." : "No tests to run."); return; }
             RevealTool("tests");
 
-            // what each run compiles is taken on the UI thread (the plan reads the open documents)
-            var jobs = new List<(string Id, string Title, IReadOnlyList<string> Sources, BuildPlan? Plan, string? BasePath, IReadOnlyList<string>? Names, TestFilter? Filter, string? Error)>();
+            // what each run compiles is taken on the UI thread: the project (or the file) and the texts of the open documents that are not saved (forge reads them as overlays)
+            var unsaved = OpenTexts();
+            var jobs = new List<(string Id, string Title, string File, Dictionary<string, string> Overlays, TestFilter? Filter, string? Error, string? Temp)>();
             foreach (var id in _testExplorer.GroupIds)
             {
                 if (!selection.TryGetValue(id, out var keys) || !_testTargets.TryGetValue(id, out var target)) continue;
                 // all tests of a project: no filter (also the tests the explorer could not see, e.g. from an #include); else exactly the chosen ones
                 var filter = kind == TestRunKind.All && target.File == null ? null : TestFilter.Of(keys);
                 _testExplorer.MarkQueued(id, keys);
-                if (target.Project != null)
+                var overlays = new Dictionary<string, string>(ProjectFiles.PathComparer);
+                foreach (var (path, text) in unsaved)
                 {
-                    BuildPlan? plan = null;
-                    string? error = null;
-                    try
-                    {
-                        plan = BuildPlan.Create(_workspace, target.Project, OpenText, tests: true);
-                        if (!plan.IsValid) error = string.Join(Environment.NewLine, plan.Errors);
-                    }
-                    catch (ProjectException ex) { error = ex.Message; }
-                    jobs.Add((id, target.Project.Name, plan?.SourceTexts ?? (IReadOnlyList<string>)Array.Empty<string>(), plan, null, null, filter, error));
+                    try { if (!File.Exists(path) || File.ReadAllText(path) != text) overlays[path] = text; }
+                    catch (IOException) { }
                 }
+                if (target.Project != null)
+                    jobs.Add((id, target.Project.Name, target.Project.FilePath, overlays, filter, null, null));
+                else if (target.File != null && Path.IsPathRooted(target.File) && File.Exists(target.File))
+                    jobs.Add((id, target.Title, target.File, overlays, filter, null, null));
                 else
                 {
-                    string text = target.Text ?? (target.File != null && File.Exists(target.File) ? File.ReadAllText(target.File) : "");
-                    string? baseDir = target.File != null && Path.IsPathRooted(target.File) ? Path.GetDirectoryName(target.File) : null;
-                    jobs.Add((id, target.Title, new[] { text }, null, baseDir, new[] { target.Title }, filter, null));
+                    // (a document that was never saved: its text as a file of its own)
+                    string temp = Path.Combine(Path.GetTempPath(), $"fire-tests-{Environment.ProcessId}-{Guid.NewGuid():N}.fire");
+                    try { File.WriteAllText(temp, target.Text ?? ""); jobs.Add((id, target.Title, temp, overlays, filter, null, temp)); }
+                    catch (IOException ex) { jobs.Add((id, target.Title, "", overlays, filter, ex.Message, null)); }
                 }
             }
             if (jobs.Count == 0) return;
@@ -172,21 +194,21 @@ namespace fire.Editor
                 {
                     if (_testsStopped) break;
                     if (job.Error != null) { _testExplorer.GroupDone(job.Id, new[] { job.Error }); continue; }
-                    var runner = new TestRunner(TextWriter.Null, live: false) { Filter = job.Filter };
+                    var runner = new TestRunner { Filter = job.Filter };
                     runner.TestStarted += r => Dispatcher.UIThread.Post(() => _testExplorer.TestStarted(job.Id, r));
                     runner.TestFinished += r => Dispatcher.UIThread.Post(() => _testExplorer.TestFinished(job.Id, r));
                     _testRunner = runner;
                     var (run, error) = await Task.Run(() =>
                     {
-                        try { return (runner.RunInVm(job.Title, job.Sources, null, null, null, job.Plan, job.Names, job.BasePath), (string?)null); }
-                        catch (Exception ex) when (CommandLineRunner.IsCompileErrorForEditor(ex)) { return ((TestRun?)null, CompileErrors.Describe(ex)); }
-                        catch (Exception ex) when (ex is fire.Native.NativeNotSupportedException or IOException) { return ((TestRun?)null, ex.Message); }
+                        try { return (runner.Run(job.Title, job.File, job.Overlays), (string?)null); }
+                        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception) { return ((TestRun?)null, ex.Message); }
+                        finally { if (job.Temp != null) try { File.Delete(job.Temp); } catch (IOException) { } }
                     });
                     _testRunner = null;
                     // the events were posted: the results are shown before the problems of the run
                     await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-                    if (run != null) _testExplorer.GroupDone(job.Id, run.Problems);
-                    else _testExplorer.GroupDone(job.Id, new[] { "The tests could not be compiled:" + Environment.NewLine + error });
+                    if (run is { CompileErrors: null }) _testExplorer.GroupDone(job.Id, run.Problems);
+                    else _testExplorer.GroupDone(job.Id, new[] { "The tests could not be compiled:" + Environment.NewLine + (run?.CompileErrors ?? error) });
                 }
             }
             finally

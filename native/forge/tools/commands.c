@@ -167,7 +167,7 @@ static TcOptions* tcParse(FcCtx* c, int argc, char** argv) {
             o->keepAll = true;
         } else if (tcTryOption(arg, "--report", "--report", &inl)) {
             const char* v;
-            if (!tcIn(k, TC_BUILD, TC_PUBLISH, TC_BYTECODE)) TC_FAIL("--report is only available with build, publish and bytecode.");
+            if (!(tcIn(k, TC_BUILD, TC_PUBLISH, TC_BYTECODE) || k == TC_TEST)) TC_FAIL("--report is only available with build, publish, bytecode and test.");
             v = TC_NEXT(inl);
             if (!v || !fcAsciiIEq(tcUnquote(c, v), "json")) TC_FAIL("--report must be followed by json.");
             o->report = "json";
@@ -176,7 +176,7 @@ static TcOptions* tcParse(FcCtx* c, int argc, char** argv) {
             const char* text;
             const char* eq;
             int at;
-            if (!tcIn(k, TC_BUILD, TC_PUBLISH, TC_BYTECODE)) TC_FAIL("--overlay is only available with build, publish and bytecode.");
+            if (!(tcIn(k, TC_BUILD, TC_PUBLISH, TC_BYTECODE) || k == TC_TEST)) TC_FAIL("--overlay is only available with build, publish, bytecode and test.");
             v = TC_NEXT(inl);
             text = v ? tcUnquote(c, v) : NULL;
             eq = text ? strrchr(text, '=') : NULL;
@@ -343,6 +343,7 @@ static PjPlan* tcFilesPlan(FcCtx* c, const TcOptions* o, FcList* paths, FcList* 
 }
 /* the files of `forge test` (the Linker/NativeBuilder.Build with their paths, as `forge build <file>`: each `#include` from the folder of its file, a
  * message names its file) - each File.ReadAllText */
+static const TcOptions* tcTestOverlays;   /* `test --overlay`: the options with the overlays (NULL: none) */
 static PjPlan* tcTestFilesPlan(FcCtx* c, FcList* paths, FcList* defines, int types) {
     TcOptions o;
     FcList* texts = fcListNew(c);
@@ -352,6 +353,8 @@ static PjPlan* tcTestFilesPlan(FcCtx* c, FcList* paths, FcList* defines, int typ
     o.types = types;
     for (i = 0; i < paths->count; i++) {
         FcU16 t = {0};
+        const char* overlay = tcTestOverlays ? tcTextOf(c, tcTestOverlays, (const char*)paths->items[i]) : NULL;
+        if (overlay) { fcListAdd(c, texts, (void*)overlay); continue; }
         if (!fcReadText((const char*)paths->items[i], &t)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "cannot read '%s'", (const char*)paths->items[i]));
         fcListAdd(c, texts, (void*)fc8FromU16(c, t.p, t.len));
         fcU16Free(&t);
@@ -702,12 +705,15 @@ static NbConfig* tcTestConfig(FcCtx* c, const TrArgs* a) {
     b.keepAll = o->keepAll; b.stats = o->stats;
     return pjConfigFor(c, &b, a->file);
 }
+static void tcTestPlanHook(FcCtx* c, const void* options, PjPlan* plan) { tcApplyOverlays(c, (const TcOptions*)options, plan); }
 static int tcTest(const TcOptions* o, const char* prelude, const char* storeRoot) {
     TrArgs a;
     memset(&a, 0, sizeof a);
     a.files = o->files; a.projectName = o->projectName; a.engine = o->engine; a.filter = o->testFilter; a.toolchainName = o->toolchainName; a.configFile = o->configFile;
     a.mode = o->mode; a.keepAll = o->keepAll; a.defines = o->defines; a.floatWidth = o->floatWidth; a.intWidth = o->intWidth; a.types = o->types;
     a.config = tcTestConfig; a.options = o;
+    a.report = o->report != NULL; a.overlays = o->overlays->count > 0; a.planHook = tcTestPlanHook;
+    tcTestOverlays = a.overlays ? o : NULL;
     return trTestRun(&a, prelude, storeRoot);
 }
 

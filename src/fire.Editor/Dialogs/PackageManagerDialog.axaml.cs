@@ -6,13 +6,14 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using fire.Package.Manager;
-
+using fire.Projects;
+using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>
-    /// The package manager (ember) in the editor: search the package sources, install and remove packages (docs/packages/README.md). It works on the same global store and sources as the
-    /// command line tool `ember`: what is installed here can be imported (`#import "name"`) by every script.
+    /// The package manager (ember) in the editor: search the package sources, install and remove packages (docs/packages/README.md). It runs the program `ember` (tools/ember,
+    /// M3: `ember find --json`, `ember list --json`, `ember install`, `ember remove` - <see cref="Ember"/>): the same global store and sources as on the command line; what is
+    /// installed here can be imported (`#import "name"`) by every script.
     /// </summary>
     public partial class PackageManagerDialog : Window
     {
@@ -29,7 +30,6 @@ namespace fire.Editor
             public bool Installed => InstalledVersion.Length > 0;
         }
 
-        private readonly PackageManagerService _service;
         private bool _busy;
 
         /// <summary>True when something was installed or removed: the open scripts should be checked again.</summary>
@@ -38,16 +38,7 @@ namespace fire.Editor
         public PackageManagerDialog()
         {
             InitializeComponent();
-            PackageManagerService service;
-            string? startError = null;
-            try { service = new PackageManagerService(); }
-            catch (PackageException ex) { startError = ex.Message; service = new PackageManagerService(PackageStore.Default, new List<IPackageSource>()); }
-            _service = service;
-            Opened += async (_, _) =>
-            {
-                if (startError != null) await Dialogs.Message(this, startError, "Package Manager");
-                await RefreshAsync();
-            };
+            Opened += async (_, _) => await RefreshAsync();
         }
 
         private async void Search_Click(object? sender, RoutedEventArgs e) => await RefreshAsync();
@@ -63,18 +54,21 @@ namespace fire.Editor
             {
                 rows = await Task.Run(() =>
                 {
+                    var installed = Ember.Installed();
                     // `github:owner/repo[@ref]` in the search field: a row that installs it straight from GitHub (docs/packages/README.md "Straight from GitHub")
-                    if (GitHubSpec.TryParse(query.Trim(), out var gh))
+                    if (GitHubSpecText(query.Trim()) is { } gh)
                     {
-                        var have = _service.Store.FindBySpec(gh.Text);
-                        return new List<Row> { new Row { Name = gh.Text, Spec = query.Trim(), Latest = gh.Ref.Length > 0 ? gh.Ref : "newest release", InstalledVersion = have?.Version ?? "",
-                            Description = "Straight from " + gh.WebUrl, Details = $"Installs {gh.Text} from {gh.WebUrl}: the .fpk of the release (checked against its checksum), or the package built from the source." } };
+                        var have = installed.FirstOrDefault(p => p.Origin != null && p.Origin.StartsWith("github:" + gh.Repository, StringComparison.OrdinalIgnoreCase));
+                        return new List<Row> { new Row { Name = "github:" + gh.Repository, Spec = query.Trim(), Latest = gh.Ref.Length > 0 ? gh.Ref : "newest release", InstalledVersion = have?.Installed ?? "",
+                            Description = "Straight from https://github.com/" + gh.Repository, Details = $"Installs github:{gh.Repository} from https://github.com/{gh.Repository}: the .fpk of the release (checked against its checksum), or the package built from the source." } };
                     }
-                    var found = _service.Find(query, warnings).Select(l => ToRow(l)).ToList();
+                    var (offered, problems) = Ember.Find(query);
+                    warnings.AddRange(problems);
+                    var found = offered.Select(l => ToRow(l, installed)).ToList();
                     // installed packages that no source offers (installed from a file) are listed too
-                    foreach (var p in _service.Store.Installed())
+                    foreach (var p in installed)
                         if (!found.Any(r => string.Equals(r.Name, p.Name, StringComparison.OrdinalIgnoreCase)) && (query.Length == 0 || p.Name.Contains(query, StringComparison.OrdinalIgnoreCase)))
-                            found.Add(new Row { Name = p.Name, Latest = "", InstalledVersion = p.Version, Author = p.Manifest.Author, Description = p.Manifest.Description, Details = DetailsOf(p) });
+                            found.Add(new Row { Name = p.Name, Latest = "", InstalledVersion = p.Installed, Author = p.Author, Description = p.Description, Details = DetailsOf(p) });
                     return found.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
                 });
             }
@@ -89,21 +83,34 @@ namespace fire.Editor
             UpdateButtons();
         }
 
-        private Row ToRow(PackageListing l)
+        private static Row ToRow(EmberPackage l, List<EmberPackage> installed)
         {
-            var installed = _service.Store.Find(l.Name);
+            var have = installed.FirstOrDefault(p => string.Equals(p.Name, l.Name, StringComparison.OrdinalIgnoreCase));
             return new Row
             {
-                Name = l.Name, Latest = l.Latest?.Version ?? "", InstalledVersion = installed?.Version ?? "", Author = l.Author, Description = l.Description,
-                Details = $"{l.Name}: versions {string.Join(", ", l.Versions.Select(v => v.Version))}; from {l.Source}" + (installed != null ? $"; imports: {string.Join(", ", installed.Manifest.Imports.Select(i => i.Name))}" : ""),
+                Name = l.Name, Latest = l.Latest, InstalledVersion = have?.Installed ?? "", Author = l.Author, Description = l.Description,
+                Details = $"{l.Name}: versions {string.Join(", ", l.Versions)}; from {l.Source}" + (have != null ? $"; imports: {string.Join(", ", have.Imports)}" : ""),
             };
         }
 
-        private string DetailsOf(InstalledPackage p)
+        private static string DetailsOf(EmberPackage p)
         {
-            string origin = "installed from a file";
-            try { if (_service.Lock().ForPackage(p.Name) is { } e) origin = $"from {e.Origin}, checked: {e.Verified}"; } catch (PackageException) { }
-            return $"{p.Name} {p.Version} ({origin}); imports: {string.Join(", ", p.Manifest.Imports.Select(i => i.Name))}";
+            string origin = p.Origin != null ? $"from {p.Origin}, checked: {p.Verified}" : "installed from a file";
+            return $"{p.Name} {p.Installed} ({origin}); imports: {string.Join(", ", p.Imports)}";
+        }
+
+        /// <summary>`github:owner/repo[@ref][#name]`: the repository and the reference (null: no such spec).</summary>
+        private static (string Repository, string Ref)? GitHubSpecText(string text)
+        {
+            if (!text.StartsWith("github:", StringComparison.OrdinalIgnoreCase)) return null;
+            string rest = text.Substring(7);
+            int hash = rest.IndexOf('#');
+            if (hash >= 0) rest = rest.Substring(0, hash);
+            int at = rest.IndexOf('@');
+            string repo = at >= 0 ? rest.Substring(0, at) : rest, reference = at >= 0 ? rest.Substring(at + 1) : "";
+            var parts = repo.Split('/');
+            if (parts.Length != 2 || parts.Any(p => p.Length == 0)) return null;
+            return (repo, reference);
         }
 
         private Row? Selected => lvPackages.SelectedItem as Row;
@@ -133,7 +140,7 @@ namespace fire.Editor
         private async void Install_Click(object? sender, RoutedEventArgs e)
         {
             if (Selected is not { } row) return;
-            await RunAsync($"Installing {row.Name}...", () => _service.Install(row.Spec.Length > 0 ? row.Spec : row.Name));
+            await RunAsync($"Installing {row.Name}...", () => Ember.Install(row.Spec.Length > 0 ? row.Spec : row.Name));
         }
 
         private async void InstallFile_Click(object? sender, RoutedEventArgs e)
@@ -154,7 +161,7 @@ namespace fire.Editor
                     return;
             }
             catch (PackageException ex) { await Dialogs.Message(this, ex.Message, "Package Manager"); return; }
-            await RunAsync($"Installing {System.IO.Path.GetFileName(file)}...", () => _service.Install(file));
+            await RunAsync($"Installing {System.IO.Path.GetFileName(file)}...", () => Ember.Install(file));
         }
 
         private void Close_Click(object? sender, RoutedEventArgs e) => Close();
@@ -163,7 +170,7 @@ namespace fire.Editor
         {
             if (Selected is not { } row) return;
             if (await Dialogs.Ask(this, $"Remove the package '{row.Name}'?", "Package Manager", ("Yes", Dialogs.Answer.Yes), ("No", Dialogs.Answer.No)) != Dialogs.Answer.Yes) return;
-            await RunAsync($"Removing {row.Name}...", () => _service.Remove(row.Name));
+            await RunAsync($"Removing {row.Name}...", () => Ember.Remove(row.Name));
         }
 
         private async Task RunAsync(string status, Action action)
@@ -172,8 +179,7 @@ namespace fire.Editor
             SetBusy(true, status);
             string? error = null;
             try { await Task.Run(action); Changed = true; }
-            catch (PackageException ex) { error = ex.Message; }
-            catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException) { error = ex.Message; }
+            catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { error = ex.Message; }
             SetBusy(false, error == null ? "Done." : "Failed.");
             if (error != null) await Dialogs.Message(this, error, "Package Manager");
             await RefreshAsync();

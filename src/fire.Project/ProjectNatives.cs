@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
-using fire.Package.Manager;
-
+using fire.Projects;
 namespace fire.Projects
 {
     /// <summary>The C++ natives of a project (or of a library project), ready to build: what the project's `native` part and the folder `native/` give (docs/tools/projects.md).</summary>

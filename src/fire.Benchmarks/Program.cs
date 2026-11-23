@@ -3,10 +3,10 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using fire.Benchmarks;
-using fire.Compiler;
-using fire.Runtime;
+using fire.Tooling;
 
-// Micro-benchmarks for the VM - `fire`, the VM in C (docs/spec/VM_C.md); the programs are compiled here with the C# forge.
+// Micro-benchmarks for the VM - `fire`, the VM in C (docs/spec/VM_C.md); the programs are compiled by forge (native/forge: FIRE_FORGE, or the forge next to this program,
+// or forge-c built from the repository's sources - fire.Tooling's Forge).
 //
 //   dotnet run -c Release --project src/fire.Benchmarks -- [Optionen]
 //
@@ -62,10 +62,15 @@ foreach (var mode in modes)
     {
         if (filter != null && !script.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
 
-        var linked = new Linker { BasePath = Directory.GetCurrentDirectory(), PackageLibraries = true }.CompileAndLink(new[] { script.Source }, null, null, mode);
-        var (folder, file) = CVmRun.Write(linked, "fire-bench-");
+        string folder = Path.Combine(Path.GetTempPath(), "fire-bench-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
         try
         {
+            string source = Path.Combine(folder, script.Name + ".fire");
+            File.WriteAllText(source, script.Source);
+            var linked = Forge.CompileFiles(new[] { source }, Path.Combine(folder, script.Name + ".fbc"), mode.ToString().ToUpperInvariant());
+            if (!linked.Ok) { Console.WriteLine($"{script.Name,-8} {mode,-12} {linked.Errors}"); continue; }
+            string file = linked.Program!;
             var times = new List<double>();
             string output = string.Empty;
             for (int run = 0; run <= runs; run++) // Run 0 = warm-up (caches of the machine), does not count
@@ -110,10 +115,13 @@ if (options.TryGetValue("check", out var checkPath) && checkPath != null)
 return 0;
 
 // One run of the program in `fire` with --time: the time of "ran in" and what it printed (an exception nobody caught: its line).
-static (double Milliseconds, string Output) RunOnce(LinkedProgram linked, string file)
+static (double Milliseconds, string Output) RunOnce(CompiledScript linked, string file)
 {
-    var info = CVmRun.StartInfo(linked, file, Array.Empty<string>(), redirect: true);
-    info.ArgumentList.Insert(1, "--time");   // (fire run --time x.fbc)
+    var info = new ProcessStartInfo(linked.Vm ?? Forge.LocateVm()) { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+    info.ArgumentList.Add("run");
+    info.ArgumentList.Add("--time");   // (fire run --time x.fbc)
+    info.ArgumentList.Add(file);
+    foreach (var (k, v) in fire.Debugging.CVmLaunch.Environment(linked.Libraries)) info.Environment[k] = v;
     using var process = Process.Start(info)!;
     process.StandardInput.Close();
     var errors = process.StandardError.ReadToEndAsync();
@@ -121,7 +129,7 @@ static (double Milliseconds, string Output) RunOnce(LinkedProgram linked, string
     process.WaitForExit();
     string err = errors.Result;
     var time = Regex.Match(err, @"ran in ([0-9.]+) ms");
-    if (CVmRun.UnhandledLine(err) is { } unhandled) output += "UNBEHANDELT: " + unhandled;
+    if (fire.Debugging.CVmLaunch.UnhandledLine(err) is { } unhandled) output += "UNBEHANDELT: " + unhandled;
     else if (process.ExitCode != 0) output += $"EXITCODE {process.ExitCode}: " + err.Trim();
     return (time.Success ? double.Parse(time.Groups[1].Value, CultureInfo.InvariantCulture) : double.NaN, output);
 }

@@ -3,7 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Threading;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Debugging;
 using fire.Projects;
 
@@ -79,7 +79,7 @@ namespace fire.Editor
         private async Task StartCVmAsync(NativeFirstAction first)
         {
             var mode = _session.ExecutionMode;
-            bool debug = mode == Runtime.VmExecutionMode.Debug;
+            bool debug = mode == VmExecutionMode.Debug;
             string modeName = mode.ToString().ToLowerInvariant();
             if (ResolveRunInput(null) is not { } input) return;
             string output = CVmRunOutput(input, modeName);
@@ -118,7 +118,7 @@ namespace fire.Editor
                 }
                 EndBuildJob(job, BuildOutcome.Succeeded);
 
-                string vm = result.Output("vm") ?? await Task.Run(() => CVm.Locate(64, 64));
+                string vm = result.Output("vm") ?? await Task.Run(() => Forge.LocateVm(64, 64));
                 // (the devices of spark - the shared manager, its drivers and packet trace - for the program in `fire`: FIRE_DEVICE_HOST, docs/spec/VM_C.md "Das geteilte Gerät")
                 var environment = CVmLaunch.Environment(result.Outputs.Where(o => o.Kind == "library").Select(o => o.Path),
                     new Dictionary<string, string> { [fire.Device.Manager.DeviceManager.DeviceHostServer.EnvironmentVariable] = _devices.ProgramHost.EnvironmentValue });

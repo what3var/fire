@@ -39,8 +39,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Accesses Lexer/Parser/Resolver/Compiler directly via project reference; programs run in `fire`, the VM in C. -->
-    <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
+    <!-- No compiler in spark (docs/ROADMAP_C_PORT.md, M3): it builds, tests and serves its language services through forge (native/forge, a C program) and runs
+         programs in `fire` (native/vm). fire.Tooling: the way to them, the data of their reports, the debugger's client, the models of the editors. -->
+    <ProjectReference Include="..\fire.Tooling\fire.Tooling.csproj" />
     <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
     <ProjectReference Include="..\fire.Git\fire.Git.csproj" />
     <ProjectReference Include="..\fire.Imaging\fire.Imaging.csproj" />   <!-- the images of the pixel editor and of the project icons (PixelCanvas, ImageDecoder/Encoder) -->
@@ -77,21 +78,11 @@
 	  <Win32Resource>fileicons.res</Win32Resource>
   </PropertyGroup>
 
-  <Import Project="..\StandardSources.targets" />
-  <Import Project="..\FireVm.targets" />
-
   <!--
-    The publish profile FolderProfile (Properties/PublishProfiles) sets PublishTools: after spark, forge and ember are published into the same folder - spark starts
-    forge from its own folder (the assistant, runs, builds), and setup.iss packs that folder as it is.
+    forge, the VM, native/, Source/, Prebuilt/ and ember next to spark - after a build in its output folder, after a publish in the publish folder (what setup.iss packs):
+    `forge package-dist` (the D6 path, docs/spec/FORGE_C.md) with forge-c compiled by the C compiler of this machine, and ember (tools/ember) built by that forge. Nothing of .NET.
+    PublishForge=false: a publish of spark alone (forge, the VM and ember come from a folder made with native/forge/package-dist.sh: setup.iss /DForgeDist).
   -->
-  <Target Name="PublishTools" AfterTargets="Publish" Condition="'$(PublishTools)' == 'true'">
-    <PropertyGroup>
-      <_ToolsPublishDir>$([System.IO.Path]::GetFullPath('$(PublishDir)'))</_ToolsPublishDir>
-      <!-- PublishForge=false: only ember - forge and the VM come from `forge-c package-dist` (setup.iss /DForgeDist, docs/ROADMAP_C_PORT.md Phase D 6) -->
-      <_ToolsProjects>..\fire.Compiler\fire.Compiler.csproj;..\fire.Ember\fire.Ember.csproj</_ToolsProjects>
-      <_ToolsProjects Condition="'$(PublishForge)' == 'false'">..\fire.Ember\fire.Ember.csproj</_ToolsProjects>
-    </PropertyGroup>
-    <MSBuild Projects="$(_ToolsProjects)" Targets="Restore;Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishSingleFile=$(PublishSingleFile);PublishDir=$(_ToolsPublishDir);StandardSourcesPublish=false;PrebuildStandard=false" />
-  </Target>
+  <Import Project="..\ForgeDist.targets" />
 
 </Project>

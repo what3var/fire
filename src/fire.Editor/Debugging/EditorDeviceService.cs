@@ -112,7 +112,7 @@ namespace fire.Editor
 
         // ---- the device drivers of the installed packages (manifest `drivers`): a fire program of their own, see PackageDriverAgent ----
 
-        private fire.Compiler.PackageDriverAgent? _agent;
+        private fire.Tooling.PackageDriverAgent? _agent;
         private List<string> _agentDrivers = new();
         private readonly SemaphoreSlim _agentGate = new(1, 1);
 
@@ -127,9 +127,9 @@ namespace fire.Editor
             {
                 if (_closed || (_agent != null && !reload)) return;
                 StopAgent();
-                var drivers = fire.Compiler.PackageDriverAgent.FindDrivers();
+                var drivers = fire.Tooling.PackageDriverAgent.FindDrivers();
                 if (drivers.Count == 0) { PackageDriverStatus = "No installed package has device drivers."; return; }
-                var agent = new fire.Compiler.PackageDriverAgent();
+                var agent = new fire.Tooling.PackageDriverAgent();
                 if (!agent.Start(drivers))
                 {
                     PackageDriverStatus = "The device drivers of the packages could not be started: " + (agent.EndedWith ?? "no answer");

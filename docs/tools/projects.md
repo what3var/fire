@@ -206,7 +206,7 @@ publish All.firesln`) builds every project that has it on and copies the result 
 * The log says per project whether it was built or up to date and how many files went where, and ends with the summary (`2 projects published to /x/dist/App,
   /x/out/packages (1 up to date, not built again).`); errors and warnings go into spark's error list. Cancel stops it after the step that runs.
 
-`ProjectPublisher` (`src/fire.Compiler/ProjectPublisher.cs`) does it for spark and forge; the tests are `FIRE_TESTS_ONLY=publish`.
+forge does it (`native/forge/project`; spark runs `forge publish --report json`); the tests are `FIRE_TESTS_ONLY=publish`.
 
 ## References: libraries without an entry point
 
@@ -260,13 +260,13 @@ has).
 ## Command line
 
 ```
-fire.Compiler run   App/App.fireproj            # a project
-fire.Compiler run   All.firesln                 # a solution: the startup project
-fire.Compiler run   All.firesln -p Tool         # a project of the solution by name
-fire.Compiler build All.firesln                 # a program: App/bin/<target>-<mode>/App (vm-rel, linux-dbg, ...; or the "output" setting, or -o), the engine of the settings
-fire.Compiler build Core/Core.fireproj          # a library: bin/Core-1.2.0.fpk (-o names the folder)
-fire.Compiler publish All.firesln               # every project with publish.enabled, built when outdated, copied into its folders
-fire.Compiler publish All.firesln -p App        # one project (also when its publishing is off); a .fireproj alone: that project
+forge run   App/App.fireproj            # a project
+forge run   All.firesln                 # a solution: the startup project
+forge run   All.firesln -p Tool         # a project of the solution by name
+forge build All.firesln                 # a program: App/bin/<target>-<mode>/App (vm-rel, linux-dbg, ...; or the "output" setting, or -o), the engine of the settings
+forge build Core/Core.fireproj          # a library: bin/Core-1.2.0.fpk (-o names the folder)
+forge publish All.firesln               # every project with publish.enabled, built when outdated, copied into its folders
+forge publish All.firesln -p App        # one project (also when its publishing is off); a .fireproj alone: that project
 ```
 
 ## New solutions and projects

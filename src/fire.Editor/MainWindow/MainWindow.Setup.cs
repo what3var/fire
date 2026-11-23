@@ -31,7 +31,7 @@ namespace fire.Editor
             if (_setupRun is { Running: true }) { ShowSetupProgress(); return false; }
             var catalog = ModelCatalog.Load();
             var env = SetupEnvironment.Current(_settings.Assistant);
-            var model = new SetupWizardModel(env, catalog, fire.Native.MachineToolchains.Load());
+            var model = new SetupWizardModel(env, catalog, fire.Tooling.MachineToolchains.Load());
             var wizard = new SetupWizardWindow(model);
             if (Environment.GetEnvironmentVariable("FIRE_SETUP_WIZARD_SHOTS") is { Length: > 0 } shots) { await SaveSetupShots(shots); return false; }
             await wizard.ShowDialog<bool?>(this);
@@ -151,7 +151,7 @@ namespace fire.Editor
             if (text == _setupStatusText) return;
             _setupStatusText = text;
             var old = _setupStatusWork;
-            _setupStatusWork = text != null ? fire.Native.BackgroundWork.Begin(text, (int)(run!.Fraction * 100), 100) : null;
+            _setupStatusWork = text != null ? fire.Tooling.BackgroundWork.Begin(text, (int)(run!.Fraction * 100), 100) : null;
             old?.Dispose();
             if (run is not { Running: true }) _setupStatusTimer?.Stop();
         }
@@ -174,7 +174,7 @@ namespace fire.Editor
             var env = SetupEnvironment.Current(assistantEnabled: true) with { AssistantAvailable = true };
             if (Environment.GetEnvironmentVariable("FIRE_SETUP_WIZARD_AS") == "windows")
                 env = env with { IsWindows = true, IsMacOS = false, IsX64 = true, Detected = Array.Empty<DetectedToolchain>(), W64devkitThere = false, WatcomThere = false, TinyccThere = false, TinyccPinned = true };
-            var wizard = new SetupWizardWindow(new SetupWizardModel(env, catalog, fire.Native.MachineToolchains.Load()));
+            var wizard = new SetupWizardWindow(new SetupWizardModel(env, catalog, fire.Tooling.MachineToolchains.Load()));
             wizard.Show(this);
             await Task.Delay(800);
             try { wizard.SaveShots(folder); }

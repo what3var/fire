@@ -7,10 +7,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
-using fire.Compiler.Assembly;
-using fire.Runtime;
-using fire.Utilities;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>The build settings (execution mode, subsystem, version, icon and the texts of the assembly info) of a script; the dialog edits a copy of the settings:

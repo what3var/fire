@@ -7,8 +7,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using fire.Compiler;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>The diagnostics `forge serve` pushes for a document (docs/spec/FORGE_SERVE.md "Diagnosen"): the version they belong to, whether a newer version was
@@ -27,14 +26,11 @@ namespace fire.Editor
     /// the server pushes. One JSON message per line over stdio; requests wait for their answer (the server answers them in order, on its main thread - the completion is a few
     /// milliseconds), the diagnostics come from the server's analysis thread.
     ///
-    /// The switch: <c>FIRE_SPARK_LANG=inproc</c> keeps the language services in spark's own process (ScriptSymbolIndex, CompletionEngine, LiveDiagnostics) until M2; without it
-    /// they go over the protocol, and back to the own process when the server cannot be started or has died.
+    /// M3: the language services are only the server's (the logic in C: native/forge/serve*.c); when it cannot be started there is no completion and no live analysis
+    /// (a build still reports the errors).
     /// </summary>
     public sealed class ServeClient : IDisposable
     {
-        /// <summary>The language services run in spark's own process (<c>FIRE_SPARK_LANG=inproc</c>).</summary>
-        public static bool InProcess => string.Equals(Environment.GetEnvironmentVariable("FIRE_SPARK_LANG"), "inproc", StringComparison.OrdinalIgnoreCase);
-
         private readonly Process _process;
         private readonly object _writeLock = new();
         private readonly Dictionary<long, TaskCompletionSource<JsonNode?>> _waiting = new();
@@ -65,7 +61,7 @@ namespace fire.Editor
             _process.BeginErrorReadLine();
         }
 
-        /// <summary>Starts `exe serve` and initializes it: the prelude of this program (written into a folder of tables), the installed packages, the debounce.</summary>
+        /// <summary>Starts `exe serve` and initializes it: the installed packages, the debounce (the prelude is the one of forge: native/tables next to it).</summary>
         public static ServeClient Start(string exe, string? packages = null, int debounceMs = 300, string? log = null)
         {
             var info = new ProcessStartInfo(exe)
@@ -79,10 +75,9 @@ namespace fire.Editor
                 StandardInputEncoding = new UTF8Encoding(false),
             };
             info.ArgumentList.Add("serve");
-            info.ArgumentList.Add("--tables");
-            info.ArgumentList.Add(TablesFolder());
+            foreach (var (k, v) in Forge.Environment()) info.Environment[k] = v;
             info.ArgumentList.Add("--packages");
-            info.ArgumentList.Add(packages ?? fire.Package.Manager.PackageStore.Default.Root);
+            info.ArgumentList.Add(packages ?? fire.Projects.PackageStore.Default.Root);
             if (log != null) { info.ArgumentList.Add("--log"); info.ArgumentList.Add(log); }
             var process = fire.Debugging.ChildProcesses.Add(Process.Start(info) ?? throw new IOException("forge serve did not start."));
             var client = new ServeClient(process);
@@ -91,104 +86,18 @@ namespace fire.Editor
             return client;
         }
 
-        /// <summary>A folder with the prelude of this program (`prelude.fire`, as `forge tables` writes it): the server reads the same standard library spark compiles with.</summary>
-        private static string TablesFolder()
-        {
-            string prelude = fire.Standard.Prelude.Source.Replace("\r\n", "\n");
-            string folder = Path.Combine(Path.GetTempPath(), "fire-serve-tables-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(prelude)))[..16]);
-            string file = Path.Combine(folder, "prelude.fire");
-            if (!File.Exists(file))
-            {
-                Directory.CreateDirectory(folder);
-                string temp = file + "." + Environment.ProcessId + ".tmp";
-                File.WriteAllText(temp, prelude, new UTF8Encoding(false));
-                try { File.Move(temp, file, true); } catch (IOException) { /* another process wrote it */ }
-            }
-            return folder;
-        }
-
-        // ---- the program ----------------------------------------------------------------------------------------------------------------------------------
-
-        private static readonly object FindLock = new();
-        private static string? _found;
-        private static string? _findError;
-
-        /// <summary>The program `forge-c` (native/forge): <c>FIRE_FORGE_C</c>, next to spark, else built from native/forge/forge.c of the repository with the C compiler of
-        /// the machine (once, into a cache keyed by the sources). Null with a reason when there is none.</summary>
-        public static string? FindExecutable(out string error)
-        {
-            lock (FindLock)
-            {
-                if (_found != null || _findError != null) { error = _findError ?? ""; return _found; }
-                _found = Find(out string why);
-                _findError = _found == null ? why : null;
-                error = why;
-                return _found;
-            }
-        }
-
-        private static string? Find(out string error)
-        {
-            error = "";
-            string exeName = OperatingSystem.IsWindows() ? "forge-c.exe" : "forge-c";
-            if (Environment.GetEnvironmentVariable("FIRE_FORGE_C") is { Length: > 0 } env)
-            {
-                if (File.Exists(env)) return env;
-                error = $"FIRE_FORGE_C={env} does not exist";
-                return null;
-            }
-            string beside = Path.Combine(AppContext.BaseDirectory, exeName);
-            if (File.Exists(beside)) return beside;
-            string? source = null;
-            foreach (var start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
-                for (var dir = new DirectoryInfo(start); dir != null && source == null; dir = dir.Parent)
-                    if (File.Exists(Path.Combine(dir.FullName, "native", "forge", "forge.c"))) source = Path.Combine(dir.FullName, "native", "forge", "forge.c");
-            if (source == null) { error = "neither forge-c nor native/forge/forge.c found"; return null; }
-            // the cache: the sources' names, sizes and times
-            string forgeDir = Path.GetDirectoryName(source)!;
-            var stamp = new StringBuilder();
-            foreach (var f in Directory.GetFiles(forgeDir).Concat(Directory.GetFiles(Path.Combine(forgeDir, "..", "tables"))).Concat(Directory.GetFiles(Path.Combine(forgeDir, "..", "base"))).OrderBy(f => f, StringComparer.Ordinal))
-            {
-                var fi = new FileInfo(f);
-                stamp.Append(fi.Name).Append(fi.Length).Append(fi.LastWriteTimeUtc.Ticks).Append(';');
-            }
-            string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(stamp.ToString())))[..16];
-            string cache = Path.Combine(Path.GetTempPath(), "fire-forge-c-" + hash);
-            string exe = Path.Combine(cache, exeName);
-            if (File.Exists(exe)) return exe;
-            Directory.CreateDirectory(cache);
-            foreach (var cc in OperatingSystem.IsWindows() ? new[] { "gcc", "clang" } : new[] { "cc", "gcc", "clang" })
-            {
-                try
-                {
-                    var info = new ProcessStartInfo(cc) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
-                    string temp = exe + "." + Environment.ProcessId + ".tmp";
-                    foreach (var a in new[] { "-O2", source, "-o", temp, "-lm" }) info.ArgumentList.Add(a);
-                    if (!OperatingSystem.IsWindows()) info.ArgumentList.Add("-lpthread");
-                    using var p = Process.Start(info);
-                    if (p == null) continue;
-                    var err = p.StandardError.ReadToEndAsync();
-                    p.StandardOutput.ReadToEnd();
-                    if (!p.WaitForExit(600000)) { try { p.Kill(); } catch (Exception) { } error = cc + ": timeout"; continue; }
-                    if (p.ExitCode != 0) { error = cc + ": " + err.Result; continue; }
-                    try { File.Move(temp, exe, true); } catch (IOException) { /* another process built it */ }
-                    return exe;
-                }
-                catch (System.ComponentModel.Win32Exception) { error = "no C compiler (cc, gcc, clang)"; }
-            }
-            return null;
-        }
+        /// <summary>The program forge (<see cref="Forge.Locate"/>: next to spark, FIRE_FORGE, or built from the repository's sources). Null with a reason when there is none.</summary>
+        public static string? FindExecutable(out string error) => Forge.Locate(out error);
 
         private static ServeClient? _shared;
         private static readonly object SharedLock = new();
         private static bool _sharedFailed;
 
-        /// <summary>The server of this process, started on first use; null in the in-process mode, or when it cannot be started (then the own process serves).</summary>
+        /// <summary>The server of this process, started on first use; null when it cannot be started.</summary>
         public static ServeClient? Shared
         {
             get
             {
-                if (InProcess) return null;
                 lock (SharedLock)
                 {
                     if (_shared != null && _shared.IsAlive) return _shared;
@@ -574,6 +483,41 @@ namespace fire.Editor
             catch (Exception ex) when (ex is IOException or ServeException) { return (false, null); }
         }
 
+        /// <summary>The source of a prelude (`standard` or an import) and its title, as the server has it (`preludeSource`); null: not available.</summary>
+        public static (string Title, string Text)? PreludeSource(string name)
+        {
+            try
+            {
+                var client = ServeClient.Shared;
+                if (client == null || !client.Capabilities.Contains("preludeSource")) return null;
+                if (client.Request("preludeSource", new JsonObject { ["name"] = name }) is not JsonObject o || o["text"]?.GetValue<string>() is not { } text) return null;
+                return (o["title"]?.GetValue<string>() ?? name, text);
+            }
+            catch (Exception ex) when (ex is IOException or ServeException or InvalidOperationException) { return null; }
+        }
+
+        /// <summary>The tests of a file (the Test Explorer: the methods with [Test], found by parsing only - `tests`): the tests and the problems of the file; null: not
+        /// available.</summary>
+        public static (List<DiscoveredTest> Tests, List<string> Problems)? Tests(string path, string? text)
+        {
+            try
+            {
+                var client = ServeClient.Shared;
+                if (client == null || !client.Capabilities.Contains("tests")) return null;
+                var p = new JsonObject { ["path"] = path };
+                if (text != null) p["text"] = text;
+                if (client.Request("tests", p, 30000) is not JsonObject o) return null;
+                var tests = new List<DiscoveredTest>();
+                foreach (var t in o["tests"]?.AsArray() ?? new JsonArray())
+                    if (t is JsonObject x)
+                        tests.Add(new DiscoveredTest(x["class"]?.GetValue<string>() ?? "", x["method"]?.GetValue<string>() ?? "", x["title"]?.GetValue<string>() ?? "",
+                            x["description"]?.GetValue<string>() ?? "", path, x["line"]?.GetValue<int>() ?? 0, x["parameters"]?.GetValue<bool>() ?? false));
+                var problems = (o["problems"]?.AsArray() ?? new JsonArray()).Select(n => n?.GetValue<string>() ?? "").ToList();
+                return (tests, problems);
+            }
+            catch (Exception ex) when (ex is IOException or ServeException or InvalidOperationException) { return null; }
+        }
+
         /// <summary>The completion of a markup file over the protocol; null: not available (the server cannot, or the own process serves).</summary>
         public static fire.UI.Markup.MarkupCompletionResult? CompleteMarkup(string path, string text, int offset)
         {
@@ -644,7 +588,7 @@ namespace fire.Editor
         /// <summary>The installed packages or the workspace changed.</summary>
         public static void Invalidate()
         {
-            if (ServeClient.InProcess) return;
+
             try { ServeClient.Shared?.Invalidate(); } catch (IOException) { }
             lock (Projects) Projects.Clear();
         }

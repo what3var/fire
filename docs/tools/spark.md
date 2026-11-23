@@ -3,6 +3,14 @@
 spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps** (*Help > First Steps*,
 [source](../../src/fire.Editor/Help/First%20Steps.md)) walks through it; this page shows what is where.
 
+**spark has no compiler** (milestone M3 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md)): forge (`native/forge`, a C program) compiles, builds and tests, and
+answers the editor's questions (`forge serve`: completion, live errors, hover, signature, definition, the tests of a file - [FORGE_SERVE.md](../spec/FORGE_SERVE.md));
+programs run in `fire` (`native/vm`); the Package Manager runs `ember` (`tools/ember`). They are next to spark - the build and the publish of spark put the
+folder of `forge package-dist` there (forge, fire, `native/`, `Source/`, `Prebuilt/`) and ember (`src/ForgeDist.targets`); `FIRE_FORGE` names another forge,
+and without one spark builds forge-c from `native/forge` of the repository it runs in. What spark keeps in C# without a compiler is `src/fire.Tooling`: the
+way to these programs, the data of their reports, the debugger's client, the child processes of the previews, the models of the editors, the lexer of the
+syntax colours.
+
 ![The code editor](../images/spark-code.png)
 
 - **Code editor:** completion (`Ctrl+Space`), go to definition (`F12`, also into the libraries), live errors while typing, the error list with codes
@@ -15,7 +23,8 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   variables of the method around a lambda; the class of an `.fxml` (in the project or `#include`d) and the libraries it imports are known in the
   code-behind. The class's own members come first, then the inherited ones, the names that start with what was typed in the same case before the
   others, and the lower-case state of a library (`cw`, `styled` of `UI.Element`) last. When the type is unknown, the members of the program's own
-  classes are offered (those of the libraries only after a first letter).
+  classes are offered (those of the libraries only after a first letter). All of it comes from `forge serve` (without a forge there is no completion and no
+  live analysis - a build still reports the errors).
 - **Run and debug:** `F5` starts (and continues to the next breakpoint), `Ctrl+F5` starts without debugging (breakpoints are ignored), `Ctrl+Shift+F5`
   compiles again and starts, `Shift+F5` stops; `F9` sets a breakpoint, `F10`/`F11` step; the panels *Threads*, *Scope* and *Stack* show the paused program.
   *Run > Run Engine* chooses *Virtual Machine* (the default) or *Native* (a native build that runs) - saved in the `engine` setting of the project that
@@ -53,9 +62,8 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   forge as an overlay (`--overlay <file>=<copy>`), a script that was never saved as a temporary file - the same as when spark built in its own process
   (Visual Studio saves first; spark leaves saving to you, so a build never writes your files). spark still decides what it decided before: the target of
   the tool strip (`-t`), the mode of the run (`-m`), where the program goes (`-o`), the statistics switch (`--stats`), the hare (`--quick`); a missing compiler is asked for
-  in spark before forge starts. Clean builds nothing and stays in spark, so does the compile for a run in the VM (the VM runs inside spark until it moves
-  to a child process, [ROADMAP_C_PORT](../ROADMAP_C_PORT.md)). `FIRE_FORGE` names another forge (a program or a `forge.dll`). *Build virtual* only writes
-  the program now; *Start* compiles for the VM itself.
+  in spark before forge starts. Clean builds nothing and stays in spark. `FIRE_FORGE` names another forge. *Build virtual* only writes the program now;
+  *Start* compiles for the VM itself (`forge bytecode --report json`).
 - **Build action of a file:** the *Properties* window of a file of a project has the category *Build* - *Build action*: *Build* (the default), *Ignore*,
   *Copy if newer*, *Copy always* - and *Set by* (the file itself, a pattern or the default). Several files selected in the Solution Explorer (Ctrl+click,
   Shift+click) are changed at once (the window shows "(mixed)" when they differ); the context menu of a file has the same as *Build Action*. An ignored
@@ -182,6 +190,6 @@ points clicked in a 2D view, *Extrude* pulls faces out to a body, *Mirror* copie
 ## More
 
 - [Projects and solutions](projects.md), [templates](templates.md) (*File > New*), [git](git.md), [notes](notes.md)
-- *Tools > Package Manager (ember)*, *Tools > Toolchain Settings* (the targets and toolchains of `fire.native.json`), *Tools > Options*, *Tools > Open the Standard Libraries (Source)*
+- *Tools > Package Manager (ember)* - it runs `ember find --json`, `ember list --json`, `ember install`, `ember remove` ([ember](ember.md)), *Tools > Toolchain Settings* (the targets and toolchains of `fire.native.json`), *Tools > Options*, *Tools > Open the Standard Libraries (Source)*
 - The Markdown viewer and editor (`.md`), the raster editor for pictures (PNG, BMP, GIF; its codecs and drawing area are `src/fire.Imaging`, the images of
   spark only - a program draws with the C library of `graphics`), the packet viewer (`.fplog`) of the device traces

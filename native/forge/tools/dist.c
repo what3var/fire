@@ -6,7 +6,7 @@
  * The layout (flat, as setup.iss installs the publish folder into {app}; spark starts forge from its own folder):
  *   <folder>/forge[.exe]          this forge-c (--name: another name; default forge, so that spark finds it)
  *   <folder>/fire[.exe], fire-i32, fire-i16, fire-f32, fire-i32-f32, fire-i16-f32 (+ .key)   the VM in C and its variants (`build-vm --all`)
- *   <folder>/native/              what forge-c reads at run time: tables/ (the prelude, the .def), runtime/, abi/, platform/ (the C runtime of native
+ *   <folder>/native/              what forge-c reads at run time: tables/ (the prelude, the .def), runtime/, abi/, platform/, forge/ (the sources of libforge, M3) (the C runtime of native
  *                                 builds), vm/ and base/ (the sources of the VM, built on a machine without one next to forge)
  *   <folder>/Source/              the standard packages as projects (packages/ of the repository: StandardSources.EnsureInstalled installs them)
  *   <folder>/Prebuilt/<package>/<rid>/   the libraries of their natives for this machine (`prebuild-standard`)
@@ -108,9 +108,12 @@ static int pdPackageDistMain(int argc, char** argv) {
     static const char* const headers[] = { ".h", ".hpp", ".asm", NULL };
     static const char* const vmSources[] = { ".c", ".h", NULL };
     static const char* const baseHeaders[] = { ".h", NULL };
+    static const char* const forgeSources[] = { ".c", ".h", ".inc", NULL };
     /* native/: what forge-c reads from its native root (builder.c nbResources, cvm.c nvSources, forge.c fcFindPrelude) */
     static const struct { const char* sub; const char* const* exts; bool recursive; } parts[] = {
         { "tables", NULL, false }, { "runtime", NULL, true }, { "abi", NULL, false }, { "platform", headers, true }, { "vm", vmSources, false }, { "base", baseHeaders, false },
+        /* (forge/: the sources of libforge - build-embed builds it for the packages forge and script, M3) */
+        { "forge", forgeSources, true },
     };
     fcCtxInit(c);
     for (i = 2; i < argc; i++) {
@@ -163,6 +166,14 @@ static int pdPackageDistMain(int argc, char** argv) {
         int n = pdCopyTree(c, nbCombine(c, nbNativeRoot, parts[i].sub), nbCombine(c, nbCombine(c, folder, "native"), parts[i].sub), parts[i].exts, parts[i].recursive, dry, &b);
         if (n < 0) { fcCtxFree(c); return 1; }
         printf("  %-34s %4d files, %6lld KB (from %s/%s)\n", fcFmt(c, "native/%s/", parts[i].sub), n, (b + 1023) / 1024, nbNativeRoot, parts[i].sub);
+        total += n; bytes += b;
+    }
+    /* packages/compression/native/: the deflater libforge includes from native/forge/project/fpk.c (`../../../packages/...`) - build-embed compiles libforge here */
+    {
+        long long b = 0;
+        int n = pdCopyTree(c, nbCombine(c, nbCombine(c, packages, "compression"), "native"), nbCombine(c, nbCombine(c, nbCombine(c, folder, "packages"), "compression"), "native"), headers, false, dry, &b);
+        if (n < 0) { fcCtxFree(c); return 1; }
+        printf("  %-34s %4d files, %6lld KB (from %s/compression/native)\n", "packages/compression/native/", n, (b + 1023) / 1024, packages);
         total += n; bytes += b;
     }
     /* Source/ */

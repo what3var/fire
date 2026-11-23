@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Debugging;
 using fire.Projects;
 
@@ -47,7 +47,7 @@ namespace fire.Editor
             engine ??= _settings.Engine;
             if (engine == null)
                 try { engine = LoadNativeConfig(out _, StartProject()).Engine; }
-                catch (fire.Native.NativeConfigException) { }
+                catch (fire.Tooling.NativeConfigException) { }
             return string.Equals(engine, "native", StringComparison.OrdinalIgnoreCase) ? "native" : "vm";
         }
 
@@ -126,10 +126,10 @@ namespace fire.Editor
 
         /// <summary>Where the program of a native run goes: a project into bin/&lt;target&gt;-&lt;mode&gt; of its folder, a saved script into bin/&lt;target&gt;-&lt;mode&gt;
         /// next to it, an unsaved one into the temporary folder.</summary>
-        private string NativeRunOutput(RunInput input, fire.Runtime.TargetProfile target, string mode)
+        private string NativeRunOutput(RunInput input, fire.Tooling.TargetProfile target, string mode)
         {
             // (the extension of the target - `.exe` also for Windows 3.x and DOS; a program for this machine on Windows has one too)
-            string extension = target.ProgramExtension.Length > 0 ? target.ProgramExtension : OperatingSystem.IsWindows() && target.Name == fire.Runtime.TargetProfile.Host.Name ? ".exe" : "";
+            string extension = target.ProgramExtension.Length > 0 ? target.ProgramExtension : OperatingSystem.IsWindows() && target.Name == fire.Tooling.TargetProfile.Host.Name ? ".exe" : "";
             if (input.Project is { } project) return ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, mode, extension);
             string? path = FullPathOf(input.Document);
             string directory = path != null ? Path.GetDirectoryName(path)! : Path.Combine(Path.GetTempPath(), "spark-native");
@@ -157,16 +157,16 @@ namespace fire.Editor
             }
             if (ResolveRunInput(null) is not { } input) return;
 
-            fire.Native.NativeConfig config;
-            fire.Runtime.TargetProfile target;
-            fire.Native.ToolchainDef toolchain;
+            fire.Tooling.NativeConfig config;
+            fire.Tooling.TargetProfile target;
+            fire.Tooling.ToolchainDef toolchain;
             try
             {
                 config = LoadNativeConfig(out _, input.Project);
                 target = config.ResolveTarget(_nativeTargetChoice ?? input.Plan?.Settings.Target);
-                toolchain = config.ResolveToolchain(target, input.Plan?.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
+                toolchain = config.ResolveToolchain(target, input.Plan?.Settings.Toolchain, fire.Tooling.ToolchainPurpose.Build);
             }
-            catch (fire.Native.NativeConfigException ex)
+            catch (fire.Tooling.NativeConfigException ex)
             {
                 await Dialogs.Message(this, ex.Message, "Native run");
                 return;
@@ -183,7 +183,7 @@ namespace fire.Editor
             }
 
             var mode = _session.ExecutionMode;
-            bool debug = mode == Runtime.VmExecutionMode.Debug;
+            bool debug = mode == VmExecutionMode.Debug;
             string modeName = mode.ToString().ToLowerInvariant();
             string output = NativeRunOutput(input, target, modeName);
             var buildToolchain = debug ? NativeLaunch.DebugToolchain(toolchain) : toolchain;
@@ -253,8 +253,8 @@ namespace fire.Editor
         /// <summary>The build of a native run through forge (`forge build ... --engine native -t target -m mode -o output [--debug-info | --toolchain esp-idf]`): the errors into
         /// the build log and the error list, the job ended when it failed or was cancelled (null then); else the program (or the folder of the files), the job still running
         /// for the caller to end. <paramref name="toolchainName"/>: a toolchain named for forge (the component of ESP-IDF), else forge takes the one spark resolved too.</summary>
-        private async Task<string?> BuildForRunAsync(BuildJob job, RunInput input, fire.Native.NativeConfig config, fire.Runtime.TargetProfile target, fire.Native.ToolchainDef toolchain,
-            string output, Runtime.VmExecutionMode mode, bool debug, string? defaultFile, string? defaultPath, string? toolchainName = null)
+        private async Task<string?> BuildForRunAsync(BuildJob job, RunInput input, fire.Tooling.NativeConfig config, fire.Tooling.TargetProfile target, fire.Tooling.ToolchainDef toolchain,
+            string output, VmExecutionMode mode, bool debug, string? defaultFile, string? defaultPath, string? toolchainName = null)
         {
             var overlays = OverlaysOfOpenDocuments();
             var args = new List<string> { "build" };
@@ -313,7 +313,7 @@ namespace fire.Editor
         /// <summary>Run/Debug on an ESP32: builds the ESP-IDF project (bin/esp32-&lt;mode&gt;), `idf.py build flash`, then opens the board's serial port (the
         /// project's/target's `port` and `baud`, else the only USB serial port, else the one esptool used) and restarts the board - Debug: the debug agent of
         /// the debug build over the console UART; Release/Performance: the console in the Output panel.</summary>
-        private async Task StartBoardAsync(RunInput input, fire.Native.NativeConfig config, fire.Runtime.TargetProfile target, NativeFirstAction first)
+        private async Task StartBoardAsync(RunInput input, fire.Tooling.NativeConfig config, fire.Tooling.TargetProfile target, NativeFirstAction first)
         {
             if (BuildRunning()) return;
             string? idf = Esp32Launch.FindIdf(_settings.IdfPath);
@@ -323,7 +323,7 @@ namespace fire.Editor
                 return;
             }
             var mode = _session.ExecutionMode;
-            bool debug = mode == Runtime.VmExecutionMode.Debug;
+            bool debug = mode == VmExecutionMode.Debug;
             string modeName = mode.ToString().ToLowerInvariant();
             string programPath = NativeRunOutput(input, target, modeName);
             string projectDir = Path.GetDirectoryName(Path.GetFullPath(programPath))!;
@@ -340,7 +340,7 @@ namespace fire.Editor
             try
             {
                 UpdateStatus($"Building {input.What} for the ESP32 ({modeName})...");
-                var toolchain = fire.Native.ToolchainDef.BuiltIn["esp-idf"];   // (the component; spark runs idf.py itself)
+                var toolchain = fire.Tooling.ToolchainDef.BuiltIn["esp-idf"];   // (the component; spark runs idf.py itself)
                 Directory.CreateDirectory(projectDir);
                 if (await BuildForRunAsync(job, input, config, target, toolchain, Path.Combine(projectDir, "main"), mode, debug, defaultFile, defaultPath, toolchainName: "esp-idf") == null)
                 {
