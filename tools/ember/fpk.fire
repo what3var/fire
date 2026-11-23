@@ -37,17 +37,6 @@ class ZipFiles : IFiles {
     }
 }
 
-/// <summary>A new random name (as Guid.NewGuid().ToString("N")): 32 hex digits.</summary>
-class Guid {
-    static PseudoRandom random = new PseudoRandom()
-    static string NewText() {
-        string digits = "0123456789abcdef"
-        var sb = new StringBuilder()
-        for (int i = 0; i < 32; i++) { sb.Append(digits[Guid.random.Next(16)]) }
-        return sb.ToString()
-    }
-}
-
 class Fpk {
     static string ManifestEntry = "package.json"
     static string Extension = ".fpk"

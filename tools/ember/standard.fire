@@ -95,7 +95,7 @@ class NativeLibraryCache {
     /// <summary>Environment.SpecialFolder.LocalApplicationData (with SpecialFolderOption.Create: the folder is made).</summary>
     static string LocalApplicationData() {
         string folder = undefined
-        if (Environment.Platform == "windows") { folder = Ci.Or(Environment.Get("LOCALAPPDATA"), "") }
+        if (Environment.Platform == "windows") { folder = Environment.Get("LOCALAPPDATA") ?? "" }
         else if (Environment.Platform == "macos") { folder = IO.Path.Combine(IO.Directory.GetHomeDirectory(), "Library", "Application Support") }
         else {
             string xdg = Environment.Get("XDG_DATA_HOME")

@@ -105,7 +105,7 @@ class PackageManagerService {
     }
 
     undefined InstallCore(string spec, bool force, HashSet<string> inProgress, bool update) {
-        string temp = IO.Path.Combine(IO.Path.GetTempPath(), "ember-" + Guid.NewText())
+        string temp = IO.Path.Combine(IO.Path.GetTempPath(), "ember-" + Guid.NewGuid().ToString("N"))
         try {
             string fpk = undefined
             GitHubLockEntry locked = undefined

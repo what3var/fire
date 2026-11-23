@@ -43,12 +43,12 @@ Put the program next to forge (in place of the C# `ember`, or under another name
 
 | File | |
 | --- | --- |
-| `json.fire` | JSON as the C# ember reads and writes it: comments and trailing commas when reading, the indented format and the escapers of System.Text.Json when writing |
+| `json.fire` | JSON as the C# ember reads and writes it, with `JsonNode` of the package `json`: comments and trailing commas when reading (`JsonReadOptions(true)`), the indented format and the escapers of System.Text.Json when writing; the typed reads of System.Text.Json (its messages) |
 | `manifest.fire` | the package description (`package.json`), its check, the build order of the natives; versions |
 | `fpk.fire` | the package file: reading, unpacking, `ember forge` |
 | `store.fire` | the installed packages and `ember-lock.json` |
-| `sources.fire` | folders, indexes, `ember.json`, downloads with size and SHA-256, `ember index` |
-| `github.fire` | `github:` specs, the REST API of GitHub, checksums of releases, the source snapshot (a tar reader) |
+| `sources.fire` | folders, indexes, `ember.json`, downloads with size and SHA-256 (streamed into the file: `Http.Client.Send`), `ember index` |
+| `github.fire` | `github:` specs, the REST API of GitHub, checksums of releases, the source snapshot (`Tar.Archive` of the package `compression`) |
 | `service.fire` | install, update, remove, find |
 | `standard.fire` | what ember asks forge for, the cache of native libraries, the templates of `create`/`blank` |
 | `main.fire` | the command line |
