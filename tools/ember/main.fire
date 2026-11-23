@@ -1,0 +1,207 @@
+// ember, the package manager of fire, written in fire (docs/packages/README.md): the command line of the C# ember (src/fire.Ember) with the same
+// commands, messages, exit codes, store, stamps and lock file - so that the two can be swapped. Built with forge (`forge build tools/ember/ember.fireproj`).
+// The program expects to live in the folder of the compiler: the store (Packages/), ember.json, PackageSource/, forge and Source/ are found next to it.
+
+class Ember {
+    static string Usage() {
+        return "ember - the package manager of fire\n"
+            + "\n"
+            + "  ember find [Name]              search the package sources (part of a name or description; no name: everything)\n"
+            + "  ember install Name[@Version]   install a package (with what it depends on); also: ember install path\\to\\package.fpk\n"
+            + "  ember install github:owner/repo[@ref] [--name N] [--force]\n"
+            + "                                 straight from a GitHub repository: the newest release, a tag (@v1.2.0), a branch or a commit (built from the source);\n"
+            + "                                 --name accepts a package not named like the repository, --force replaces a package of the same name from elsewhere\n"
+            + "  ember update [Name|github:owner/repo]\n"
+            + "                                 move installed packages to their newest version (from GitHub: the newest release; pinned tags and commits stay unless named)\n"
+            + "  ember remove Name              remove an installed package (also: ember remove github:owner/repo)\n"
+            + "  ember list                     the installed packages (and where those from GitHub came from)\n"
+            + "  ember sources                  the package sources in use (ember.json next to the compiler, or the defaults) and the GitHub API\n"
+            + "  ember create File.json         write a package description with example values (and the example files next to it)\n"
+            + "  ember blank File.json          write a package description with all fields empty\n"
+            + "  ember forge File.json [-o Dir] build the package (.fpk) from the description; the description with absolute paths is kept in Dir\\json\\\n"
+            + "  ember index Folder [BaseUrl]   write Folder\\index.json for the .fpk files in Folder (to publish them on a web page)\n"
+            + "  ember cache [clean]            the user-wide cache of the static libraries of native builds (linkage \"static\"): where it is and how big; clean empties it\n"
+            + "\n"
+            + "Packages are installed for the machine, below Packages\\ in the folder of the compiler. The sources are listed in ember.json next to the compiler\n"
+            + "(default: the folder PackageSource and the index of the packages on the web)."
+    }
+
+    static int Usage1(string text) {
+        Log.Error("Usage: " + text)
+        return 2
+    }
+
+    static int Main(string args[]) {
+        if (args.length == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" || args[0] == "/?") {
+            Log.Line(Ember.Usage())
+            if (args.length == 0) { return 2 }
+            return 0
+        }
+        string command = args[0].ToLower()
+        var rest = new List<string>()
+        for (int i = 1; i < args.length; i++) { rest.Add(args[i]) }
+        try {
+            // the standard packages are packed and installed from Source (by forge next to ember) when they are missing or changed - quick when nothing changed
+            if (command != "create" && command != "blank" && command != "forge" && command != "index" && command != "cache" && command != "sources") { Standard.EnsureInstalled() }
+            return Ember.Run(command, rest)
+        } catch (PackageException e) {
+            Log.Error("ember: " + e.message)
+            return 1
+        }
+    }
+
+    static int Run(string command, List<string> a) {
+        if (command == "find") {
+            var warnings = new List<string>()
+            var service = new PackageManagerService()
+            var found = service.Find(" ".Join(a), warnings)
+            foreach (w in warnings) { Log.Error("ember: " + w) }
+            if (found.Count == 0) {
+                Log.Line("Nothing found.")
+                return 1
+            }
+            foreach (l in found) {
+                string installed = ""
+                var p = service.store.Find(l.name)
+                if (p != undefined) { installed = " [installed: " + p.Version + "]" }
+                var latest = l.Latest()
+                string version = ""
+                if (latest != undefined) { version = latest.version }
+                Log.Line(l.name + " " + version + installed)
+                if (l.description.Length > 0) { Log.Line("    " + l.description) }
+                string author = "?"
+                if (l.author.Length > 0) { author = l.author }
+                string license = ""
+                if (l.license.Length > 0) { license = "; license: " + l.license }
+                var versions = new List<string>()
+                foreach (v in l.versions) {
+                    if (v.yanked) { versions.Add(v.version + " (yanked)") } else { versions.Add(v.version) }
+                }
+                Log.Line("    by " + author + license + "; versions: " + ", ".Join(versions))
+            }
+            return 0
+        }
+        if (command == "install") {
+            string spec = undefined
+            string name = undefined
+            bool force = false
+            for (int i = 0; i < a.Count; i++) {
+                if (a[i] == "--force" || a[i] == "-f") { force = true }
+                else if (a[i] == "--name" && i + 1 < a.Count) {
+                    i++
+                    name = a[i]
+                }
+                else if (spec == undefined) { spec = a[i] }
+                else { return Ember.Usage1("ember install Name[@Version] | github:owner/repo[@ref] [--name Name] [--force]") }
+            }
+            if (spec == undefined) { return Ember.Usage1("ember install Name[@Version] | github:owner/repo[@ref] [--name Name] [--force]") }
+            if (name != undefined) {
+                if (!GitHubSpec.IsGitHub(spec)) { return Ember.Usage1("--name is for a package from GitHub: ember install github:owner/repo --name Name") }
+                if (spec.IndexOf("#") >= 0) { spec = spec.Substring(0, spec.IndexOf("#")) }
+                spec = spec + "#" + name
+            }
+            new PackageManagerService().Install(spec, force)
+            return 0
+        }
+        if (command == "update") {
+            if (a.Count > 1) { return Ember.Usage1("ember update [Name | github:owner/repo[@ref]]") }
+            string spec = undefined
+            if (a.Count == 1) { spec = a[0] }
+            var results = new PackageManagerService().Update(spec)
+            if (results.Count == 0) { Log.Line("Nothing to update.") }
+            foreach (r in results) {
+                if (r.oldVersion == r.newVersion) { Log.Line(r.name + " " + r.newVersion + " is up to date (" + r.origin + ").") }
+                else { Log.Line(r.name + ": " + r.oldVersion + " -> " + r.newVersion + " (" + r.origin + ")") }
+            }
+            return 0
+        }
+        if (command == "sources") {
+            string file = Here.File(EmberSettings.FileName)
+            if (IO.File.Exists(file)) { Log.Line("The package sources (" + file + "):") }
+            else { Log.Line("The package sources (default; " + file + " lists others):") }
+            foreach (source in EmberSettings.LoadSources()) {
+                string kind = "index "
+                if (source.IsFolder()) { kind = "folder" }
+                Log.Line("  " + kind + "  " + source.Name())
+            }
+            var gh = EmberSettings.LoadGitHub()
+            string token = "no token"
+            if (gh.token != undefined) { token = "token from " + gh.tokenSource }
+            Log.Line("  github  github:owner/repo[@ref] through " + gh.apiBase + " (" + token + ")")
+            foreach (e in PackageLock.Load(PackageStore.Default()).github) { Log.Line("          " + e.package + " " + e.version + ": " + e.Origin() + ", checked: " + e.verified) }
+            return 0
+        }
+        if (command == "remove") {
+            if (a.Count != 1) { return Ember.Usage1("ember remove Name") }
+            new PackageManagerService(false).Remove(a[0])
+            Log.Line("Removed " + a[0] + ".")
+            return 0
+        }
+        if (command == "list") {
+            var store = PackageStore.Default()
+            var installed = store.Installed()
+            if (installed.Count == 0) { Log.Line("No packages installed.") }
+            var locked = PackageLock.Load(store)
+            foreach (p in installed) {
+                string line = p.Name + " " + p.Version + "  (imports: " + p.manifest.ImportNames() + ")"
+                var e = locked.ForPackage(p.Name)
+                if (e != undefined) { line = line + "  from " + e.Origin() }
+                Log.Line(line)
+            }
+            return 0
+        }
+        if (command == "create" || command == "blank") {
+            if (a.Count != 1) { return Ember.Usage1("ember " + command + " File.json") }
+            string path = a[0]
+            if (IO.File.Exists(path)) { throw new PackageException("'" + path + "' exists already.") }
+            if (command == "create") { Templates.Example(path, true).Save(path) } else { Templates.Blank().Save(path) }
+            Log.Line("Wrote " + IO.Path.GetFullPath(path) + ".")
+            return 0
+        }
+        if (command == "forge") {
+            string output = undefined
+            var files = new List<string>()
+            for (int i = 0; i < a.Count; i++) {
+                if ((a[i] == "-o" || a[i] == "--output") && i + 1 < a.Count) {
+                    i++
+                    output = a[i]
+                }
+                else { files.Add(a[i]) }
+            }
+            if (files.Count != 1) { return Ember.Usage1("ember forge File.json [-o Directory]") }
+            var result = Fpk.Forge(files[0], output)
+            Log.Line("Package: " + result[0])
+            Log.Line("Description (absolute paths): " + result[1])
+            return 0
+        }
+        if (command == "index") {
+            if (a.Count < 1 || a.Count > 2) { return Ember.Usage1("ember index Folder [BaseUrl]") }
+            string baseUrl = undefined
+            if (a.Count > 1) { baseUrl = a[1] }
+            string json = PackageIndex.Build(a[0], baseUrl)
+            string file = IO.Path.Combine(a[0], "index.json")
+            IO.File.WriteAllText(file, json)
+            Log.Line("Wrote " + IO.Path.GetFullPath(file) + ".")
+            return 0
+        }
+        if (command == "cache") {
+            if (a.Count > 1 || (a.Count == 1 && a[0].ToLower() != "clean")) { return Ember.Usage1("ember cache [clean]") }
+            if (a.Count == 1) {
+                var removed = NativeLibraryCache.Clean()
+                Log.Line("Removed " + removed[0] + " libraries (" + (removed[1] / 1024) + " KB) from " + NativeLibraryCache.Root() + ".")
+                return 0
+            }
+            var size = NativeLibraryCache.Size()
+            Log.Line(NativeLibraryCache.Root() + ": " + size[0] + " libraries, " + (size[1] / 1024) + " KB")
+            return 0
+        }
+        Log.Error("ember: unknown command '" + command + "'.\n")
+        Log.Error(Ember.Usage())
+        return 2
+    }
+}
+
+IO.Stdio.Flush()
+int code = Ember.Main(Environment.Args)
+IO.Stdio.Flush()
+Environment.Exit(code)
