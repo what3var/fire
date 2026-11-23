@@ -219,6 +219,19 @@ typedef uint64_t FireUInt;
 /* `word` (SPEC 8.10): the machine word of the target, unsigned, without a unit - K_Word, its bits in `w` (zero above the width). The generator defines
  * FIRE_WORD_BITS from the target (`wordWidth`); without it (a package library for the VM) the width of a pointer. An operation on words wraps at the
  * width (wordOp). */
+#if defined(FIRE_WORD_DYNAMIC)
+/* (the VM in C: the width of the program it runs - `wordWidth` of the program file, set by fireSetWordBits before it starts, as the C# VM's Value.WordBits;
+ * a word is kept in 64 bits, its bits above the width zero) */
+typedef uint64_t FireWord;
+static int g_fireWordBits = 64;
+static uint64_t g_fireWordMask = 0xFFFFFFFFFFFFFFFFull;
+#define FIRE_WORD_BITS g_fireWordBits
+#define FIRE_WORD_MASK g_fireWordMask
+static void fireSetWordBits(int bits) {
+    g_fireWordBits = bits == 16 || bits == 32 ? bits : 64;
+    g_fireWordMask = g_fireWordBits == 64 ? 0xFFFFFFFFFFFFFFFFull : (1ull << g_fireWordBits) - 1;
+}
+#else
 #ifndef FIRE_WORD_BITS
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #define FIRE_WORD_BITS 64
@@ -237,6 +250,7 @@ typedef uint64_t FireWord;
 #define FIRE_WORD_MASK 0xFFFFFFFFFFFFFFFFull
 #else
 #error "FIRE_WORD_BITS must be 16, 32 or 64"
+#endif
 #endif
 
 /* A runtime value, trivially copyable, 16 bytes on every target: it holds whatever a variable of type `any` can hold - an int of 64 bits too (docs/spec/TYPES.md:

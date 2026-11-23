@@ -4059,6 +4059,26 @@ else
 
         // a call through an interface (members public, E4063): its own dispatcher over the implementing classes - no caller class, no access check, not the
         // class outside the interface that has the name privately
+        // `word` in the width of the target (SPEC 8.10): 16 and 32 bits wrap in the VM in C as in the native build for that target (and as the C# VM did: Value.WordBits)
+        const string wordWidthTitle = "word in der Breite des Ziels (16, 32 Bit): Ueberlauf und Umbruch in der C-VM wie nativ";
+        if (TestSelected(wordWidthTitle))
+        {
+            const string wordScript = "word a = 65535\na = a + 1\nword b = 0\nb = b - 1\nword c = 4000000000\nc = c * 2\nword s = 1\ns = s << 20\nword h = 4294967295\nh = h + 3\n"
+                + "word d = 0\nd = d - 1\nd = d / 3\nprint(Word.Bits + \" \" + a + \" \" + b + \" \" + c + \" \" + s + \" \" + h + \" \" + d + \" \" + (b > 70000))";   // (70000 as a word of 16 bits is 4464)
+            var detail = new System.Text.StringBuilder();
+            foreach (var (bits, want) in new[] { (16, "16 0 65535 20480 0 2 21845 True\n"), (32, "32 65536 4294967295 3705032704 1048576 2 1431655765 True\n"), (64, "64 65536 18446744073709551615 8000000000 1048576 4294967298 6148914691236517205 True\n") })
+            {
+                var linked = new Linker().CompileAndLink(new[] { wordScript }, null, null, VmExecutionMode.Release, null, TargetProfile.Host with { WordWidth = bits });
+                var vmRun = CVmTest.Run(linked);
+                string vm = string.Concat(vmRun.Printed.Select(l => l + "\n"));
+                string exe = Path.Combine(workDir, $"word{bits}.bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, fire.Native.CppGenerator.GenerateSources(linked), workDir, $"word{bits}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int wordExit);
+                string nat = wordExit == 0 ? TestProcess.Run(exe, "", workDir).Stdout : "C/C++-Compiler: " + build;
+                if (vm != want || nat != want) detail.AppendLine($"{bits}: erwartet {want.TrimEnd()}, C-VM {vm.TrimEnd()} {vmRun.Errors.Trim()}, nativ {nat.TrimEnd()}");
+            }
+            CheckNat(wordWidthTitle, detail.Length == 0, detail.ToString());
+        }
+
         const string interfaceCallTitle = "Interface-Aufrufe: eigener Verteiler ohne Aufruferklasse und Zugriffspruefung (fremde private Methode gleichen Namens)";
         if (TestSelected(interfaceCallTitle))
         {

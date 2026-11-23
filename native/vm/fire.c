@@ -20,6 +20,7 @@
 #define FIRE_DEBUG 1               /* the debugger (vm_debug.c): the agent of the runtime, armed only with FIRE_DEBUG / --debug */
 #define FIRE_DEBUG_AGENT 1
 #define FIRE_REFLECTION 1         /* (the runtime's probes and the selector of a lambda: the reflection of the VM, vm_reflect.c) */
+#define FIRE_WORD_DYNAMIC 1         /* (`word` in the width of the program: wordWidth of its file, 16, 32 or 64 - fireSetWordBits) */
 #define FIRE_PTRBOUNDS 1          /* (a pointer into an array or a buffer is checked when it is used, like a native build that is not #performance) */
 #define FIRE_NDIMS 16              /* (a program's dimensions are a constant of the generated code; the VM takes room for 16) */
 #ifdef FIRE_VM_STATS
@@ -214,6 +215,7 @@ static int vmRunProgram(const char* path, const char* pkgPath, uint8_t* bytes, s
         return 2;
     }
 
+    fireSetWordBits(p->wordWidth);   /* (`word` of its target, SPEC 8.10 - as the C# VM's RuntimeSession: Value.WordBits = WordWidth) */
     t1 = fire_plat_unixMicros();
     vm = (Vm*)calloc(1, sizeof(Vm));
     vm->prog = p;
