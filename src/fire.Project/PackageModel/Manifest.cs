@@ -1,0 +1,334 @@
+using System.Text.Json;
+using System.Text.Encodings.Web;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+
+namespace fire.Projects
+{
+    /// <summary>The `package.json` in the root of a package (.fpk): who made it and which imports it brings. In a package the paths are relative to the root of the
+    /// archive; in the file that `ember forge` reads (and keeps next to the package) they are absolute paths (or relative to the file).</summary>
+    public sealed class PackageManifest
+    {
+        /// <summary>The version of this file format.</summary>
+        public int Format { get; set; } = 1;
+        public string Name { get; set; } = "";
+        public string Version { get; set; } = "";
+        public string Author { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string License { get; set; } = "";
+        public string Homepage { get; set; } = "";
+        /// <summary>Names of other packages that have to be installed too.</summary>
+        public List<string> Dependencies { get; set; } = new();
+        /// <summary>The imports (`#import "name"`) the package provides.</summary>
+        public List<PackageImport> Imports { get; set; } = new();
+        /// <summary>A folder with the templates the package brings (`Code/` and `Project/` below it, see docs/tools/templates.md): in the forge file a path (relative to the file; none given: `templates/` next to
+        /// it, if there is one), in the package `templates`.</summary>
+        public string? Templates { get; set; }
+        /// <summary>The documents of the package as a whole - its readme, the licence text, notices (`README.md`, `LICENSE`, `NOTICE`): in the forge file paths (relative to the file; none
+        /// given: the files `README*`, `LICENSE*`, `LICENCE*`, `COPYING*` and `NOTICE*` next to it), in the package their names in its root. A licence that asks for its text to go
+        /// with every copy (MIT, BSD, Apache-2.0, ...) is kept this way; the package page of the website shows the readme. null: none.</summary>
+        public List<string>? Documents { get; set; }
+
+        /// <summary>The names that make a file next to the forge file a document of the package (<see cref="Documents"/>) when the description names none.</summary>
+        public static bool IsDocumentName(string fileName)
+        {
+            string stem = Path.GetFileNameWithoutExtension(fileName).ToUpperInvariant();
+            string ext = Path.GetExtension(fileName).ToLowerInvariant();
+            return stem is "README" or "LICENSE" or "LICENCE" or "COPYING" or "NOTICE" or "AUTHORS" && ext is "" or ".md" or ".txt";
+        }
+
+        private static readonly JsonSerializerOptions Options = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        };
+
+        public static PackageManifest Parse(string json)
+        {
+            try { return JsonSerializer.Deserialize<PackageManifest>(json, Options) ?? throw new PackageException("The package description is empty."); }
+            catch (JsonException ex) { throw new PackageException("The package description is not valid JSON: " + ex.Message); }
+        }
+
+        public static PackageManifest Load(string path)
+        {
+            try { return Parse(File.ReadAllText(path)); }
+            catch (IOException ex) { throw new PackageException($"Cannot read '{path}': {ex.Message}"); }
+        }
+
+        public string ToJson() => JsonSerializer.Serialize(this, Options);
+
+        public void Save(string path)
+        {
+            string? dir = Path.GetDirectoryName(Path.GetFullPath(path));
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            File.WriteAllText(path, ToJson());
+        }
+
+        public static readonly Regex NamePattern = new(@"^[A-Za-z0-9][A-Za-z0-9._-]*$", RegexOptions.Compiled);
+        // letters, digits and '_', starting with a letter; several such parts may be joined by dots ("ui.docking")
+        public static readonly Regex ImportNamePattern = new(@"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
+
+        /// <summary>The imports of the compiler itself: a package must not take one of these names.</summary>
+        public static readonly IReadOnlySet<string> ReservedImportNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "print", "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "process", "hash", "compression", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics", "ui.docking", "json", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86",
+        };
+
+        /// <summary>All problems of the description (empty: it is fine). <paramref name="fileExists"/> decides whether a referenced file exists (relative to the root of the
+        /// package, or - for the forge file - to where the paths point); null: the files are not checked.</summary>
+        public IReadOnlyList<string> Validate(Func<string, bool>? fileExists = null)
+        {
+            var problems = new List<string>();
+            if (Format != 1) problems.Add($"Unknown format {Format} (this version of ember reads 1).");
+            if (!NamePattern.IsMatch(Name ?? "")) problems.Add("'name' is missing or has characters other than letters, digits, '.', '_' and '-'.");
+            if (!SemanticVersion.TryParse(Version, out _)) problems.Add("'version' is missing or not a version (1.2.3).");
+            if (Imports == null || Imports.Count == 0) problems.Add("The package needs at least one entry in 'imports'.");
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var import in Imports ?? new List<PackageImport>())
+            {
+                string where = $"Import '{import.Name}': ";
+                if (!ImportNamePattern.IsMatch(import.Name ?? "")) { problems.Add($"Import name '{import.Name}' is not a name (letters, digits and '_', starting with a letter; parts may be joined by dots)."); continue; }
+                if (!import.Standard && ReservedImportNames.Contains(import.Name!)) problems.Add(where + "this name belongs to the compiler.");
+                if (!seen.Add(import.Name)) problems.Add(where + "the name is used twice.");
+                if (string.IsNullOrWhiteSpace(import.Prelude) && import.Native == null) problems.Add(where + "needs a 'prelude' and/or a 'native' part.");
+                if (!string.IsNullOrWhiteSpace(import.Prelude) && fileExists != null && !fileExists(import.Prelude)) problems.Add(where + $"the prelude '{import.Prelude}' does not exist.");
+                foreach (var (name, file) in import.Resources ?? new())
+                {
+                    if (string.IsNullOrWhiteSpace(import.Prelude)) { problems.Add(where + "has resources but no prelude that uses them."); break; }
+                    if (Path.IsPathRooted(name) || name.Replace('\\', '/').Split('/').Any(part => part == ".." || part.Length == 0)) problems.Add(where + $"the resource '{name}' must be a path below the prelude's folder.");
+                    else if (fileExists != null && !fileExists(file)) problems.Add(where + $"the resource '{name}' ('{file}') does not exist.");
+                }
+                if (import.Native is { } native)
+                {
+                    if (native.Sources.Count == 0 && native.PlatformSources.Count == 0 && native.Libraries.Count == 0) problems.Add(where + "'native' needs at least one file in 'sources' (or in 'platformSources' or 'libraries').");
+                    foreach (var src in native.Sources.Concat(native.PlatformSources.Values.SelectMany(l => l)).Concat(native.Libraries.Values).Concat(native.Headers))
+                        if (fileExists != null && !fileExists(src)) problems.Add(where + $"the file '{src}' does not exist.");
+                    if (native.Language is not (null or "c" or "c++")) problems.Add(where + $"'native.language' is '{native.Language}' (c or c++).");
+                    var functions = new HashSet<string>();
+                    foreach (var fn in native.Functions)
+                    {
+                        if (string.IsNullOrWhiteSpace(fn.Name) || string.IsNullOrWhiteSpace(fn.Symbol)) problems.Add(where + $"a native function needs 'name' and '{(native.IsC ? "c" : "cpp")}'.");
+                        else if (!functions.Add(fn.Name)) problems.Add(where + $"the native function '{fn.Name}' is declared twice.");
+                        if (fn.Arguments < 0 || fn.Arguments > 16) problems.Add(where + $"the native function '{fn.Name}' takes {fn.Arguments} arguments (0-16).");
+                    }
+                }
+            }
+            foreach (var document in Documents ?? new List<string>())
+                if (string.IsNullOrWhiteSpace(document)) problems.Add("'documents' has an empty entry.");
+                else if (fileExists != null && !fileExists(document)) problems.Add($"The document '{document}' does not exist.");
+            return problems;
+        }
+    }
+
+    public sealed class PackageImport
+    {
+        /// <summary>The name in `#import "name"` (not case sensitive).</summary>
+        public string Name { get; set; } = "";
+        /// <summary>The import is one of the standard bridges of the compiler (graphics, io, time, ...), packaged with its prelude and C++ sources: it may have the name of a built-in import.
+        /// The compiler still resolves such a name to its built-in implementation first.</summary>
+        public bool Standard { get; set; }
+        /// <summary>The prelude: fire source that is added to the program (classes, functions). Optional.</summary>
+        public string? Prelude { get; set; }
+        /// <summary>Other imports (of the compiler or of packages) that this one switches on, as `ui` switches on `graphics`.</summary>
+        public List<string> Requires { get; set; } = new();
+        /// <summary>The natives as C++ source (only for the native backend). Optional.</summary>
+        public PackageNative? Native { get; set; }
+        /// <summary>The files the prelude embeds with `new Resource("path")` (docs/stdlib/resources.md): the key is the path as the prelude writes it (relative to the prelude's folder,
+        /// with `/`), the value the file - in a forge file where it is now, in a package where it lies in the package (the prelude's folder + the key).</summary>
+        public Dictionary<string, string>? Resources { get; set; }
+        /// <summary>The device drivers of the import (classes of the device framework, made with `new Class()`): the IDE loads them and lists their devices. null: none.</summary>
+        public List<string>? Drivers { get; set; }
+        /// <summary>`false`: the classes of the prelude cannot be written to or read from JSON (docs/stdlib/json.md; like `[NotSerializable]` on each, derived classes included) - a
+        /// native build never keeps them for JSON. null: serializable.</summary>
+        public bool? Serializable { get; set; }
+    }
+
+    /// <summary>C++ source for the native backend. The files are put into the generated file after the runtime, outside of any namespace: they include what they need
+    /// themselves and put their functions into `namespace fire`, taking and returning `Value` (see packages/<name>/native/ of the compiler for examples). The virtual machine has no
+    /// way to run C++: calling such a native there is an error that says so; a prelude that has no natives works in both.</summary>
+    public sealed class PackageNative
+    {
+        /// <summary>The language of the sources: `c` (put into the generated program itself - a C compiler such as TinyCC is enough, also on a platform without C++) or `c++`
+        /// (the default: a file of its own, built with a C++ compiler). The functions of a C package are plain C functions (`Value io_Read(Value a, ...)`, named by `c`).</summary>
+        public string? Language { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool IsC => Language == "c";
+        /// <summary>The source files; an entry can have a build order (see <see cref="NativeSourceList"/>).</summary>
+        public NativeSourceList Sources { get; set; } = new();
+        /// <summary>More source files for one platform or target: the key is the platform package (`posix`, `windows`, `freertos`, `esp32`, `dos16`, ...) or the name of the target
+        /// (`linux`, `macos`, `esp32`, ...), `vm` for the library of the virtual machine (then only it), `default` for a platform without a key of its own; they come before
+        /// <see cref="Sources"/> in builds for it, so that the common code can use what they declare. The same code can use `FIRE_TARGET_&lt;NAME&gt;` and `FIRE_HAL_&lt;PLATFORM&gt;`.</summary>
+        public Dictionary<string, NativeSourceList> PlatformSources { get; set; } = new();
+        /// <summary>The platforms of the target (`posix`, `windows`, `freertos`, ...) the source is written for; empty: all (and the keys of <see cref="PlatformSources"/>).</summary>
+        public List<string> Platforms { get; set; } = new();
+        /// <summary>Prebuilt shared libraries for the virtual machine, by runtime identifier (`win-x64`, `linux-x64`, `linux-arm64`, `osx-arm64`, ...): they export the C ABI of
+        /// native/abi/fire_pkg_abi.h. Without one for the machine, the compiler builds the library from the C++ sources with a C++ compiler.</summary>
+        public Dictionary<string, string> Libraries { get; set; } = new();
+        /// <summary>System libraries the C++ needs for one platform or target (the key as in <see cref="PlatformSources"/>), e.g. <c>{ "windows": [ "ws2_32" ] }</c>: the build links them (`-lws2_32`, `ws2_32.lib`).</summary>
+        public Dictionary<string, List<string>> LinkLibraries { get; set; } = new();
+        public List<PackageNativeFunction> Functions { get; set; } = new();
+        /// <summary>The natives of the display (graphics, windows): declared here like <see cref="Functions"/>, but they live in the one shared library of the display
+        /// (fire_gfx, its windows and framebuffers have one state) and are called directly by the generator - not a library of the package of their own.</summary>
+        public List<PackageNativeFunction> Bridge { get; set; } = new();
+        /// <summary>Exception classes of the prelude that natives throw with `fireError("ClassName", "message")` (the class has a constructor with one text argument). In the virtual
+        /// machine the library reports the error to the VM, which throws the class; a native build needs to know the classes to construct them.</summary>
+        public List<string> Exceptions { get; set; } = new();
+        /// <summary>The natives may be called by several fire threads at once (`"threadSafe": true`). Without it a native build without the GIL calls the natives of
+        /// one package one at a time (a lock per package; a native that waits - with gilRelease - lets go of it), as the GIL did (docs/ROADMAP_TASKS.md 1f).</summary>
+        public bool ThreadSafe { get; set; }
+        /// <summary>A C++ function without arguments that the VM calls when a program ends (`fire_pkg_reset`): the natives forget what the program left behind (open streams, ...), because the
+        /// library stays loaded for the next program of the same host. Optional.</summary>
+        public string? Reset { get; set; }
+        /// <summary>Other imports whose platform layer this one builds on (ROADMAP 13.3b): their `platformSources` for the target - the code of the platform a package owns,
+        /// such as the file system of `io` - come before this import's own sources, once (`"uses": [ "io" ]` in graphics: its fonts are read through the file system of io).
+        /// The other import has to be installed; its `sources` (its bridge, its natives) are not taken. An entry can name the platforms it is for
+        /// (`{ "import": "audio", "platforms": [ "posix", "windows", "vm" ] }`, keys as in `platformSources`): elsewhere the layer is not taken.</summary>
+        public List<NativeUse> Uses { get; set; } = new();
+        /// <summary>Files the sources include (`#include "x.h"`) that are not sources of every build: a selector of a platform includes the implementation it picks, which
+        /// includes the common parts. The headers of an installed package are files of every build (`pkg/<import>/`, next to the generated program): the include stays as it
+        /// is written (also within `#if`), it only names that file; a header that is a source of the build is taken out as before. (The headers of a project are put in where
+        /// they are included.)</summary>
+        public List<string> Headers { get; set; } = new();
+    }
+
+    public static class PackageNativeExtensions
+    {
+        /// <summary>The key of <see cref="PackageNative.PlatformSources"/> for the library of the virtual machine.</summary>
+        public const string VmKey = "vm";
+        /// <summary>The key of <see cref="PackageNative.PlatformSources"/> for a platform that has no key of its own.</summary>
+        public const string DefaultKey = "default";
+
+        /// <summary>The source files for a build for a target, in build order: first those of every key that names the target (not case sensitive) - the layer under the common code - then
+        /// <see cref="PackageNative.Sources"/>, which can use what the platform files declare; all of them then sorted by their build order (`order`, stable: without one 0).</summary>
+        /// The key <see cref="VmKey"/> (the library for the virtual machine, <c>PackageLibrary.HostPlatformKeys</c> names it first) is the only one when the package has it - the
+        /// VM then gets that layer, not the one of the machine it runs on (a package whose platform layer reaches hardware or a console the VM does not have says "none" there);
+        /// when no key names the target, <see cref="DefaultKey"/> does (the layer of a platform the package knows nothing special about).
+        public static IReadOnlyList<string> SourcesFor(this PackageNative native, IEnumerable<string> platformKeys)
+        {
+            var result = new List<(string File, int Order)>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var keys = platformKeys.ToList();
+            bool Has(string key) => native.PlatformSources.Keys.Any(k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase));
+            if (keys.Any(k => string.Equals(k, VmKey, StringComparison.OrdinalIgnoreCase)) && Has(VmKey)) keys = new List<string> { VmKey };
+            else keys.RemoveAll(k => string.Equals(k, VmKey, StringComparison.OrdinalIgnoreCase));
+            if (!keys.Any(Has)) keys = new List<string> { DefaultKey };
+            foreach (var key in keys)
+                foreach (var (k, files) in native.PlatformSources)
+                    if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) foreach (var f in files) if (seen.Add(f)) result.Add((f, files.OrderOf(f) ?? 0));
+            foreach (var f in native.Sources) if (seen.Add(f)) result.Add((f, native.Sources.OrderOf(f) ?? 0));
+            return NativeSourceOrder.Sort(result);
+        }
+
+        /// <summary>The platform layer of an import for a build: only its <see cref="PackageNative.PlatformSources"/> for the keys (with the rules of <see cref="SourcesFor"/>) -
+        /// what an import that <see cref="PackageNative.Uses"/> it gets.</summary>
+        public static IReadOnlyList<string> PlatformLayerFor(this PackageNative native, IEnumerable<string> platformKeys)
+        {
+            var layerOnly = new PackageNative { PlatformSources = native.PlatformSources };
+            return layerOnly.SourcesFor(platformKeys);
+        }
+
+
+        /// <summary>The system libraries to link in a build for a target (see <see cref="PackageNative.LinkLibraries"/>).</summary>
+        public static IReadOnlyList<string> LinkLibrariesFor(this PackageNative native, IEnumerable<string> platformKeys)
+        {
+            var result = new List<string>();
+            foreach (var key in platformKeys)
+                foreach (var (k, libs) in native.LinkLibraries)
+                    if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) foreach (var l in libs) if (!result.Contains(l)) result.Add(l);
+            return result;
+        }
+
+        /// <summary>Does the native part have something for one of the keys (platform package or target name)?</summary>
+        public static bool SupportsAny(this PackageNative native, IEnumerable<string> platformKeys)
+        {
+            if (native.Platforms.Count == 0) return true;
+            foreach (var key in platformKeys)
+            {
+                if (native.Platforms.Contains(key, StringComparer.OrdinalIgnoreCase)) return true;
+                if (native.PlatformSources.Keys.Contains(key, StringComparer.OrdinalIgnoreCase)) return true;
+            }
+            return native.PlatformSources.Keys.Contains(DefaultKey, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    public sealed class PackageNativeFunction
+    {
+        /// <summary>The name that fire code calls (the prelude of the package, or a script directly).</summary>
+        public string Name { get; set; } = "";
+        public int Arguments { get; set; }
+        /// <summary>The C++ function: `Value cpp(Value a, Value b)` (a package in C++).</summary>
+        public string Cpp { get; set; } = "";
+        /// <summary>The C function: `Value c(Value a, Value b)` (a package in C, `"language": "c"`).</summary>
+        public string? C { get; set; }
+        /// <summary>The function the native is: <see cref="C"/> or <see cref="Cpp"/>.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string Symbol => !string.IsNullOrEmpty(C) ? C! : Cpp;
+        /// <summary>The function gets the list of the scope (`OwnList* list`) as its last argument: what it allocates for its result (arrays, buffers) belongs to the caller.</summary>
+        public bool NeedsList { get; set; }
+        /// <summary>The result can be an object, array or buffer that has to be adopted (set it with `NeedsList`).</summary>
+        public bool ReturnsReference { get; set; }
+        /// <summary>In the virtual machine the host runs this function itself (a function that has to wait or be aborted, like `Sleep`: it is registered by the VM, not taken from the library).
+        /// A native build uses <see cref="Cpp"/> as always.</summary>
+        public bool Host { get; set; }
+        /// <summary>What the function returns, as a type of fire (`int`, `int[64]`, `float`, `bool`, `string`, `byte[]`, `any[]`, `undefined`, a class; null or
+        /// `any`: not said) - the type checker gives a call this type, a result of `int`/`float`/`bool` is checked at run time (docs/packages/README.md).</summary>
+        public string? Returns { get; set; }
+        /// <summary>The C types of the parameters of a function in C (`"parameters": ["int", "float", "any"]`, one per argument): with them the C function is typed -
+        /// `int` is an `int64_t`, `int[32]`/`int[16]` an `int32_t`/`int16_t`, `float` a `Real`, `bool` a `bool`, everything else a `Value` - and so is its
+        /// result when <see cref="Returns"/> is one of those (docs/packages/README.md "Typed functions"). Null: every parameter and the result are Values.</summary>
+        public List<string>? Parameters { get; set; }
+    }
+
+    public sealed class PackageException : Exception
+    {
+        public PackageException(string message) : base(message) { }
+    }
+
+    /// <summary>`1.2.3`, `1.2`, `2.0.0-beta1`: numbers compared one by one; a version with a suffix is older than the same one without.</summary>
+    public readonly struct SemanticVersion : IComparable<SemanticVersion>
+    {
+        private readonly int[] _parts;
+        public string Suffix { get; }
+        public string Text { get; }
+
+        private SemanticVersion(int[] parts, string suffix, string text) { _parts = parts; Suffix = suffix; Text = text; }
+
+        public static bool TryParse(string? text, out SemanticVersion version)
+        {
+            version = default;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            string t = text.Trim();
+            int dash = t.IndexOf('-');
+            string numbers = dash < 0 ? t : t.Substring(0, dash);
+            string suffix = dash < 0 ? "" : t.Substring(dash + 1);
+            var parts = new List<int>();
+            foreach (var p in numbers.Split('.'))
+            {
+                if (!int.TryParse(p, out int n) || n < 0) return false;
+                parts.Add(n);
+            }
+            version = new SemanticVersion(parts.ToArray(), suffix, t);
+            return true;
+        }
+
+        public int CompareTo(SemanticVersion other)
+        {
+            int n = Math.Max(_parts.Length, other._parts.Length);
+            for (int i = 0; i < n; i++)
+            {
+                int a = i < _parts.Length ? _parts[i] : 0, b = i < other._parts.Length ? other._parts[i] : 0;
+                if (a != b) return a.CompareTo(b);
+            }
+            if (Suffix == other.Suffix) return 0;
+            if (Suffix.Length == 0) return 1;
+            if (other.Suffix.Length == 0) return -1;
+            return string.CompareOrdinal(Suffix, other.Suffix);
+        }
+
+        public override string ToString() => Text;
+    }
+}
