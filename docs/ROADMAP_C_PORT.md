@@ -357,7 +357,7 @@ der C#-VM; Latenz nach einer Änderung 604 ms gegen 520 ms im Prozess (der Proze
 der Breiten, `FIRE_PKG_PATH` mit den Ordnern der Bibliotheken; `run` mit der Konsole von forge - `CommandLineRunner.WritersAreConsole`, sonst über die Writer
 des Aufrufers -, `test` liest die Zeilen des Treibers, während sie kommen (`FIRE_STDOUT_LINES`; der Test-Explorer von spark und `Cancel` beenden den Prozess),
 eine unbehandelte Ausnahme ist die Zeile `Unhandled exception of type ...` von `fire`). Ausgabe und Exitcodes wie vorher (`tests/compare-commands.sh` gegen
-forge-c: siehe Zahlen unten). Der Übersetzer braucht die C#-Bridges nicht mehr: die Namen der Natives von graphics, windows und reflection kommen aus
+forge-c: siehe "Geprüft" unten). Der Übersetzer braucht die C#-Bridges nicht mehr: die Namen der Natives von graphics, windows und reflection kommen aus
 `native/tables/bridges.def` (`BridgeNatives`, wie forge-c), die Host-Natives der Pakete sind nur Namen. `fire.Testing`: jede Prüfung, die die C#-VM als Engine
 oder als Vergleich nahm, läuft in `fire` (`CVmTest`: übersetzt hier, `fire run` mit `FIRE_PRINT_RECORDS`; `CVmTest.Debug`: unter dem Debugger wie spark) oder
 gegen die `.expected` der Fälle; was nur die C#-VM selbst prüft, ist als solches markiert und läuft nur mit `FIRE_TESTS_DOTNET_VM=1` (`DotnetVm.Skip`) - die
@@ -410,6 +410,20 @@ Build von `fire.Compiler` ohne die Referenz und ohne die Dateien unten - es übe
   Threads in spark trägt im Output-Panel nicht mehr den Namen des Threads (`fire` schreibt sie auf stdout, nicht je Thread); die Prüfungen der
   UI-Bibliothek, der Dialoge, des Dockings und des WindowManagers laufen nur noch mit der C#-VM, bis die C-VM eine Test-Anzeige mit Test-Natives hat
   (die UI-Pakete sind sonst über die Fälle "native == VM" und die Live-Sitzung geprüft).
+* **Geprüft** (23.11.2026, Linux x64): `tests/compare-commands.sh` C#-forge gegen forge-c **100 von 103** gleich (alle `run`, `test`, `data` gleich; die drei
+  sind Dateien nativer Builds und die gepackte Datei von `build -m debug --types strict` - das C#-forge vor dieser Änderung schreibt Byte für Byte dieselben,
+  die gepackte Datei ist schon von Lauf zu Lauf verschieden); `tests/run-cases.sh` mit dem C#-forge **1152 von 1152**, `tests/run-cases-vm.sh` **1152 von
+  1152**. Die Standardrunde von `fire.Testing` ohne `native` (`FIRE_TEST_NO_NATIVE=1`, 9 min): 2204 Prüfungen, danach behoben: die Fälle `.error` zur
+  Laufzeit in `TestCasesVm`, die Prüfung "Eigener Manager" der Geräte (die C#-VM baute einen eigenen Manager ab) - übrig ein Fehler, der schon vorher da war
+  (die Sprachdoku verlinkt `../spec/PLUGINS.md`, die Prüfung will Links im selben Ordner); einzeln danach grün: `debugger` 43, `cvmrun` 26, `previews` 10,
+  `trace` 27, `syntax` 58, `diagnostics` 76, `types` 268, `programfile` 138, `testing` 32, `drivers` 10, `circuiteditor` 53, `packer` 40, `completion` 62
+  (`windows`, `dialogs`, `docking` melden sich als Prüfungen der C#-VM ab; `linkage` 107 von 120 in 29 min, der Rest MinGW/Wine; `native`: die 505 Fälle
+  "VM: die erwartete Ausgabe" alle grün, die nativen Builds mit ASan brauchen länger als 30 min je Prozess - unberührt von diesem Schritt). Unter Xvfb
+  mit spark: ein Konsolenprogramm (Ausgabe, Eingabe über die Zeile des Output-Panels), ein Haltepunkt (Halt, Scope-Panel, weiter bis zum Ende), ein
+  Fensterprogramm (sein Fenster aus `fire`), der Schaltplan-Editor (Live-Sitzung in `fire`, Simulation läuft), das Werkzeug `check` des MCP-Servers über forge.
+* **Gefunden** (nicht behoben, `native/vm`): `inline c` in der C-VM beendet das Programm mit `fire runtime error: the VM in C does not support the inline C
+  function M_Add yet`, statt wie die C#-VM eine abfangbare Ausnahme `'M.Add' is an inline C function: it runs only in a native build` zu werfen - die zwei
+  Prüfungen "inline c ... in der VM" der Gruppe `native` zeigen es (rot gelassen).
 
 Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt die `Value` der VM direkt, keine Kopien, Objekte dürfen hinüber).
 
