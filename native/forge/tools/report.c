@@ -257,16 +257,35 @@ static void frEndChildren(void) {
 #endif
 }
 static void frOnSignal(int sig) { (void)sig; frCancel = 1; }
+/* the input, line by line: read() on the descriptor, not fgets on stdin - a thread blocked in fgets holds the lock of stdin, and exit() (which flushes every
+ * FILE, stdin too) would wait for it for ever: a forge whose input stays open (spark keeps it open for "cancel") never ended after its report */
 static void* frReadInput(void* arg) {
     char line[512];
+    size_t len = 0;
     (void)arg;
-    while (fgets(line, sizeof line, stdin)) {
-        size_t a = 0, n = strlen(line);
-        while (a < n && (line[a] == ' ' || line[a] == '\t')) a++;
-        while (n > a && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' ' || line[n - 1] == '\t')) n--;
-        if (n - a == 6 && memcmp(line + a, "cancel", 6) == 0) { frCancel = 1; frEndChildren(); return NULL; }
+    for (;;) {
+        size_t start = 0, i;
+#ifdef _WIN32
+        int got = _read(0, line + len, (unsigned)(sizeof line - 1 - len));
+#else
+        ssize_t got = read(0, line + len, sizeof line - 1 - len);
+        if (got < 0 && errno == EINTR) continue;
+#endif
+        if (got <= 0) return NULL;
+        len += (size_t)got;
+        for (i = 0; i < len; i++) {
+            if (line[i] != '\n') continue;
+            {
+                size_t a = start, n = i;
+                while (a < n && (line[a] == ' ' || line[a] == '\t')) a++;
+                while (n > a && (line[n - 1] == '\r' || line[n - 1] == ' ' || line[n - 1] == '\t')) n--;
+                if (n - a == 6 && memcmp(line + a, "cancel", 6) == 0) { frCancel = 1; frEndChildren(); return NULL; }
+            }
+            start = i + 1;
+        }
+        if (start > 0) { memmove(line, line + start, len - start); len -= start; }
+        else if (len == sizeof line - 1) len = 0;   /* (a line too long for a command: dropped) */
     }
-    return NULL;
 }
 /* BuildMonitor.Step: cancelled, the build stops here (ThrowIfCancellationRequested); else the progress */
 static void frCheckpoint(void) {

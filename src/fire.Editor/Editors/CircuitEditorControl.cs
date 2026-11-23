@@ -16,7 +16,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
-using fire.Compiler;
+using fire.Tooling;
 using fire.UI.Markup;
 
 namespace fire.Editor
@@ -539,7 +539,7 @@ namespace fire.Editor
                 }
                 catch (Exception ex)
                 {
-                    Dispatcher.UIThread.Post(() => { if (ReferenceEquals(session, _session)) SetStatus("The circuit editor could not start: " + CompileErrors.Describe(ex)); });
+                    Dispatcher.UIThread.Post(() => { if (ReferenceEquals(session, _session)) SetStatus("The circuit editor could not start: " + ex.Message); });
                 }
             });
         }

@@ -3,8 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using Avalonia.Interactivity;
 using fire.Editor.Setup;
-using fire.Native;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     // Tools > Options (OptionsDialog): the options of spark for this machine - General (start, the engine of a script, the assistant, the MCP server, the ESP-IDF folder) and

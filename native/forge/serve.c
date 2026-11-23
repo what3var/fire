@@ -698,7 +698,7 @@ static void svCompletionResult(SvServer* S, SvDoc* d, int offset, FcBuf* b) {
 }
 
 static void svCapabilities(FcBuf* b) {
-    fcBufStr(b, "[\"diagnostics\",\"completion\",\"hover\",\"signature\",\"definition\",\"references\",\"symbols\",\"folding\",\"preludeSource\"");
+    fcBufStr(b, "[\"diagnostics\",\"completion\",\"hover\",\"signature\",\"definition\",\"references\",\"symbols\",\"folding\",\"preludeSource\",\"tests\"");
 #ifdef SV_HAVE_MARKUP
     fcBufStr(b, ",\"markupCompletion\"");
 #endif
@@ -709,6 +709,113 @@ static void svCapabilities(FcBuf* b) {
 static void svNavRequest(SvServer* S, SvDoc* d, const char* method, int offset, FcBuf* b);
 static void svPreludeSourceResult(SvServer* S, const char* name, FcBuf* b);
 static void svMarkupCompletion(SvServer* S, SvDoc* d, int offset, FcBuf* b);
+
+/* `tests` (M3, the test explorer of spark - TestDiscovery.InFile of the C# forge): the methods with [Test] of the classes of one file, found by parsing only - its
+ * `#include` lines left out (blank, so the lines stay), nothing compiled or run. params: `path`, `text?` (else the file is read). Result:
+ * {"tests":[{"class","method","title","description","line","parameters"}],"problems":["<file>: <message>"]} - a file that does not parse has no tests and a problem. */
+static void svTestsCollect(FcCtx* c, FcList* stmts, FcBuf* b, bool* first) {
+    int i, k;
+    for (i = 0; i < stmts->count; i++) {
+        const FcStmt* s = (const FcStmt*)stmts->items[i];
+        if (s->kind == SK_NamespaceDecl) { svTestsCollect(c, ((const FcNamespaceDecl*)s)->members, b, first); continue; }
+        if (s->kind != SK_ClassDecl) continue;
+        {
+            const FcClassDecl* cls = (const FcClassDecl*)s;
+            for (k = 0; cls->members && k < cls->members->count; k++) {
+                const FcStmt* ms = (const FcStmt*)cls->members->items[k];
+                const FcMethodDecl* m;
+                const FcAttributeDecl* test;
+                const char* title;
+                const char* description;
+                if (ms->kind != SK_MethodDecl) continue;
+                m = (const FcMethodDecl*)ms;
+                if (!(test = tdFirst(m, "Test"))) continue;
+                title = tdStringArg(test, 0);
+                description = tdStringArg(test, 1);
+                if (!*first) fcBufChar(b, ',');
+                *first = false;
+                fcBufStr(b, "{\"class\":"); fcEsc(b, cls->name);
+                fcBufStr(b, ",\"method\":"); fcEsc(b, m->name);
+                fcBufStr(b, ",\"title\":"); fcEsc(b, title ? title : m->name);
+                fcBufStr(b, ",\"description\":"); fcEsc(b, description ? description : "");
+                fcBufFmt(b, ",\"line\":%d,\"parameters\":%s}", ms->line, tdParamCount(m) > 0 ? "true" : "false");
+            }
+        }
+    }
+}
+static void svTestsResult(SvServer* S, FcJson* params, FcBuf* b) {
+    const char* path = params ? svJStr(params, "path") : NULL;
+    const char* text = params ? svJStr(params, "text") : NULL;
+    const char* name;
+    FcCtx t;
+    FcU16 src = {0};
+    bool first = true;
+    (void)S;
+    if (!path) fcThrow(S->lang.tmp, FC_ERR_INTERNAL, 0, 0, NULL, "params");
+    name = strrchr(path, '/');
+    name = name ? name + 1 : path;
+    fcBufStr(b, "{\"tests\":[");
+    if (fcEndsWith(path, ".fxml") || fcEndsWith(path, ".biscuit") || fcEndsWith(path, ".fdata")) { fcBufStr(b, "],\"problems\":[]}"); return; }   /* (the markup has no tests) */
+    if (text) fcU16FromFc8(text, &src);
+    else if (!fcReadText(path, &src)) {
+        fcBufStr(b, "],\"problems\":[");
+        { FcCtx e; fcCtxInit(&e); fcEsc(b, fcFmt(&e, "%s: cannot read the file", name)); fcCtxFree(&e); }
+        fcBufStr(b, "]}");
+        return;
+    }
+    fcCtxInit(&t);
+    {
+        /* the cheap answer for most files: no "[Test" */
+        static const uint16_t needle[] = { '[', 'T', 'e', 's', 't' };
+        bool has = false;
+        int i, j, n = src.len;
+        uint16_t* u = (uint16_t*)fcAlloc(&t, sizeof(uint16_t) * (size_t)(n + 1));
+        for (i = 0; i + 5 <= n && !has; i++) { for (j = 0; j < 5 && src.p[i + j] == needle[j]; j++) {} if (j == 5) has = true; }
+        if (has) {
+            /* the #include lines blank (the line numbers stay those of the file) */
+            int start = 0;
+            if (n) memcpy(u, src.p, sizeof(uint16_t) * (size_t)n);
+            for (i = 0; i <= n; i++) {
+                if (i == n || u[i] == '\n') {
+                    int a = start;
+                    while (a < i && (u[a] == ' ' || u[a] == '\t')) a++;
+                    if (i - a >= 8 && u[a] == '#' && u[a + 1] == 'i' && u[a + 2] == 'n' && u[a + 3] == 'c' && u[a + 4] == 'l' && u[a + 5] == 'u' && u[a + 6] == 'd' && u[a + 7] == 'e'
+                        && (a + 8 == i || !(u[a + 8] == '_' || (u[a + 8] >= 'a' && u[a + 8] <= 'z') || (u[a + 8] >= 'A' && u[a + 8] <= 'Z') || (u[a + 8] >= '0' && u[a + 8] <= '9'))))
+                        for (j = start; j < i; j++) if (u[j] != '\r') u[j] = ' ';
+                    start = i + 1;
+                }
+            }
+            FC_TRY(&t) {
+                FcProcessed* processed;
+                FcList* program;
+                fcSymbolsForHost(&t, t.symbols);
+                processed = fcPreprocess(&t, u, n, fcDirectoryName(&t, fcFullPath(&t, ".", path)));
+                processed->name = fcStr(&t, name);
+                program = fcParseMultiple(&t, &processed, 1);
+                svTestsCollect(&t, program, b, &first);
+                fcBufStr(b, "],\"problems\":[]}");
+            } FC_CATCH(&t) {
+                FcList* diags = fcDiagnosticsOf(&t, &t.err, NULL);
+                FcBuf m = {0};
+                int k;
+                fcBufStr(&m, "");
+                for (k = 0; k < diags->count; k++) {
+                    const FcDiagnostic* d = (const FcDiagnostic*)diags->items[k];
+                    fcBufFmt(&m, "%s%s%s", k ? "\n" : "", d->message, d->line > 0 ? fcFmt(&t, " (line %d)", d->line) : "");
+                }
+                if (diags->count == 0) fcBufStr(&m, t.err.message ? t.err.message : "?");
+                /* (the tests found before the error are dropped: a file that does not parse has none) */
+                b->len = 0;
+                fcBufStr(b, "{\"tests\":[],\"problems\":[");
+                fcEsc(b, fcFmt(&t, "%s: %s", name, m.p));
+                fcBufStr(b, "]}");
+                fcBufFree(&m);
+            } FC_END_TRY;
+        } else fcBufStr(b, "],\"problems\":[]}");
+    }
+    fcU16Free(&src);
+    fcCtxFree(&t);
+}
 
 /* one message; false: exit */
 static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
@@ -896,6 +1003,12 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
             if (strcmp(method, "completion") == 0) svCompletionResult(S, d, offset, &b);
             else if (strcmp(method, "markupCompletion") == 0) svMarkupCompletion(S, d, offset, &b);
             else svNavRequest(S, d, method, offset, &b);
+            svReply(S, id, b.p);
+            fcBufFree(&b);
+        } else if (strcmp(method, "tests") == 0) {
+            FcBuf b = {0};
+            fcBufStr(&b, "");
+            svTestsResult(S, params, &b);
             svReply(S, id, b.p);
             fcBufFree(&b);
         } else if (strcmp(method, "preludeSource") == 0) {

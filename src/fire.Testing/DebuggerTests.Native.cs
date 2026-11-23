@@ -2,8 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Text;
 using fire.Debugging;
-using fire.Runtime;
-
+using fire.Tooling;
 /// <summary>
 /// NativeDebugTarget against a fake agent: a small TCP client in this process that speaks docs/spec/NATIVE_DEBUG_PROTOCOL.md like a native debug build would
 /// (hello, stopped, thread, exited; breakpoints, continue, step, pause, trace, scopes, globals, this, expand, set, resume, terminate) over a simulated
@@ -752,13 +751,10 @@ static partial class DebuggerTests
             throw new Exception("boom")
             print("after")
             """;
-        var config = new fire.Native.NativeConfig();
-        var target = fire.Runtime.TargetProfile.Host;
+        var config = new fire.Tooling.NativeConfig();
+        var target = fire.Tooling.TargetProfile.Host;
         var toolchain = config.ResolveToolchain(target);
-        string generated;
-        try { generated = fire.Compiler.NativeBuilder.Generate(new[] { script }, target, VmExecutionMode.Debug); }
-        catch (Exception ex) { Console.WriteLine("(Ende-zu-Ende nativ uebersprungen: " + ex.Message + ")"); return; }
-        if (!generated.Contains("fire_dbgStart") || !NativeLaunch.CanRunHere(target, toolchain, out _) || fire.Native.ToolchainDetector.Find(toolchain) == null)
+        if (!NativeLaunch.CanRunHere(target, toolchain, out _) || fire.Tooling.ToolchainDetector.Find(toolchain) == null)
         {
             Console.WriteLine("(Ende-zu-Ende nativ uebersprungen: die Runtime hat noch keinen Debug-Agenten oder es gibt keinen C-Compiler)");
             return;
@@ -768,9 +764,13 @@ static partial class DebuggerTests
         try
         {
             string exe = Path.Combine(dir, OperatingSystem.IsWindows() ? "box.exe" : "box");
-            var built = fire.Compiler.NativeBuilder.BuildSafe(new[] { script }, config, target, NativeLaunch.DebugToolchain(toolchain), exe, VmExecutionMode.Debug);
-            Check(built.Ok, "Ende-zu-Ende: Debug-Build (-O0 -g) gelingt", built.Log.Length > 2000 ? built.Log[..2000] : built.Log);
-            if (!built.Ok) return;
+            // (forge builds it for the debugger: --debug-info, -O0 -g - M3)
+            string source = Path.Combine(dir, "box.fire");
+            File.WriteAllText(source, script);
+            var (builtCode, builtOut, builtErr) = Forge.Run(new[] { "build", source, "--engine", "native", "-m", "DEBUG", "--debug-info", "-o", exe }, dir);
+            string log = builtOut + builtErr;
+            Check(builtCode == 0 && File.Exists(exe), "Ende-zu-Ende: Debug-Build (-O0 -g) gelingt", log.Length > 2000 ? log[..2000] : log);
+            if (builtCode != 0 || !File.Exists(exe)) return;
 
             // the VM as the reference - the VM in C under the debugger (M1): the stop at line 5, then t = 10 and Step Over to the unhandled exception, then on after it
             var vmOutput = new ConcurrentQueue<string>();
@@ -788,7 +788,7 @@ static partial class DebuggerTests
             vm.MainThread.RunUntilEnd(() => false);
 
             var lines = new ConcurrentQueue<string>();
-            using var native = NativeLaunch.LaunchDebug(built.Output, Array.Empty<string>(), dir, TimeSpan.FromSeconds(30));
+            using var native = NativeLaunch.LaunchDebug(exe, Array.Empty<string>(), dir, TimeSpan.FromSeconds(30));
             native.Output += (_, line) => lines.Enqueue(line);
             int src = native.FirstUserSourceIndex;
             var main = native.MainThread;

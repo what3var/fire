@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
-using fire.Compiler;
-using fire.Lexing;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>

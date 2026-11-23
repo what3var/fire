@@ -6,7 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
-using fire.Compiler;
+using fire.Tooling;
 using fire.UI.Markup;
 
 namespace fire.Editor

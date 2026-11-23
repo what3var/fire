@@ -2,8 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using fire.Native;
-
+using fire.Tooling;
 namespace fire.Editor.Setup
 {
     public enum SetupPage { Welcome, Toolchains, Model, Summary }
@@ -36,7 +35,7 @@ namespace fire.Editor.Setup
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
             }
             string assistant = Path.Combine(AppContext.BaseDirectory, "Assistant", "assistant.fire");
-            string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+            string forge = Forge.Locate(out _) ?? Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
             return new SetupEnvironment(OperatingSystem.IsWindows(), OperatingSystem.IsMacOS(), System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.X64,
                 MachineInfo.Current(), File.Exists(assistant) && File.Exists(forge), assistantEnabled, detected,
                 W64devkitThere: File.Exists(Path.Combine(ToolchainSetup.W64devkitDirectory, "bin", "g++.exe")),

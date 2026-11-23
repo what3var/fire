@@ -29,7 +29,7 @@ namespace fire.Editor
             int number = Editor.TextArea.Caret.Line;
             if (number < 1 || number > Editor.Document.LineCount) return;
             var line = Editor.Document.GetLineByNumber(number);
-            if (fire.Compiler.OutputLocations.TraceFrame(Editor.Document.GetText(line.Offset, line.Length)) is { } at) LocationActivated?.Invoke(at.File, at.Line);
+            if (fire.Tooling.OutputLocations.TraceFrame(Editor.Document.GetText(line.Offset, line.Length)) is { } at) LocationActivated?.Invoke(at.File, at.Line);
         }
 
         public void Append(string text)

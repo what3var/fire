@@ -1,38 +1,6 @@
-using fire.Runtime;
+using fire.Tooling;
 using System;
 
-sealed class LoggingDestructRunner : IDestructRunner
-{
-    public void RunDestructor(ObjectInstance instance) =>
-        Console.WriteLine($"  destruct() aufgerufen für Instanz von '{instance.ClassName}'");
-}
-
-sealed class RaceDemoRunner : IDestructRunner
-{
-    private readonly ObjectInstance _watchFor;
-    private readonly ObjectInstance _transferSource;
-    private readonly IDestructRunner _inner;
-
-    public RaceDemoRunner(ObjectInstance watchFor, ObjectInstance transferSource, IDestructRunner inner)
-    {
-        _watchFor = watchFor;
-        _transferSource = transferSource;
-        _inner = inner;
-    }
-
-    public void RunDestructor(ObjectInstance instance)
-    {
-        _inner.RunDestructor(instance);
-        if (ReferenceEquals(instance, _watchFor))
-        {
-            Console.WriteLine("  (simuliert: waehrend destruct() wird TakeTo auf das gerade zerstoerte Objekt aufgerufen)");
-            _transferSource.TakeTo(_watchFor, this);
-        }
-    }
-}
-
-/// <summary>Builds a generated native program for the tests: the program (C) with the C compiler that belongs to <c>cxx</c>, and - when it has natives in C++ -
-/// those with <c>cxx</c>, linked together. The files are <c>name.c</c> and <c>name_natives.cpp</c> in <c>dir</c> (next to the runtime files).</summary>
 static class NativeTestBuild
 {
     /// <summary>How long the program of a case of the group native may run (FIRE_TEST_CASE_TIMEOUT in seconds; default 20 minutes: with ASan, on a busy machine).</summary>
@@ -116,129 +84,8 @@ static class NativeTestBuild
         File.Move(temp, path, true);
     }
 
-    /// <summary>Writes the sources and returns the command lines, in order (each: the program, its arguments).</summary>
-    public static List<(string Tool, string Arguments)> Commands(string cxx, fire.Native.NativeSources sources, string dir, string name, string flags, string exe, string tail = "")
-    {
-        string cc = fire.Native.ToolchainDef.CCompilerFor(cxx);
-        var commands = new List<(string, string)>();
-        if (sources.Units != null)
-        {
-            // a split program (FIRE_SPLIT=1, docs/spec/NATIVE_SPLIT.md): its units in a folder of their own (each includes fire_program.h next to it), every unit to an
-            // object file (through ccache when it is there), then linked - by the C++ compiler when there are natives in C++
-            string unitDir = Path.Combine(dir, ContentName(string.Concat(sources.Units.Select(u => u.Name + "\n" + u.Text)), cc + " " + flags));
-            Use(dir, name, unitDir);
-            Directory.CreateDirectory(unitDir);
-            var objects = new List<string>();
-            foreach (var unit in sources.Units)
-            {
-                WriteAtomically(Path.Combine(unitDir, unit.Name), unit.Text);
-                if (unit.Kind == fire.Native.SplitUnitKind.Header) continue;
-                string obj = Path.Combine(dir, name + "_" + Path.GetFileNameWithoutExtension(unit.Name) + ".o");
-                objects.Add(obj);
-                string compile = $"-std=c11 {flags} -c \"{Path.Combine(unitDir, unit.Name)}\" -I\"{dir}\" -o \"{obj}\"";
-                commands.Add(Ccache != null ? (Ccache, cc + " " + compile) : (cc, compile));
-            }
-            string objs = string.Join(" ", objects.Select(o => $"\"{o}\""));
-            if (sources.Natives == null) { commands.Add((cc, $"{flags} {objs} -o \"{exe}\"{tail} -lm")); return commands; }
-            string nFile = Path.Combine(unitDir, "fire_natives.cpp");
-            WriteAtomically(nFile, sources.Natives);
-            commands.Add((cxx, $"-std=c++17 {flags} \"{nFile}\" {objs} -I\"{dir}\" -o \"{exe}\"{tail}"));
-            return commands;
-        }
-        if (Ccache != null)
-        {
-            // with the cache: every unit compiled on its own (-c, through ccache), then linked
-            string cName = ContentName(sources.Program, cc + " " + flags);
-            string cFile = Path.Combine(dir, cName + ".c");
-            Use(dir, name, cFile);
-            WriteAtomically(cFile, sources.Program);
-            string cObj = Path.Combine(dir, name + ".o");
-            commands.Add((Ccache, $"{cc} -std=c11 {flags} -c \"{cFile}\" -I\"{dir}\" -o \"{cObj}\""));
-            if (sources.Natives == null)
-            {
-                commands.Add((cc, $"{flags} \"{cObj}\" -o \"{exe}\"{tail} -lm"));
-                return commands;
-            }
-            string nName = ContentName(sources.Natives, cxx + " " + flags);
-            string nFile = Path.Combine(dir, nName + "_natives.cpp");
-            Use(dir, name, nFile);
-            WriteAtomically(nFile, sources.Natives);
-            string nObj = Path.Combine(dir, name + "_natives.o");
-            commands.Add((Ccache, $"{cxx} -std=c++17 {flags} -c \"{nFile}\" -I\"{dir}\" -o \"{nObj}\""));
-            commands.Add((cxx, $"{flags} \"{nObj}\" \"{cObj}\" -o \"{exe}\"{tail} -lm"));
-            return commands;
-        }
-        {
-            string cFile = Path.Combine(dir, name + ".c");
-            File.WriteAllText(cFile, sources.Program);
-            if (sources.Natives == null)
-            {
-                commands.Add((cc, $"-std=c11 {flags} \"{cFile}\" -I\"{dir}\" -o \"{exe}\"{tail} -lm"));
-                return commands;
-            }
-            string nativesFile = Path.Combine(dir, name + "_natives.cpp");
-            File.WriteAllText(nativesFile, sources.Natives);
-            string obj = Path.Combine(dir, name + ".o");
-            commands.Add((cc, $"-std=c11 {flags} -c \"{cFile}\" -I\"{dir}\" -o \"{obj}\""));
-            commands.Add((cxx, $"-std=c++17 {flags} \"{nativesFile}\" \"{obj}\" -I\"{dir}\" -o \"{exe}\"{tail}"));
-            return commands;
-        }
-    }
 
-    /// <summary>Writes the C of a program for one command that compiles and links it: `name.c` in <paramref name="dir"/>, or - a split program (FIRE_SPLIT=1) - its units in
-    /// `name.split/`; the files to put on the command line, quoted (the runtime files are in <paramref name="dir"/>: -I it).</summary>
-    public static string SourceFiles(fire.Native.NativeSources sources, string dir, string name)
-    {
-        if (sources.Units == null)
-        {
-            string cFile = Path.Combine(dir, name + ".c");
-            File.WriteAllText(cFile, sources.Program);
-            return $"\"{cFile}\"";
-        }
-        string unitDir = Path.Combine(dir, name + ".split");
-        Directory.CreateDirectory(unitDir);
-        foreach (var unit in sources.Units) File.WriteAllText(Path.Combine(unitDir, unit.Name), unit.Text);
-        return string.Join(" ", sources.Units.Where(u => u.Kind != fire.Native.SplitUnitKind.Header).Select(u => $"\"{Path.Combine(unitDir, u.Name)}\""));
-    }
-
-    /// <summary>The program with <paramref name="text"/> after its C (a split program: after unit 0, `fire_program.c`).</summary>
-    public static fire.Native.NativeSources Append(fire.Native.NativeSources sources, string text) => sources with
-    {
-        Program = sources.Program + text,
-        Units = sources.Units?.Select(u => u.Kind == fire.Native.SplitUnitKind.Runtime ? u with { Text = u.Text + text } : u).ToList(),
-    };
-
-    /// <summary>The text of every C file of a program (a split one: its units) with its name.</summary>
-    public static IEnumerable<(string Name, string Text)> Texts(fire.Native.NativeSources sources) =>
-        sources.Units?.Select(u => (u.Name, u.Text)) ?? new[] { (fire.Native.CppGenerator.ProgramFileName, sources.Program) };
-
-    /// <summary>Runs the commands of <see cref="Commands"/> with <paramref name="run"/> (tool, arguments -> output, exit code); the output of all, the exit code of the first that failed.
-    /// (each command as one of the compiler processes that <see cref="TestJobs.Compiler"/> allows at a time)</summary>
-    static readonly System.Text.RegularExpressions.Regex ObjectOutput = new("-o \"([^\"]+\\.o)\"");
-
-    public static string Build(Func<string, string, (string Output, int Exit)> run, string cxx, fire.Native.NativeSources sources, string dir, string name, string flags, string exe, out int exit, string tail = "")
-    {
-        var output = new System.Text.StringBuilder();
-        exit = 0;
-        // (a full disk makes every build after it fail - wait for space first: TestDisk)
-        TestDisk.WaitForSpace(dir);
-        var commands = Commands(cxx, sources, dir, name, flags, exe, tail);
-        foreach (var (tool, arguments) in commands)
-        {
-            var (text, code) = TestJobs.Compiler(() => run(tool, arguments));
-            output.Append(text);
-            if ((exit = code) != 0) break;
-        }
-        // (the object files of this build go once it ran - hundreds of cases with sanitizers would fill the disk; FIRE_TESTS_KEEP=1 keeps them. Only the
-        // objects its own commands wrote, "-o x.o": no pattern that could take those of another build whose name starts the same)
-        if (!Keep)
-            foreach (var (_, arguments) in commands)
-                foreach (System.Text.RegularExpressions.Match m in ObjectOutput.Matches(arguments))
-                    try { File.Delete(m.Groups[1].Value); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        return output.ToString();
-    }
-
-    /// <summary>A program for <see cref="Build"/>: runs the tool in <paramref name="dir"/>.</summary>
+    /// <summary>A program: runs the tool in <paramref name="dir"/>.</summary>
     public static Func<string, string, (string, int)> In(string dir) => (tool, arguments) =>
     {
         using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments)
@@ -565,6 +412,10 @@ static class TestProgress
     /// <summary>The checks counted so far.</summary>
     public static int Count => Volatile.Read(ref _count);
 
+    static int _failures;
+    /// <summary>The checks that failed so far (their lines "FEHLER: ...").</summary>
+    public static int Failures => Volatile.Read(ref _failures);
+
     /// <summary>Puts the counting writer in front of the console and saves the count when the process ends.</summary>
     public static void Install()
     {
@@ -611,6 +462,7 @@ static class TestProgress
         else return null;
         if (status == "FEHLER: " && line.Length > 8 && char.IsDigit(line[8]) && line.EndsWith("fehlgeschlagen.", StringComparison.Ordinal)) return null;
         int n = Interlocked.Increment(ref _count);
+        if (status == "FEHLER: ") Interlocked.Increment(ref _failures);
         return $"{status}[{n}/{_total}] {line.Substring(status.Length)}";
     }
 

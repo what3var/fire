@@ -5,8 +5,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using fire.Native;
-
+using fire.Tooling;
 namespace fire.Editor.Setup
 {
     /// <summary>The real steps of the setup: the portable toolchains (<see cref="ToolchainSetup"/>, <see cref="WatcomSetup"/>), a model of ai.models, the standard packages
@@ -80,7 +79,7 @@ namespace fire.Editor.Setup
         /// or does what the start could not, e.g. now that there is a toolchain). The progress is the one of the status bar: "Installing the package io (3/40)".</summary>
         public static ISetupStep Packages(string title, Func<Action<string>, IReadOnlyList<string>>? install = null, WaitHandle? startup = null) => new SetupStep(title, ctx =>
         {
-            install ??= log => fire.Compiler.StandardSources.EnsureInstalled(log);
+            install ??= log => fire.Tooling.StandardSources.EnsureInstalled(log);
             ctx.Phase(startup != null ? "Waiting for the installation that spark started" : "Checking the standard packages");
             var problems = new List<string>();
             void Changed()

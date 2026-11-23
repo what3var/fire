@@ -10,7 +10,7 @@ using Avalonia.Threading;
 using AvaloniaEdit.CodeCompletion;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
-using fire.Compiler;
+using fire.Tooling;
 using fire.UI.Markup;
 
 namespace fire.Editor

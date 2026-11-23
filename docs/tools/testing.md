@@ -135,59 +135,41 @@ Stop ends the run at the next instruction of the VM; the test that was running i
 not run at the same time - stop the program first.
 
 
-## The test suite of the compiler (`src/fire.Testing`)
+## The tests of fire itself
 
-The compiler, the VM, the native backend and the libraries are checked by `fire.Testing` (`dotnet build -c Release`, then `dotnet bin/Release/net10.0/linux-x64/fire.Testing.dll`).
-The programs of the checks run in `fire`, the VM in C (`CVmTest`, `TestCasesVm`); the checks of the C# VM itself went with it at milestone M1
-([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md)).
-A full run takes a while, most of it the native backend: every case is built with gcc and AddressSanitizer/UBSan and compared with the VM (in parallel, see below). To check a change
-quickly:
+Since milestone M3 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md) forge and the VM are C programs and their tests are **data**: the cases of `tests/cases`
+(below), run by **`forge conformance`** without .NET. The checks in C# that tested the C# forge - the native backend against the VM with its sanitizer runs,
+windows, FreeRTOS and Wine, the linkages, the C# frontend (`DiagnosticTests`, `TypeTests`, `SyntaxTests`), the program file, the stack traces, the packer,
+the registry of the C# ember, BIOS under QEMU, scene3d, the AI programs - went with it; what of them is not a case yet is listed in
+[FORGE_C.md](../spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) ("Was in fire.Testing bleibt").
 
-| Switch | Effect |
+### The test program of spark (`src/fire.Testing`)
+
+`fire.Testing` checks spark and the C# libraries it keeps (`fire.Tooling`, `fire.Project`, `fire.Git`, `fire.Imaging`, `fire.UI.Markup`): its build puts forge,
+the VM, `native/`, `Source/` and ember next to it (`src/ForgeDist.targets`; `FIRE_FORGE` names another forge), it installs the standard packages into a store
+of its own for the run (`forge install-standard`, `FIRE_PACKAGES`) and runs its groups - all of them, or one with `FIRE_TESTS_ONLY=<group>`:
+
+| Group | What it checks |
 |---|---|
-| `FIRE_TESTS_ONLY=<group>` | only one group: `native` (the native backend: cases against the VM, windows, FreeRTOS, toolchains), `ui` (the drawing of the UI library in `fire`, the reference of "UI nativ == VM"), `types`, `completion` (the completion of the editor: visibility, the type of `x.`, the order), `syntax`, `diagnostics`, `projects`, `registry` (ember against a package index on the web: a local HTTP server, checksums, yanked versions; seconds, no compiler), `testing`, `circuiteditor`, `scene3d`, `snippets`, `notes`, `explorer` (the filter, Sync and Show All Files of spark's solution explorer; seconds), `forgereport` (spark builds through forge: the report of `forge build --report json` written and read, spark's runner against a fake forge with Cancel, the real forge on a library; seconds), `cvmrun` (spark on the VM in C: Run/Debug as a child process `fire run x.fbc` - against a fake `fire` (command line, output, input, exit code, Stop, a program that does not connect) and with the real forge and `fire` (`forge bytecode --report json`, an overlay, an error, a console program, a window program without a screen, a run under the debugger: engine vm, scopes at the entry, a breakpoint, variables, a step, the end); seconds), `drivers` (the device drivers of the packages in spark's driver agent, as plugins and through `#import`), `debugger` (the debugger without a window: the debug target of `fire.Debugging` against a fake agent and spark's `DebugSession` on `fire`), `packer` (the packer - the VM in C with the program behind it (`forge build --engine vm`: the payload, end to end, the cache of the libraries, `#intwidth 32`, `fire run`/`help`/exit codes) - and the wasm target: with Emscripten on the PATH a program under node and a window in headless Chromium) |
-| ESP32 | with `IDF_PATH` set (ESP-IDF) the native group builds a program for the ESP32 and runs it in Espressif's QEMU (`FIRE_TESTS_FILTER="ESP32 (ESP-IDF"`; the project is kept in ~/.cache/fire-tests/esp32) |
-| `FIRE_TESTS_FILTER=<text>` | of the checks listed as cases (the native cases, the native window and device cases, the UI checks) only those whose name contains the text; several texts separated by `\|`, case does not matter |
-| `FIRE_S3D_GPU` | the test program sets it to `cpu` unless it is set already: the scene3d hardware checks then draw on a Vulkan device that is a CPU (lavapipe) and compare with software, instead of only seeing the fallback. Set it to `0` to test the fallback (no GPU at all). Without `XDG_RUNTIME_DIR` the program makes a private one for Vulkan |
-| Native debugger | the native group drives debug builds over the debug protocol (`NativeDebugTests.cs`, [Debug-Protokoll nativer Programme](../spec/NATIVE_DEBUG_PROTOCOL.md)) and compares them with the VM: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="Native-Debugger"` (gdb, clang, tcc, MinGW and Wine are used when they are there); the framed transports: `"Native-Debugger: stdio"`, `"Native-Debugger: FreeRTOS"` (the simulator), and with `IDF_PATH` an ESP32 debug build on QEMU: `"Native-Debugger: ESP32"` (project in ~/.cache/fire-tests/esp32-dbg; the first build of ESP-IDF takes minutes) |
-| `FIRE_TESTS_ONLY=linkage` | (`FIRE_TESTS_FILTER=plugin`: only the fire plugins, `=plugindebug`: only debugging a plugin, `=library`: only `Library.Load`/`Get`, `=vmgraphics`: only the VM's library of graphics and windows - built for Windows with MinGW, for Linux with `--no-undefined`, `new Window` without a display throws why; with `FIRE_TEST_WIN_FORGE=<folder with forge.exe for win-x64>` the VM of Windows opens a ui window under Wine, with release:) linkage "static" of native builds (ROADMAP 9): a program with several packages from the cache, the second build without a compile of a library, a project whose library changes, the interface files, the classes of the program and of the libraries meeting (every module serves its own, the others through the tables of the runtime) and the size of the program's C, the stripping levels 2 and 3 with static libraries (the program strips like with source, a library keeps its API), a breakpoint in a static library, TinyCC, MinGW/Wine when there, `ember cache clean` |
-| `FIRE_MODULES=1` | every native build is generated from modules in one file (the libraries as linkage "static" would build them, ROADMAP 9 phase A): run the native group with it to check that the modules behave like the whole program; `FIRE_MODULES_LOG=<file>` lists the programs that could not be split |
-| `FIRE_SPLIT=1` | every native build is several translation units (docs/spec/NATIVE_SPLIT.md), the tests compile each unit and link them: run the native group with it to check that the units behave like the one file; `FIRE_SPLIT_UNIT_KB=<n>` makes the units small (every border crossed); `FIRE_SPLIT=0` keeps one file even where `"split": "auto"` would split. Checks that look at the form of the C in `NativeSources.Program` (now only unit 0) may differ |
-| `FIRE_TEST_NO_NATIVE=1` | everything but the native backend |
-| `FIRE_TEST_CCACHE=0` | no compiler cache |
-| `FIRE_TEST_JOBS=<n>` | how many native builds and test programs at a time (default: the cores of the machine); `1` builds and runs one case after the other |
-| `FIRE_TEST_CASE_TIMEOUT=<s>` | how long the program of a case of the group `native` may run (default 1200 s, room for ASan on a busy machine); one that does not end fails with `(Zeitueberschreitung nach N s)` and the stacks of its threads (gdb, when the machine has it) instead of holding a worker - and the whole group - for ever. Its stdin is closed, as in the VM's run |
-| `FIRE_TEST_SANITIZE=0` | the native cases without AddressSanitizer/UBSan (by default they run under them when the compiler has them): the paths the runtime keeps for the sanitizers' own checks then run - the pool of small objects (fire_rt.h objMemAlloc) instead of malloc per object |
-| `FIRE_TEST_OPT=<flags>` | the optimization of the native test builds (default `-O1`; e.g. `-O2` for a run that looks for the warnings only `-O2` finds) |
-| `FIRE_TESTS_RESUME=<dir>` | record every check as it finishes and skip what passed before with the same key: see [Resume and shards](#resume-and-shards) (`1`: `~/.cache/fire-tests/resume`) |
-| `FIRE_TESTS_SHARD=<i>/<n>` | only part i of n of the units (cases, debugger cases, window cases, groups): see [Resume and shards](#resume-and-shards) |
-| `FIRE_TESTS_KEEP=1` | the native group keeps the programs, objects and sources of every case in its temporary folder (by default those of a passed case are deleted as soon as it passed, a failed one keeps them) |
-| `FIRE_TESTS_MIN_FREE_MB=<n>` | before a native build, the free space of the temporary folder's disk is checked (default 1024 MB, `0`: no check): below it the builds wait (`[ disk ]` lines) for up to `FIRE_TESTS_DISK_WAIT` seconds (default 600) for space, then go on with a warning instead of failing one after the other |
-| `FIRE_TESTS_ONLY=resume` | the checks of the key and the records of resume and shards (a second, nothing built) |
+| `resume` | the key and the records of resume and shards (a second, nothing built) |
+| `startproject` | the start project of a solution, the order of Build Solution and Clean |
+| `explorer` | the filter, Sync and Show All Files of the solution explorer (the folders of a project: forge compiles it) |
+| `forgereport` | spark's runner of `forge build --report json`: the report written and read, a fake forge with Cancel, the real forge on a library |
+| `editorchecks` | how spark checks documents in the background (debounce, cancellation, stale results, the gate) and the protocol of `forge serve` |
+| `cvmrun` | spark's Run and Debug in `fire`: a fake `fire`, then forge and `fire` (an overlay, an error, a console and a window program, the debugger) |
+| `previews` | the design view of markup and the block preview, drawn by programs forge compiles and `fire` runs |
+| `projects` | projects, solutions, templates, samples, packing a library and installing it (forge and ember), the analysis of a project's documents (forge serve) |
+| `serve`, `completion` | the language services over `forge serve`: diagnostics of cases and of projects (what each must say), the completion (visibility, the type of `x.`, the order) |
+| `notes`, `git`, `circuiteditor`, `blocks`, `mesh`, `setupwizard`, `mcpserver`, `aimodels`, `image` | the notes, git and the git panel, the circuit editor (its view in `fire`), the block and mesh models, the setup wizard (its downloads are `forge toolchain-setup`), the MCP server, the model catalog, the image codecs |
+| `debugger` | spark's `DebugSession` against a fake agent and on programs in `fire` (and natively built by forge, when there is a C compiler) |
+| `drivers` | the device drivers of the installed packages in spark's driver agent (compiled by forge) |
 
-The window cases of the native group (filter `Fenster`) run every window program with fire's own display without a screen (`FIRE_DISPLAY=headless`) and on Wayland (`weston`); the
-clipboard of X11 needs `xvfb-run` (one program, two programs, the VM as the other one), the Windows cases MinGW and Wine; the VM's Windows clipboard a `dotnet publish -r win-x64` (the runtime
-pack for win-x64 comes from NuGet once). Drag-out on Wayland needs `weston` (it runs with its X11 backend under Xvfb). A case whose tools are missing is skipped with a note.
-
-When `ccache` is installed, the native builds of the tests go through it: a case whose generated program did not change is not compiled again (a run of the native group
-with an unchanged program takes seconds per case instead of a minute). Example: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="Drop|Compression:"` runs the native checks of
-two topics in under a minute.
-
-**In parallel.** The native group builds and runs its cases on all cores (`FIRE_TEST_JOBS`). First the VM runs all cases, one after the other and alone (the
-precision of `float` and the handlers of `terminate` are process-wide while a program runs, and some thread cases depend on timing that a machine busy with
-compilers upsets); then the C of the cases is generated in parallel and handed to workers that compile (at most `FIRE_TEST_JOBS` compilers at a time - with
-AddressSanitizer a compiler needs hundreds of MB; the biggest program first, a case with the ui library compiles for minutes) and run the programs.
-The parts after that - the debugger, the devices, the windows with the UI, the cases under Wine, FreeRTOS - run at the same time, too. The output does not change: every
-part prints its checks in the order of its cases, a part's lines are held back until the parts before it are done, and `OK:`/`FEHLER:` come in the same order as with
-`FIRE_TEST_JOBS=1`. What cannot run at the same time takes turns: the cases under Wine share one prefix, every `xvfb-run` gets an X server of its own (`-n`, a number
-far from those of `-a`), a test program gets its variables (`FIRE_DISPLAY`, `LSAN_OPTIONS`) per process. The cases are built with `-O1` (`FIRE_TEST_OPT`) - with
-the sanitizers 20-30 % less compile time than `-O2` (a case of 1.3 MB C: 33 s instead of 48 s) and the same memory errors; a few warnings of gcc appear only with
-`-O2` (`FIRE_TEST_OPT=-O2` looks for them), the checks that are about `-O2` itself name it.
+`FIRE_TESTS_RESUME`, `FIRE_TESTS_SHARD`, `FIRE_TESTS_FILTER` (where a group reads it) and the progress lines are as they were (below).
 
 ### The cases as files (`tests/cases`)
 
-The cases "native == VM" - a program that must print the same in the VM and as a native program - are files, not text in the test program
-(`TestCases.cs`; [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md), L5: the same files will check the VM and the compiler in C):
+The cases "native == VM" - a program that must print the same in the VM and as a native program - are files ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md), L5:
+the same files check the VM and the compiler in C; `forge conformance` runs them):
 
 ```
 tests/cases/native/0420-records-gleichheit-nach-inhalt.fire        the source, exactly; then lines about the case
@@ -207,8 +189,8 @@ prints what the VM printed, and - as before - the special runs (sanitizers, Free
 **A new case:** write `<number>-<name>.fire` with its title line, then record what the VM prints and look at it before you check it in:
 
 ```
-FIRE_TESTS_ONLY=native FIRE_TESTS_UPDATE=1 dotnet fire.Testing.dll     # writes the .expected (and .unhandled) of new and changed cases, runs nothing else
-FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="<title>" dotnet fire.Testing.dll
+tests/tools/cases.py record <forge> tests/cases/native       # writes what forge and the VM say of the cases (M3: the C# test program is gone)
+forge conformance native --filter "<title>" --engine all
 ```
 
 A case without an expected output is a failed check that says so, and so is a case the compiler refuses (`WIRD NICHT UEBERSETZT: <errors>`).

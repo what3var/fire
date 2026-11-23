@@ -34,7 +34,7 @@ namespace fire.Editor.Setup
                         ctx.Log($"{url} -> {part}");
                         try
                         {
-                            fire.Native.DownloadTransfer.Fetch(http, url, part, (done, total) => ctx.Bytes(done, total > 0 ? total : model.Size), null, ctx.Token, resume: true);
+                            fire.Tooling.DownloadTransfer.Fetch(http, url, part, (done, total) => ctx.Bytes(done, total > 0 ? total : model.Size), null, ctx.Token, resume: true);
                             break;
                         }
                         catch (Exception ex) when (!ctx.Token.IsCancellationRequested && attempt < attempts && ex is HttpRequestException or IOException or TimeoutException

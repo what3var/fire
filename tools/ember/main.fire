@@ -6,7 +6,7 @@ class Ember {
     static string Usage() {
         return "ember - the package manager of fire\n"
             + "\n"
-            + "  ember find [Name]              search the package sources (part of a name or description; no name: everything)\n"
+            + "  ember find [Name] [--json]     search the package sources (part of a name or description; no name: everything)\n"
             + "  ember install Name[@Version]   install a package (with what it depends on); also: ember install path\\to\\package.fpk\n"
             + "  ember install github:owner/repo[@ref] [--name N] [--force]\n"
             + "                                 straight from a GitHub repository: the newest release, a tag (@v1.2.0), a branch or a commit (built from the source);\n"
@@ -14,7 +14,8 @@ class Ember {
             + "  ember update [Name|github:owner/repo]\n"
             + "                                 move installed packages to their newest version (from GitHub: the newest release; pinned tags and commits stay unless named)\n"
             + "  ember remove Name              remove an installed package (also: ember remove github:owner/repo)\n"
-            + "  ember list                     the installed packages (and where those from GitHub came from)\n"
+            + "  ember list [--json]            the installed packages (and where those from GitHub came from)\n"
+            + "                                 --json: one JSON document on the output instead of the text (for tools: spark's Package Manager)\n"
             + "  ember sources                  the package sources in use (ember.json next to the compiler, or the defaults) and the GitHub API\n"
             + "  ember create File.json         write a package description with example values (and the example files next to it)\n"
             + "  ember blank File.json          write a package description with all fields empty\n"
@@ -50,11 +51,94 @@ class Ember {
         }
     }
 
+    /// <summary>`--json` among the arguments (it is taken out of them).</summary>
+    static bool TakeJson(List<string> a) {
+        bool json = false
+        for (int i = a.Count - 1; i >= 0; i--) {
+            if (a[i] == "--json") {
+                json = true
+                a.RemoveAt(i)
+            }
+        }
+        return json
+    }
+
+    static JsonNode Text(string s) {
+        if (s == undefined) { return JsonNode.MakeNull() }
+        return JsonNode.MakeText(s)
+    }
+
+    /// <summary>`ember find --json`: {"packages":[{name, latest, installed, author, description, license, homepage, source, versions:[{version, yanked}]}], "warnings":[...]}.</summary>
+    static string FindJson(PackageManagerService service, List<PackageListing> found, List<string> warnings) {
+        var list = JsonNode.MakeArray()
+        foreach (l in found) {
+            var o = JsonNode.MakeObject()
+            o.Put("name", Ember.Text(l.name))
+            var latest = l.Latest()
+            string version = ""
+            if (latest != undefined) { version = latest.version }
+            o.Put("latest", Ember.Text(version))
+            string installed = ""
+            var p = service.store.Find(l.name)
+            if (p != undefined) { installed = p.Version }
+            o.Put("installed", Ember.Text(installed))
+            o.Put("author", Ember.Text(l.author))
+            o.Put("description", Ember.Text(l.description))
+            o.Put("license", Ember.Text(l.license))
+            o.Put("homepage", Ember.Text(l.homepage))
+            o.Put("source", Ember.Text(l.source))
+            var versions = JsonNode.MakeArray()
+            foreach (v in l.versions) {
+                var vo = JsonNode.MakeObject()
+                vo.Put("version", Ember.Text(v.version))
+                vo.Put("yanked", JsonNode.MakeBool(v.yanked))
+                versions.Push(take vo)
+            }
+            o.Put("versions", take versions)
+            list.Push(take o)
+        }
+        var root = JsonNode.MakeObject()
+        root.Put("packages", take list)
+        root.Put("warnings", JsonNode.Strings(warnings))
+        return root.ToJson()
+    }
+
+    /// <summary>`ember list --json`: [{name, version, author, description, imports:[...], origin, verified}] (origin, verified: of a package from GitHub, else null).</summary>
+    static string ListJson(PackageStore store) {
+        var locked = PackageLock.Load(store)
+        var list = JsonNode.MakeArray()
+        foreach (p in store.Installed()) {
+            var o = JsonNode.MakeObject()
+            o.Put("name", Ember.Text(p.Name))
+            o.Put("version", Ember.Text(p.Version))
+            o.Put("author", Ember.Text(p.manifest.author))
+            o.Put("description", Ember.Text(p.manifest.description))
+            var imports = JsonNode.MakeArray()
+            foreach (i in p.manifest.imports) { imports.Push(Ember.Text(i.name)) }
+            o.Put("imports", take imports)
+            var e = locked.ForPackage(p.Name)
+            if (e != undefined) {
+                o.Put("origin", Ember.Text(e.Origin()))
+                o.Put("verified", Ember.Text(e.verified))
+            } else {
+                o.Put("origin", JsonNode.MakeNull())
+                o.Put("verified", JsonNode.MakeNull())
+            }
+            list.Push(take o)
+        }
+        return list.ToJson()
+    }
+
     static int Run(string command, List<string> a) {
         if (command == "find") {
+            bool json = Ember.TakeJson(a)
             var warnings = new List<string>()
             var service = new PackageManagerService()
             var found = service.Find(" ".Join(a), warnings)
+            if (json) {
+                Log.Line(Ember.FindJson(service, found, warnings))
+                return 0
+            }
             foreach (w in warnings) { Log.Error("ember: " + w) }
             if (found.Count == 0) {
                 Log.Line("Nothing found.")
@@ -138,6 +222,10 @@ class Ember {
             return 0
         }
         if (command == "list") {
+            if (Ember.TakeJson(a)) {
+                Log.Line(Ember.ListJson(PackageStore.Default()))
+                return 0
+            }
             var store = PackageStore.Default()
             var installed = store.Installed()
             if (installed.Count == 0) { Log.Line("No packages installed.") }

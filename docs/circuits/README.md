@@ -746,7 +746,7 @@ amp.rf.Resistance = 22kOhm      // the Resistor "rf"
 amp.Parameter("gain", 4)        // a value "gain*1k" follows
 ```
 
-The fields are set again whenever the schematic makes its parts anew (`OnBuilt()`, which a derived class can override too). `fire.Compiler biscuit Amp.biscuit` shows the script.
+The fields are set again whenever the schematic makes its parts anew (`OnBuilt()`, which a derived class can override too). `forge biscuit Amp.biscuit` shows the script.
 
 ### Inputs and outputs
 

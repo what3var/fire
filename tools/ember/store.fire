@@ -27,7 +27,12 @@ class PackageStore {
 
     construct(string root) { this.root = IO.Path.GetFullPath(root) }
 
-    static PackageStore Default() { return new PackageStore(Here.File("Packages")) }
+    /// <summary>The store next to the program, or FIRE_PACKAGES (as forge takes it: spark runs both with the store it uses).</summary>
+    static PackageStore Default() {
+        string env = Environment.Get("FIRE_PACKAGES")
+        if (env != undefined && env.Length > 0) { return new PackageStore(env) }
+        return new PackageStore(Here.File("Packages"))
+    }
 
     /// <summary>All installed packages (a folder whose package.json cannot be read is left out), by the name of their folder.</summary>
     List<InstalledPackage> Installed() {

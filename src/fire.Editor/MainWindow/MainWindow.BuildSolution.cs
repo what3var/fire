@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Interactivity;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Projects;
 
 namespace fire.Editor
@@ -76,19 +76,19 @@ namespace fire.Editor
         }
 
         /// <summary>The toolchains the programs of a Build Solution use (each asked for when it is missing, before forge runs).</summary>
-        private IEnumerable<fire.Native.ToolchainDef> SolutionToolchains(IEnumerable<LoadedProject> projects)
+        private IEnumerable<fire.Tooling.ToolchainDef> SolutionToolchains(IEnumerable<LoadedProject> projects)
         {
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var project in projects.Where(p => p.Project.Type != OutputType.Library))
             {
-                fire.Native.ToolchainDef? toolchain = null;
+                fire.Tooling.ToolchainDef? toolchain = null;
                 try
                 {
                     var settings = ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings);
                     var config = LoadNativeConfig(out _, project);
-                    toolchain = config.ResolveToolchain(config.ResolveTarget(_nativeTargetChoice ?? settings.Target), settings.Toolchain, fire.Native.ToolchainPurpose.Build);
+                    toolchain = config.ResolveToolchain(config.ResolveTarget(_nativeTargetChoice ?? settings.Target), settings.Toolchain, fire.Tooling.ToolchainPurpose.Build);
                 }
-                catch (fire.Native.NativeConfigException) { }   // (forge reports it)
+                catch (fire.Tooling.NativeConfigException) { }   // (forge reports it)
                 if (toolchain != null && seen.Add(toolchain.EffectiveKind + "|" + toolchain.EffectiveCompiler)) yield return toolchain;
             }
         }

@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Threading;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Projects;
 
 namespace fire.Editor
@@ -38,7 +38,7 @@ namespace fire.Editor
         }
 
         /// <summary>`-m` for the mode of the run.</summary>
-        private static string ForgeMode(Runtime.VmExecutionMode mode) => mode.ToString().ToUpperInvariant();
+        private static string ForgeMode(VmExecutionMode mode) => mode.ToString().ToUpperInvariant();
 
         /// <summary>Runs forge for <paramref name="job"/>: its log into the job's feed (the build log, the window), its progress into the job (the window, the status bar), its work
         /// without a window (the standard packages) into the status bar; the job's Cancel stops it. The overlays are removed afterwards.</summary>
@@ -65,15 +65,15 @@ namespace fire.Editor
 
         /// <summary>Before a native build: when its toolchain is not on this machine, the questions of spark (install, change, cancel) - forge asks nobody. Whatever the answer,
         /// forge builds then (with what was installed or chosen, or it reports that there is no compiler).</summary>
-        private static async Task EnsureToolchainAsync(fire.Native.ToolchainDef toolchain)
+        private static async Task EnsureToolchainAsync(fire.Tooling.ToolchainDef toolchain)
         {
             if (toolchain.EffectiveKind is "files" or "custom" or "esp-idf") return;
             bool there = await Task.Run(() =>
             {
-                try { return fire.Native.ToolchainDetector.Find(toolchain) != null || fire.Native.ToolchainSetup.Detect() != null; }
+                try { return fire.Tooling.ToolchainDetector.Find(toolchain) != null || fire.Tooling.ToolchainSetup.Detect() != null; }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception) { return true; }
             });
-            if (!there) await Task.Run(() => fire.Native.ToolchainProvider.Require(toolchain, "A native build translates the program to C and compiles it with a C toolchain."));
+            if (!there) await Task.Run(() => fire.Tooling.ToolchainProvider.Require(toolchain, "A native build translates the program to C and compiles it with a C toolchain."));
         }
 
         /// <summary>The errors of a failed build for its window: the errors of the compiler, else the lines of the log that say error (what the C compiler said), else its end.</summary>

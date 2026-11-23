@@ -10,8 +10,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
-using fire.Compiler;
-
+using fire.Tooling;
 namespace fire.Editor
 {
     /// <summary>
@@ -92,7 +91,7 @@ namespace fire.Editor
             {
                 byte[] f3dBytes;
                 try { f3dBytes = _f3d(); }
-                catch (Exception ex) { return (Frames: (List<byte[]>?)null, Error: CompileErrors.Describe(ex), Engine: "", CompileMs: 0.0, RunMs: 0.0); }
+                catch (Exception ex) { return (Frames: (List<byte[]>?)null, Error: ex.Message, Engine: "", CompileMs: 0.0, RunMs: 0.0); }
                 return BlockPreview.RenderFrames(f3dBytes, _w, _h, _d, animation?.Name ?? "", fast, yaw, frames, cancel.Token);
             });
             if (request != _request) return;

@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using fire.Debugging;
-using fire.Runtime;
-using fire.Values;
+using fire.Tooling;
 
 /// <summary>
 /// The debugger without a window (FIRE_TESTS_ONLY=debugger; also part of the full run): the stepping loops of the VM (the run of F5), the
@@ -87,30 +86,20 @@ static partial class DebuggerTests
         }
 
         {
-            // the fire compiler on a thread of the pool (forge does it so for spark) reports its steps in order
-            var steps = new List<fire.Native.BuildProgress>();
-            System.Threading.Tasks.Task.Run(() =>
-            {
-                using var use = fire.Native.BuildMonitor.Use(new fire.Native.BuildMonitor(default, p => steps.Add(p)));
-                new fire.Compiler.Linker().CompileAndLink(new[] { TargetScript }, null, null, VmExecutionMode.Debug, null);
-            }).Wait();
-            Check(steps.Count > 0 && steps.All(x => x.Phase == fire.Native.BuildPhase.CompileFire && x.Total == 4) && steps.Select(x => x.Done).SequenceEqual(new[] { 0, 1, 2, 3 }),
-                "der fire-Compiler meldet seine Schritte in Reihenfolge (0..3 von 4)", string.Join(" | ", steps.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
-
             // spark's build log: every line of a build (its phases, the commands, the compiler's output, the errors) reaches the build log panel as it comes - the build
             // window only mirrors it, so it can be read and copied after the window is gone; the whole log of the result adds only what had not come yet
             var panel = new List<string>();
             var feed = new fire.Editor.BuildLogFeed(panel.Add);
-            var feedMonitor = new fire.Native.BuildMonitor(default, feed.Progress, feed.Line);
+            var feedMonitor = new fire.Tooling.BuildMonitor(default, feed.Progress, feed.Line);
             bool feedCompiled = false;
             System.Threading.Tasks.Task.Run(() =>
             {
-                using var use = fire.Native.BuildMonitor.Use(feedMonitor);
-                new fire.Compiler.Linker().CompileAndLink(new[] { TargetScript }, null, null, VmExecutionMode.Debug, null);
+                using var use = fire.Tooling.BuildMonitor.Use(feedMonitor);
+                for (int i = 0; i < 4; i++) fire.Tooling.BuildMonitor.Step(fire.Tooling.BuildPhase.CompileFire, "Compiling", i, 4);   // (the steps forge reports)
                 feedCompiled = true;
-                fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.PackageNatives, "Building the natives of packages");
-                fire.Native.BuildMonitor.LogLine("gcc.exe -std=c11 -O2 -shared wrapper.c -o fire_gfx.dll");
-                fire.Native.BuildMonitor.LogLine("wrapper.c:(.text+0x2c93c): undefined reference to `className'");
+                fire.Tooling.BuildMonitor.Step(fire.Tooling.BuildPhase.PackageNatives, "Building the natives of packages");
+                fire.Tooling.BuildMonitor.LogLine("gcc.exe -std=c11 -O2 -shared wrapper.c -o fire_gfx.dll");
+                fire.Tooling.BuildMonitor.LogLine("wrapper.c:(.text+0x2c93c): undefined reference to `className'");
             }).Wait();
             var drained = feed.Drain();
             var rest = feed.Missing("gcc.exe -std=c11 -O2 -shared wrapper.c -o fire_gfx.dll\nwrapper.c:(.text+0x2c93c): undefined reference to `className'\nBuild failed.\n");

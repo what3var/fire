@@ -13,8 +13,7 @@ using Avalonia.Threading;
 using Dock.Model.Avalonia.Json;
 using Dock.Model.Controls;
 using Dock.Model.Core;
-using fire.Compiler;
-using fire.Compiler.Assembly;
+using fire.Tooling;
 using fire.Projects;
 using DockDocument = Dock.Model.Avalonia.Controls.Document;
 using DockTool = Dock.Model.Avalonia.Controls.Tool;
@@ -175,8 +174,8 @@ namespace fire.Editor
             if (ext == fire.Device.Manager.DeviceManager.PacketLog.FileExtension) return DocumentKind.PacketLog;
             if (ext == ".fxml") return DocumentKind.UiMarkup;
             if (ext == ".biscuit") return DocumentKind.Circuit;
-            if (ext == fire.Compiler.BlockModel.Extension) return DocumentKind.Blocks;
-            if (ext == fire.Compiler.MeshModel.Extension) return DocumentKind.Mesh;
+            if (ext == fire.Tooling.BlockModel.Extension) return DocumentKind.Blocks;
+            if (ext == fire.Tooling.MeshModel.Extension) return DocumentKind.Mesh;
             if (ext == ".fdata") return DocumentKind.DataModel;
             if (ImageExtensions.Contains(ext)) return DocumentKind.Image;
             if (TextExtensions.Contains(ext) || CppHighlighter.IsCppFile(path)) return DocumentKind.Text;
@@ -188,7 +187,7 @@ namespace fire.Editor
         {
             InitializeComponent();
             EditorTiming.StartWatchdog();
-            fire.Package.Manager.PackageStore.RecheckInterval = TimeSpan.FromSeconds(1);   // (the analyses ask the store for every #import: the package folders are looked at once a second)
+            fire.Projects.PackageStore.RecheckInterval = TimeSpan.FromSeconds(1);   // (the analyses ask the store for every #import: the package folders are looked at once a second)
             Opened += (_, _) =>
             {
                 UpdateRunButtons();   // (Stop is grey while nothing runs)
@@ -341,7 +340,7 @@ namespace fire.Editor
             _ = ShowWelcomeAfterSplash(!fromCommandLine && _settings.ShowWelcome);
             // the MCP server for AI tools, when the user switched it (or the assistant) on
             StartMcpServerIfWanted();
-            fire.Native.BackgroundWork.Changed += () => Dispatcher.UIThread.Post(UpdateWorkStatus);   // (packages built while nothing else shows it)
+            fire.Tooling.BackgroundWork.Changed += () => Dispatcher.UIThread.Post(UpdateWorkStatus);   // (packages built while nothing else shows it)
             UpdateWorkStatus();
             StartAssistantIfWanted();
         }
@@ -1136,7 +1135,6 @@ namespace fire.Editor
                 Dispatcher.UIThread.Post(() =>
                 {
                     LiveDiagnostics.Invalidate();
-                    ScriptSymbolIndex.ForgetImports();
                     foreach (var doc in _documents) doc.Script?.Revalidate();
                     ScheduleAllProjectChecks(TimeSpan.FromSeconds(1));
                 });

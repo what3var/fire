@@ -38,7 +38,7 @@ namespace fire.Editor
         private readonly ListBox _references = new() { MinHeight = 180 };
         private readonly TextBlock _error = new() { Foreground = EditorTheme.ErrorMark, TextWrapping = TextWrapping.Wrap, IsVisible = false, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
         private readonly SettingsNav _nav = new();
-        private fire.Native.NativeConfig _native;
+        private fire.Tooling.NativeConfig _native;
 
         private string _name;
         private OutputType _type;
@@ -75,8 +75,8 @@ namespace fire.Editor
             _solutionNotes = workspace.Solution?.Notes;
             _startup = workspace.Solution?.Startup;
             _publish = p.Publish?.Clone() ?? new PublishSettings();
-            try { _native = fire.Native.NativeConfig.FindFor(project.FilePath); }
-            catch (fire.Native.NativeConfigException) { _native = new fire.Native.NativeConfig(); }
+            try { _native = fire.Tooling.NativeConfig.FindFor(project.FilePath); }
+            catch (fire.Tooling.NativeConfigException) { _native = new fire.Tooling.NativeConfig(); }
 
             Title = $"Project Properties - {project.Name}";
             Width = 900; Height = 640; MinWidth = 760; MinHeight = 520;
@@ -208,11 +208,11 @@ namespace fire.Editor
         }
 
         /// <summary>The compiler this machine uses for building or publishing when the project names none ("tcc (automatic, recommended)").</summary>
-        private static string MachineCompiler(fire.Native.ToolchainPurpose purpose)
+        private static string MachineCompiler(fire.Tooling.ToolchainPurpose purpose)
         {
             try
             {
-                var (toolchain, source) = fire.Native.MachineToolchains.Load().Resolve(purpose);
+                var (toolchain, source) = fire.Tooling.MachineToolchains.Load().Resolve(purpose);
                 return toolchain == null ? "none found" : $"{toolchain.EffectiveKind} ({source})";
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return "?"; }
@@ -445,17 +445,17 @@ namespace fire.Editor
             var s = _settings;
             string defaultTarget;
             try { defaultTarget = _native.ResolveTarget(_inherited?.Target).Name; }
-            catch (fire.Native.NativeConfigException) { defaultTarget = "?"; }
+            catch (fire.Tooling.NativeConfigException) { defaultTarget = "?"; }
             var target = Pick(_native.TargetNames, () => s.Target, v => s.Target = v, _inherited?.Target != null ? $"(from solution: {_inherited.Target})" : $"(default: {defaultTarget})");
-            string machineBuild = MachineCompiler(fire.Native.ToolchainPurpose.Build), machinePublish = MachineCompiler(fire.Native.ToolchainPurpose.Publish);
+            string machineBuild = MachineCompiler(fire.Tooling.ToolchainPurpose.Build), machinePublish = MachineCompiler(fire.Tooling.ToolchainPurpose.Publish);
             var toolchain = Pick(_native.ToolchainNames, () => s.Toolchain, v => s.Toolchain = v, _inherited?.Toolchain != null ? $"(from solution: {_inherited.Toolchain})"
                 : _native.Toolchain != null ? $"(fire.native.json: {_native.Toolchain})" : $"(the IDE's: Build {machineBuild}, Publish {machinePublish})");
             var edit = new Button { Content = "Edit targets and toolchains..." };
             edit.Click += async (_, _) =>
             {
                 if (EditToolchains == null || !await EditToolchains(this)) return;
-                try { _native = fire.Native.NativeConfig.FindFor(_project.FilePath); }   // the lists may have new names now
-                catch (fire.Native.NativeConfigException) { return; }
+                try { _native = fire.Tooling.NativeConfig.FindFor(_project.FilePath); }   // the lists may have new names now
+                catch (fire.Tooling.NativeConfigException) { return; }
                 Refill(target, _native.TargetNames, s.Target);
                 Refill(toolchain, _native.ToolchainNames, s.Toolchain);
             };
@@ -468,8 +468,8 @@ namespace fire.Editor
             var stripping = Choice(new[] { ("0 none", "0"), ("1 protected", "1"), ("2 methods", "2"), ("3 all", "3") }, () => Level(s.Stripping), v => s.Stripping = v,
                 strippingInh, strippingFrom, "default: 3");
             string defaultDirection;
-            try { defaultDirection = fire.Runtime.OptimizeFors.Name(_native.OptimizeValue ?? _native.ResolveTarget(s.Target ?? _inherited?.Target).Optimize); }
-            catch (fire.Native.NativeConfigException) { defaultDirection = "?"; }
+            try { defaultDirection = fire.Tooling.OptimizeFors.Name(_native.OptimizeValue ?? _native.ResolveTarget(s.Target ?? _inherited?.Target).Optimize); }
+            catch (fire.Tooling.NativeConfigException) { defaultDirection = "?"; }
             var optimize = Choice(new[] { ("speed", "speed"), ("size", "size") }, () => s.Optimize?.ToLowerInvariant(), v => s.Optimize = v,
                 InheritedOf(x => x.Optimize, null, out string optimizeFrom), optimizeFrom, $"default: {defaultDirection}");
             return Page("Native & Toolchain", "The target a native build runs on and the C++ toolchain that compiles it. Used when General > Runs as is Native.",
@@ -550,10 +550,10 @@ namespace fire.Editor
             var mode = Choice(new[] { ("Debug", "debug"), ("Release", "release"), ("Performance", "performance") }, () => pub.Mode, v => pub.Mode = v, "release", "default");
             string defaultTarget;
             try { defaultTarget = _native.ResolveTarget(_settings.Target ?? _inherited?.Target).Name; }
-            catch (fire.Native.NativeConfigException) { defaultTarget = "?"; }
+            catch (fire.Tooling.NativeConfigException) { defaultTarget = "?"; }
             var target = Pick(_native.TargetNames, () => pub.Target, v => pub.Target = v, $"(the project's target: {defaultTarget})");
             string? projectToolchain = _settings.Toolchain ?? _inherited?.Toolchain ?? _native.Toolchain;
-            string publishCompiler = projectToolchain != null ? $"the project's: {projectToolchain}" : $"the IDE's Publish compiler: {MachineCompiler(fire.Native.ToolchainPurpose.Publish)}";
+            string publishCompiler = projectToolchain != null ? $"the project's: {projectToolchain}" : $"the IDE's Publish compiler: {MachineCompiler(fire.Tooling.ToolchainPurpose.Publish)}";
             var publishToolchain = Pick(_native.ToolchainNames, () => pub.Toolchain, v => pub.Toolchain = v, $"({publishCompiler})");
             return Page("Publish", "Publish builds the program for handing out - again only when something changed - and copies it with what it needs into folders of your choice.",
                 Group("Publish", enabled,

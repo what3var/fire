@@ -52,7 +52,7 @@ In a project the `#include` is not needed: the `.fxml` files of a project are co
 same name next to it. The editor makes both when you add an **FXML Window** or **FXML View** (Add > New), and the solution explorer shows the markup as a node that opens: its
 first row **Designer** opens the markup editor (like a double click on the markup itself), below it is the code-behind.
 
-`#include` treats a file ending in `.fxml` like a script: it is translated on the fly, so there is nothing to keep in sync. `fire.Compiler ui Greeter.fxml [-o Greeter.fire]` writes the generated
+`#include` treats a file ending in `.fxml` like a script: it is translated on the fly, so there is nothing to keep in sync. `forge ui Greeter.fxml [-o Greeter.fire]` writes the generated
 script (to look at it, or to ship it), and the editor shows it too (*Generated script* in the markup editor). Mistakes in the markup are reported with the line of the markup file.
 
 ## Namespaces

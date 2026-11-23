@@ -19,8 +19,8 @@ namespace fire.Editor
         private static readonly FilePickerFileType PictureFiles = new("Pictures (PNG, BMP)") { Patterns = new[] { "*.png", "*.bmp" } };
         private static readonly FilePickerFileType UiMarkupFiles = new("UI markup") { Patterns = new[] { "*.fxml" } };
         private static readonly FilePickerFileType CircuitFiles = new("Circuit") { Patterns = new[] { "*.biscuit" } };
-        private static readonly FilePickerFileType BlockModelFiles = new("Block model") { Patterns = new[] { "*" + fire.Compiler.BlockModel.Extension } };
-        private static readonly FilePickerFileType MeshModelFiles = new("Mesh model") { Patterns = new[] { "*" + fire.Compiler.MeshModel.Extension } };
+        private static readonly FilePickerFileType BlockModelFiles = new("Block model") { Patterns = new[] { "*" + fire.Tooling.BlockModel.Extension } };
+        private static readonly FilePickerFileType MeshModelFiles = new("Mesh model") { Patterns = new[] { "*" + fire.Tooling.MeshModel.Extension } };
         private static readonly FilePickerFileType DataModelFiles = new("Data model") { Patterns = new[] { "*.fdata" } };
         private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.fire", "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*.biscuit", "*.fblocks", "*.fmesh", "*.fdata", "*.h", "*.hpp", "*.cpp", "*.c", "*.txt", "*.png", "*.bmp", "*.gif", "*.jpg", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
 
@@ -64,7 +64,7 @@ namespace fire.Editor
 
         /// <summary>File > New Block Model: an empty grid of 16 x 16 x 16 cells in the block editor (saved as .fblocks; docs/graphics/models.md).</summary>
         private void NewBlockModel_Click(object? sender, RoutedEventArgs e) =>
-            CreateDocument(DocumentKind.Blocks, fire.Compiler.BlockModel.CreateDefault().ToJson(), null, untitledName: "Untitled.fblocks");
+            CreateDocument(DocumentKind.Blocks, fire.Tooling.BlockModel.CreateDefault().ToJson(), null, untitledName: "Untitled.fblocks");
 
         /// <summary>File > New Data Model: an empty data model in the data designer (saved as .fdata; docs/data/designer.md).</summary>
         private void NewDataModel_Click(object? sender, RoutedEventArgs e) =>
@@ -72,7 +72,7 @@ namespace fire.Editor
 
         /// <summary>File > New Mesh Model: a box of a meter in the CAD editor (saved as .fmesh; docs/graphics/models.md).</summary>
         private void NewMeshModel_Click(object? sender, RoutedEventArgs e) =>
-            CreateDocument(DocumentKind.Mesh, fire.Compiler.MeshModel.CreateDefault().ToJson(), null, untitledName: "Untitled.fmesh");
+            CreateDocument(DocumentKind.Mesh, fire.Tooling.MeshModel.CreateDefault().ToJson(), null, untitledName: "Untitled.fmesh");
 
         /// <summary>File > New Pixel Image: asks for the size and the kind (palette of 256 colours, or true colour) and opens a new picture in the pixel editor.</summary>
         private async void NewPixelImage_Click(object? sender, RoutedEventArgs e)

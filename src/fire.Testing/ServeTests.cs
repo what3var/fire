@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using fire.Compiler;
+using fire.Tooling;
 using fire.Editor;
 
 /// <summary>The language services over the protocol (docs/spec/FORGE_SERVE.md; `forge-c serve`, native/forge/serve*.c, the client ServeClient): the scheduling of the
@@ -63,7 +63,6 @@ static class ServeTests
     private static string? Exe(out string error)
     {
         error = "";
-        if (ServeClient.InProcess) { error = "FIRE_SPARK_LANG=inproc"; return null; }
         return ServeClient.FindExecutable(out error);
     }
 
@@ -73,7 +72,7 @@ static class ServeTests
         Console.WriteLine("=== forge serve: Protokoll (Entprellen, latest wins, Versionen, Dokumente, Projekt) ===");
         _failures = 0;
         var exe = Exe(out string why);
-        if (exe == null) { Check("forge-c (native/forge) gefunden oder gebaut", ServeClient.InProcess, why); return _failures; }
+        if (exe == null) { Check("forge (native/forge) gefunden oder gebaut", false, why); return _failures; }
         Directory.CreateDirectory(Folder);
         try
         {
@@ -193,7 +192,7 @@ static class ServeTests
     private static void ProjectDiagnostics(string exe)
     {
         using var s = new Session(exe, 50);
-        void Compare(string title, fire.Projects.Workspace ws, string projectName, string document, Func<string, string?>? textOf = null)
+        void Compare(string title, fire.Projects.Workspace ws, string projectName, string document, Func<string, string?>? textOf = null, Func<List<Diagnostic>, bool>? expected = null)
         {
             var project = ws.FindByName(projectName)!;
             var plan = fire.Projects.BuildPlan.Create(ws, project, path => textOf?.Invoke(Path.GetFullPath(path)) ?? FileTexts.Read(path));
@@ -201,17 +200,15 @@ static class ServeTests
             var others = plan.Sources.Where(f => !fire.Projects.ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
             string text = textOf?.Invoke(self) ?? File.ReadAllText(document);
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            var own = LiveDiagnostics.AnalyzeInProject(text, others, Path.GetDirectoryName(document), plan);
-            long ownMs = watch.ElapsedMilliseconds;
-            watch.Restart();
-            var served = ServeDocuments.AnalyzeInProject(s.Client, self, text, Path.GetDirectoryName(document), plan, others) ?? new List<Diagnostic>();
+            var served = ServeDocuments.AnalyzeInProject(s.Client, self, text, Path.GetDirectoryName(document), plan, others);
             long servedMs = watch.ElapsedMilliseconds;
-            Check($"Diagnosen im Projekt: {title} ({own.Count} Diagnosen; eigener Prozess {ownMs} ms, Protokoll {servedMs} ms mit dem Senden des Projekts)", Show(served) == Show(own),
-                $"Protokoll: {Show(served)}\n  eigener Prozess: {Show(own)}");
+            // (M3: spark has no analysis of its own any more to compare with - what the protocol says is checked against what the case expects)
+            Check($"Diagnosen im Projekt: {title} ({served?.Count} Diagnosen; Protokoll {servedMs} ms mit dem Senden des Projekts)", served != null && (expected?.Invoke(served) ?? true),
+                $"Protokoll: {(served == null ? "keine Antwort" : Show(served))}");
             if (title.Contains(".firesln")) CompareCompletion(title, self, text, others.Concat(plan.Libraries.Values.Distinct().SelectMany(l => l.Sources.Select(f => (f.Path, f.Text)))).ToList());
         }
 
-        // the completion at the places of a real document (after `this.`, after the first `.` of a call, on a word being typed): the same list as in this process, and the time
+        // the completion at the places of a real document (after `this.`, after the first `.` of a call, on a word being typed): a list, and the time
         void CompareCompletion(string title, string path, string text, List<(string Path, string Text)> context)
         {
             var offsets = new List<int>();
@@ -223,30 +220,19 @@ static class ServeTests
             if (at >= 0) offsets.Add(at + 7);
             if (offsets.Count == 0) return;
             s.Client.Open(path + ".completion", 1, text, includes: context.Select(f => new ServeFile(f.Path, f.Text)));
-            long ownMs = 0, servedMs = 0, firstMs = -1;
-            bool same = true;
+            long servedMs = 0, firstMs = -1;
+            bool some = true;
             string detail = "";
             foreach (int offset in offsets)
             {
                 var watch = System.Diagnostics.Stopwatch.StartNew();
-                var index = ScriptSymbolIndex.Build(text, Array.Empty<string>(), context);
-                var own = CompletionEngine.GetSuggestions(text, offset, index).OrderByDescending(i => i.Score).ToList();
-                ownMs += watch.ElapsedMilliseconds;
-                watch.Restart();
                 var served = s.Client.Completion(path + ".completion", offset, out _);
                 if (firstMs < 0) firstMs = watch.ElapsedMilliseconds; else servedMs += watch.ElapsedMilliseconds;
-                static string Item(CompletionItem i) => $"{i.Text}|{i.Kind}|{i.Score:R}|{i.Detail}";
-                if (!own.Select(Item).SequenceEqual(served.Select(Item)))
-                {
-                    same = false;
-                    int k = 0;
-                    while (k < own.Count && k < served.Count && Item(own[k]) == Item(served[k])) k++;
-                    detail += $"\n  bei {offset}: ab {k}: Protokoll {string.Join(", ", served.Skip(k).Take(4).Select(Item))} / eigener Prozess {string.Join(", ", own.Skip(k).Take(4).Select(Item))}";
-                }
+                if (served.Count == 0) { some = false; detail += $"\n  bei {offset}: keine Vorschlaege"; }
             }
             s.Client.Close(path + ".completion");
-            Check($"Vervollstaendigung im Projekt: {title} an {offsets.Count} Stellen wie im eigenen Prozess (eigener Prozess mit dem Index {ownMs / offsets.Count} ms je Stelle; "
-                + $"Protokoll: die erste {firstMs} ms mit den Indizes der {context.Count} Dateien, dann {(offsets.Count > 1 ? servedMs / (offsets.Count - 1) : 0)} ms)", same, detail);
+            Check($"Vervollstaendigung im Projekt: {title} an {offsets.Count} Stellen (Protokoll: die erste {firstMs} ms mit den Indizes der {context.Count} Dateien, dann "
+                + $"{(offsets.Count > 1 ? servedMs / (offsets.Count - 1) : 0)} ms)", some, detail);
         }
 
         string root = Path.Combine(Folder, "solution");
@@ -265,11 +251,16 @@ static class ServeTests
         string main = Write("App/main.fire", "#import \"core.lib\"\n#import \"Util\"\nprint(core.lib.Greeter.Hello(\"x\"))\nprint(Util.Shout.Loud(\"y\"))\nprint(Helper.Twice(2))\nprint(Nope.X())\n");
         string helper = Write("App/helper.fire", "class Helper {\n    static int Twice(int x) { return x * 2 }\n}\n");
         var ws = fire.Projects.Workspace.Open(Write("All.firesln", """{ "name": "All", "projects": ["Core/Core.fireproj", "Util/Util.fireproj", "App/App.fireproj"] }"""));
-        Compare("Bibliotheken mit Namespace, eine andere Datei, ein Fehler", ws, "App", main);
-        Compare("ein Syntaxfehler in der Bibliothek", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, greeter) ? "class Greeter {\n    static string Hello(string name { return name }\n}\n" : null);
-        Compare("eine andere Datei kaputt: das Dokument allein", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, helper) ? "class Helper {\n    static int Twice(int x { return x }\n" : null);
-        Compare("unbekannter Import mit dem Hinweis auf die Bibliotheken", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, Path.GetFullPath(main)) ? "#import \"Core\"\nprint(1)\n" : null);
-        Compare("eine Bibliothek selbst (ihr eigener Import)", ws, "Util", Path.Combine(root, "Util/text.fire"));
+        static bool Errs(List<Diagnostic> d, Func<Diagnostic, bool> which) => d.Any(x => x.IsError && which(x));
+        Compare("Bibliotheken mit Namespace, eine andere Datei, ein Fehler", ws, "App", main, expected: d => Errs(d, x => x.Line == 6 && x.File == null && x.Message.Contains("Nope"))
+            && d.Count(x => x.IsError) == 1 && d.Any(x => x.IsWarning && x.File != null && fire.Projects.ProjectFiles.PathComparer.Equals(x.File, greeter)));
+        Compare("ein Syntaxfehler in der Bibliothek", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, greeter) ? "class Greeter {\n    static string Hello(string name { return name }\n}\n" : null,
+            d => Errs(d, x => x.File != null && fire.Projects.ProjectFiles.PathComparer.Equals(x.File, greeter) && x.Line == 2));
+        Compare("eine andere Datei kaputt: das Dokument allein", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, helper) ? "class Helper {\n    static int Twice(int x { return x }\n" : null,
+            d => Errs(d, x => x.Message.Contains("Nope")) && Errs(d, x => x.Message.Contains("Helper")));   // (the broken file is left out: Helper is unknown)
+        Compare("unbekannter Import mit dem Hinweis auf die Bibliotheken", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, Path.GetFullPath(main)) ? "#import \"Core\"\nprint(1)\n" : null,
+            d => Errs(d, x => x.Line == 1 && x.Message.Contains("Core")));
+        Compare("eine Bibliothek selbst (ihr eigener Import)", ws, "Util", Path.Combine(root, "Util/text.fire"), expected: d => d.Count(x => x.IsError) == 1 && d.Any(x => x.Line == 1 && x.Message.Contains("core.lib")));   // (Util does not reference Core)
 
         // a big solution of this machine (read only)
         string? solution = Environment.GetEnvironmentVariable("FIRE_SERVE_SOLUTION");
@@ -285,40 +276,41 @@ static class ServeTests
         }
     }
 
-    /// <summary>Everything (with the installed packages): the protocol, and the diagnostics compared with LiveDiagnostics.</summary>
+    /// <summary>Everything (with the installed packages): the protocol, and the diagnostics of cases (what each must say).</summary>
     public static int Run()
     {
         int failures = RunProtocol();
         _failures = 0;
-        Console.WriteLine("=== forge serve: Diagnosen wie LiveDiagnostics im eigenen Prozess ===");
+        Console.WriteLine("=== forge serve: Diagnosen ===");
         var exe = Exe(out string why);
-        if (exe == null) { Check("forge-c", ServeClient.InProcess, why); return failures + _failures; }
+        if (exe == null) { Check("forge", false, why); return failures + _failures; }
         try
         {
             using var s = new Session(exe, 50);
-            var cases = new (string Title, string Source)[]
+            // (M3: what each case must say - spark has no analysis of its own any more to compare with)
+            static int E(IEnumerable<Diagnostic> d) => d.Count(x => x.IsError);
+            var cases = new (string Title, string Source, Func<List<Diagnostic>, bool> Expected)[]
             {
-                ("ohne Fehler", "var a = 1\nprint(a)\n"),
-                ("unbekannter Name", "var a = missing + 1\n"),
-                ("Syntaxfehler", "class A {\n  int x = \n}\nvar = 3\n"),
-                ("Fehler des Resolvers, mehrere", "var a = b\nvar c = d\nnew Nope()\n"),
-                ("Typkonflikt (lax: Warnung)", "int n = \"text\"\n"),
-                ("strikt per #strict", "#strict\nint n = \"text\"\n"),
-                ("#import ui", "#import \"ui\"\nvar b = new UI.Button(\"x\")\nb.Text = \"y\"\nb.Nope()\n"),
-                ("unbekannter Import", "#import \"nothing_like_this\"\nvar a = 1\n"),
-                ("Fehler des Compilers", "class A { M() { break } }\n"),
-                ("Warnung des Codes", "warn 77: \"careful\"\nvar a = 1\n"),
+                ("ohne Fehler", "var a = 1\nprint(a)\n", d => E(d) == 0),
+                ("unbekannter Name", "var a = missing + 1\n", d => d.Any(x => x.IsError && x.Line == 1 && x.Message.Contains("missing"))),
+                ("Syntaxfehler", "class A {\n  int x = \n}\nvar = 3\n", d => E(d) == 1),
+                ("Fehler des Resolvers, mehrere", "var a = b\nvar c = d\nnew Nope()\n", d => E(d) >= 2),
+                ("Typkonflikt (lax: Warnung)", "int n = \"text\"\n", d => E(d) == 0 && d.Any(x => x.IsWarning)),
+                ("strikt per #strict", "#strict\nint n = \"text\"\n", d => E(d) >= 1),
+                ("#import ui", "#import \"ui\"\nvar b = new UI.Button(\"x\")\nb.Text = \"y\"\nb.Nope()\n", d => d.Any(x => x.Line == 4)),
+                ("unbekannter Import", "#import \"nothing_like_this\"\nvar a = 1\n", d => d.Any(x => x.IsError && x.Line == 1)),
+                ("Fehler des Compilers", "class A { M() { break } }\n", d => E(d) >= 1),
+                ("Warnung des Codes", "warn 77: \"careful\"\nvar a = 1\n", d => E(d) == 0 && d.Any(x => x.IsWarning && x.Code == "W77")),
             };
             int n = 0;
-            foreach (var (title, source) in cases)
+            foreach (var (title, source, expected) in cases)
             {
                 string path = Path.Combine(Folder, $"diag{++n}.fire");
                 File.WriteAllText(path, source);
                 s.Client.Open(path, 1, source);
                 var (_, served) = s.Client.Diagnose(path);
-                var own = LiveDiagnostics.Analyze(source, Folder);
                 string Show(IEnumerable<Diagnostic> l) => string.Join(" | ", l.Select(d => $"{d.Line}:{d.Severity}:{d.Code}:{d.Message}{(d.File != null ? " @" + d.File : "")}"));
-                Check($"Diagnosen: {title}", Show(served) == Show(own), $"Protokoll: {Show(served)}\n  eigener Prozess: {Show(own)}");
+                Check($"Diagnosen: {title}", expected(served), $"Protokoll: {Show(served)}");
                 s.Client.Close(path);
             }
         }

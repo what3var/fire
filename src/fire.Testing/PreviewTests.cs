@@ -1,7 +1,5 @@
 using System.Diagnostics;
-using fire.Compiler;
-
-
+using fire.Tooling;
 /// <summary>
 /// spark's previews in `fire` (docs/spec/VM_C.md, "spark auf der C-VM", M1 (4)): the design view of markup (UiPreview: its window on the host's display file,
 /// FIRE_DISPLAY_SHM; the places of the elements as print) and the preview of block models (BlockPreview.RenderFrames: scene3d writes PNGs) run as a child

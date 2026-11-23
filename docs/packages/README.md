@@ -10,8 +10,8 @@
 fire can import more than the libraries that come with the compiler (`graphics`, `io`, `time`, ...): a **package** brings one or more imports of its own, for example the
 interface to a sensor, a protocol or an operating system API. `#import "name"` finds the imports of the installed packages like the built-in ones.
 
-`ember` is the package manager (the library `fire.Package.Manager`, used by fire.Native and fire.Project, and the command line program `ember` in `src/fire.Ember`). The editor has a small window for it
-(*Tools > Package Manager (ember)...*).
+`ember` is the package manager (a fire program, `tools/ember`; [its command line](../tools/ember.md)). The editor has a small window for it
+(*Tools > Package Manager (ember)...*) that runs it.
 
 ## Using packages
 
@@ -206,9 +206,10 @@ ember cache clean    empty it
 
 ## Where it is in the code
 
-* `src/fire.Package.Manager`: the manifest (`PackageManifest`), the package file (`Fpk`), the installed packages (`PackageStore`), the sources (`FolderSource`, `IndexSource`),
-  install/remove/update (`PackageManagerService`), packages straight from GitHub (`GitHubSpec`, `GitHubSource`) and the lock file (`PackageLock`). The tests:
-  `FIRE_TESTS_ONLY=registry` (`src/fire.Testing/RegistryTests*.cs`; `FIRE_TESTS_FILTER=github` only the GitHub part, against a fake GitHub on this machine). A library: fire.Native and fire.Project reference it (the compiler and the editor get it from them). The command line is `src/fire.Ember` (`Program`), an executable that only uses the library. The same command line written in fire is `tools/ember/` ([ember on the command line](../tools/ember.md)): the same commands, messages, exit codes, store and lock file (`tests/compare-ember.sh` compares the two).
+* `tools/ember/` (fire): the manifest, the package file, the installed packages, the sources, install/remove/update, packages straight from GitHub and the lock
+  file ([ember on the command line](../tools/ember.md)). What forge needs of packages to build (the manifest, the store, `.fpk`) is C in `native/forge/project`;
+  what spark reads (the manifest, the natives, the store, the manifest of an `.fpk`) is `src/fire.Project/PackageModel`. The C# ember (`src/fire.Ember`,
+  `src/fire.Package.Manager`) is gone with milestone M3 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md).
 * The compiler keeps the imports of packages in its set of imports under the key `pkg:name` (`PackageStore.KeyPrefix`): `ImportedPreludes` resolves `#import`, inserts the prelude
   and registers the names of the natives; `LinkedProgram.PackageNatives` carries those names so that a run in the virtual machine (also of a packed program) keeps the
   indexes of the native calls right.

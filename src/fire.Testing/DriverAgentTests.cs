@@ -1,4 +1,4 @@
-using fire.Compiler;
+using fire.Tooling;
 using fire.Device.Manager.DeviceManager;
 
 /// <summary>The device drivers of installed packages in spark's device manager (PackageDriverAgent): the agent loads each package's drivers as a fire plugin (its prelude
@@ -19,7 +19,7 @@ static class DriverAgentTests
         _failures = 0;
         var proj = fire.Projects.FireProject.Parse("{\"name\": \"x\", \"type\": \"library\", \"drivers\": [\"A.MyDriver\"]}");
         var again = fire.Projects.FireProject.Parse(proj.ToJson());
-        var manifest = fire.Package.Manager.PackageManifest.Parse("{\"name\": \"p\", \"version\": \"1.0.0\", \"imports\": [{\"name\": \"p\", \"drivers\": [\"PDriver\"]}]}");
+        var manifest = fire.Projects.PackageManifest.Parse("{\"name\": \"p\", \"version\": \"1.0.0\", \"imports\": [{\"name\": \"p\", \"drivers\": [\"PDriver\"]}]}");
         Check("'drivers' im Projekt und im Manifest (leer wird nicht geschrieben)", again.Drivers is { Count: 1 } && again.Drivers[0] == "A.MyDriver" && manifest.Imports[0].Drivers is { Count: 1 }
             && !fire.Projects.FireProject.Parse("{\"name\": \"y\"}").ToJson().Contains("drivers"));
 
@@ -27,54 +27,13 @@ static class DriverAgentTests
         Check("die installierten Standardpakete melden ihre Treiber (usb, gpio, i2c, spi)", found.Any(d => d.Class == "UsbDriver" && d.Import == "usb") && found.Any(d => d.Class == "GpioDriver"),
             string.Join(", ", found));
 
-        // the plugin of usb: built into the cache once, the second time the same file (not written again)
-        PackageDriverAgent.DriverPlugin? plugin = null;
-        string error = "";
-        try { plugin = PackageDriverAgent.EnsurePlugin("usb"); } catch (Exception ex) { error = CompileErrors.Describe(ex); }
-        DateTime written = plugin != null ? File.GetLastWriteTimeUtc(plugin.Path) : default;
-        var second = plugin != null ? PackageDriverAgent.EnsurePlugin("usb") : null;
-        Check("das Plugin von usb: der Bytecode des Preludes im Cache (mit den Klassen und den Modulen, gegen die es gebaut ist), beim zweiten Mal dieselbe Datei",
-            plugin != null && plugin.Classes.Contains("UsbDriver") && plugin.Classes.Contains("Usb.Device") && plugin.Imports.Contains("devices")
-            && second?.Path == plugin.Path && File.GetLastWriteTimeUtc(plugin.Path) == written,
-            plugin == null ? error : $"{plugin.Path}: {string.Join(",", plugin.Classes.Take(8))} / {string.Join(",", plugin.Imports)}");
-
-        // the agent with the plugin (and a driver the package does not have), then the old way: the same devices, sending and echo
-        var withPlugin = AgentRun(true, "Plugin");
+        // the agent (M3: compiled by forge, the packages through `#import` - the bytecode plugins of the C# forge are gone): its devices, sending and echo
         var withImport = AgentRun(false, "#import");
-        Check("mit Plugin und mit #import dieselben Geraete", withPlugin.Count > 0 && withPlugin.SequenceEqual(withImport), string.Join(",", withPlugin) + " / " + string.Join(",", withImport));
+        Check("der Agent hat Geraete", withImport.Count > 0, string.Join(",", withImport));
 
-        // all drivers of the installed packages: each as a plugin, the same drivers and devices as through #import
-        var all = AllDrivers(true, out var allPlugins);
+        // all drivers of the installed packages
         var allImport = AllDrivers(false, out _);
-        Check("alle Treiber der Pakete als Plugins (usb, gpio, i2c, spi): dieselben Treiber und Geraete wie mit #import",
-            allPlugins.Count == found.Select(d => d.Import).Distinct(StringComparer.OrdinalIgnoreCase).Count() && all.Count > 0 && all.SequenceEqual(allImport),
-            $"plugins {string.Join(",", allPlugins)}: {string.Join(",", all)} / {string.Join(",", allImport)}");
-
-        // a cached plugin that no longer fits (built against another interface of `devices`): the agent says it did not load and starts again with `#import "usb"`
-        if (plugin != null)
-        {
-            var good = File.ReadAllBytes(plugin.Path);
-            try
-            {
-                // (the header of the file: magic, length, JSON - the interface of `devices` in it changed)
-                int length = BitConverter.ToInt32(good, 8);
-                var header = System.Text.Json.Nodes.JsonNode.Parse(good.AsSpan(12, length).ToArray())!;
-                foreach (var dep in header["Deps"]!.AsArray()) if ((string?)dep![0] == "pkg:devices") dep[1] = "1:0000";
-                var json = System.Text.Encoding.UTF8.GetBytes(header.ToJsonString());
-                File.WriteAllBytes(plugin.Path, good.Take(8).Concat(BitConverter.GetBytes(json.Length)).Concat(json).Concat(good.Skip(12 + length)).ToArray());
-                var notes = new List<string>();
-                using var agent = new PackageDriverAgent();
-                agent.Message += m => { lock (notes) notes.Add(m); };
-                bool ok = agent.Start(new[] { new PackageDriver("fire-usb", "usb", "UsbDriver") });
-                var devices = ok ? agent.ListDevices(refresh: true).Select(d => d.Identifier).ToList() : new List<string>();
-                lock (notes)
-                    Check("ein Plugin, das nicht mehr passt (andere Schnittstelle von devices): gemeldet, der Agent startet neu mit #import und hat usb:sim"
-                        + (agent.RunsInFire ? " (in der C-VM: die Programmdatei traegt die Schnittstellen ihrer Module)" : ""),
-                        ok && agent.PluginImports.Count == 0 && devices.Contains("usb:sim") && agent.StartErrors.Count == 0 && notes.Any(n => n.Contains("did not load") && n.Contains("devices")),
-                        $"{ok} {agent.EndedWith} / {string.Join(",", devices)} / {string.Join(" | ", notes)} / {string.Join(";", agent.StartErrors)}");
-            }
-            finally { File.WriteAllBytes(plugin.Path, good); }
-        }
+        Check("alle Treiber der Pakete (usb, gpio, i2c, spi) mit #import: Treiber und Geraete", allImport.Count > 0, string.Join(",", allImport));
         return _failures;
     }
 
@@ -87,7 +46,7 @@ static class DriverAgentTests
         string detail = agent.EndedWith ?? "";
         // (the agent is a process of the VM in C - its plugins loaded there - unless no `fire` can be had)
         bool cvm = false;
-        try { cvm = fire.Compiler.CVm.Locate(64, 64) != null; } catch (Exception) { }
+        try { cvm = Forge.LocateVm(64, 64) != null; } catch (Exception) { }
         if (cvm) Check($"der Treiber-Agent ({how}) laeuft in der C-VM (fire), ohne Rueckfall in die C#-VM", ok && agent.RunsInFire && agent.EndedWith == null, $"{ok} {agent.RunsInFire} {agent.EndedWith}");
         var ids = new List<string>();
         if (ok)
