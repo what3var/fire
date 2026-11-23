@@ -115,6 +115,9 @@ namespace fire.Runtime
             var rc = ResolveClass(obj.ClassName);
             if (!obj.HasFieldLocked(name) && rc.FindMethod("get_" + name, 0) == null)
                 return ReflectFail($"'{obj.ClassName}' has no readable member '{name}'.");
+            // (a static property is no member of the object: Reflect does not use static members - like Reflect.Call, natively rf_get)
+            if (!obj.HasFieldLocked(name) && rc.FindMethod("get_" + name, 0) is { IsStatic: true })
+                return ReflectFail($"'{name}' is a static property - Reflect.Get only reads members of objects.");
             Push(target);
             if (!GetFieldSlowCore(name, -1)) { _nativeRedirected = true; return default; }
             return Pop();
@@ -128,6 +131,10 @@ namespace fire.Runtime
                 return ReflectFail(rc.FindMethod("get_" + name, 0) != null
                     ? $"The property '{name}' of '{obj.ClassName}' has no setter (only 'get')."
                     : $"'{obj.ClassName}' has no writable member '{name}'.");
+            // (a static property is no member of the object: Reflect does not use static members - its value would belong to the object, not to the scope of
+            // the static field - the program's, or a plugin's own, docs/spec/PLUGINS.md; like Reflect.Call, natively rf_set)
+            if (!obj.HasFieldLocked(name) && rc.FindMethod("set_" + name, 1) is { IsStatic: true })
+                return ReflectFail($"'{name}' is a static property - Reflect.Set only sets members of objects.");
             for (var c = rc; c != null; c = c.Base)
             {
                 if (c.Meta == null) continue;

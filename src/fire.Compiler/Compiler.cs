@@ -337,7 +337,9 @@ namespace fire.Compiler
             public readonly HashSet<string> EnumNames = new();
             /// <summary>The declarations of the classes (by their name, generic ones with the `N suffix): the `where` of a type parameter.</summary>
             public readonly Dictionary<string, ClassDecl> ClassDecls = new();
-            /// <summary>A name some class or method uses as a type parameter (`T`): a declaration of that type is not checked at run time.</summary>
+            /// <summary>A name some class or method uses as a type parameter (`T`). Not scoped: the type parameters in scope (of the method being compiled,
+            /// of the class that owns it) are found before this is asked, so it only decides what an out-of-scope name that is no class, interface or enum
+            /// stands for - never a class of that name (`class A` next to `class Pair<A, B>`: `A arr[]` is a TypeArray of A).</summary>
             public bool IsTypeParam(string name) => _typeParamNames.Contains(name);
 
             public static RefParamTable Build(IEnumerable<ClassDecl> classes)
@@ -493,7 +495,7 @@ namespace fire.Compiler
                 return DeclaredType.OfTypeParam(_methodTypeParams![m!.Value], m.Value, "", Resolve);   // (the type arguments of the call: Scope.TypeArgs)
             if (owner?.Decl?.TypeParams is { } ownParams && ownParams.ToList().FindIndex(tp => tp.Name == type.BaseName) is var k and >= 0)
                 return DeclaredType.OfTypeParam(ownParams[k], k, owner.Name, Resolve);
-            if (_refParams.IsTypeParam(type.BaseName)) return null;
+            // (a type parameter of some other class or method - `T`, `A`, `K` - is no type here: a class of that name is checked like any class, see RefParamTable.IsTypeParam)
             string name = type.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(type, args.Count, Known) : type.ResolveBaseName(Known);
             if (!Known(name)) return null;
             // `Bag<int> b` (DECISIONS D10): the type arguments an object of the class must have, where the run time knows them
@@ -513,7 +515,6 @@ namespace fire.Compiler
             if (tr.LambdaSignature != null || tr.ArrayRank > 0 || tr.PointerDepth > 0 || tr.IsInferred || _knownClassNames == null) return "";
             if (_methodTypeParams?.ToList().FindIndex(tp => tp.Name == tr.BaseName) is var m and >= 0) return $"${m}@";
             if (owner?.Decl?.TypeParams is { } ownParams && ownParams.ToList().FindIndex(tp => tp.Name == tr.BaseName) is var k and >= 0) return $"${k}@{owner.Name}";
-            if (_refParams.IsTypeParam(tr.BaseName)) return "";
             switch (tr.BaseName)
             {
                 // a number without a unit is unitless (like a declared `int`); `int : cm` is one in cm, `int : any` one in any unit
@@ -526,6 +527,8 @@ namespace fire.Compiler
             bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
             string name = tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, Known) : tr.ResolveBaseName(Known);
             if (Known(name)) return name;
+            // (a name some other class or method uses as a type parameter is not a unit; one of a class or an enum of that name is that type, above)
+            if (_refParams.IsTypeParam(tr.BaseName)) return "";
             if (target?.TypeParams is { } tps && index < tps.Count && tps[index].ConstraintGroups.Any(g => g.Constraints.Any(c => c.Kind == TypeConstraintKind.IsIn)))
                 return "in:" + tr.BaseName;
             return "";

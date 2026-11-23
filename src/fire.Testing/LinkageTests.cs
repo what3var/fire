@@ -853,6 +853,21 @@ static class LinkageTests
             while (done < 400) { sync globals; Sleep(5ms) }
             print("done " + done)
             """;
+        // (a thread writes a global in a loop while the main program loops: every write is a section - the main program serves them out of the globals and away,
+        // the thread takes the next ones itself; before, each write cost four or five sleeps and wake-ups, ~50 us - 300000 writes took 14-20 s)
+        const string writer = """
+            int counter = 0
+            int n = 300000
+            var done = new Channel<int>()
+            fire with done {
+                for (int i = 0; i < n; i++) { counter = counter + 1 }
+                done.Send(1)
+            }
+            int spins = 0
+            while (counter < n) { spins++ }
+            done.Receive()
+            print("writes " + counter + " " + (spins > 0))
+            """;
         string nativesWant = "thread ran while the main program was in natives: True\nsum 138000, bumps 2000\n";
         var builds = new List<(string Name, string Linkage, ToolchainDef? Toolchain, TargetProfile? Target)> { ("gcc static", "static", null, null), ("gcc shared", "shared", null, null) };
         if (ToolchainDetector.Find(ToolchainDef.BuiltIn["tcc"]) != null) builds.Add(("TinyCC static", "static", ToolchainDef.BuiltIn["tcc"], null));
@@ -882,6 +897,12 @@ static class LinkageTests
             double seconds = watch.Elapsed.TotalSeconds;
             Check($"Module ohne GIL ({name}): 400 fire-Threads schlafen in time (einer Bibliothek) und schreiben in Sektionen - fertig in unter 10 s (mit der GIL Minuten), {seconds:0.00} s",
                 slept.Ok && sleptOut == "done 400\n" && seconds < 10, $"{slept.Log}\nnativ:\n{sleptOut}");
+            var wrote = Build(new[] { writer }, linkage, ExeIn("threads-writer-" + tag), toolchain, target);
+            watch.Restart();
+            string wroteOut = Run(wrote);
+            seconds = watch.Elapsed.TotalSeconds;
+            Check($"Module ohne GIL ({name}): ein fire-Thread schreibt 300000-mal eine globale Variable, waehrend das Hauptprogramm in einer Schleife laeuft - unter 5 s (vorher 14-20 s), {seconds:0.00} s",
+                wrote.Ok && wroteOut == "writes 300000 True\n" && seconds < 5, $"{wrote.Log}\nnativ:\n{wroteOut}");
         }
     }
 
@@ -1442,7 +1463,13 @@ static class LinkageTests
                 static UKit.Item first = new UKit.Item("u-first")
                 static List<int> marks = new List<int>()
                 static UKit.Item later = undefined
+                static UKit.Item made = undefined
+                static UKit.Item madeT = undefined
+                static string Label { get; set; } = "label"
                 construct() { }
+                string Make { set { UKit.Store.made = new UKit.Item(value) } }
+                string MakeT { set { UKit.Store.madeT = new UKit.Item(value) } }
+                string Made() { return (UKit.Store.made == undefined ? "-" : UKit.Store.made.name) + " " + (UKit.Store.madeT == undefined ? "-" : UKit.Store.madeT.name) }
                 string Show() { return (UKit.Store.first == undefined ? "undefined" : UKit.Store.first.name) + " " + (UKit.Store.marks == undefined ? "-" : "" + UKit.Store.marks.Count) }
                 undefined Note(string s) { UKit.Store.later = new UKit.Item(s); UKit.Store.marks.Add(1) }
                 string Keep() { return UKit.Store.later == undefined ? "no later" : UKit.Store.later.name }
@@ -1469,19 +1496,27 @@ static class LinkageTests
         any st = Reflect.New("UKit.Store", [])
         print("loaded: " + st.Show() + " " + st.Keep())
         any held = st.First()
-        // (a static field set in a fire thread to a fresh object: it joins the plugin's scope - the end of the thread does not take it along)
+        // (the plugin's code reached by reflection - Reflect.Set of a property whose setter stores into a static field: the fresh object joins the plugin's
+        // scope too; a static property is no member of an object - Reflect does not use static members, in every engine)
+        Reflect.Set(st, "Make", "u-made")
+        try { Reflect.Set(st, "Label", "x") } catch (ReflectionException e) { print("static: " + e.message) }
+        try { print(Reflect.Get(st, "Label")) } catch (ReflectionException e) { print("static: " + e.message) }
+        // (a static field set in a fire thread to a fresh object: it joins the plugin's scope - the end of the thread does not take it along; also by reflection)
         var ch = new Channel<string>()
         fire with ch {
             any t = Reflect.New("UKit.Store", [])
             t.Note("from-thread")
-            ch.Send("thread: " + t.Keep())
+            Reflect.Set(t, "MakeT", "t-made")
+            string why = ""
+            try { Reflect.Set(t, "Label", "y") } catch (ReflectionException e) { why = e.message }
+            ch.Send("thread: " + t.Keep() + " | " + why)
         }
         print(ch.Receive())
         Sleep(150ms)
-        print("after the thread: " + st.Keep() + " " + st.Show())
+        print("after the thread: " + st.Keep() + " " + st.Show() + " " + st.Made())
         // (lib.Unload(): the plugin's scope goes - its destructors run -, its static fields are undefined; what the program held of it is destroyed; its code stays)
         lib.Unload()
-        print("unloaded: " + st.Show() + " " + st.Keep())
+        print("unloaded: " + st.Show() + " " + st.Keep() + " " + st.Made())
         try { print(held.name) } catch (DestroyedException e) { print("held: " + e.message) }
         lib.Unload()
         print("again: " + st.Show())
@@ -1492,7 +1527,10 @@ static class LinkageTests
         print("end")
         """;
 
-    private const string UnloadExpected = "loaded: u-first 0 no later\nthread: from-thread\nafter the thread: from-thread u-first 1\nitem u-first destroyed\nitem from-thread destroyed\nunloaded: undefined - no later\nheld: Access to a destroyed object.\nagain: undefined -\nreloaded: u-first 0 u-first\nc: The library '<clib>' is no fire plugin: only a fire plugin can be unloaded.\nend\nprogram guard destroyed\nitem u-first destroyed\n";
+    private const string UnloadExpected = "loaded: u-first 0 no later\n"
+        + "static: 'Label' is a static property - Reflect.Set only sets members of objects.\nstatic: 'Label' is a static property - Reflect.Get only reads members of objects.\n"
+        + "thread: from-thread | 'Label' is a static property - Reflect.Set only sets members of objects.\nafter the thread: from-thread u-first 1 u-made t-made\n"
+        + "item u-first destroyed\nitem u-made destroyed\nitem from-thread destroyed\nitem t-made destroyed\nunloaded: undefined - no later - -\nheld: Access to a destroyed object.\nagain: undefined -\nreloaded: u-first 0 u-first\nc: The library '<clib>' is no fire plugin: only a fire plugin can be unloaded.\nend\nprogram guard destroyed\nitem u-first destroyed\n";
 
     /// <summary>Library.Load of a plugin in a fire thread: what the static initialisers make belongs to the main program's globals (not to the thread's global
     /// scope - it outlives the thread and is shared with the other threads), the main program and other threads use the static fields after the loading thread

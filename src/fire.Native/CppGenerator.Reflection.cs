@@ -680,6 +680,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
     int kind = rf_kind(c, name);
     const RfMember* getter = rf_member(c, name, ""property"");
     if (kind != 1 && !(getter && (getter->flags & 4))) {{ char n[200], t[500]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, ""'%s' has no readable member '%s'."", c->name, n); return rfFail(t); }}
+    if (kind != 1 && getter && (getter->flags & 1)) {{ char n[200], t[500]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, ""'%s' is a static property - Reflect.Get only reads members of objects."", n); return rfFail(t); }}
 {get}    {{ const RfClass* in = NULL; const char* s = rf_stripped(c, name, &in); if (s) return rf_strippedMember(in, s); }}
     {{ char n[200], t[700]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, ""Member '%s.%s' was left out of the build (stripping %d): it cannot be read by name. Add [Keep] to it or use stripping 0."", c->name, n, kRfStripping); return rfFail(t); }}
 }}");
@@ -695,6 +696,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
         else snprintf(t, sizeof t, ""'%s' has no writable member '%s'."", c->name, n);
         return rfFail(t);
     }}
+    if (kind != 1 && prop && (prop->flags & 1)) {{ char n[200], t[500]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, ""'%s' is a static property - Reflect.Set only sets members of objects."", n); return rfFail(t); }}
     {{ const RfMember* field = rf_member(c, name, ""field""); if (field && !(field->flags & 1) && (field->flags & 2)) {{
         char n[200], t[500]; strToUtf8(name, n, sizeof n);
         snprintf(t, sizeof t, ""The field '%s' of '%s' is 'readonly' and cannot be assigned."", n, field->declared);

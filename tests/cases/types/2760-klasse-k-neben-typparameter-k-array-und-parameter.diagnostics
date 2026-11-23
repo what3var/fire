@@ -1,0 +1,3 @@
+warning TC001: Cannot assign a value of type 'V' to an element of type 'K' (line 9)
+Unhandled exception of type 'ArgumentException': An element of an array of K must be a K (or undefined), not V.
+   at <main> (2760-klasse-k-neben-typparameter-k-array-und-parameter.fire:9)

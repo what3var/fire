@@ -414,7 +414,7 @@ static const char* DeclaredTypeOfCore(FcComp* cm, const FcTypeRef* type, FcRtCla
         return fcDtOfTypeParam(CC_, (FcTypeParam*)cm->methodTypeParams->items[m], m, "", fcResolveForTypeParam, &rctx);
     if (owner && owner->decl && (k = fcTypeParamIndex(owner->decl->typeParams, type->baseName)) >= 0)
         return fcDtOfTypeParam(CC_, (FcTypeParam*)owner->decl->typeParams->items[k], k, owner->name, fcResolveForTypeParam, &rctx);
-    if (fcRpIsTypeParam(cm, type->baseName)) return NULL;
+    /* (a type parameter of some other class or method - T, A, K - is no type here: a class of that name is checked like any class) */
     name = type->typeArgs && type->typeArgs->count > 0 ? fcResolveNewTarget(CC_, type, type->typeArgs->count, known) : fcTrResolveBaseName(CC_, type, known);
     if (!fcKnows(known, name)) return NULL;
     if (type->typeArgs && type->typeArgs->count > 0 && fcDictHas(cm->sh->knownClassNames, name)) {
@@ -447,7 +447,6 @@ static const char* TypeArgText(FcComp* cm, const FcTypeRef* tr, FcRtClass* owner
     if (tr->lambdaSignature != NULL || tr->arrayRank > 0 || tr->pointerDepth > 0 || fcTrIsInferred(tr) || cm->sh->knownClassNames == NULL) return "";
     if ((m = fcTypeParamIndex(cm->methodTypeParams, tr->baseName)) >= 0) return fcFmt(CC_, "$%d@", m);
     if (owner && owner->decl && (k = fcTypeParamIndex(owner->decl->typeParams, tr->baseName)) >= 0) return fcFmt(CC_, "$%d@%s", k, owner->name);
-    if (fcRpIsTypeParam(cm, tr->baseName)) return "";
     if (streq0(tr->baseName, "int") || streq0(tr->baseName, "float")) return tr->unit == NULL ? tr->baseName : fcFmt(CC_, "%s:%s", tr->baseName, tr->unit);
     if (streq0(tr->baseName, "bool") || streq0(tr->baseName, "char") || streq0(tr->baseName, "string")) return tr->baseName;
     if (streq0(tr->baseName, "any") || streq0(tr->baseName, "class")) return "";
@@ -455,6 +454,8 @@ static const char* TypeArgText(FcComp* cm, const FcTypeRef* tr, FcRtClass* owner
     known = fcKnownOf(cm, fcKnownClassOrInterface);
     name = tr->typeArgs && tr->typeArgs->count > 0 ? fcResolveNewTarget(CC_, tr, tr->typeArgs->count, known) : fcTrResolveBaseName(CC_, tr, known);
     if (fcKnows(known, name)) return name;
+    /* (a name some other class or method uses as a type parameter is not a unit; a class or an enum of that name is that type, above) */
+    if (fcRpIsTypeParam(cm, tr->baseName)) return "";
     if (target && target->typeParams && index < target->typeParams->count && fcTpHasIsIn((FcTypeParam*)target->typeParams->items[index]))
         return fcFmt(CC_, "in:%s", tr->baseName);
     return "";

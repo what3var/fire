@@ -734,6 +734,7 @@ static const char* ReflectionCode(FgGen* g) {
         "    int kind = rf_kind(c, name);\n"
         "    const RfMember* getter = rf_member(c, name, \"property\");\n"
         "    if (kind != 1 && !(getter && (getter->flags & 4))) { char n[200], t[500]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, \"'%%s' has no readable member '%%s'.\", c->name, n); return rfFail(t); }\n"
+        "    if (kind != 1 && getter && (getter->flags & 1)) { char n[200], t[500]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, \"'%%s' is a static property - Reflect.Get only reads members of objects.\", n); return rfFail(t); }\n"
         "%s    { const RfClass* in = NULL; const char* s = rf_stripped(c, name, &in); if (s) return rf_strippedMember(in, s); }\n"
         "    { char n[200], t[700]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, \"Member '%%s.%%s' was left out of the build (stripping %%d): it cannot be read by name. Add [Keep] to it or use stripping 0.\", c->name, n, kRfStripping); return rfFail(t); }\n"
         "}\n", fcBufDone(g->c, &get));
@@ -750,6 +751,7 @@ static const char* ReflectionCode(FgGen* g) {
         "        else snprintf(t, sizeof t, \"'%%s' has no writable member '%%s'.\", c->name, n);\n"
         "        return rfFail(t);\n"
         "    }\n"
+        "    if (kind != 1 && prop && (prop->flags & 1)) { char n[200], t[500]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, \"'%%s' is a static property - Reflect.Set only sets members of objects.\", n); return rfFail(t); }\n"
         "    { const RfMember* field = rf_member(c, name, \"field\"); if (field && !(field->flags & 1) && (field->flags & 2)) {\n"
         "        char n[200], t[500]; strToUtf8(name, n, sizeof n);\n"
         "        snprintf(t, sizeof t, \"The field '%%s' of '%%s' is 'readonly' and cannot be assigned.\", n, field->declared);\n"

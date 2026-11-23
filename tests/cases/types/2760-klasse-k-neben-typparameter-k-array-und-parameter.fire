@@ -1,0 +1,12 @@
+class Map2<K, V> { K keys[]; construct() { this.keys = new K[1] } }
+class K { int n = 1 }
+class V { int m = 2 }
+class Util { static undefined Take(K k) { print("took " + k.n) } }
+any v = new V()
+Util.Take(new K())
+try { Util.Take(v) } catch (ArgumentException e) { print("E1 " + e.message) }
+K ks[] = new K[1]
+ks[0] = new V()
+print("not reached")
+//# modes: Release
+//# name: types 276: a class K next to the type parameter K of another class - the type checker and the array at run time both see the class

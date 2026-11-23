@@ -20,6 +20,14 @@ Engines; das Ende des Threads zerstörte sie, das Hauptprogramm bekam die `Destr
   schon jemand besitzt, bleibt eine Referenz. Aus einem Thread gilt Regel 10 wie für die statischen Felder des Programms (ein frisches oder genommenes Objekt
   zieht um, in einer Sektion; ein anderes des Threads ist die `ArgumentException`). Begründung: ein statisches Feld gehört zu seiner Klasse, der Besitz folgt
   dem Ort - beim Programm dessen globaler Scope, beim Plugin dessen eigener.
+* **Über Reflection** gilt dasselbe, denn es ist der Code des Plugins, der speichert: `Reflect.Set(obj, "P", v)` auf eine Property, deren Setter ein
+  statisches Feld schreibt, `Reflect.Call` einer Methode, die es tut - auch aus einem fire-Thread. Ein statisches Feld oder eine statische Property selbst
+  erreicht Reflection nicht (wie [16-probes-and-reflection.md](../language/16-probes-and-reflection.md) sagt): bis 22.11.2026 fanden die beiden VMs eine
+  statische Property über das Objekt (`Reflect.Set(st, "Cur", x)` rief ihren Setter), und der Wert ging an das Objekt (`try value??.TakeTo(obj)` des
+  Preludes), nicht in den Scope des Plugins - nativ war es "left out of the build". Jetzt ist es in allen drei Engines die `ReflectionException`
+  `'Cur' is a static property - Reflect.Set only sets members of objects.` (`Reflect.Get`: `... only reads members of objects.`; VM.Reflection.cs,
+  vm_reflect.c, `rf_get`/`rf_set` beider Generatoren), wie `Reflect.Call` für eine statische Methode. LinkageTests (UKit/UHost) prüft beides nativ, in der VM und
+  der C-VM.
 
 ## (b) Entladen: `lib.Unload()`
 
