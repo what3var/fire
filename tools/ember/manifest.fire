@@ -1,0 +1,722 @@
+// ember: the package description (`package.json`) - fire.Package.Manager/Manifest.cs and NativeSources.cs of the C# ember.
+
+/// <summary>What goes wrong with a package (the C# ember's PackageException): `ember: <message>` and the exit code 1.</summary>
+class PackageException : Exception {
+    construct(string message) : base(message) { }
+}
+
+/// <summary>Texts compared as .NET's OrdinalIgnoreCase does (upper case, then ordinal).</summary>
+class Ci {
+    static bool Eq(string a, string b) {
+        if (a == undefined || b == undefined) { return a == undefined && b == undefined }
+        if (a.Length != b.Length) { return false }
+        return a.ToUpper() == b.ToUpper()
+    }
+    static int Compare(string a, string b) { return a.ToUpper().CompareTo(b.ToUpper()) }
+    static bool StartsWith(string a, string prefix) { return a.Length >= prefix.Length && Ci.Eq(a.Substring(0, prefix.Length), prefix) }
+    static bool EndsWith(string a, string suffix) { return a.Length >= suffix.Length && Ci.Eq(a.Substring(a.Length - suffix.Length), suffix) }
+    static bool Contains(string a, string part) { return a.ToUpper().IndexOf(part.ToUpper()) >= 0 }
+    static bool InList(List<string> list, string s) {
+        foreach (x in list) { if (Ci.Eq(x, s)) { return true } }
+        return false
+    }
+    static string Or(string a, string b) {
+        if (a == undefined) { return b }
+        return a
+    }
+    static bool IsBlank(string s) { return s == undefined || s.Trim().Length == 0 }
+    /// <summary>A text of letters (A-Z, a-z), digits and the characters of `more`, starting with a letter or digit (`letterFirst`: a letter).</summary>
+    static bool Plain(string s, string more, bool letterFirst) {
+        if (s == undefined || s.Length == 0) { return false }
+        for (int i = 0; i < s.Length; i++) {
+            char c = s[i]
+            bool letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            bool digit = c >= '0' && c <= '9'
+            if (i == 0) {
+                if (letterFirst && !letter) { return false }
+                if (!letter && !digit) { return false }
+            } else if (!letter && !digit && more.IndexOf(c) < 0) { return false }
+        }
+        return true
+    }
+}
+
+/// <summary>`1.2.3`, `1.2`, `2.0.0-beta1`: numbers compared one by one; a version with a suffix is older than the same one without.</summary>
+class SemanticVersion {
+    List<int> parts = new List<int>()
+    string suffix = ""
+    string text = ""
+
+    /// <summary>The version, or undefined when the text is none.</summary>
+    static SemanticVersion Parse(string text) {
+        if (Ci.IsBlank(text)) { return undefined }
+        string t = text.Trim()
+        int dash = t.IndexOf("-")
+        string numbers = t
+        string suffix = ""
+        if (dash >= 0) {
+            numbers = t.Substring(0, dash)
+            suffix = t.Substring(dash + 1)
+        }
+        var v = new SemanticVersion()
+        foreach (p in numbers.Split(".")) {
+            if (!SemanticVersion.IsNumber(p)) { return undefined }
+            v.parts.Add(p.Trim().ToInt())
+        }
+        v.suffix = suffix
+        v.text = t
+        return v
+    }
+
+    /// <summary>What int.TryParse takes and is not negative: digits with spaces around and a `+`, at most int.MaxValue.</summary>
+    static bool IsNumber(string p) {
+        string s = p.Trim()
+        if (s.StartsWith("+")) { s = s.Substring(1) }
+        if (s.Length == 0 || s.Length > 10) { return false }
+        for (int i = 0; i < s.Length; i++) { if (!s[i].IsDigit()) { return false } }
+        return s.Length < 10 || s <= "2147483647"
+    }
+
+    static bool IsValid(string text) { return SemanticVersion.Parse(text) != undefined }
+
+    int CompareTo(SemanticVersion other) {
+        int n = Math.Max(this.parts.Count, other.parts.Count)
+        for (int i = 0; i < n; i++) {
+            int a = 0
+            int b = 0
+            if (i < this.parts.Count) { a = this.parts[i] }
+            if (i < other.parts.Count) { b = other.parts[i] }
+            if (a != b) {
+                if (a < b) { return -1 }
+                return 1
+            }
+        }
+        if (this.suffix == other.suffix) { return 0 }
+        if (this.suffix.Length == 0) { return 1 }
+        if (other.suffix.Length == 0) { return -1 }
+        return this.suffix.CompareTo(other.suffix)
+    }
+
+    /// <summary>a compared with b as versions (both must be versions).</summary>
+    static int Compare(string a, string b) { return SemanticVersion.Parse(a).CompareTo(SemanticVersion.Parse(b)) }
+}
+
+/// <summary>The list of native sources (`native.sources`, one list of `native.platformSources`): paths in order, an entry may have a build order
+/// (`{ "file": "native/x.h", "order": -10 }`); a plain string stays a plain string when the list is written again.</summary>
+class NativeSourceList {
+    List<string> files = new List<string>()
+    Dictionary<string, int> orders = new Dictionary<string, int>()
+
+    defined int Count { get { return this.files.Count } }
+
+    any OrderOf(string entry) { return this.orders.Get(entry, undefined) }
+
+    undefined Add(string file, any order = undefined) {
+        this.files.Add(file)
+        if (order != undefined) { this.orders[file] = order }
+    }
+
+    static NativeSourceList Read(JNode v, string path) {
+        var list = new NativeSourceList()
+        if (v.kind != JNode.KArray) { throw new JsonError("A list of native sources is a list ([\"native/x.h\", { \"file\": \"native/y.h\", \"order\": 10 }]).") }
+        foreach (item in v.items) {
+            if (item.kind == JNode.KText) { list.Add(item.text) }
+            else if (item.kind == JNode.KObject) {
+                string file = undefined
+                any order = undefined
+                for (int i = 0; i < item.keys.Count; i++) {
+                    string name = item.keys[i]
+                    var x = item.items[i]
+                    if (Ci.Eq(name, "file")) {
+                        if (x.kind != JNode.KText) { throw new JsonError("'file' of a native source is a path.") }
+                        file = x.text
+                    } else if (Ci.Eq(name, "order")) {
+                        if (!x.IsWholeNumber() || x.text.TryToInt() == undefined) { throw new JsonError("'order' of a native source is a whole number.") }
+                        order = x.text.ToInt()
+                    } else { throw new JsonError("A native source has 'file' and 'order', not '" + name + "'.") }
+                }
+                if (Ci.IsBlank(file)) { throw new JsonError("A native source { ... } needs 'file'.") }
+                list.Add(file, order)
+            } else { throw new JsonError("A native source is \"path\" or { \"file\": \"path\", \"order\": n }.") }
+        }
+        return list
+    }
+
+    JNode ToNode() {
+        var n = JNode.MakeArray()
+        foreach (f in this.files) {
+            any o = this.OrderOf(f)
+            if (o != undefined) { n.Push(JNode.MakeRaw("{ \"file\": " + Json2.Quote(f, true) + ", \"order\": " + o + " }")) }
+            else { n.Push(JNode.MakeText(f)) }
+        }
+        return n
+    }
+}
+
+/// <summary>An entry of `native.uses`: `"io"`, or `{ "import": "audio", "platforms": [ "posix", "windows", "vm" ] }`.</summary>
+class NativeUse {
+    string import = ""
+    List<string> platforms = new List<string>()
+
+    static NativeUse Read(JNode v) {
+        var use = new NativeUse()
+        if (v.kind == JNode.KText) {
+            use.import = v.text
+            return use
+        }
+        if (v.kind != JNode.KObject) { throw new JsonError("An entry of 'uses' is \"import\" or { \"import\": \"name\", \"platforms\": [ \"posix\", ... ] }.") }
+        for (int i = 0; i < v.keys.Count; i++) {
+            string name = v.keys[i]
+            var x = v.items[i]
+            if (Ci.Eq(name, "import")) {
+                if (x.kind != JNode.KText) { throw new JsonError("'import' of an entry of 'uses' is the name of an import.") }
+                use.import = x.text
+            } else if (Ci.Eq(name, "platforms")) {
+                if (x.kind == JNode.KNull) { use.platforms = new List<string>() }
+                else {
+                    if (x.kind != JNode.KArray) { throw new JsonError("The JSON value could not be converted to System.Collections.Generic.List`1[System.String].") }
+                    foreach (p in x.items) {
+                        if (p.kind != JNode.KText) { throw new JsonError("The JSON value could not be converted to System.String.") }
+                        use.platforms.Add(p.text)
+                    }
+                }
+            } else { throw new JsonError("An entry of 'uses' has 'import' and 'platforms', not '" + name + "'.") }
+        }
+        if (Ci.IsBlank(use.import)) { throw new JsonError("An entry of 'uses' { ... } needs 'import'.") }
+        return use
+    }
+
+    JNode ToNode() {
+        if (this.platforms.Count == 0) { return JNode.MakeText(this.import) }
+        var n = JNode.MakeObject()
+        n.Put("import", JNode.MakeText(this.import))
+        n.Put("platforms", JNode.Strings(this.platforms))
+        return n
+    }
+}
+
+class PackageNativeFunction {
+    string name = ""
+    int arguments = 0
+    string cpp = ""
+    string c = undefined
+    bool needsList = false
+    bool returnsReference = false
+    bool host = false
+    string returns = undefined
+    List<string> parameters = undefined
+
+    string Symbol() {
+        if (this.c != undefined && this.c.Length > 0) { return this.c }
+        return this.cpp
+    }
+
+    static PackageNativeFunction Read(JNode v, string path) {
+        if (v.kind != JNode.KObject) { throw Json2.Mismatch(v, "fire.Package.Manager.PackageNativeFunction", path) }
+        var f = new PackageNativeFunction()
+        f.name = Json2.Str(v, "name", path, f.name)
+        f.arguments = Json2.IntOf(v, "arguments", path, f.arguments)
+        f.cpp = Json2.Str(v, "cpp", path, f.cpp)
+        f.c = Json2.Str(v, "c", path, undefined)
+        f.needsList = Json2.BoolOf(v, "needsList", path, false)
+        f.returnsReference = Json2.BoolOf(v, "returnsReference", path, false)
+        f.host = Json2.BoolOf(v, "host", path, false)
+        f.returns = Json2.Str(v, "returns", path, undefined)
+        f.parameters = Json2.StrList(v, "parameters", path)
+        return f
+    }
+
+    JNode ToNode() {
+        var n = JNode.MakeObject()
+        if (this.name != undefined) { n.Put("name", JNode.MakeText(this.name)) }
+        n.Put("arguments", JNode.MakeInt(this.arguments))
+        if (this.cpp != undefined) { n.Put("cpp", JNode.MakeText(this.cpp)) }
+        if (this.c != undefined) { n.Put("c", JNode.MakeText(this.c)) }
+        n.Put("needsList", JNode.MakeBool(this.needsList))
+        n.Put("returnsReference", JNode.MakeBool(this.returnsReference))
+        n.Put("host", JNode.MakeBool(this.host))
+        if (this.returns != undefined) { n.Put("returns", JNode.MakeText(this.returns)) }
+        if (this.parameters != undefined) { n.Put("parameters", JNode.Strings(this.parameters)) }
+        return n
+    }
+}
+
+/// <summary>The natives of an import (C or C++ for the native backend).</summary>
+class PackageNative {
+    string language = undefined
+    NativeSourceList sources = new NativeSourceList()
+    Dictionary<string, NativeSourceList> platformSources = new Dictionary<string, NativeSourceList>(Owns.Values)
+    List<string> platforms = new List<string>()
+    Dictionary<string, string> libraries = new Dictionary<string, string>()
+    Dictionary<string, List<string>> linkLibraries = new Dictionary<string, List<string>>(Owns.Values)
+    List<PackageNativeFunction> functions = new List<PackageNativeFunction>(Owns.Values)
+    List<PackageNativeFunction> bridge = new List<PackageNativeFunction>(Owns.Values)
+    List<string> exceptions = new List<string>()
+    bool threadSafe = false
+    string reset = undefined
+    List<NativeUse> uses = new List<NativeUse>(Owns.Values)
+    List<string> headers = new List<string>()
+
+    bool IsC() { return this.language == "c" }
+
+    static List<PackageNativeFunction> Functions(JNode v, string key, string path) {
+        var x = v.Get(key)
+        if (x == undefined || x.kind == JNode.KNull) { return undefined }
+        if (x.kind != JNode.KArray) { throw Json2.Mismatch(x, "System.Collections.Generic.List`1[fire.Package.Manager.PackageNativeFunction]", path + "." + key) }
+        var list = new List<PackageNativeFunction>(Owns.Values)
+        for (int i = 0; i < x.items.Count; i++) { list.Add(PackageNativeFunction.Read(x.items[i], path + "." + key + "[" + i + "]")) }
+        return list
+    }
+
+    static PackageNative Read(JNode v, string path) {
+        if (v.kind != JNode.KObject) { throw Json2.Mismatch(v, "fire.Package.Manager.PackageNative", path) }
+        var n = new PackageNative()
+        n.language = Json2.Str(v, "language", path, undefined)
+        var s = v.Get("sources")
+        if (s != undefined && s.kind != JNode.KNull) { n.sources = NativeSourceList.Read(s, path + ".sources") }
+        var ps = v.Get("platformSources")
+        if (ps != undefined && ps.kind != JNode.KNull) {
+            if (ps.kind != JNode.KObject) { throw Json2.Mismatch(ps, "System.Collections.Generic.Dictionary`2[System.String,fire.Package.Manager.NativeSourceList]", path + ".platformSources") }
+            for (int i = 0; i < ps.keys.Count; i++) { n.platformSources[ps.keys[i]] = NativeSourceList.Read(ps.items[i], path + ".platformSources." + ps.keys[i]) }
+        }
+        var platforms = Json2.StrList(v, "platforms", path)
+        if (platforms != undefined) { n.platforms = take platforms }
+        var libraries = Json2.StrMap(v, "libraries", path)
+        if (libraries != undefined) { n.libraries = take libraries }
+        var ll = v.Get("linkLibraries")
+        if (ll != undefined && ll.kind != JNode.KNull) {
+            if (ll.kind != JNode.KObject) { throw Json2.Mismatch(ll, "System.Collections.Generic.Dictionary`2[System.String,System.Collections.Generic.List`1[System.String]]", path + ".linkLibraries") }
+            for (int i = 0; i < ll.keys.Count; i++) {
+                var libs = Json2.StrList(ll, ll.keys[i], path + ".linkLibraries")
+                if (libs == undefined) { libs = new List<string>() }
+                n.linkLibraries[ll.keys[i]] = libs
+            }
+        }
+        var functions = PackageNative.Functions(v, "functions", path)
+        if (functions != undefined) { n.functions = take functions }
+        var bridge = PackageNative.Functions(v, "bridge", path)
+        if (bridge != undefined) { n.bridge = take bridge }
+        var exceptions = Json2.StrList(v, "exceptions", path)
+        if (exceptions != undefined) { n.exceptions = take exceptions }
+        n.threadSafe = Json2.BoolOf(v, "threadSafe", path, false)
+        n.reset = Json2.Str(v, "reset", path, undefined)
+        var uses = v.Get("uses")
+        if (uses != undefined && uses.kind != JNode.KNull) {
+            if (uses.kind != JNode.KArray) { throw Json2.Mismatch(uses, "System.Collections.Generic.List`1[fire.Package.Manager.NativeUse]", path + ".uses") }
+            foreach (u in uses.items) { n.uses.Add(NativeUse.Read(u)) }
+        }
+        var headers = Json2.StrList(v, "headers", path)
+        if (headers != undefined) { n.headers = take headers }
+        return n
+    }
+
+    JNode ToNode() {
+        var n = JNode.MakeObject()
+        if (this.language != undefined) { n.Put("language", JNode.MakeText(this.language)) }
+        n.Put("sources", this.sources.ToNode())
+        var ps = JNode.MakeObject()
+        foreach (pair in this.platformSources) { ps.Put(pair.Key, pair.Value.ToNode()) }
+        n.Put("platformSources", ps)
+        n.Put("platforms", JNode.Strings(this.platforms))
+        n.Put("libraries", Json2.MapNode(this.libraries))
+        var ll = JNode.MakeObject()
+        foreach (pair in this.linkLibraries) { ll.Put(pair.Key, JNode.Strings(pair.Value)) }
+        n.Put("linkLibraries", ll)
+        var fs = JNode.MakeArray()
+        foreach (f in this.functions) { fs.Push(f.ToNode()) }
+        n.Put("functions", fs)
+        var bs = JNode.MakeArray()
+        foreach (f in this.bridge) { bs.Push(f.ToNode()) }
+        n.Put("bridge", bs)
+        n.Put("exceptions", JNode.Strings(this.exceptions))
+        n.Put("threadSafe", JNode.MakeBool(this.threadSafe))
+        if (this.reset != undefined) { n.Put("reset", JNode.MakeText(this.reset)) }
+        var us = JNode.MakeArray()
+        foreach (u in this.uses) { us.Push(u.ToNode()) }
+        n.Put("uses", us)
+        n.Put("headers", JNode.Strings(this.headers))
+        return n
+    }
+
+    /// <summary>Every file the natives name: the sources, the platform sources, the libraries, the headers.</summary>
+    List<string> AllFiles() {
+        var all = new List<string>()
+        foreach (f in this.sources.files) { all.Add(f) }
+        foreach (pair in this.platformSources) { foreach (f in pair.Value.files) { all.Add(f) } }
+        foreach (pair in this.libraries) { all.Add(pair.Value) }
+        foreach (h in this.headers) { all.Add(h) }
+        return all
+    }
+
+    bool HasPlatformKey(string key) {
+        foreach (pair in this.platformSources) { if (Ci.Eq(pair.Key, key)) { return true } }
+        return false
+    }
+
+    /// <summary>The sources of a build for these keys, in build order (PackageNativeExtensions.SourcesFor).</summary>
+    List<string> SourcesFor(List<string> platformKeys, bool layerOnly = false) {
+        var keys = new List<string>()
+        bool vm = false
+        foreach (k in platformKeys) {
+            if (Ci.Eq(k, "vm")) { vm = true }
+            else { keys.Add(k) }
+        }
+        if (vm && this.HasPlatformKey("vm")) {
+            keys = new List<string>()
+            keys.Add("vm")
+        }
+        bool any = false
+        foreach (k in keys) { if (this.HasPlatformKey(k)) { any = true } }
+        if (!any) {
+            keys = new List<string>()
+            keys.Add("default")
+        }
+        var files = new List<string>()
+        var orders = new List<int>()
+        var seen = new HashSet<string>()
+        foreach (key in keys) {
+            foreach (pair in this.platformSources) {
+                if (Ci.Eq(pair.Key, key)) {
+                    foreach (f in pair.Value.files) {
+                        if (seen.Add(f)) {
+                            files.Add(f)
+                            any o = pair.Value.OrderOf(f)
+                            if (o == undefined) { o = 0 }
+                            orders.Add(o)
+                        }
+                    }
+                }
+            }
+        }
+        if (!layerOnly) {
+            foreach (f in this.sources.files) {
+                if (seen.Add(f)) {
+                    files.Add(f)
+                    any o = this.sources.OrderOf(f)
+                    if (o == undefined) { o = 0 }
+                    orders.Add(o)
+                }
+            }
+        }
+        // stable by the order (an insertion sort: equal orders keep their place)
+        var result = new List<string>()
+        var resultOrders = new List<int>()
+        for (int i = 0; i < files.Count; i++) {
+            int at = result.Count
+            while (at > 0 && resultOrders[at - 1] > orders[i]) { at-- }
+            result.Insert(at, files[i])
+            resultOrders.Insert(at, orders[i])
+        }
+        return result
+    }
+}
+
+class PackageImport {
+    string name = ""
+    bool standard = false
+    string prelude = undefined
+    List<string> requires = new List<string>()
+    PackageNative native = undefined
+    Dictionary<string, string> resources = undefined
+    List<string> drivers = undefined
+    any serializable = undefined
+
+    static PackageImport Read(JNode v, string path) {
+        if (v.kind != JNode.KObject) { throw Json2.Mismatch(v, "fire.Package.Manager.PackageImport", path) }
+        var i = new PackageImport()
+        i.name = Json2.Str(v, "name", path, i.name)
+        i.standard = Json2.BoolOf(v, "standard", path, false)
+        i.prelude = Json2.Str(v, "prelude", path, undefined)
+        var requires = Json2.StrList(v, "requires", path)
+        if (requires != undefined) { i.requires = take requires }
+        var native = v.Get("native")
+        if (native != undefined && native.kind != JNode.KNull) { i.native = PackageNative.Read(native, path + ".native") }
+        i.resources = Json2.StrMap(v, "resources", path)
+        i.drivers = Json2.StrList(v, "drivers", path)
+        i.serializable = Json2.BoolOf(v, "serializable", path, undefined)
+        return i
+    }
+
+    JNode ToNode() {
+        var n = JNode.MakeObject()
+        if (this.name != undefined) { n.Put("name", JNode.MakeText(this.name)) }
+        n.Put("standard", JNode.MakeBool(this.standard))
+        if (this.prelude != undefined) { n.Put("prelude", JNode.MakeText(this.prelude)) }
+        n.Put("requires", JNode.Strings(this.requires))
+        if (this.native != undefined) { n.Put("native", this.native.ToNode()) }
+        if (this.resources != undefined) { n.Put("resources", Json2.MapNode(this.resources)) }
+        if (this.drivers != undefined) { n.Put("drivers", JNode.Strings(this.drivers)) }
+        if (this.serializable != undefined) { n.Put("serializable", JNode.MakeBool(this.serializable)) }
+        return n
+    }
+}
+
+/// <summary>Where the files a description names are: on the disk (relative to a folder) or in a package file.</summary>
+interface IFiles {
+    bool Exists(string path)
+    /// <summary>The text of the file, undefined when it cannot be read.</summary>
+    string Read(string path)
+}
+
+/// <summary>The `package.json` of a package (paths relative to its root) or the description `ember forge` reads (absolute paths, or relative to the file).</summary>
+class PackageManifest {
+    int format = 1
+    string name = ""
+    string version = ""
+    string author = ""
+    string description = ""
+    string license = ""
+    string homepage = ""
+    List<string> dependencies = new List<string>()
+    List<PackageImport> imports = new List<PackageImport>(Owns.Values)
+    string templates = undefined
+    List<string> documents = undefined
+
+    static string[] Reserved() {
+        return ["print", "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "process", "hash", "compression", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics", "ui.docking", "json", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86"]
+    }
+
+    static bool IsReservedImport(string name) {
+        foreach (r in PackageManifest.Reserved()) { if (Ci.Eq(r, name)) { return true } }
+        return false
+    }
+
+    /// <summary>^[A-Za-z0-9][A-Za-z0-9._-]*$</summary>
+    static bool IsName(string name) { return Ci.Plain(name, "._-", false) }
+
+    /// <summary>letters, digits and '_', starting with a letter; parts joined by dots.</summary>
+    static bool IsImportName(string name) {
+        if (name == undefined || name.Length == 0) { return false }
+        foreach (part in name.Split(".")) { if (!Ci.Plain(part, "_", true)) { return false } }
+        return true
+    }
+
+    /// <summary>The names that make a file next to the forge file a document of the package.</summary>
+    static bool IsDocumentName(string fileName) {
+        string stem = IO.Path.GetFileNameWithoutExtension(fileName).ToUpper()
+        string ext = IO.Path.GetExtension(fileName).ToLower()
+        bool named = stem == "README" || stem == "LICENSE" || stem == "LICENCE" || stem == "COPYING" || stem == "NOTICE" || stem == "AUTHORS"
+        return named && (ext == "" || ext == ".md" || ext == ".txt")
+    }
+
+    static PackageManifest Parse(string json) {
+        JNode root = undefined
+        try {
+            root = JsonReader.Parse(json)
+        } catch (JsonError e) { throw new PackageException("The package description is not valid JSON: " + e.message) }
+        if (root.kind == JNode.KNull) { throw new PackageException("The package description is empty.") }
+        try {
+            return PackageManifest.FromNode(root)
+        } catch (JsonError e) { throw new PackageException("The package description is not valid JSON: " + e.message) }
+    }
+
+    static PackageManifest FromNode(JNode v) {
+        if (v.kind != JNode.KObject) { throw Json2.Mismatch(v, "fire.Package.Manager.PackageManifest", "$") }
+        var m = new PackageManifest()
+        m.format = Json2.IntOf(v, "format", "$", 1)
+        m.name = Json2.Str(v, "name", "$", "")
+        m.version = Json2.Str(v, "version", "$", "")
+        m.author = Json2.Str(v, "author", "$", "")
+        m.description = Json2.Str(v, "description", "$", "")
+        m.license = Json2.Str(v, "license", "$", "")
+        m.homepage = Json2.Str(v, "homepage", "$", "")
+        var deps = Json2.StrList(v, "dependencies", "$")
+        if (deps != undefined) { m.dependencies = take deps }
+        var imports = v.Get("imports")
+        if (imports != undefined && imports.kind != JNode.KNull) {
+            if (imports.kind != JNode.KArray) { throw Json2.Mismatch(imports, "System.Collections.Generic.List`1[fire.Package.Manager.PackageImport]", "$.imports") }
+            for (int i = 0; i < imports.items.Count; i++) { m.imports.Add(PackageImport.Read(imports.items[i], "$.imports[" + i + "]")) }
+        }
+        m.templates = Json2.Str(v, "templates", "$", undefined)
+        m.documents = Json2.StrList(v, "documents", "$")
+        return m
+    }
+
+    static PackageManifest Load(string path) {
+        string text = undefined
+        try {
+            text = IO.File.ReadAllText(path)
+        } catch (IO.IOException e) { throw new PackageException("Cannot read '" + path + "': " + e.message) }
+        return PackageManifest.Parse(text)
+    }
+
+    JNode ToNode() {
+        var n = JNode.MakeObject()
+        n.Put("format", JNode.MakeInt(this.format))
+        if (this.name != undefined) { n.Put("name", JNode.MakeText(this.name)) }
+        if (this.version != undefined) { n.Put("version", JNode.MakeText(this.version)) }
+        if (this.author != undefined) { n.Put("author", JNode.MakeText(this.author)) }
+        if (this.description != undefined) { n.Put("description", JNode.MakeText(this.description)) }
+        if (this.license != undefined) { n.Put("license", JNode.MakeText(this.license)) }
+        if (this.homepage != undefined) { n.Put("homepage", JNode.MakeText(this.homepage)) }
+        n.Put("dependencies", JNode.Strings(this.dependencies))
+        var list = JNode.MakeArray()
+        foreach (i in this.imports) { list.Push(i.ToNode()) }
+        n.Put("imports", list)
+        if (this.templates != undefined) { n.Put("templates", JNode.MakeText(this.templates)) }
+        if (this.documents != undefined) { n.Put("documents", JNode.Strings(this.documents)) }
+        return n
+    }
+
+    string ToJson() { return Json2.Write(this.ToNode(), true) }
+
+    undefined Save(string path) {
+        string dir = IO.Path.GetDirectoryName(IO.Path.GetFullPath(path))
+        if (dir != undefined && dir.Length > 0) { IO.Directory.CreateDirectory(dir) }
+        IO.File.WriteAllText(path, this.ToJson())
+    }
+
+    /// <summary>A copy (through the JSON, as the C# ember makes one).</summary>
+    PackageManifest Clone() { return PackageManifest.Parse(this.ToJson()) }
+
+    /// <summary>The names of the imports, joined with ", ".</summary>
+    string ImportNames() {
+        var names = new List<string>()
+        foreach (i in this.imports) { names.Add(i.name) }
+        return ", ".Join(names)
+    }
+
+    /// <summary>All problems of the description (empty: it is fine). `files` (or undefined: not checked) says whether a referenced file exists.</summary>
+    List<string> Validate(IFiles files) {
+        var problems = new List<string>()
+        if (this.format != 1) { problems.Add("Unknown format " + this.format + " (this version of ember reads 1).") }
+        if (!PackageManifest.IsName(this.name)) { problems.Add("'name' is missing or has characters other than letters, digits, '.', '_' and '-'.") }
+        if (!SemanticVersion.IsValid(this.version)) { problems.Add("'version' is missing or not a version (1.2.3).") }
+        if (this.imports.Count == 0) { problems.Add("The package needs at least one entry in 'imports'.") }
+        var seen = new HashSet<string>()
+        foreach (import in this.imports) {
+            string iname = import.name
+            if (iname == undefined) { iname = "" }
+            string at = "Import '" + iname + "': "
+            if (!PackageManifest.IsImportName(iname)) {
+                problems.Add("Import name '" + iname + "' is not a name (letters, digits and '_', starting with a letter; parts may be joined by dots).")
+                continue
+            }
+            if (!import.standard && PackageManifest.IsReservedImport(iname)) { problems.Add(at + "this name belongs to the compiler.") }
+            if (!seen.Add(iname.ToUpper())) { problems.Add(at + "the name is used twice.") }
+            if (Ci.IsBlank(import.prelude) && import.native == undefined) { problems.Add(at + "needs a 'prelude' and/or a 'native' part.") }
+            if (!Ci.IsBlank(import.prelude) && files != undefined && !files.Exists(import.prelude)) { problems.Add(at + "the prelude '" + import.prelude + "' does not exist.") }
+            if (import.resources != undefined) {
+                foreach (pair in import.resources) {
+                    if (Ci.IsBlank(import.prelude)) {
+                        problems.Add(at + "has resources but no prelude that uses them.")
+                        break
+                    }
+                    bool bad = IO.Path.IsPathRooted(pair.Key)
+                    foreach (part in pair.Key.Replace("\\", "/").Split("/")) { if (part == ".." || part.Length == 0) { bad = true } }
+                    if (bad) { problems.Add(at + "the resource '" + pair.Key + "' must be a path below the prelude's folder.") }
+                    else if (files != undefined && !files.Exists(pair.Value)) { problems.Add(at + "the resource '" + pair.Key + "' ('" + pair.Value + "') does not exist.") }
+                }
+            }
+            if (import.native != undefined) {
+                var native = import.native
+                if (native.sources.Count == 0 && native.platformSources.Count == 0 && native.libraries.Count == 0) { problems.Add(at + "'native' needs at least one file in 'sources' (or in 'platformSources' or 'libraries').") }
+                foreach (src in native.AllFiles()) {
+                    if (files != undefined && !files.Exists(src)) { problems.Add(at + "the file '" + src + "' does not exist.") }
+                }
+                if (native.language != undefined && native.language != "c" && native.language != "c++") { problems.Add(at + "'native.language' is '" + native.language + "' (c or c++).") }
+                var functions = new HashSet<string>()
+                foreach (fn in native.functions) {
+                    if (Ci.IsBlank(fn.name) || Ci.IsBlank(fn.Symbol())) {
+                        string which = "cpp"
+                        if (native.IsC()) { which = "c" }
+                        problems.Add(at + "a native function needs 'name' and '" + which + "'.")
+                    } else if (!functions.Add(fn.name)) { problems.Add(at + "the native function '" + fn.name + "' is declared twice.") }
+                    if (fn.arguments < 0 || fn.arguments > 16) { problems.Add(at + "the native function '" + fn.name + "' takes " + fn.arguments + " arguments (0-16).") }
+                }
+            }
+        }
+        if (this.documents != undefined) {
+            foreach (document in this.documents) {
+                if (Ci.IsBlank(document)) { problems.Add("'documents' has an empty entry.") }
+                else if (files != undefined && !files.Exists(document)) { problems.Add("The document '" + document + "' does not exist.") }
+            }
+        }
+        return problems
+    }
+}
+
+/// <summary>The build order of the native sources and its check (NativeSourceOrder).</summary>
+class NativeSourceOrder {
+    static string FileNameOf(string source) {
+        string s = source.Replace("\\", "/")
+        int slash = s.LastIndexOf("/")
+        if (slash < 0) { return s }
+        return s.Substring(slash + 1)
+    }
+
+    /// <summary>The file a line includes with `#include "x"` (^[ \t]*#[ \t]*include[ \t]+"([^"\r\n]+)"), or undefined.</summary>
+    static string IncludeOf(string line) {
+        int i = 0
+        int n = line.Length
+        while (i < n && (line[i] == ' ' || line[i] == '\t')) { i++ }
+        if (i >= n || line[i] != '#') { return undefined }
+        i++
+        while (i < n && (line[i] == ' ' || line[i] == '\t')) { i++ }
+        if (i + 7 > n || line.Substring(i, 7) != "include") { return undefined }
+        i += 7
+        int spaces = i
+        while (i < n && (line[i] == ' ' || line[i] == '\t')) { i++ }
+        if (i == spaces || i >= n || line[i] != '"') { return undefined }
+        i++
+        int start = i
+        while (i < n && line[i] != '"' && line[i] != '\r') { i++ }
+        if (i >= n || line[i] != '"' || i == start) { return undefined }
+        return line.Substring(start, i - start)
+    }
+
+    /// <summary>The problems of the order: a source that includes another source of the list that is built after it.</summary>
+    static List<string> CheckIncludes(List<string> names, List<string> texts) {
+        var position = new Dictionary<string, int>()
+        for (int i = 0; i < names.Count; i++) {
+            string f = NativeSourceOrder.FileNameOf(names[i])
+            if (!position.ContainsKey(f)) { position[f] = i }
+        }
+        var problems = new List<string>()
+        for (int i = 0; i < names.Count; i++) {
+            var lines = texts[i].Split("\n")
+            for (int ln = 0; ln < lines.length; ln++) {
+                string inc = NativeSourceOrder.IncludeOf(lines[ln])
+                if (inc == undefined) { continue }
+                string f = NativeSourceOrder.FileNameOf(inc)
+                if (!position.ContainsKey(f)) { continue }
+                int at = position[f]
+                if (at <= i) { continue }
+                problems.Add(names[i] + ":" + (ln + 1) + ": #include \"" + inc + "\" is a source of the same package that is built after it - "
+                    + "give '" + names[at] + "' a smaller build order (\"order\") than '" + names[i] + "', or list it before.")
+            }
+        }
+        return problems
+    }
+
+    /// <summary>The check for every build a native part can have: the common sources alone and with each key of `platformSources`.</summary>
+    static List<string> CheckAllPlatforms(PackageNative native, IFiles files) {
+        var problems = new List<string>()
+        var keys = new List<string>()
+        keys.Add(undefined)
+        foreach (pair in native.platformSources) { keys.Add(pair.Key) }
+        foreach (key in keys) {
+            var platformKeys = new List<string>()
+            if (key != undefined) { platformKeys.Add(key) }
+            var list = native.SourcesFor(platformKeys)
+            var names = new List<string>()
+            var texts = new List<string>()
+            foreach (f in list) {
+                string t = files.Read(f)
+                if (t != undefined) {
+                    names.Add(f)
+                    texts.Add(t)
+                }
+            }
+            foreach (p in NativeSourceOrder.CheckIncludes(names, texts)) {
+                bool known = false
+                foreach (x in problems) { if (x == p || x.StartsWith(p + " (in a build for")) { known = true } }
+                if (!known) {
+                    if (key == undefined) { problems.Add(p) }
+                    else { problems.Add(p + " (in a build for '" + key + "')") }
+                }
+            }
+        }
+        return problems
+    }
+}

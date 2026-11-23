@@ -1,7 +1,7 @@
 # forge on the command line
 
 `forge` (the compiler, `src/fire.Compiler`) runs, builds and tests fire programs. spark uses the same code; everything spark does can be done with
-`forge` and `ember` (the [package manager](../packages/README.md)).
+`forge` and `ember` (the [package manager](../packages/README.md), [its command line](ember.md)).
 
 ## Commands
 

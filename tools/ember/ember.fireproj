@@ -1,0 +1,6 @@
+{
+  "format": 1,
+  "name": "ember",
+  "type": "exe",
+  "files": ["json.fire", "manifest.fire", "fpk.fire", "store.fire", "sources.fire", "github.fire", "service.fire", "standard.fire", "main.fire"]
+}

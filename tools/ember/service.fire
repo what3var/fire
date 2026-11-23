@@ -1,0 +1,292 @@
+// ember: find, install, update and remove (PackageManagerService.cs of the C# ember).
+
+/// <summary>What ember says while it works (Console.WriteLine of the C# ember).</summary>
+class Log {
+    static undefined Line(string text) { IO.Stdio.WriteLine(text) }
+    static undefined Error(string text) { IO.Stdio.ErrorLine(text) }
+}
+
+/// <summary>One package that `ember update` looked at.</summary>
+class UpdateResult {
+    string name
+    string oldVersion
+    string newVersion
+    string origin
+    construct(string name, string oldVersion, string newVersion, string origin) {
+        this.name = name
+        this.oldVersion = oldVersion
+        this.newVersion = newVersion
+        this.origin = origin
+    }
+}
+
+class PackageManagerService {
+    PackageStore store
+    List<IPackageSource> sources
+    GitHubSource github = undefined
+
+    construct(bool withSources = true) {
+        this.store = PackageStore.Default()
+        if (withSources) { this.sources = EmberSettings.LoadSources() } else { this.sources = new List<IPackageSource>(Owns.Values) }
+    }
+
+    GitHubSource GitHub() {
+        if (this.github == undefined) { this.github = new GitHubSource(EmberSettings.LoadGitHub()) }
+        return this.github
+    }
+
+    PackageLock Lock() { return PackageLock.Load(this.store) }
+
+    /// <summary>The packages of all sources that match `query` (part of the name or of the description; empty: all); a source that cannot be read adds a warning.</summary>
+    List<PackageListing> Find(string queryIn, List<string> warnings) {
+        var all = new List<PackageListing>(Owns.Values)
+        foreach (source in this.sources) {
+            try {
+                var listed = source.List()
+                while (listed.Count > 0) { all.Add(listed.TakeAt(0)) }
+            } catch (PackageException e) { warnings.Add(e.message) }
+        }
+        // the same package from several sources: the versions are put together
+        var merged = new List<PackageListing>(Owns.Values)
+        var done = new HashSet<string>()
+        for (int i = 0; i < all.Count; i++) {
+            var first = all[i]
+            if (!done.Add(first.name.ToUpper())) { continue }
+            var group = new List<PackageListing>()
+            for (int k = i; k < all.Count; k++) { if (Ci.Eq(all[k].name, first.name)) { group.Add(all[k]) } }
+            var m = new PackageListing(first.name)
+            m.author = first.author
+            m.description = first.description
+            m.source = first.source
+            m.license = first.license
+            m.homepage = first.homepage
+            if (group.Count > 1) {
+                var versionsSeen = new HashSet<string>()
+                var sourceNames = new List<string>()
+                m.license = ""
+                m.homepage = ""
+                foreach (g in group) {
+                    foreach (v in g.versions) { if (versionsSeen.Add(v.version)) { m.versions.Add(v.Copy()) } }
+                    if (!sourceNames.Contains(g.source)) { sourceNames.Add(g.source) }
+                    if (m.license.Length == 0 && g.license.Length > 0) { m.license = g.license }
+                    if (m.homepage.Length == 0 && g.homepage.Length > 0) { m.homepage = g.homepage }
+                }
+                m.source = ", ".Join(sourceNames)
+            } else { foreach (v in first.versions) { m.versions.Add(v.Copy()) } }
+            merged.Add(take m)
+        }
+        string query = ""
+        if (queryIn != undefined) { query = queryIn.Trim() }
+        var result = new List<PackageListing>(Owns.Values)
+        while (merged.Count > 0) {
+            var l = merged.TakeAt(0)
+            if (query.Length == 0 || Ci.Contains(l.name, query) || Ci.Contains(l.description, query)) { result.Add(take l) }
+        }
+        // exact name matches first, then by name (not case sensitive); stable
+        var sorted = new List<PackageListing>(Owns.Values)
+        var keys = new List<string>()
+        while (result.Count > 0) {
+            var l = result.TakeAt(0)
+            string key = "1"
+            if (Ci.Eq(l.name, query)) { key = "0" }
+            key = key + l.name.ToUpper()
+            int at = keys.Count
+            while (at > 0 && keys[at - 1] > key) { at-- }
+            keys.Insert(at, key)
+            sorted.Insert(at, take l)
+        }
+        return sorted
+    }
+
+    /// <summary>Installs `name`, `name@1.2.0`, a package file or `github:owner/repo[@ref][#name]` with what it depends on.</summary>
+    undefined Install(string spec, bool force = false) {
+        var inProgress = new HashSet<string>()
+        this.InstallCore(spec, force, inProgress, false)
+    }
+
+    undefined InstallCore(string spec, bool force, HashSet<string> inProgress, bool update) {
+        string temp = IO.Path.Combine(IO.Path.GetTempPath(), "ember-" + Guid.NewText())
+        try {
+            string fpk = undefined
+            GitHubLockEntry locked = undefined
+            if (GitHubSpec.IsGitHub(spec)) {
+                var gh = GitHubSpec.Parse(spec)
+                var lockFile = this.Lock()
+                var pinned = lockFile.ForRepository(gh.Repository())
+                var fetched = new GitHubLockEntry()
+                string path = this.GitHub().Fetch(gh, pinned, update, temp, fetched)
+                var m = Fpk.ReadManifest(path)
+                this.CheckGitHubPackage(gh, m, lockFile, force)
+                fetched.package = m.name
+                fetched.version = m.version
+                var same = this.store.Find(m.name)
+                if (!force && pinned != undefined && same != undefined && same.Version == m.version && pinned.commit == fetched.commit
+                    && (pinned.kind == "source" || pinned.sha256 == fetched.sha256)) {
+                    Log.Line(m.name + " " + m.version + " from " + fetched.Origin() + " is already installed.")
+                    return
+                }
+                Log.Line(m.name + " " + m.version + " comes from " + gh.WebUrl() + " (" + fetched.Origin() + ").")
+                fpk = path
+                locked = fetched
+            } else if (Ci.EndsWith(spec, Fpk.Extension) && IO.File.Exists(spec)) { fpk = IO.Path.GetFullPath(spec) }
+            else {
+                string name = spec
+                string wanted = ""
+                int at = spec.IndexOf("@")
+                if (at > 0) {
+                    name = spec.Substring(0, at)
+                    wanted = spec.Substring(at + 1)
+                }
+                var warnings = new List<string>()
+                var found = this.Find(name, warnings)
+                PackageListing listing = undefined
+                foreach (l in found) { if (listing == undefined && Ci.Eq(l.name, name)) { listing = l } }
+                if (listing == undefined) {
+                    if (warnings.Count > 0) { throw new PackageException("The package '" + name + "' was not found:\n  " + "\n  ".Join(warnings)) }
+                    throw new PackageException("The package '" + name + "' was not found.")
+                }
+                PackageVersion version = undefined
+                if (wanted.Length == 0) { version = listing.Latest() }
+                else { foreach (v in listing.versions) { if (version == undefined && v.version == wanted) { version = v } } }
+                if (version == undefined && wanted.Length == 0) {
+                    var all = new List<string>()
+                    foreach (v in listing.versions) { all.Add(name + "@" + v.version) }
+                    throw new PackageException("Every version of '" + name + "' was withdrawn (yanked); name one to install it anyway: " + ", ".Join(all) + ".")
+                }
+                if (version == undefined) {
+                    var all = new List<string>()
+                    foreach (v in listing.versions) { all.Add(v.version) }
+                    throw new PackageException("The package '" + name + "' has no version '" + wanted + "' (available: " + ", ".Join(all) + ").")
+                }
+                if (version.yanked) { Log.Line("Note: " + listing.name + " " + version.version + " was withdrawn (yanked) by its source.") }
+                var already = this.store.Find(listing.name)
+                if (!force && already != undefined && already.Version == version.version) {
+                    Log.Line(listing.name + " " + version.version + " is already installed.")
+                    return
+                }
+                Log.Line("Fetching " + listing.name + " " + version.version + "...")
+                fpk = Downloads.Fetch(version, temp)
+            }
+
+            var manifest = Fpk.ReadManifest(fpk)
+            // (a cycle of dependencies)
+            if (!inProgress.Add(manifest.name.ToUpper())) { return }
+            foreach (dependency in manifest.dependencies) {
+                if (this.store.FindBySpec(dependency) == undefined) {
+                    Log.Line(manifest.name + " needs " + dependency + ".")
+                    this.InstallCore(dependency, false, inProgress, false)
+                }
+            }
+            var package = this.store.Install(fpk)
+            // the lock file: a package from GitHub with its commit and checksum; one of the same name from elsewhere is no longer from GitHub
+            var lockNow = this.Lock()
+            if (locked != undefined) {
+                lockNow.Set(locked)
+                lockNow.Save()
+            } else if (lockNow.RemovePackage(package.Name)) { lockNow.Save() }
+            Log.Line("Installed " + package.Name + " " + package.Version + " (imports: " + package.manifest.ImportNames() + ").")
+        } finally {
+            if (IO.Directory.Exists(temp)) { IO.Directory.Delete(temp, true) }
+        }
+    }
+
+    /// <summary>A package from GitHub must be named like its repository (or as `#name` says), must not take a reserved name, and replaces one of the same
+    /// name from elsewhere only with `force`.</summary>
+    undefined CheckGitHubPackage(GitHubSpec spec, PackageManifest m, PackageLock lockFile, bool force) {
+        if (spec.packageName != undefined && !Ci.Eq(spec.packageName, m.name)) { throw new PackageException("The package in " + spec.Repository() + " is named '" + m.name + "', not '" + spec.packageName + "'.") }
+        if (spec.packageName == undefined && !Ci.Eq(spec.repo, m.name)) {
+            throw new PackageException("The package in " + spec.Repository() + " is named '" + m.name + "', not like the repository. Accept the name with " + spec.Text() + "#" + m.name + " (or ember install ... --name " + m.name + ").")
+        }
+        bool standard = Ci.StartsWith(m.name, Standard.Prefix)
+        foreach (i in m.imports) { if (i.standard) { standard = true } }
+        if (standard) { throw new PackageException("The package in " + spec.Repository() + " takes the name or an import of a standard library of fire ('" + m.name + "'): not installed from GitHub.") }
+        var other = this.store.Find(m.name)
+        var entry = lockFile.ForPackage(m.name)
+        string origin = undefined
+        if (entry != undefined) { origin = entry.repository }
+        if (!force && other != undefined && !Ci.Eq(origin, spec.Repository())) {
+            string place = "another source"
+            if (entry != undefined) { place = "github:" + entry.repository }
+            throw new PackageException("A package '" + m.name + "' is installed already from " + place + " (" + other.Version + "); --force replaces it with the one of " + spec.Repository() + ".")
+        }
+    }
+
+    /// <summary>`ember update`: see the C# ember - releases move to the newest release, branches to their newest commit, tags and commits stay unless named;
+    /// the packages of the sources move to their newest version.</summary>
+    List<UpdateResult> Update(string spec) {
+        var results = new List<UpdateResult>(Owns.Values)
+        var lockFile = this.Lock()
+        GitHubSpec named = undefined
+        if (spec != undefined && GitHubSpec.IsGitHub(spec)) { named = GitHubSpec.Parse(spec) }
+        var entries = new List<GitHubLockEntry>(Owns.Values)
+        foreach (e in lockFile.github) {
+            if (spec == undefined || (named != undefined && Ci.Eq(e.repository, named.Repository())) || (named == undefined && Ci.Eq(e.package, spec))) { entries.Add(e.Copy()) }
+        }
+        foreach (entry in entries) {
+            var installed = this.store.Find(entry.package)
+            string old = ""
+            if (installed != undefined) { old = installed.Version }
+            bool explicitly = spec != undefined
+            bool commit = entry.reference.Length > 0 && Ci.StartsWith(entry.commit, entry.reference)
+            bool tag = entry.reference.Length > 0 && entry.tag != undefined
+            string target = undefined
+            if (named != undefined && named.reference.Length > 0) { target = named.Text() }
+            else if ((commit || tag) && !explicitly) {
+                results.Add(new UpdateResult(entry.package, old, old, entry.Origin()))
+                continue
+            } else {
+                target = "github:" + entry.repository
+                if (!(tag || commit || entry.reference.Length == 0)) { target = target + "@" + entry.reference }
+            }
+            if (!Ci.Eq(entry.package, entry.repository.Split("/")[1])) { target = target + "#" + entry.package }
+            this.InstallCore(target, false, new HashSet<string>(), true)
+            var now = this.Lock().ForRepository(entry.repository)
+            var after = this.store.Find(entry.package)
+            string newVersion = old
+            if (after != undefined) { newVersion = after.Version }
+            string origin = entry.Origin()
+            if (now != undefined) { origin = now.Origin() }
+            results.Add(new UpdateResult(entry.package, old, newVersion, origin))
+        }
+        if (named == undefined) {
+            var fromGitHub = new HashSet<string>()
+            foreach (e in lockFile.github) { fromGitHub.Add(e.package.ToUpper()) }
+            var candidates = new List<string>()
+            var versions = new List<string>()
+            foreach (p in this.store.Installed()) {
+                if (fromGitHub.Contains(p.Name.ToUpper()) || Ci.StartsWith(p.Name, Standard.Prefix)) { continue }
+                if (spec != undefined && !Ci.Eq(p.Name, spec)) { continue }
+                candidates.Add(p.Name)
+                versions.Add(p.Version)
+            }
+            if (candidates.Count > 0) {
+                var warnings = new List<string>()
+                var listings = this.Find("", warnings)
+                foreach (w in warnings) { Log.Line("Note: " + w) }
+                for (int i = 0; i < candidates.Count; i++) {
+                    PackageVersion latest = undefined
+                    foreach (l in listings) { if (latest == undefined && Ci.Eq(l.name, candidates[i])) { latest = l.Latest() } }
+                    if (latest == undefined) { continue }
+                    bool newer = SemanticVersion.IsValid(latest.version) && SemanticVersion.IsValid(versions[i]) && SemanticVersion.Compare(latest.version, versions[i]) > 0
+                    if (newer) { this.Install(candidates[i] + "@" + latest.version) }
+                    string nv = versions[i]
+                    if (newer) { nv = latest.version }
+                    results.Add(new UpdateResult(candidates[i], versions[i], nv, "sources"))
+                }
+            }
+        }
+        if (spec != undefined && results.Count == 0) { throw new PackageException("'" + spec + "' is not installed from GitHub or a package source.") }
+        return results
+    }
+
+    /// <summary>Removes an installed package (and its entry in the lock file); one that another installed package needs is an error.</summary>
+    undefined Remove(string name) {
+        var package = this.store.FindBySpec(name)
+        if (package == undefined) { throw new PackageException("The package '" + name + "' is not installed.") }
+        var dependents = this.store.DependentsOf(package.Name)
+        if (dependents.Count > 0) { throw new PackageException("'" + package.Name + "' is needed by " + ", ".Join(dependents) + ".") }
+        this.store.Remove(package.Name)
+        var lockFile = this.Lock()
+        if (lockFile.RemovePackage(package.Name)) { lockFile.Save() }
+    }
+}
