@@ -172,7 +172,7 @@ static FcToken* Expect(FcParser* p, FcTokenType type, const char* message) {
 static bool ContinuesAtLineStart(FcParser* p, FcTokenType type) {
     return (type == TT_Dot && p->withVarStack->count == 0) || type == TT_QuestionDot || type == TT_QuestionQuestionDot
         || type == TT_And || type == TT_Or || type == TT_Plus || type == TT_Minus || type == TT_Slash || type == TT_Percent || type == TT_Caret || type == TT_Pipe
-        || type == TT_Eq || type == TT_NotEq || type == TT_Lt || type == TT_LtEq || type == TT_Gt || type == TT_GtEq || type == TT_Question;
+        || type == TT_Eq || type == TT_NotEq || type == TT_Lt || type == TT_LtEq || type == TT_Gt || type == TT_GtEq || type == TT_Question || type == TT_QuestionQuestion;
 }
 static bool LineContinues(FcParser* p) { return p->bracketDepth > 0 || !Peek(p)->newlineBefore || ContinuesAtLineStart(p, Peek(p)->type); }
 
@@ -3508,6 +3508,15 @@ static FcExpr* ParseAssignment(FcParser* p) {
         if (IsAssignTarget(left)) return mkAssign(p, line, left, value);
         Error(p, "Invalid assignment target", Previous(p));
     }
+    if (LineContinues(p) && Check(p, TT_QuestionQuestionAssign)) {
+        /* `a ?\?= b` is `a ?? (a = b)`: a is evaluated twice (only when it is undefined), so it must not have effects of its own */
+        FcToken* opTok = Advance(p);
+        FcExpr* value = ParseAssignment(p);
+        if (!IsAssignTarget(left)) Error(p, "Invalid assignment target", opTok);
+        if (!IsPlainTarget(left))
+            Error(p, S(p, "The target of '%s' must not contain a call, '++', '--' or an assignment (write the assignment out)", opTok->lexeme), opTok);
+        return mkBinary(p, opTok->line, BOP_Coalesce, left, mkAssign(p, opTok->line, left, value));
+    }
     if (LineContinues(p) && (op = CompoundOperator(Peek(p)->type)) != BOP__NONE) {
         FcToken* opTok = Advance(p);
         FcExpr* value = ParseAssignment(p);
@@ -3521,8 +3530,19 @@ static FcExpr* ParseAssignment(FcParser* p) {
 
 static FcExpr* ParseOr(FcParser* p);
 
+/* `a ?? b` (null-coalescing, as in C#): below `||`, above `?:`, right-associative (`a ?? b ?? c` is `a ?? (b ?? c)`) */
+static FcExpr* ParseCoalesce(FcParser* p) {
+    FcExpr* left = ParseOr(p);
+    int line;
+    FcExpr* right;
+    if (!(LineContinues(p) && Check(p, TT_QuestionQuestion))) return left;
+    line = Advance(p)->line;
+    right = ParseCoalesce(p);
+    return mkBinary(p, line, BOP_Coalesce, left, right);
+}
+
 static FcExpr* ParseConditional(FcParser* p) {
-    FcExpr* condition = ParseOr(p);
+    FcExpr* condition = ParseCoalesce(p);
     int line, savedSuppress;
     FcExpr* then;
     FcExpr* otherwise;

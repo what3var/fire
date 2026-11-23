@@ -949,7 +949,7 @@ static const FcST* InferBinaryType(FcTC* t, FcBinaryExpr* b, const FcST* left, c
 static const FcU* BinaryUnit(FcTC* t, FcBinaryExpr* b, const FcST* left, const FcST* right);
 static void InferOperands(FcTC* t, FcBinaryExpr* b, const FcST** left, const FcST** right) {
     FcCoercionInfo leftInfo, rightInfo;
-    if (b->op == BOP_And || b->op == BOP_Or) { *left = Infer(t, b->left); *right = Infer(t, b->right); return; }
+    if (b->op == BOP_And || b->op == BOP_Or || b->op == BOP_Coalesce) { *left = Infer(t, b->left); *right = Infer(t, b->right); return; }
     leftInfo = fcAnalyzeCoercion(b->left);
     rightInfo = fcAnalyzeCoercion(b->right);
     if (!ciRequestsAnyAuto(&leftInfo) && !ciRequestsAnyAuto(&rightInfo)) { *left = Infer(t, b->left); *right = Infer(t, b->right); return; }
@@ -978,6 +978,12 @@ static const FcST* InferBinary(FcTC* t, FcBinaryExpr* b) {
     const FcST* type;
     const FcU* unit;
     InferOperands(t, b, &left, &right);
+    if (b->op == BOP_Coalesce) {
+        /* `a ?? b`: the common type of both; defined when a is or b is */
+        FcList* both = fcListNew(TC_);
+        fcListAdd(TC_, both, (void*)left); fcListAdd(TC_, both, (void*)right);
+        return stWithNull(TC_, Join(t, both, (FcExpr*)b), left->nul == NUL_Defined ? NUL_Defined : right->nul);
+    }
     if (b->op == BOP_And || b->op == BOP_Or) {
         const char* op = b->op == BOP_And ? "&&" : "||";
         CheckLogicalOperand(t, left, op, b->h.line);

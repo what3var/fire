@@ -481,7 +481,9 @@ static void CheckTreeRules(FcTC* t, FcExpr* e, int line) {
             for (i = 0; i < call->args->count; i++) CheckTreeRules(t, (FcExpr*)call->args->items[i], line);
             return;
         }
-        case EK_BinaryExpr: CheckTreeRules(t, ((FcBinaryExpr*)e)->left, line); CheckTreeRules(t, ((FcBinaryExpr*)e)->right, line); return;
+        case EK_BinaryExpr:
+            if (((FcBinaryExpr*)e)->op == BOP_Coalesce) { NO("'?\?' (write 'a != undefined ? a : b')"); return; }
+            CheckTreeRules(t, ((FcBinaryExpr*)e)->left, line); CheckTreeRules(t, ((FcBinaryExpr*)e)->right, line); return;
         case EK_UnaryExpr: {
             FcUnaryExpr* u = (FcUnaryExpr*)e;
             if (u->op == UOP_Negate || u->op == UOP_LogicalNot || u->op == UOP_BitNot) { CheckTreeRules(t, u->operand, line); return; }

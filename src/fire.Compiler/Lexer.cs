@@ -721,6 +721,9 @@ namespace fire.Compiler
                     // `a?.b`, `a??.b` (conditional access) - not `c ?.5 : x` (a number after the dot stays the conditional operator)
                     if (Peek() == '.' && !char.IsDigit(PeekNext())) { Advance(); return Tok(TokenType.QuestionDot, "?.", line, col, newlineBefore); }
                     if (Peek() == '?' && PeekNext() == '.') { Advance(); Advance(); return Tok(TokenType.QuestionQuestionDot, "??.", line, col, newlineBefore); }
+                    // `a ?? b`, `a ??= b`
+                    if (Peek() == '?' && PeekNext() == '=') { Advance(); Advance(); return Tok(TokenType.QuestionQuestionAssign, "??=", line, col, newlineBefore); }
+                    if (Match('?')) return Tok(TokenType.QuestionQuestion, "??", line, col, newlineBefore);
                     return Tok(TokenType.Question, "?", line, col, newlineBefore);
 
                 case ':':

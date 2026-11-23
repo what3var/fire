@@ -1390,6 +1390,7 @@ static void DisqualifyFields(FcTC* t) {
                 }
                 case EK_BinaryExpr: {
                     FcBinaryExpr* cmp = (FcBinaryExpr*)e;
+                    if (cmp->op == BOP_Coalesce && (n = fcAccessName(cmp->left)) != NULL) { fcSetAdd(asked, n); break; }
                     if (cmp->op != BOP_Eq && cmp->op != BOP_NotEq) break;
                     if (cmp->left->kind == EK_LiteralExpr && ((FcLiteralExpr*)cmp->left)->value.kind == VK_Undefined && (n = fcAccessName(cmp->right)) != NULL) fcSetAdd(asked, n);
                     if (cmp->right->kind == EK_LiteralExpr && ((FcLiteralExpr*)cmp->right)->value.kind == VK_Undefined && (n = fcAccessName(cmp->left)) != NULL) fcSetAdd(asked, n);

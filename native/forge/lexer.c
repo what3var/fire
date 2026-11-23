@@ -470,6 +470,9 @@ static FcToken lxReadOperatorOrPunctuation(FcLexer* l, int line, int col, bool n
         case '?':
             if (lxPeek(l) == '.' && !fcIsDigit(lxPeekNext(l))) { lxAdvance(l); TOK(QuestionDot, "?."); }
             if (lxPeek(l) == '?' && lxPeekNext(l) == '.') { lxAdvance(l); lxAdvance(l); TOK(QuestionQuestionDot, "??."); }
+            /* `a ?? b` and its assignment form (`?\?=`) */
+            if (lxPeek(l) == '?' && lxPeekNext(l) == '=') { lxAdvance(l); lxAdvance(l); TOK(QuestionQuestionAssign, "?\?="); }
+            if (lxMatch(l, '?')) TOK(QuestionQuestion, "??");
             TOK(Question, "?");
         case ':': TOK(Colon, ":");
         case '!': if (lxMatch(l, '=')) TOK(NotEq, "!="); TOK(Bang, "!");

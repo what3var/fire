@@ -1,0 +1,65 @@
+class Node {
+    string name
+    Node next
+    int calls = 0
+    construct(string name) { this.name = name }
+    Node Next() {
+        this.calls++
+        return this.next
+    }
+}
+class Counter {
+    static int evaluated = 0
+    static string Side() {
+        Counter.evaluated++
+        return "side"
+    }
+}
+string missing = undefined
+string some = "some"
+print(missing ?? "fallback")
+print(some ?? "fallback")
+print(missing ?? missing ?? "third")
+string chained = missing
+    ?? "next line"
+print(chained)
+// precedence: below || and above ?: (as in C#), right-associative
+bool flag = undefined
+print(flag ?? false || true)
+print(missing ?? "a" == "a" ? "yes" : "no")
+int n = undefined
+int total = (n ?? 40) + 2
+print(total)
+// the left side is evaluated once, the right side only when it is needed
+var a = new Node("a")
+print(a.Next()?.name ?? "no next")
+print(a.calls)
+print(some ?? Counter.Side())
+print(Counter.evaluated)
+print(missing ?? Counter.Side())
+print(Counter.evaluated)
+// false, 0 and "" are values, not undefined
+bool off = false
+print(off ?? true)
+print(0 ?? 7)
+print("" ?? "empty")
+// ??=: only when undefined
+string s = undefined
+s ??= "first"
+s ??= "second"
+print(s)
+a.next ??= new Node("b")
+a.next ??= new Node("c")
+print(a.next.name)
+var list = new List<string>()
+list.Add(undefined)
+list[0] ??= "filled"
+print(list[0])
+print((s ??= "x") + " " + (missing ??= "now"))
+print(missing)
+// typing: `var` takes the common type; a defined right side makes the result defined
+var t = missing ?? "typed"
+print(t.Length)
+any loose = undefined
+print(loose ?? 3.5)
+//# name: ?? (null-coalescing) and ??=: a or b when a is undefined, b only evaluated then, a once; precedence below || and above ?:, right-associative; false, 0 and "" are values; ??= assigns only when undefined

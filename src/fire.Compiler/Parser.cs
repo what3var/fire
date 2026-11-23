@@ -3799,6 +3799,17 @@ namespace fire.Compiler
                     return new AssignExpr(line, left, value);
                 throw Error("Invalid assignment target", Previous());
             }
+            if (LineContinues() && Check(TokenType.QuestionQuestionAssign))
+            {
+                // `a ??= b` is `a ?? (a = b)`: a is evaluated twice (only when it is undefined), so it must not have effects of its own
+                var opTok = Advance();
+                var value = ParseAssignment();
+                if (left is not (IdentifierExpr or MemberExpr or IndexExpr or UnaryExpr { Op: UnaryOp.Dereference }))
+                    throw Error("Invalid assignment target", opTok);
+                if (!IsPlainTarget(left))
+                    throw Error($"The target of '{opTok.Lexeme}' must not contain a call, '++', '--' or an assignment (write the assignment out)", opTok);
+                return new BinaryExpr(opTok.Line, BinaryOp.Coalesce, left, new AssignExpr(opTok.Line, left, value));
+            }
             if (LineContinues() && CompoundOperator(Peek().Type) is { } op)
             {
                 var opTok = Advance();
@@ -3817,7 +3828,7 @@ namespace fire.Compiler
         /// conversion - write `(x:m)` there.</summary>
         private Expr ParseConditional()
         {
-            var condition = ParseOr();
+            var condition = ParseCoalesce();
             if (!(LineContinues() && Check(TokenType.Question))) return condition;
             int line = Advance().Line;
             var savedSuppress = _suppressColonPostfixAtDepth;
@@ -3857,6 +3868,15 @@ namespace fire.Compiler
             UnaryExpr u => IsPlainTarget(u.Operand),
             _ => false,
         };
+
+        /// <summary>`a ?? b` (null-coalescing, as in C#): below `||`, above `?:`, right-associative (`a ?? b ?? c` is `a ?? (b ?? c)`).</summary>
+        private Expr ParseCoalesce()
+        {
+            var left = ParseOr();
+            if (!(LineContinues() && Check(TokenType.QuestionQuestion))) return left;
+            int line = Advance().Line;
+            return new BinaryExpr(line, BinaryOp.Coalesce, left, ParseCoalesce());
+        }
 
         private Expr ParseOr()
         {
@@ -4828,7 +4848,7 @@ namespace fire.Compiler
         /// `.` at the start of a line is its member (`.x = 10`), a new statement.</summary>
         private bool ContinuesAtLineStart(TokenType type) => type == TokenType.Dot && _withVarStack.Count == 0 || type is TokenType.QuestionDot or TokenType.QuestionQuestionDot
             or TokenType.And or TokenType.Or or TokenType.Plus or TokenType.Minus or TokenType.Slash or TokenType.Percent or TokenType.Caret or TokenType.Pipe
-            or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq or TokenType.Question;
+            or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq or TokenType.Question or TokenType.QuestionQuestion;
 
         /// <summary>Enforces the statement separation rule: between two statements
         /// there must be a ';' or a line break. End of block ('}') and end of file
