@@ -5,7 +5,11 @@
  * The program `fire` (native/vm/fire.c) with the program file and the libraries behind it; `fire` is found or built like the C# forge does - the same key
  * (`fire.key`), the same cache folder - so a VM the one forge built is taken by the other. The .NET runtime (FIRE_VM_ENGINE=dotnet) is not ported. */
 
+#ifdef _WIN32
+#define NV_EXTENSION ".exe"   /* (CVm.VariantName with the program's extension: fire.exe) */
+#else
 #define NV_EXTENSION ""
+#endif
 /* the store whose headers go with the runtime of the VM (NativeRuntimeFiles.WriteTo: PackageHeaders) - set by the commands */
 static const char* nvStoreRoot = "Packages";
 /* VariantName: fire, fire-i32, fire-f32, fire-i32-f32, fire-i16, fire-i16-f32 */

@@ -293,6 +293,8 @@ typedef struct PjLinkIn {
     FcStore** storeOut;          /* gets the store of the link, with the overlay of the plan (the engine vm: the libraries of its packages, build/cvm.c); NULL: not wanted */
 } PjLinkIn;
 
+/* Linker.ProcessIntWidth: -i of a command whose links take no width of their own (publish: every link of the process) - 0: none */
+static int pjProcessIntWidth;
 /* Linker.CompileAndLink with the plan: the linked program; `registry` gets the NativeRegistry (the generator's names) */
 static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     PjLinker* P = (PjLinker*)fcAlloc(c, sizeof *P);
@@ -313,6 +315,7 @@ static FcLinked* pjLink(FcCtx* c, const PjLinkIn* in, FcNatives** registry) {
     FcDict* done = fcDictNew(c, FC_KEY_STR);
     const uint16_t* src;
     int len, firstUserSource = 1, i, k, total, intWidth, floatWidth, intOverride = in->o ? in->o->intWidth : in->intWidthOverride, floatOverride = in->o ? in->o->floatWidth : in->floatWidthOverride;
+    if (!intOverride) intOverride = pjProcessIntWidth;
     bool strict = plan->settings->typeChecking && pjIEq(plan->settings->typeChecking, "strict");
     L->c = c;
     L->store.root = in->storeRoot;

@@ -382,12 +382,17 @@ static char** nbSplitArguments(const char* s, int* count) {
     *count = argc;
     return argv;
 }
+#ifndef _WIN32
 extern char** environ;
+#endif
 typedef struct NbRunResult { bool ok; char* text; size_t len; } NbRunResult;   /* text: malloc'd, stdout then stderr */
 /* the program as Process.Start finds it: a path as it is, a name on the PATH of this process */
 static char* nbResolveExe(const char* exe) {
     const char* path;
     const char* p;
+#ifdef _WIN32
+    if (exe) return fwResolveExe(exe);
+#endif
     if (strchr(exe, '/')) return strdup(exe);
     path = getenv("PATH");
     for (p = path ? path : ""; p && *p;) {
@@ -428,6 +433,52 @@ static NbRunResult nbRun(const char* exe, const char* arguments, const char* wor
         if (i == r.len || r.text[i] == '\n') { if (i > start || i < r.len) nbMonitorLine(r.text + start, i - start); start = i + 1; }
     return r;
 }
+#ifdef _WIN32
+/* Windows: CreateProcess with the command line as .NET passes it (fwRun, win32.h); the PATH and Open Watcom's variables as below, with ';' */
+static NbRunResult nbRunCore(const char* exe, const char* arguments, const char* workDir) {
+    NbRunResult r = { false, NULL, 0 };
+    FcBuf out = {0}, err = {0};
+    char* env[6] = { NULL, NULL, NULL, NULL, NULL, NULL };
+    int n = 0, code, i;
+    const char* slash = strrchr(exe, '/');
+    const char* back = strrchr(exe, '\\');
+    char* found;
+    if (back && (!slash || back > slash)) slash = back;
+    fcBufStr(&out, "");
+    fcBufStr(&err, "");
+    if (slash && slash != exe && (exe[0] == '/' || (exe[0] && exe[1] == ':'))) {
+        const char* old = getenv("PATH");
+        size_t dl = (size_t)(slash - exe);
+        char root[4096], probe[4200];
+        env[n] = (char*)malloc(dl + strlen(old ? old : "") + 8);
+        if (!env[n]) fbOutOfMemory();
+        sprintf(env[n], "PATH=%.*s;%s", (int)dl, exe, old ? old : "");
+        n++;
+        /* (Open Watcom: WATCOM, INCLUDE, EDPATH - WatcomToolchain.PrepareEnvironment) */
+        snprintf(root, sizeof root, "%.*s", (int)dl, exe);
+        fwSlashes(root);
+        if ((slash = strrchr(root, '/')) != NULL) {
+            root[slash - root] = 0;
+            snprintf(probe, sizeof probe, "%s/h/stdio.h", root);
+            if (nbFileExists(probe)) {
+                env[n] = (char*)malloc(8300); if (!env[n]) fbOutOfMemory(); snprintf(env[n], 8300, "WATCOM=%s", root); n++;
+                env[n] = (char*)malloc(8300); if (!env[n]) fbOutOfMemory(); snprintf(env[n], 8300, "INCLUDE=%s/h;%s/h/nt", root, root); n++;
+                env[n] = (char*)malloc(8300); if (!env[n]) fbOutOfMemory(); snprintf(env[n], 8300, "EDPATH=%s/eddat", root); n++;
+            }
+        }
+    }
+    code = fwRun(exe, arguments, workDir, (const char* const*)env, &out, &err);
+    if (code == -1 && (found = fwResolveExe(exe)) == NULL) fcBufFmt(&out, "Could not run '%s': No such file or directory\n", exe);
+    else if (code == -1) free(found);
+    r.ok = code == 0;
+    fcBufPut(&out, err.p, err.len);
+    r.text = out.p;
+    r.len = out.len;
+    fcBufFree(&err);
+    for (i = 0; i < n; i++) free(env[i]);
+    return r;
+}
+#else
 static NbRunResult nbRunCore(const char* exe, const char* arguments, const char* workDir) {
     NbRunResult r = { false, NULL, 0 };
     int argc = 0, i, outPipe[2], errPipe[2], status = 0;
@@ -542,6 +593,7 @@ done:
     for (i = 0; i < 3; i++) free(watcomEntries[i]);
     return r;
 }
+#endif
 static void nbAppendRun(FcBuf* log, NbRunResult* r) { if (r->text) fcBufPut(log, r->text, r->len); free(r->text); r->text = NULL; }
 static NbRunResult nbRunCommand(FcCtx* c, const char* command, const char* workDir) {
     const char* space = strchr(command, ' ');
@@ -771,6 +823,8 @@ static FcList* nbSplitCommands(FcCtx* c, const NbToolchain* t, const FgTarget* t
 static long long nbTicks(const struct stat* st) {
 #if defined(__APPLE__)
     long long ns = (long long)st->st_mtimespec.tv_nsec;
+#elif defined(_WIN32)
+    long long ns = 0;   /* (the C runtime of Windows has the seconds) */
 #else
     long long ns = (long long)st->st_mtim.tv_nsec;
 #endif
@@ -962,10 +1016,29 @@ static char nbHexDigit(int v) { return "0123456789abcdef"[v & 15]; }
 static const char* nbGuid(FcCtx* c) {
     char b[33];
     int i;
-    FILE* f = fopen("/dev/urandom", "rb");
     unsigned char r[16];
+#ifdef _WIN32
+    {
+        /* (no /dev/urandom: the SHA-256 of the time, the counter of the performance, the process, the thread and a number of this process) */
+        static volatile LONG serial;
+        LARGE_INTEGER qpc;
+        long long now = fwNowTicks();
+        DWORD ids[2];
+        LONG k = InterlockedIncrement(&serial);
+        FcSha256 h;
+        QueryPerformanceCounter(&qpc);
+        ids[0] = GetCurrentProcessId(); ids[1] = GetCurrentThreadId();
+        fcShaInit(&h);
+        fcShaUpdate(&h, (const uint8_t*)&now, sizeof now); fcShaUpdate(&h, (const uint8_t*)&qpc, sizeof qpc);
+        fcShaUpdate(&h, (const uint8_t*)ids, sizeof ids); fcShaUpdate(&h, (const uint8_t*)&k, sizeof k);
+        (void)r; (void)i; (void)b;
+        return fcStrN(c, fcShaHex(c, &h), 32);
+    }
+#else
+    FILE* f = fopen("/dev/urandom", "rb");
     if (!f || fread(r, 1, 16, f) != 16) { for (i = 0; i < 16; i++) r[i] = (unsigned char)(rand() ^ (int)getpid()); }
     if (f) fclose(f);
+#endif
     for (i = 0; i < 16; i++) { b[i * 2] = nbHexDigit(r[i] >> 4); b[i * 2 + 1] = nbHexDigit(r[i]); }
     b[32] = 0;
     return fcStr(c, b);
@@ -1119,6 +1192,13 @@ typedef struct NbBuild {
 static int nbUnitOrderCmp(const void* a, const void* b);
 static bool nbUnitOrderNatives;
 static const char* nbTempPath(FcCtx* c) {
+#ifdef _WIN32
+    char buf[MAX_PATH + 2];
+    DWORD n = GetTempPathA(sizeof buf, buf);   /* (Path.GetTempPath: TMP, TEMP, USERPROFILE, the Windows folder - with its separator) */
+    if (n == 0 || n >= sizeof buf) return "C:/Windows/Temp/";
+    fwSlashes(buf);
+    return n > 0 && buf[n - 1] == '/' ? fcStr(c, buf) : fcFmt(c, "%s/", buf);
+#endif
     const char* t = getenv("TMPDIR");
     if (t && *t) return t[strlen(t) - 1] == '/' ? t : fcFmt(c, "%s/", t);
     return "/tmp/";

@@ -7,8 +7,8 @@
  * The steps of a build (BuildMonitor.Step) come from the linkers, the builder and the packer through fcMonitorStep, the warnings of the code as they are
  * collected through fcOnReport (DiagnosticCollector.OnReport; diag.c) - a native build collects its own and reports them at its end, as BuildSafe does.
  * Cancelling: the line "cancel" on the input or SIGTERM/SIGINT; the tools that run are ended (the children of this process), the build stops at its next
- * step and the report ends with "cancelled" (exit 3). Not ported: the events "background" (BackgroundWork: the standard packages, the natives of a
- * package being built - spark's status bar), and cancelling a step of the frontend while it runs (it stops at the next step). */
+ * step and the report ends with "cancelled" (exit 3). The events "background" (BackgroundWork, diag.c: the standard packages installed, the library of graphics
+ * and windows built - spark's status bar) come as the work begins and ends. Not ported: cancelling a step of the frontend while it runs (it stops at the next step). */
 
 /* ---- ForgeReportWriter ---- */
 static pthread_mutex_t frLock = PTHREAD_MUTEX_INITIALIZER;
@@ -92,6 +92,13 @@ static void frLogLine(const char* text, size_t n) {
     free(line);
 }
 static void frLog(const char* line) { frFlushPending(); frLogLine(line, strlen(line)); }
+/* Background: what runs without a build window (BackgroundWork.Latest), without a text when nothing runs any more */
+static void frBackground(const FcBgItem* item) {
+    FcBuf b;
+    frBegin(&b, "background");
+    if (item) { frFieldStr(&b, "text", item->text); frFieldInt(&b, "done", item->done); frFieldInt(&b, "total", item->total); }
+    frEmit(&b);
+}
 /* LogBlock: the lines of a log written at its end that have not come as they happened */
 static void frLogBlock(const char* log) {
     char* text;
@@ -480,7 +487,7 @@ static FrOutcome frBuildProgram(FcCtx* c, const TcOptions* o, PjPlan* plan, cons
         return outcome;
     }
     {
-        const char* program = output ? output : pjProgramPath(c, plan->project->project->directory, name, "vm", frModeName(c, o, plan, prelude, storeRoot, NULL, po), "");
+        const char* program = output ? output : pjProgramPath(c, plan->project->project->directory, name, "vm", frModeName(c, o, plan, prelude, storeRoot, NULL, po), NV_EXTENSION);
         const char* full = pjFull(c, program, ".");
         FcBuf l = {0}, e = {0};
         nbMkdirs(c, fcDirectoryName(c, full));
@@ -740,13 +747,15 @@ static FrOutcome frPublish(FcCtx* c, const TcOptions* o, const char* prelude, co
         failure = c->err.message;
     } FC_END_TRY;
     if (failure) return frFailure(c, 2, failure);
-    if (o->overlays->count > 0) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, "unported: --overlay with publish");
+    /* (the overlays as PublishOptions.TextOf; -i, --types, --global-jobs process-wide as Linker.Process*; -D publish does not use - as the C# forge) */
+    pjPublishPlanHook = tcPublishPlanHook; pjPublishHookState = o; pjProcessIntWidth = o->intWidth;
     options.toolchain = o->toolchainName; options.includeDisabled = projects != NULL; options.quick = o->quick; options.rebuild = false;
     pjPublishSummary = NULL;
     /* (ProjectPublisher collects the warnings of each build with its result: nothing is reported as it comes) */
     fcOnReport = NULL;
     pjOnWarning = NULL;
     results = pjPublish(c, po, w, projects, &options, prelude, storeRoot, &ok);
+    pjPublishPlanHook = NULL;
     fcOnReport = frOnReportHook;
     pjOnWarning = frOnReportHook;
     frFlushPending();
@@ -782,22 +791,23 @@ static int tcReportMain(int argc, char** argv, const char* prelude, const char* 
     FcCtx* c = &ctx;
     TcOptions* o;
     volatile int result = 0;
-    struct sigaction sa;
     pthread_t input;
+#ifdef _WIN32
+    signal(SIGTERM, frOnSignal);
+    signal(SIGINT, frOnSignal);
+#else
+    struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = frOnSignal;
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
+#endif
     if (!isatty(0) && pthread_create(&input, NULL, frReadInput, NULL) == 0) pthread_detach(input);
     fcBufStr(&frPending, "");
     frPending.len = 0;
-    {
-        /* (StandardSources.EnsureInstalled with the log of the report) */
-        char* text = NULL;
-        size_t n = 0;
-        FILE* log = open_memstream(&text, &n);
-        if (log) { nsEnsureInstalled(prelude, storeRoot, log); fclose(log); if (text) frLogLines(text); free(text); }
-    }
+    /* (the work without a build window as the events "background"; StandardSources.EnsureInstalled with the log of the report) */
+    fcBgChanged = frBackground;
+    nsEnsureInstalledIn(prelude, NULL, storeRoot, true, NULL, frLogLines);
     fcCtxInit(c);
     c->collecting = true;   /* (the collector of RunReported: the warnings of the code as they are reported) */
     o = tcParse(c, argc, argv);

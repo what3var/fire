@@ -186,13 +186,78 @@ static void nbPeSetSubsystem(const char* exePath, int subsystem) {
     fclose(f);
 }
 /* NativeBuilder.ApplyPeMetadata: version info and icon into a Windows program the toolchain made - with the Win32 resource API, so only on Windows (any other
- * platform leaves the file alone, as the C# forge does). forge-c builds on POSIX only: nothing to do. */
-static void nbApplyPeMetadata(FcCtx* c, const char* exe, const FcAsmInfo* info, const FgTarget* target, FcBuf* log) {
-    (void)c; (void)exe; (void)info; (void)log;
+ * platform leaves the file alone, as the C# forge does). PeResourceEditor.SetVersionInfo (RT_VERSION 1), SetIcon (the old images removed, the new ones as 1..N, the
+ * group under the names it had, else 1); a failure of the API is the line of the log and the program stays as it was. */
 #ifdef _WIN32
-#error "forge-c: the PE resources on Windows (UpdateResource) are not ported"
+typedef struct NbPeNames { FcCtx* c; FcList* names; } NbPeNames;
+static BOOL CALLBACK nbPeCollectName(HMODULE module, LPCSTR type, LPSTR name, LONG_PTR param) {
+    NbPeNames* n = (NbPeNames*)param;
+    (void)module; (void)type;
+    if (IS_INTRESOURCE(name) && n->names->count < 4096) fcListAdd(n->c, n->names, (void*)name);   /* (the names fire writes are numbers) */
+    return TRUE;
+}
+static FcList* nbPeResourceNames(FcCtx* c, const char* exe, LPCSTR type) {
+    FcList* names = fcListNew(c);
+    NbPeNames state;
+    HMODULE m = LoadLibraryExA(exe, NULL, LOAD_LIBRARY_AS_DATAFILE);
+    if (!m) return names;
+    state.c = c; state.names = names;
+    EnumResourceNamesA(m, type, nbPeCollectName, (LONG_PTR)&state);
+    FreeLibrary(m);
+    return names;
+}
+/* the message of the last Win32 error (Win32Exception.Message) */
+static const char* nbPeLastError(FcCtx* c, const char* what) {
+    char buf[512];
+    DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, GetLastError(), 0, buf, sizeof buf, NULL);
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r' || buf[n - 1] == '.')) n--;
+    buf[n] = 0;
+    return n ? fcFmt(c, "%s.", buf) : what;
+}
+static const char* nbPeWrite(FcCtx* c, const char* exe, const NbPeVersionInfo* v, FcList* images) {
+    HANDLE h;
+    uint8_t* data;
+    size_t n;
+    int i;
+    FcList* oldGroups = images ? nbPeResourceNames(c, exe, RT_GROUP_ICON) : NULL;
+    FcList* oldIcons = images ? nbPeResourceNames(c, exe, RT_ICON) : NULL;
+    if (!(h = BeginUpdateResourceA(exe, FALSE))) return nbPeLastError(c, fcFmt(c, "BeginUpdateResource for '%s' failed.", exe));
+    n = nbPeBuildVersionInfo(c, v, &data);
+    if (!UpdateResourceA(h, RT_VERSION, MAKEINTRESOURCEA(1), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), data, (DWORD)n)) { free(data); EndUpdateResourceA(h, TRUE); return nbPeLastError(c, "UpdateResource failed."); }
+    free(data);
+    if (images) {
+        for (i = 0; i < oldIcons->count; i++) UpdateResourceA(h, RT_ICON, (LPCSTR)oldIcons->items[i], MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), NULL, 0);
+        for (i = 0; i < images->count; i++) {
+            const NbPeIcon* image = (const NbPeIcon*)images->items[i];
+            if (!UpdateResourceA(h, RT_ICON, MAKEINTRESOURCEA(i + 1), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), (void*)image->data, image->size)) { EndUpdateResourceA(h, TRUE); return nbPeLastError(c, "UpdateResource failed."); }
+        }
+        n = nbPeBuildGroupIcon(images, &data);
+        if (oldGroups->count == 0) fcListAdd(c, oldGroups, (void*)MAKEINTRESOURCEA(1));
+        for (i = 0; i < oldGroups->count; i++)
+            if (!UpdateResourceA(h, RT_GROUP_ICON, (LPCSTR)oldGroups->items[i], MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), data, (DWORD)n)) { free(data); EndUpdateResourceA(h, TRUE); return nbPeLastError(c, "UpdateResource failed."); }
+        free(data);
+    }
+    if (!EndUpdateResourceA(h, FALSE)) return nbPeLastError(c, "EndUpdateResource failed.");
+    return NULL;
+}
 #endif
+static void nbApplyPeMetadata(FcCtx* c, const char* exe, const FcAsmInfo* info, const FgTarget* target, FcBuf* log) {
+#ifdef _WIN32
+    NbPeVersionInfo v;
+    FcList* images = NULL;
+    const char* error = NULL;
+    if (!streq0(target->name, "windows") || !nbFileExists(exe) || !info) return;
+    v = nbPeVersionInfoOf(info);
+    if (info->iconPath && *info->iconPath) {
+        if (!nbFileExists(info->iconPath)) fcBufFmt(log, "Icon '%s' not found: the program keeps the default icon.\n", info->iconPath);
+        else if (!(images = nbPeReadIconImages(c, info->iconPath, &error))) { fcBufFmt(log, "Could not write version info/icon into the program: %s\n", error); return; }
+    }
+    if ((error = nbPeWrite(c, exe, &v, images)) != NULL) { fcBufFmt(log, "Could not write version info/icon into the program: %s\n", error); return; }
+    fcBufStr(log, "Version info and icon written into the program.\n");
+#else
+    (void)c; (void)exe; (void)info; (void)log;
     if (!streq0(target->name, "windows")) return;
+#endif
 }
 
 /* `peres <file.fire>`: the PE resources a native build for Windows writes for a source (its #noconsole, #name, ... #icon): the subsystem, VS_VERSIONINFO and,

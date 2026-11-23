@@ -126,6 +126,48 @@ static bool fcSameText(const char* a, const char* b) { return a == b || (a && b 
 static void (*fcOnReport)(const FcDiagnostic* d);
 static void (*fcMonitorStepHook)(int phase, const char* text, int done, int total);
 static void fcMonitorStep(int phase, const char* text, int done, int total) { if (fcMonitorStepHook) fcMonitorStepHook(phase, text, done, total); }
+/* BackgroundWork (src/fire.Native/BackgroundWork.cs): long work without a build window - the standard packages installed, the library of graphics and windows built.
+ * fcBgBegin/fcBgEnd keep what runs; every change calls fcBgChanged with the work begun last (NULL: nothing runs any more) - the report writes it as the event
+ * "background", a forge-c with FIRE_PROGRESS_LINES as a line "##fire-progress <done> <total> <text>" on its error output. One thread does this work. */
+typedef struct FcBgItem { long id; char* text; int done, total; } FcBgItem;
+#define FC_BG_MAX 16
+static FcBgItem fcBgItems[FC_BG_MAX];
+static int fcBgCount;
+static long fcBgNext;
+static void (*fcBgChanged)(const FcBgItem* latest);
+static void fcBgRaise(void) { if (fcBgChanged) fcBgChanged(fcBgCount > 0 ? &fcBgItems[fcBgCount - 1] : NULL); }
+static long fcBgBegin(const char* text, int done, int total) {
+    long id = ++fcBgNext;
+    if (fcBgCount < FC_BG_MAX) {
+        FcBgItem* item = &fcBgItems[fcBgCount++];
+        item->id = id; item->text = strdup(text); item->done = done; item->total = total;
+        if (!item->text) fbOutOfMemory();
+    }
+    fcBgRaise();
+    return id;
+}
+static void fcBgEnd(long id) {
+    int i;
+    for (i = 0; i < fcBgCount; i++)
+        if (fcBgItems[i].id == id) {
+            free(fcBgItems[i].text);
+            memmove(&fcBgItems[i], &fcBgItems[i + 1], sizeof fcBgItems[0] * (size_t)(fcBgCount - i - 1));
+            fcBgCount--;
+            break;
+        }
+    fcBgRaise();
+}
+/* BackgroundWork.WriteLines: the line of LinePrefix that says what runs now, on the error output */
+static void fcBgWriteLine(const FcBgItem* latest) {
+    if (!latest) fputs("##fire-progress\n", stderr);
+    else {
+        const char* p;
+        fprintf(stderr, "##fire-progress %d %d ", latest->done, latest->total);
+        for (p = latest->text; *p; p++) fputc(*p == '\n' || *p == '\r' ? ' ' : *p, stderr);
+        fputc('\n', stderr);
+    }
+    fflush(stderr);
+}
 
 /* DiagnosticCollector.Add: the same message for the same place once */
 static void fcCollect(FcCtx* c, FcDiagnostic* d) {

@@ -96,6 +96,27 @@ static const char* fcFullPath(FcCtx* c, const char* basePath, const char* path) 
     int count = 0, i;
     const char* p;
     FcBuf out = {0};
+#ifdef _WIN32
+    /* (Windows: a path with its drive is rooted; the result is C:/a/b) */
+    char drive[3] = { 0, 0, 0 };
+    bool rooted = fcIsSep(path[0]) || (path[0] && path[1] == ':');
+    if (!rooted) {
+        if (!(fcIsSep(basePath[0]) || (basePath[0] && basePath[1] == ':'))) {
+            char cwd[4096];
+            if (!_getcwd(cwd, sizeof cwd)) strcpy(cwd, ".");
+            fcBufStr(&joined, cwd);
+            fcBufChar(&joined, '/');
+        }
+        fcBufStr(&joined, basePath);
+        fcBufChar(&joined, '/');
+    }
+    fcBufStr(&joined, path);
+    if (joined.p[0] && joined.p[1] == ':') { drive[0] = joined.p[0]; drive[1] = ':'; joined.p[0] = '/'; joined.p[1] = '/'; }
+    else if (fcIsSep(joined.p[0])) {
+        char cwd[8];
+        if (_getcwd(cwd, sizeof cwd) && cwd[1] == ':') { drive[0] = cwd[0]; drive[1] = ':'; }   /* (\x: the drive of the working folder) */
+    }
+#else
     if (!fcIsSep(path[0])) {
         if (!fcIsSep(basePath[0])) {
             char cwd[4096];
@@ -111,6 +132,7 @@ static const char* fcFullPath(FcCtx* c, const char* basePath, const char* path) 
         fcBufChar(&joined, '/');
     }
     fcBufStr(&joined, path);
+#endif
     parts = (const char**)fcAlloc(c, sizeof(char*) * (joined.len + 1));
     for (p = joined.p; *p;) {
         const char* s;
@@ -123,15 +145,29 @@ static const char* fcFullPath(FcCtx* c, const char* basePath, const char* path) 
         parts[count++] = fcStrN(c, s, (size_t)(p - s));
     }
     fcBufStr(&out, "");
+#ifdef _WIN32
+    fcBufStr(&out, drive);
+#endif
     for (i = 0; i < count; i++) { fcBufChar(&out, '/'); fcBufStr(&out, parts[i]); }
     if (count == 0) fcBufChar(&out, '/');
     fcBufFree(&joined);
     return fcBufDone(c, &out);
 }
+/* the root of a file system: "/" (Windows: "C:/", "C:" as well) */
+static bool fcIsRootDir(const char* p) {
+#ifdef _WIN32
+    if (p[0] && p[1] == ':' && (!p[2] || (fcIsSep(p[2]) && !p[3]))) return true;
+#endif
+    return fcIsSep(p[0]) && !p[1];
+}
 static const char* fcDirectoryName(FcCtx* c, const char* fullPath) {
     const char* last = NULL;
     const char* p;
     for (p = fullPath; *p; p++) if (fcIsSep(*p)) last = p;
+#ifdef _WIN32
+    /* (the drive: C:/a -> C:/, C:/ stays) */
+    if (fullPath[0] && fullPath[1] == ':' && (!last || last == fullPath + 2)) return fcFmt(c, "%.2s/", fullPath);
+#endif
     if (!last) return ".";
     if (last == fullPath) return "/";
     return fcStrN(c, fullPath, (size_t)(last - fullPath));
