@@ -777,7 +777,10 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   Hauptprogramm sie erteilt (`fire_sectionGrantMain` in `drainQueue`) oder ein Thread sie sich selbst nimmt (`fire_sectionGrantedAway`); die anderen warten
   geparkt in `blockUntil` wie jeder wartende Task, nicht an der Sperre der Globals. `sectionRelease` gibt das Zeichen zurück (`sectFree`) und weckt die älteste
   wartende Anfrage, wenn sie sich ihre Sektion selbst nehmen darf - nur wenn ein Thread wartet (`g_sectWaiters`; die Warteschlange hält auch die erledigten
-  Anfragen, die das Hauptprogramm noch nicht herausgenommen hat, beim Schreiben in einer Schleife Tausende). Vorher nahm jeder Thread, der fragte, während das
+  Anfragen, die das Hauptprogramm noch nicht herausgenommen hat, beim Schreiben in einer Schleife Tausende). Die Erteilung selbst ist ein Compare-and-Swap
+  auf `granted`: das Hauptprogramm und der Thread können dieselbe Anfrage beanspruchen - nahm der Thread sie, lief seine Sektion und gab er das Zeichen
+  zurück, zwischen dem Blick des Hauptprogramms auf `granted` und seinem Griff nach dem Zeichen, so blieb das Zeichen für eine beendete Sektion genommen
+  (die Prüfung der 300000 Schreibungen hing so etwa jedes zehnte Mal; wer das Zeichen umsonst nahm, gibt es zurück). Vorher nahm jeder Thread, der fragte, während das
   Hauptprogramm bediente, seine Sektion sofort und wartete dann in `domWriterEnter` - an der Bedingungsvariablen der Sperre, mit seinem System-Thread: ein
   Worker des Pools (oder der Thread des Hauptprogramms), der so lange keinen Task ausführt und nicht als blockiert zählt. Gab der Task in der Sektion seinen
   Worker ab (das Ende seiner Zeitscheibe an einem sicheren Punkt in der Sektion - ein Aufruf, eine Schleife -, das Hauptprogramm, das seinen Thread

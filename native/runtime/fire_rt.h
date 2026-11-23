@@ -12270,10 +12270,13 @@ FIRE_FN bool fire_vmGrantAway(SectionReq* r);
  * - on the condition variable of the lock, with its system thread: a worker of the pool (or the main program's thread) that runs no task meanwhile and is
  * not counted as blocked. When the task in the section gave its worker away (the end of a time slice at a safe point inside the section, the main program
  * wanting its thread back), the workers were all waiting for it in domWriterEnter, none was left to run it: a deadlock (native/3510, 30 threads). */
+FIRE_FN void sectFree(void);
 FIRE_FN bool sectClaim(SectionReq* r) {
     if (fire_atomic_loadAcquire(&r->granted)) return true;
     if (lentLoadSC(&g_sectHeld) || !fire_domCas(&g_sectHeld, 0, 1)) return false;
-    fire_atomic_storeRelease(&r->granted, 1);
+    /* (the grant itself is a compare-and-swap: the main program and the thread may both claim the same request - the thread took it, ran its section and
+     * gave the token back between the main program's look at `granted` and its claim of the token; the token would stay taken for a section that is over) */
+    if (!fire_domCas(&r->granted, 0, 1)) sectFree();
     return true;
 }
 /* (the main program grants a request of the queue - unless its thread took it already) */
