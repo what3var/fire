@@ -4207,7 +4207,9 @@ else
                 string linkFlags = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
                 string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"case{index}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exeFile, out int buildExit, linkFlags);
                 if (buildExit != 0 || build.Contains("warning:")) return (null, "C/C++-Compiler: " + build, 0);
-                return TestProcess.Run(exeFile, "", workDir);
+                // (stdin closed, as the VM's run has it: a case must not wait for the input of the test run; a case that does not end in NativeCaseTimeoutMs fails
+                // with the stacks of its threads instead of holding a worker - and with all of them the whole group - for ever)
+                return TestProcess.Run(exeFile, "", workDir, input: "", timeoutMs: NativeTestBuild.CaseTimeoutMs, stacksOnTimeout: true);
             }
             try { natRan[index] = Ran(); }
             catch (Exception ex) { natRan[index] = (null, "Test: " + ex, 0); }

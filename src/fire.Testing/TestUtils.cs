@@ -35,6 +35,9 @@ sealed class RaceDemoRunner : IDestructRunner
 /// those with <c>cxx</c>, linked together. The files are <c>name.c</c> and <c>name_natives.cpp</c> in <c>dir</c> (next to the runtime files).</summary>
 static class NativeTestBuild
 {
+    /// <summary>How long the program of a case of the group native may run (FIRE_TEST_CASE_TIMEOUT in seconds; default 20 minutes: with ASan, on a busy machine).</summary>
+    public static readonly int CaseTimeoutMs = int.TryParse(Environment.GetEnvironmentVariable("FIRE_TEST_CASE_TIMEOUT"), out int s) && s > 0 ? s * 1000 : 20 * 60 * 1000;
+
     /// <summary>ccache when it is on this machine (FIRE_TEST_CCACHE=0 switches it off): the programs of an unchanged case are not compiled again. It only caches
     /// compiling (not linking), keys on the preprocessed text and the flags - the paths below the temporary folder are made relative (CCACHE_BASEDIR), the
     /// file of the program is named after its content (a filter that numbers the cases differently still finds them).</summary>
@@ -306,7 +309,7 @@ static class TestDisk
 static class TestProcess
 {
     public static (string Stdout, string Stderr, int Exit) Run(string tool, string arguments, string dir, string? input = null,
-        IReadOnlyDictionary<string, string?>? environment = null, int timeoutMs = -1)
+        IReadOnlyDictionary<string, string?>? environment = null, int timeoutMs = -1, bool stacksOnTimeout = false)
     {
         var info = new System.Diagnostics.ProcessStartInfo(tool, arguments)
         { RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input != null, UseShellExecute = false, WorkingDirectory = dir };
@@ -319,12 +322,33 @@ static class TestProcess
         var output = p.StandardOutput.ReadToEndAsync();
         if (!p.WaitForExit(timeoutMs))
         {
+            // (stacksOnTimeout: where its threads stand, before it is killed - gdb, when the machine has it: a hang names its place)
+            string stacks = stacksOnTimeout ? Stacks(p.Id) : "";
             try { p.Kill(true); } catch (Exception) { }
             p.WaitForExit();
-            return (output.Result, err.Result + "(Zeitueberschreitung)", -1);
+            return (output.Result, err.Result + $"(Zeitueberschreitung nach {timeoutMs / 1000} s)" + stacks, -1);
         }
         p.WaitForExit();
         return (output.Result, err.Result, p.ExitCode);
+    }
+
+    /// <summary>The stacks of all threads of a process that hangs (gdb -p; "" without gdb or on Windows).</summary>
+    public static string Stacks(int pid)
+    {
+        if (OperatingSystem.IsWindows()) return "";
+        try
+        {
+            var info = new System.Diagnostics.ProcessStartInfo("gdb") { RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, UseShellExecute = false };
+            foreach (var a in new[] { "-batch", "-nx", "-p", pid.ToString(), "-ex", "thread apply all bt 25" }) info.ArgumentList.Add(a);
+            using var g = System.Diagnostics.Process.Start(info)!;
+            g.StandardInput.Close();
+            var err = g.StandardError.ReadToEndAsync();
+            string text = g.StandardOutput.ReadToEnd();
+            if (!g.WaitForExit(60000)) try { g.Kill(true); } catch (Exception) { }
+            var lines = text.Split('\n').Where(l => l.StartsWith("#", StringComparison.Ordinal) || l.StartsWith("Thread ", StringComparison.Ordinal)).Take(400);
+            return "\n  Stapel (gdb):\n  " + string.Join("\n  ", lines);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { return ""; }
     }
 }
 

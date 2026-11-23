@@ -156,6 +156,7 @@ quickly:
 | `FIRE_TEST_NO_NATIVE=1` | everything but the native backend |
 | `FIRE_TEST_CCACHE=0` | no compiler cache |
 | `FIRE_TEST_JOBS=<n>` | how many native builds and test programs at a time (default: the cores of the machine); `1` builds and runs one case after the other |
+| `FIRE_TEST_CASE_TIMEOUT=<s>` | how long the program of a case of the group `native` may run (default 1200 s, room for ASan on a busy machine); one that does not end fails with `(Zeitueberschreitung nach N s)` and the stacks of its threads (gdb, when the machine has it) instead of holding a worker - and the whole group - for ever. Its stdin is closed, as in the VM's run |
 | `FIRE_TEST_SANITIZE=0` | the native cases without AddressSanitizer/UBSan (by default they run under them when the compiler has them): the paths the runtime keeps for the sanitizers' own checks then run - the pool of small objects (fire_rt.h objMemAlloc) instead of malloc per object |
 | `FIRE_TEST_OPT=<flags>` | the optimization of the native test builds (default `-O1`; e.g. `-O2` for a run that looks for the warnings only `-O2` finds) |
 | `FIRE_TESTS_RESUME=<dir>` | record every check as it finishes and skip what passed before with the same key: see [Resume and shards](#resume-and-shards) (`1`: `~/.cache/fire-tests/resume`) |
