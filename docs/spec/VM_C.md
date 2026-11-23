@@ -444,7 +444,9 @@ wird mit `fireError` geworfen (die Klasse des Programms, sonst das Ende mit ihre
 (vm_core.c) baut die Ausnahme mit dem Konstruktor eines Arguments, eine Klasse ohne einen solchen (`IndexOutOfBoundsException`: Text, Index, Länge;
 `UnitMismatchException`) mit dem Konstruktor der wenigsten Parameter, der Text zuerst, der Rest `undefined` - wie die C#-VM (`NativeFail`). Index und Länge,
 die `indexError` der Runtime in den Text schreibt (`Array index 7 out of range (length 3).`), werden daraus zurückgelesen, wie sie der native Build hat
-(`makeIndexError`). Vorher bekam eine solche Klasse gar keinen Konstruktor, ihr `message` blieb `undefined` (Paket-Prüfung "ein Fehler der Native").
+(`makeIndexError`). Vorher bekam eine solche Klasse gar keinen Konstruktor, ihr `message` blieb `undefined` (`caught: undefined`). Prüfung: `tests/package-native-errors.sh <forge>` - ein Paket
+im eigenen Speicher, dessen Natives scheitern, in der VM und nativ. Nativ gilt der Konstruktor eines Arguments weiter (der Generator von `makeClassError`):
+`IndexOutOfBoundsException` kommt dort über `makeIndexError` der Runtime, ein `fireError` mit einer Klasse ohne einen solchen Konstruktor beendet das Programm.
 
 **Der Host** (`fire_host`): Konsole = die des Prozesses (`std_write` geht durch `stdout` der Runtime: die Reihenfolge mit `print` bleibt), Pfade und
 Hosts sind alle erlaubt (wie die gepackte Runtime der C#-VM: sie hat keinen anderen Host), Geräte des Hosts keine (das devices-Paket nimmt seine
