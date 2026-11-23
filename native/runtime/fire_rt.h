@@ -4057,6 +4057,9 @@ FIRE_FN Value callLamU(Value callee, int argc, const Value* args, OwnList* list)
 /* A lambda that the runtime or a native calls (a probe, a job, a callback): in a debug build the VM runs it nested - no stops inside. */
 #ifdef FIRE_NO_GIL
 extern FIRE_RT_DATA int32_t g_awayDepth;
+extern FIRE_RT_DATA int32_t g_mainOut;   /* (the main program's: it serves sections out of the globals - drainQueue) */
+extern FIRE_RT_DATA fire_atomic32 g_sectServing;   /* (... and meanwhile a thread that asks for a section takes it itself - fire_sectionGrantedAway) */
+extern FIRE_RT_DATA int64_t g_drainRest;   /* (the main program's: until when its loops serve no sections - it served FIRE_DRAIN_MS long, now it is its turn) */
 FIRE_FN int32_t fire_awayPause(void);
 FIRE_FN void fire_awayResume(int32_t depth);
 #endif
@@ -10066,12 +10069,14 @@ FIRE_FN bool fire_taskSliced(void);
 #endif
 /* (what a strand lets go of while it waits, and takes again - without the counting of a native that waits, see gilRelease) */
 FIRE_FN void strandAcquire(void) {
+    if (!g_isThread && g_mainOut) return;   /* (the main program serves sections out of the globals: it stays out until drainQueue ends) */
     if (!g_isThread) domMainEnter();
     else if (g_natDom && g_domReader == 1) domReadTake(NULL);   /* (the native that waited reads the domain: the read side first, then its package's lock) */
     if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
     FIRE_LENT_SAFE();
 }
 FIRE_FN void strandRelease(void) {
+    if (!g_isThread && g_mainOut) return;
     FIRE_LENT_QUIET();
     if (g_pkgHeld) fire_mutex_unlock(g_pkgHeld);
     if (!g_isThread) domMainLeave(); else domReadLeave();
@@ -12226,6 +12231,8 @@ FIRE_FN bool fire_sectionGrantedAway(void* ctx) {
     if (fire_sectionGranted(ctx)) return true;
 #if defined(FIRE_VM) && !defined(FIRE_NO_GIL)
     if (!fire_vmGrantAway((SectionReq*)ctx)) return false;
+#elif defined(FIRE_NO_GIL)
+    if (!fire_mainAway() && !fire_atomic_loadAcquire(&g_sectServing)) return false;
 #else
     if (!fire_mainAway()) return false;
 #endif
@@ -12828,21 +12835,59 @@ FIRE_FN void jobFail(JobReq* j) {
     jobFree(j);
 }
 
-/* The main program serves the queue: each section is granted in turn (it waits until it ends), each job runs. Returns how many entries it handled. */
+/* The main program serves the queue: each section is granted in turn (it waits until it ends), each job runs. Returns how many entries it handled.
+ * Without the GIL the main program lets go of the globals for the sections it serves - once, not for each - and meanwhile (g_sectServing) a
+ * thread that asks for the next section takes it itself (fire_sectionGrantedAway) and reads the globals without waiting for the main program's next safe
+ * point. A thread that writes a global in a loop paid four or five sleeps and wake-ups of the kernel per write (the read side at the main program's tick,
+ * its grant, the main program letting go, the end), ~50 us; now about one. Not longer than FIRE_DRAIN_MS: then the main program goes on (and serves the
+ * rest at its next safe point). */
+#ifdef FIRE_NO_GIL
+/* (not fire_awayBegin: away, a thread's call of a method of an object of the globals would run in the thread instead of as a job of the main program -
+ * only the sections are taken; the threads that wait for one already look again) */
+FIRE_FN void sectServingSet(uint32_t on) {
+    fire_atomic_storeRelease(&g_sectServing, on);
+    if (on && (fire_atomic_load(&g_attn) & ATTN_SECT)) notifyEventAll();
+}
+#endif
+#ifndef FIRE_DRAIN_MS
+#define FIRE_DRAIN_MS 2
+#endif
 FIRE_FN int drainQueue(void) {
     int handled = 0;
     Req r;
+#ifdef FIRE_NO_GIL
+    bool out = false;
+    int64_t until = 0;
+#endif
     while (reqPop(&r)) {
         handled++;
         if (r.sec) {
             SectionReq* sec = r.sec;
+#ifdef FIRE_NO_GIL
+            /* (out of the globals for the sections: the main program only waits here - unless it is away in a native already, or serves for a thread) */
+            if (!out && !g_isThread && g_awayDepth == 0) { strandRelease(); g_mainOut = 1; sectServingSet(1); out = true; until = steadyMs() + FIRE_DRAIN_MS; }
+#endif
             fire_atomic_storeRelease(&sec->granted, 1);
             notifyKey(sec);
             blockUntil(fire_sectionDone, sec, false, 0);
             sectionReqDrop(sec);
-        } else runJob(r.job);
+#ifdef FIRE_NO_GIL
+            if (out && steadyMs() >= until) { g_drainRest = steadyMs() + FIRE_DRAIN_MS; break; }   /* (the main program's turn: the rest after it) */
+#endif
+        } else {
+#ifdef FIRE_NO_GIL
+            if (out) { sectServingSet(0); g_mainOut = 0; strandAcquire(); out = false; }   /* (a job is fire code of the main program: in the globals again) */
+#endif
+            runJob(r.job);
+        }
     }
+#ifdef FIRE_NO_GIL
+    if (out) { sectServingSet(0); g_mainOut = 0; strandAcquire(); }
+#endif
     fire_atomic_and(&g_attn, ~(uint32_t)ATTN_SECT);
+    /* (asked after the last look, or left for the next safe point: the flag again - a thread that pushed its request between the look and the clearing set
+     * it before the clearing, and would wait for a grant nobody looks for) */
+    if (reqCount() > 0) fire_atomic_or(&g_attn, ATTN_SECT);
     return handled;
 }
 
@@ -13913,7 +13958,16 @@ FIRE_FN void mainPoll(bool waiting) {
     if (!(g_globalJobs == GJ_SAFEPOINTS || (waiting && g_globalJobs == GJ_SLEEP))) return;
     /* (not inside a running job: its own safe points would run the next jobs nested, before it ends - out of order; not in a destructor, a host service, a
      * `catch threads` handler; the VM does not either) */
-    if (!g_unwind.active && g_jobDepth == 0 && g_noSyncDepth == 0) { drainQueue(); hostServe(); }
+    if (!g_unwind.active && g_jobDepth == 0 && g_noSyncDepth == 0) {
+#ifdef FIRE_NO_GIL
+        /* (a loop's safe point right after the main program served the threads FIRE_DRAIN_MS long: first its own turn as long - a thread that writes
+         * the globals without a pause gets half of the time, not all of it; a wait serves at once) */
+        if (waiting || g_drainRest == 0 || steadyMs() >= g_drainRest) { g_drainRest = 0; drainQueue(); }
+#else
+        drainQueue();
+#endif
+        hostServe();
+    }
 }
 
 FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
@@ -14258,6 +14312,9 @@ fire_mutex g_thrM, g_reqM, g_mailboxM, g_cancelM;
 #ifdef FIRE_NO_GIL
 DomLock g_dom;
 int32_t g_awayDepth;
+int32_t g_mainOut;
+fire_atomic32 g_sectServing;
+int64_t g_drainRest;
 fire_atomic32 g_lentEpoch = {1}, g_lentGraveN, g_lentReaderN, g_domChanges;
 LentReader* g_lentReaders = NULL;
 LentGrave* g_lentGraves = NULL;

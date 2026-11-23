@@ -847,6 +847,21 @@ static class LinkageTests
             while (done < 400) { sync globals; Sleep(5ms) }
             print("done " + done)
             """;
+        // (a thread writes a global in a loop while the main program loops: every write is a section - the main program serves them out of the globals and away,
+        // the thread takes the next ones itself; before, each write cost four or five sleeps and wake-ups, ~50 us - 300000 writes took 14-20 s)
+        const string writer = """
+            int counter = 0
+            int n = 300000
+            var done = new Channel<int>()
+            fire with done {
+                for (int i = 0; i < n; i++) { counter = counter + 1 }
+                done.Send(1)
+            }
+            int spins = 0
+            while (counter < n) { spins++ }
+            done.Receive()
+            print("writes " + counter + " " + (spins > 0))
+            """;
         string nativesWant = "thread ran while the main program was in natives: True\nsum 138000, bumps 2000\n";
         var builds = new List<(string Name, string Linkage, ToolchainDef? Toolchain, TargetProfile? Target)> { ("gcc static", "static", null, null), ("gcc shared", "shared", null, null) };
         if (ToolchainDetector.Find(ToolchainDef.BuiltIn["tcc"]) != null) builds.Add(("TinyCC static", "static", ToolchainDef.BuiltIn["tcc"], null));
@@ -876,6 +891,12 @@ static class LinkageTests
             double seconds = watch.Elapsed.TotalSeconds;
             Check($"Module ohne GIL ({name}): 400 fire-Threads schlafen in time (einer Bibliothek) und schreiben in Sektionen - fertig in unter 10 s (mit der GIL Minuten), {seconds:0.00} s",
                 slept.Ok && sleptOut == "done 400\n" && seconds < 10, $"{slept.Log}\nnativ:\n{sleptOut}");
+            var wrote = Build(new[] { writer }, linkage, ExeIn("threads-writer-" + tag), toolchain, target);
+            watch.Restart();
+            string wroteOut = Run(wrote);
+            seconds = watch.Elapsed.TotalSeconds;
+            Check($"Module ohne GIL ({name}): ein fire-Thread schreibt 300000-mal eine globale Variable, waehrend das Hauptprogramm in einer Schleife laeuft - unter 5 s (vorher 14-20 s), {seconds:0.00} s",
+                wrote.Ok && wroteOut == "writes 300000 True\n" && seconds < 5, $"{wrote.Log}\nnativ:\n{wroteOut}");
         }
     }
 

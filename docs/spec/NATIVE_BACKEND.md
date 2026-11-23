@@ -763,6 +763,16 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   **Sektion** (`SectionScope`): Anmeldung in der Warteschlange, Warten (ohne GIL), bis das Hauptprogramm sie an einem sicheren Punkt (wie `#globaljobs` sagt; bei `sync`/`#nosync` erst bei `sync globals`) erteilt;
   es wartet dann, bis sie endet. `sync global { }` ist `sectionEnterOp`/`sectionExitOp`, `fire global { }` ein Auftrag (`postJob`, Objekt-Argumente als Kopie), den das
   Hauptprogramm auf seinem Strang mit den echten Globals ausführt (eine Ausnahme darin geht an `catch threads`).
+  Ohne die GIL (seit 22.11.2026, `drainQueue`): das Hauptprogramm lässt für die Sektionen, die es bedient, die Globals einmal los (nicht je Sektion,
+  `g_mainOut`); solange nimmt ein Thread, der die nächste Sektion verlangt, sie selbst (`g_sectServing`, `fire_sectionGrantedAway`) und liest die
+  Globals, ohne auf den nächsten sicheren Punkt des Hauptprogramms zu warten. Nicht `fire_awayBegin`: "weg" liefe der Aufruf einer Methode eines Objekts der Globals
+  im Thread statt als Auftrag im Hauptprogramm (eine andere Meldung in native/2410). Höchstens `FIRE_DRAIN_MS` (2 ms) am Stück; danach bedient die Schleife des
+  Hauptprogramms ebenso lange keine (`g_drainRest`; ein Warten - `Sleep`, `sync globals`, das Ende - bedient sofort), ein Thread, der ohne Pause Globals
+  schreibt, bekommt so die halbe Zeit. Vorher kostete jede Schreibung eines Threads in einer Schleife vier bis fünf Schlaf-/Weckvorgänge des Kerns (die Leseseite
+  erst beim Tick des Hauptprogramms, die Erteilung, das Loslassen, das Ende): 300000 Schreibungen 13,8 s (Release) bzw. 14,6 s (Debug), jetzt 0,4-0,8 s bzw.
+  1,9 s; die C-VM (mit GIL) brauchte nie lange. Dabei behoben: `drainQueue` löschte `ATTN_SECT` nach dem letzten Blick in die Warteschlange - eine Anfrage
+  dazwischen wartete auf eine Erteilung, nach der niemand sah (jetzt wird das Bit danach wieder gesetzt). Ein Spinnen vor dem Schlafen (gemessen: 4000 `pause`)
+  machte es auf der belasteten Maschine 5-8mal langsamer - verworfen.
   Abweichungen von der VM: Actor-Referenzen und Objekt-Argumente von Nachrichten gelten als Referenzen (ein Actor muss die Threads überleben, die ihn benutzen); `try sync`
   liefert nie `false` (es gibt nur einen Strang zur Zeit); ein `leave`/`terminate` in einem Destruktor/einer Property wirkt nativ erst an deren Ende; nach einem `leave` in
   einem Thread zerstört dieser auch das, was er in `taking`-Kopien angelegt hat (die VM ließ es liegen). Hosts brauchen `-pthread`
