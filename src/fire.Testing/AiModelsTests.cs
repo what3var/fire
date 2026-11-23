@@ -18,11 +18,8 @@ static class AiModelsTests
 
     private static string Vm(string source)
     {
-        var lines = new List<string>();
-        var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
-        session.Run();
-        Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
-        return string.Join("\n", lines);
+        // (in the VM in C: docs/ROADMAP_C_PORT.md, M1)
+        return CVmTest.Output(source, ended: false);
     }
 
     public static void Run()

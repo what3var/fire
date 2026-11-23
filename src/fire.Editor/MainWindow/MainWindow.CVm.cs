@@ -13,14 +13,11 @@ namespace fire.Editor
     // (`forge bytecode ... --report json`, with the text of the editor as overlays; its report names the libraries of the packages and the `fire` of the program's widths),
     // then spark starts `fire run x.fbc` - Release/Performance: its output in the Output panel, a line below it is its input, the exit code in the status bar, Stop kills it;
     // Debug: with FIRE_DEBUG (TCP; its input still through the pipe), debugged by NativeDebugTarget as a native program is (the same panels, without the operand stack; its hello says engine
-    // "vm"). FIRE_SPARK_VM=dotnet keeps the C# VM in spark's process (DebugSession.CompileAsync, VmDebugTarget) until M1.
+    // "vm"). (M1: the C# VM in spark's process - FIRE_SPARK_VM=dotnet, DebugSession.CompileAsync, VmDebugTarget - is gone; every run is a child process.)
     public partial class MainWindow
     {
         /// <summary>The plain run in _nativeRun is a program of the VM (not a native build).</summary>
         private bool _nativeRunIsVm;
-
-        /// <summary>A run of what Start runs is a child process: a native build, or the VM in C (not FIRE_SPARK_VM=dotnet).</summary>
-        private bool RunsAsChild() => UsesNativeEngine() || !CVmLaunch.UseDotnet;
 
         /// <summary>Where the program file of a run of the VM goes: a project into bin/vm-&lt;mode&gt;/&lt;name&gt;.fbc, a saved script into bin/vm-&lt;mode&gt; next to it, an
         /// unsaved one into the temporary folder.</summary>
@@ -31,6 +28,50 @@ namespace fire.Editor
             string directory = path != null ? Path.GetDirectoryName(path)! : Path.Combine(Path.GetTempPath(), "spark-vm");
             string name = path != null ? Path.GetFileNameWithoutExtension(path) : "program";
             return ProjectOutput.ProgramPath(directory, name, ProjectOutput.VmTarget, mode, ".fbc");
+        }
+
+        /// <summary>The tool `check` of the MCP server: what Start would run is compiled - by forge, as for a run (`forge bytecode`, or `forge build` for the native engine)
+        /// - into the build log and the error list, without running it. false: it did not compile (or there was nothing to compile).</summary>
+        private async Task<bool> CheckAsync()
+        {
+            if (BuildRunning()) return false;
+            StopNativeRun();
+            var mode = _session.ExecutionMode;
+            string modeName = mode.ToString().ToLowerInvariant();
+            if (ResolveRunInput(null) is not { } input) return false;
+            string? defaultFile = input.Project != null ? null : input.Document?.DisplayName;
+            string? defaultPath = input.Project != null ? null : FullPathOf(input.Document);
+            string output = Path.Combine(Path.GetTempPath(), "spark-check-" + Guid.NewGuid().ToString("N") + ".fbc");
+            BeginRun(input);
+            var job = BeginBuildJob($"{input.What} (check, {modeName})");
+            try
+            {
+                var overlays = OverlaysOfOpenDocuments();
+                var args = new System.Collections.Generic.List<string> { "bytecode" };
+                args.AddRange(input.Project != null ? ForgeProjectArgs(input.Project) : new System.Collections.Generic.List<string> { ForgeScriptSource(input.Document!, overlays) });
+                args.AddRange(new[] { "-m", ForgeMode(mode), "-o", output });
+                var result = await RunForgeAsync(job, args, overlays);
+                job.Feed.Drain();
+                if (result.Cancelled) { EndBuildJob(job, BuildOutcome.Cancelled); return false; }
+                FinishBuild("Compile", result.Ok, ForgeDiagnostics(result, overlays), defaultFile, defaultPath);
+                if (!result.Ok)
+                {
+                    string error = BuildErrorText(result);
+                    EndBuildJob(job, BuildOutcome.Failed, error);
+                    UpdateStatus("Compile error: " + error.Split('\n')[0]);
+                    return false;
+                }
+                EndBuildJob(job, BuildOutcome.Succeeded);
+                UpdateStatus($"Compiled {input.What} - no errors.");
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                EndBuildJob(job, BuildOutcome.Failed, ex.Message);
+                UpdateStatus("The check failed: " + ex.Message);
+                return false;
+            }
+            finally { try { File.Delete(output); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
         }
 
         /// <summary>F5/F10/F11/Run to End with the VM in C: forge compiles the program file, then - Debug - `fire` runs it under the debugger and does the first action, or -

@@ -37,8 +37,7 @@ static class TypeTests
         {
             using (warnings.Begin())
             {
-                var session = RuntimeSession.Build(new[] { source }, execution, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
-                session.Run();
+                lines.AddRange(CVmTest.Run(new[] { source }, execution).Printed);   // (in the VM in C, M1)
             }
         }
         catch (Exception ex)
@@ -61,7 +60,7 @@ static class TypeTests
     private static string CompileText(string source)
     {
         TestCases.CollectSource("types", source, Linker.ProcessDefaultTypeChecking?.ToString());
-        try { RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, a => Value.MakeUndefined()); return ""; }
+        try { new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null); return ""; }
         catch (Exception ex) { return string.Join("\n", CompileDiagnostics.Of(ex).Select(d => d.Message)); }
     }
 
@@ -591,7 +590,6 @@ static class TypeTests
 
         // the type checker's choice goes to the call (OverloadHint): taken when the arguments are what it assumed, otherwise the run time scores them
         {
-            long taken = VM.HintsTaken, missed = VM.HintsMissed;
             string output = Run("""
                 class Animal { }
                 class Dog : Animal { }
@@ -619,9 +617,7 @@ static class TypeTests
                 print(Show.Of(v))
                 """, TypeCheckMode.Strict);
             Check("Ueberladung vorab gewaehlt: statisch, Konstruktor, Objekt (auch abgeleitet) nehmen den Hinweis, any waehlt zur Laufzeit",
-                output == "|int string animal generic\nme int me float\nsub int me float\nstring" && VM.HintsTaken - taken == 10 && VM.HintsMissed == missed,
-                $"{output} taken {VM.HintsTaken - taken} missed {VM.HintsMissed - missed}");
-            taken = VM.HintsTaken; missed = VM.HintsMissed;
+                output == "|int string animal generic\nme int me float\nsub int me float\nstring", output);   // (the counters of the hints, VM.HintsTaken/HintsMissed, were the C# VM's: the program runs in `fire` since M1)
             output = Run("""
                 class Show {
                     static string Of(int x) { return "int" }
@@ -633,7 +629,7 @@ static class TypeTests
                 """);
             // (a conflict in lax mode is a warning, and the value does not get in - the variable stays an int, the hint holds)
             Check("Ueberladung vorab gewaehlt: ein Konflikt (lax) kommt nicht in die Variable, der Hinweis bleibt richtig",
-                output == "TC001|kept\nint" && VM.HintsMissed - missed == 0, $"{output} missed {VM.HintsMissed - missed}");
+                output == "TC001|kept\nint", output);
             Check("Rueckgabewert: ein unbewiesener Wert wird gegen den deklarierten Typ geprueft", Run("""
                 class U { static int F() { any v = "s"; return v } }
                 try { int z = U.F() } catch (ArgumentException e) { print(e.message) }
@@ -1663,7 +1659,7 @@ static class TypeTests
                 string snippet = m.Groups[1].Value;
                 if (snippet.Contains("{{") || !(snippet.Contains("class ") || snippet.Contains("var "))) continue;
                 total++;
-                try { RuntimeSession.Build(new[] { snippet }, VmExecutionMode.Release, a => Value.MakeUndefined()); }
+                try { new Linker().CompileAndLink(new[] { snippet }, null, null, VmExecutionMode.Release, null); }
                 catch (Exception ex)
                 {
                     var codes = CompileDiagnostics.Of(ex).Where(d => d.Code is "E4058" or "E4059" or "E4060").ToList();

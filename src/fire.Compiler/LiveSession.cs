@@ -1,8 +1,5 @@
 using fire.Bytecode;
 using fire.Runtime;
-using fire.Terminal;
-using fire.Terminal.Event;
-using fire.Values;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -15,75 +12,22 @@ namespace fire.Compiler
     /// (<see cref="FrameReady"/>, <see cref="CopyFrame"/>) and hands in the mouse, the keys and the size of the area it shows the picture in. The program talks to the host
     /// with `print` (every line arrives as <see cref="Message"/>) and gets the host's commands from the function `extern string __HostCommand()` (the next command, "" when
     /// there is none).
-    /// With the VM in C (the default; FIRE_SPARK_VM=dotnet keeps the C# VM in the process until M1) the program runs in a process of its own (docs/ROADMAP_C_PORT.md, L4 and
-    /// phase B step 9): compiled here to a program file, run by `fire` - its windows are the host's through a file both map (<see cref="HostDisplayFile"/>,
+    /// The program runs in the VM in C, in a process of its own (docs/ROADMAP_C_PORT.md, L4 and phase B step 9; M1: the C# VM in the host's process is gone): compiled
+    /// here to a program file, run by `fire` - its windows are the host's through a file both map (<see cref="HostDisplayFile"/>,
     /// FIRE_DISPLAY_SHM: pictures, the mouse pointer, the events), its `print` lines come on its stdout, the commands go to its stdin (`__HostCommand()` of the VM in C).
     /// A program that crashes ends its view, not the host.
     /// </summary>
     public sealed class LiveSession : IDisposable
     {
-        /// <summary>The window of the program (<see cref="IHostDisplay"/>: the C library's, or <see cref="HostRenderer"/> over the C# one): events from the host, pictures to the
-        /// host, about 60 per second.</summary>
-        private sealed class HostWindow : IHostDisplay
-        {
-            private readonly LiveSession _owner;
-            private long _lastPresent;
-            public HostWindow(LiveSession owner) => _owner = owner;
-
-            public bool NextEvent(int window, out HostDisplayEvent e)
-            {
-                lock (_owner._lock)
-                {
-                    if (_owner._events.Count == 0) { e = default; return false; }
-                    e = _owner._events[0];
-                    _owner._events.RemoveAt(0);
-                    return true;
-                }
-            }
-
-            public void Present(int window, ReadOnlySpan<uint> source, int width, int height, bool vsync)
-            {
-                bool changed;
-                lock (_owner._lock)
-                {
-                    int n = width * height;
-                    // the same picture as last time (a paused simulation, an idle editor): nothing to hand over - the host neither copies nor uploads it again
-                    changed = _owner._pixels.Length != n || _owner._width != width || _owner._height != height || !source.SequenceEqual(_owner._pixels.AsSpan(0, source.Length));
-                    if (changed)
-                    {
-                        if (_owner._pixels.Length != n) _owner._pixels = new uint[n];
-                        source.CopyTo(_owner._pixels);
-                        _owner._width = width;
-                        _owner._height = height;
-                        _owner._frame++;
-                    }
-                }
-                if (changed) _owner.FrameReady?.Invoke();
-                // about 60 pictures per second: the program waits like for the vertical blank of a screen
-                long now = Environment.TickCount64;
-                long wait = 16 - (now - _lastPresent);
-                if (wait > 0 && vsync) Thread.Sleep((int)wait);
-                _lastPresent = Environment.TickCount64;
-            }
-
-            /// <summary>Window.Cursor of the program: the host shows that pointer over the picture.</summary>
-            public void Cursor(int window, int cursor)
-            {
-                if (cursor == _owner.Cursor) return;
-                _owner.Cursor = cursor;
-                _owner.CursorChanged?.Invoke(cursor);
-            }
-        }
+        /// <summary>The types of the events of the display (the numbers of fire_gfx_host.h and of the windows of fire: EventType of graphics).</summary>
+        private enum EventType { Close = 1, TextInput = 3, Resize = 4, MouseDown = 8, MouseMove = 9, MouseUp = 11, MouseScroll = 12, KeyDown = 24, KeyUp = 25 }
 
         private readonly object _lock = new();
-        private readonly List<HostDisplayEvent> _events = new();
-        private readonly Queue<string> _commands = new();
         private uint[] _pixels = Array.Empty<uint>();
         private int _width, _height;
         private long _frame;
         private volatile bool _stopping;
         private Thread? _thread;
-        private RuntimeSession? _session;
 
         /// <summary>A line the program printed (on the thread of the program).</summary>
         public event Action<string>? Message;
@@ -98,13 +42,7 @@ namespace fire.Compiler
         /// <summary>The program ended (null) or failed (the message); on the thread of the program.</summary>
         public event Action<string?>? Ended;
 
-        public bool IsRunning => _child != null ? ChildRunning() : _thread is { IsAlive: true };
-
-        /// <summary>The program runs in the C# VM of this process (not in `fire`).</summary>
-        public bool InProcess => _child == null;
-
-        /// <summary>Always in the C# VM of this process (the driver agent of spark: fire plugins, devices shared with spark's VM), also when the VM in C is the engine.</summary>
-        public bool InProcessOnly { get; init; }
+        public bool IsRunning => _child != null && ChildRunning();
 
         // ---- the program in a process of its own (the VM in C) ----
         private System.Diagnostics.Process? _child;
@@ -121,13 +59,8 @@ namespace fire.Compiler
         /// <summary>Compiles and starts the program (`basePath`: where its `#include`s are looked for). Compile errors are thrown here.</summary>
         public void Start(string script, string? basePath = null)
         {
-            if (InProcessOnly || fire.Debugging.CVmLaunch.UseDotnet)
-            {
-                StartInProcess(script, basePath);
-                return;
-            }
-            // (no `fire` - no C compiler to build it -: the view says why, as F5 does; FIRE_SPARK_VM=dotnet still runs it in the C# VM here until M1)
-            StartChild(script, basePath, CVmScript.Locate() ?? throw new InvalidOperationException("There is no `fire` (the VM in C) to run the view in: it is built with the C compiler of the machine (or set FIRE_SPARK_VM=dotnet)."));
+            // (no `fire` - no C compiler to build it -: the view says why, as F5 does)
+            StartChild(script, basePath, CVmScript.Locate() ?? throw new InvalidOperationException("There is no `fire` (the VM in C) to run the view in: it is built with the C compiler of the machine. " + CVmScript.Unavailable));
         }
 
         private void StartChild(string script, string? basePath, string vm)
@@ -200,7 +133,7 @@ namespace fire.Compiler
             _childFolder = null;
         }
 
-        /// <summary>A new picture from the program's file: like the window of the C# VM, the same picture as before is not handed over again.</summary>
+        /// <summary>A new picture from the program's file: the same picture as before is not handed over again.</summary>
         private void TakeChildFrame(HostDisplayFile display, ref uint[] scratch)
         {
             if (display.TryCopyFrame(ref scratch, out int width, out int height, out _) == null) return;
@@ -221,61 +154,15 @@ namespace fire.Compiler
             if (changed) FrameReady?.Invoke();
         }
 
-        private void StartInProcess(string script, string? basePath)
-        {
-            var externs = new ExternRegistry();
-            externs.Register("__HostCommand", _ =>
-            {
-                lock (_lock) return _commands.Count > 0 ? _commands.Dequeue() : "";
-            });
-            _session = RuntimeSession.Build(new[] { script }, VmExecutionMode.Release, args =>
-            {
-                if (args.Length > 0) Message?.Invoke(args[0].ToString() ?? "");
-                return Value.MakeUndefined();
-            }, basePath: basePath, externs: externs, hostWindows: new HostWindows(new HostWindow(this)));
-            var session = _session;
-            _thread = new Thread(() =>
-            {
-                string? error = null;
-                try
-                {
-                    session.Run();
-                    if (session.VirtualMachine?.UnhandledException != null) error = new UncaughtScriptException(session.VirtualMachine.UnhandledException).Message;
-                }
-                catch (Exception ex) { error = CompileErrors.Describe(ex); }
-                finally
-                {
-                    try { session.CloseHostResources(); } catch (Exception) { }
-                }
-                Ended?.Invoke(error);
-            }) { IsBackground = true, Name = "fire live session" };
-            _thread.Start();
-        }
-
         /// <summary>A command for the program (it reads it with `__HostCommand()`).</summary>
         public void Send(string command)
         {
-            if (_child != null)
-            {
-                fire.Debugging.CVmLaunch.WriteInput(_child, command.Replace('\n', ' '));
-                return;
-            }
-            lock (_lock) _commands.Enqueue(command);
+            if (_child != null) fire.Debugging.CVmLaunch.WriteInput(_child, command.Replace('\n', ' '));
         }
 
         private void Post(HostDisplayEvent e)
         {
-            if (_display != null)
-            {
-                _display.Post(e);
-                return;
-            }
-            lock (_lock)
-            {
-                // a move right after a move replaces it: the program only needs the last position (a fast pointer would flood it)
-                if (e.Type == (int)EventType.MouseMove && _events.Count > 0 && _events[^1].Type == (int)EventType.MouseMove) _events[^1] = e;
-                else _events.Add(e);
-            }
+            _display?.Post(e);
         }
 
         /// <summary>Mouse button pressed / released at (x, y) in pixels of the picture (1 left, 2 middle, 3 right).</summary>

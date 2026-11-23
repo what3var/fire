@@ -378,7 +378,7 @@ namespace fire.Compiler
             }
             Add("fire publish 1");
             AddFile(typeof(ProjectPublisher).Assembly.Location);
-            AddFile(typeof(fire.Runtime.Packer).Assembly.Location);
+            Add("vm " + CVm.SourceKey());   // (the VM in C a program of the VM is packed with)
             Add(engine); Add(mode); Add(target?.Name); Add(Path.GetFullPath(output));
             if (toolchain != null) { Add(toolchain.EffectiveKind); Add(toolchain.Compiler); Add(toolchain.Optimization); Add(string.Join(" ", toolchain.Args ?? new List<string>())); }
             if (config != null) { Add(config.Linkage); if (config.Path != null) AddFile(config.Path); }

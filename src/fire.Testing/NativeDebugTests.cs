@@ -526,7 +526,24 @@ static partial class NativeDebugTests
     static readonly object VmLock = new();
 
     /// <summary>The VM: runs the plan (or every step), the stops as text. (One at a time: `terminate` and the handlers are state of the process.)</summary>
+    /// <summary>The reference of the plans: the VM - the VM in C (M1), `fire` (beside the tests) under the debugger over the protocol, the same plan as for a native
+    /// program (RunNative). The C# VM (RunCsVm) is the reference only with FIRE_TESTS_DOTNET_VM=1 (RunVmEngine: the VM in C against it).</summary>
     static (List<string> Stops, List<string> Output) RunVm(string script, int[] bps, IEnumerable<Op> plan, bool details, Func<Op?>? stepAll = null)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "fire-vmref-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string fbc = BuildVm(script, dir, "ref", out string error) ?? throw new InvalidOperationException(error);
+            string fire = CVm.Locate(64, 64);
+            var (stops, output, _) = RunNative(() => NativeDebugClient.Launch(fbc, dir, fire), bps, plan, details, stepAll);
+            return (stops, output);
+        }
+        finally { try { Directory.Delete(dir, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
+    }
+
+    /// <summary>The same plan in the C# VM of this process (fire.Runtime - it goes with it, M1).</summary>
+    static (List<string> Stops, List<string> Output) RunCsVm(string script, int[] bps, IEnumerable<Op> plan, bool details, Func<Op?>? stepAll = null)
     {
         lock (VmLock) return RunVmLocked(script, bps, plan, details, stepAll);
     }

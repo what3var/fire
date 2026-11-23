@@ -13,7 +13,7 @@ namespace fire.Editor
 {
     /// <summary>
     /// Encapsulates one compile+execute run of a script for the
-    /// thread-capable step debugger: compiles once (incl. prelude) into an IDebugTarget (fire.Debugging - the VM: VmDebugTarget),
+    /// thread-capable step debugger: takes an IDebugTarget (fire.Debugging - a native program or `fire`, the VM in C: NativeDebugTarget; the C# VM's VmDebugTarget only in the tests, DebugSessionVm.cs),
     /// afterwards holds the main thread PLUS every thread created at runtime via `fire`
     /// as one DebugThreadContext instance each (see
     /// there - EACH of them runs on its OWN background thread, NEVER on
@@ -28,7 +28,7 @@ namespace fire.Editor
     /// so that in the output window it stays traceable which
     /// line came from which thread.
     /// </summary>
-    public sealed class DebugSession
+    public sealed partial class DebugSession
     {
         private readonly object _threadsLock = new();
         private readonly List<DebugThreadContext> _threads = new();
@@ -104,81 +104,8 @@ namespace fire.Editor
         /// concurrently.</summary>
         public void UpdateBreakpoints(IEnumerable<(int SourceIndex, int Line)> locations) => _breakpointsSnapshot = new HashSet<(int, int)>(locations);
 
-        /// <summary>Recompiles the source text and sets up a fresh
-        /// main-thread VM (on its own background thread, see
-        /// DebugThreadContext.ForMain - starts waiting, nothing runs yet).
-        /// On a parse/resolve error HasProgram stays false, CompileError
-        /// contains the message.</summary>
-        /// <summary>The errors (when the compile failed) and warnings of the last <see cref="Compile"/>, with their codes; a file is set when the compiler knows it.</summary>
+        /// <summary>The errors (when the compile failed) and warnings of the last compile (the C# VM's Compile of the tests, DebugSessionVm.cs; spark compiles with forge), with their codes; a file is set when the compiler knows it.</summary>
         public IReadOnlyList<Diagnostic> LastDiagnostics { get; private set; } = Array.Empty<Diagnostic>();
-
-        /// <param name="environment">The arguments and the path the program gets (Environment.Args/ProgramPath); none without.</param>
-        public bool Compile(string[] sources, string? outname = null, string? basePath = null, fire.Projects.BuildPlan? plan = null, fire.Standard.ProgramEnvironment? environment = null)
-        {
-            Reset();
-            LastDiagnostics = Array.Empty<Diagnostic>();
-
-            // the warnings of the code (`warn 123: "text"`) are collected while the parser reads it
-            var warnings = new DiagnosticCollector();
-            using var collecting = warnings.Begin();
-            try
-            {
-                var target = VmDebugTarget.Build(sources, ExecutionMode, outname, basePath, DeviceManager, plan, environment);
-                LastDiagnostics = warnings.Items.ToList();
-                Attach(target);
-                return true;
-            }
-            catch (Exception ex) when (ex is ParseException or LexException or ResolverException or TypeCheckException
-                or NotSupportedException or PreprocessorException or LibraryEntryPointException or PackageReferenceException or fire.Projects.ProjectException or fire.Package.Manager.PackageException)
-            {
-                // All collected errors (the resolver/compiler do not stop at the
-                // first, see CompileErrors), not only the first.
-                CompileError = CompileErrors.Describe(ex);
-                LastDiagnostics = CompileDiagnostics.Of(ex).Concat(warnings.Items).ToList();
-                return false;
-            }
-        }
-
-        /// <summary>Like <see cref="Compile"/>, but the compiler runs on a thread of the pool (the window stays responsive and can show the progress): <paramref name="monitor"/>
-        /// gets its phases and the commands of a package's natives that are compiled for it. The session takes the program on the caller's thread. Cancelled: throws
-        /// <see cref="OperationCanceledException"/> and keeps no program.</summary>
-        public async System.Threading.Tasks.Task<bool> CompileAsync(string[] sources, string? outname, string? basePath, fire.Projects.BuildPlan? plan,
-            fire.Standard.ProgramEnvironment? environment, fire.Native.BuildMonitor? monitor)
-        {
-            Reset();
-            LastDiagnostics = Array.Empty<Diagnostic>();
-            var mode = ExecutionMode;
-            var devices = DeviceManager;
-            var (target, diagnostics, error) = await System.Threading.Tasks.Task.Run(() =>
-            {
-                using var watching = fire.Native.BuildMonitor.Use(monitor);
-                var warnings = new DiagnosticCollector();
-                using var collecting = warnings.Begin();
-                try
-                {
-                    var built = VmDebugTarget.Build(sources, mode, outname, basePath, devices, plan, environment);
-                    if (monitor?.IsCancellationRequested == true)
-                    {
-                        built.Dispose();
-                        throw new OperationCanceledException(monitor.Token);
-                    }
-                    return ((IDebugTarget?)built, (IReadOnlyList<Diagnostic>)warnings.Items.ToList(), (string?)null);
-                }
-                catch (Exception ex) when (ex is ParseException or LexException or ResolverException or TypeCheckException
-                    or NotSupportedException or PreprocessorException or LibraryEntryPointException or PackageReferenceException or fire.Projects.ProjectException or fire.Package.Manager.PackageException)
-                {
-                    return (null, CompileDiagnostics.Of(ex).Concat(warnings.Items).ToList(), CompileErrors.Describe(ex));
-                }
-            });
-            LastDiagnostics = diagnostics;
-            if (target == null)
-            {
-                CompileError = error;
-                return false;
-            }
-            Attach(target);
-            return true;
-        }
 
         /// <summary>Takes over a debug target that is ready (compiled, its main thread paused before the first line): its output, its main thread and
         /// every thread it starts later.</summary>

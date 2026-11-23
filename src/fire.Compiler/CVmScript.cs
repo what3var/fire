@@ -34,11 +34,11 @@ namespace fire.Compiler
     /// </summary>
     public static class CVmScript
     {
-        /// <summary>spark's previews run in `fire` (not with FIRE_SPARK_VM=dotnet, and only when there is a `fire`); <see cref="EngineOverride"/> for the tests.</summary>
-        public static bool Available => (EngineOverride ?? (fire.Debugging.CVmLaunch.UseDotnet ? "dotnet" : "c")) == "c" && Locate() != null;
+        /// <summary>spark's previews run in `fire`: there is one (or one could be built).</summary>
+        public static bool Available => Locate() != null;
 
-        /// <summary>"c" or "dotnet" (null: FIRE_SPARK_VM decides).</summary>
-        public static string? EngineOverride { get; set; }
+        /// <summary>Why there is no `fire` (the message of <see cref="CVm.Locate"/>), when <see cref="Available"/> is false.</summary>
+        public static string? Unavailable { get; private set; }
 
         /// <summary>The last run (its times: the tests report the latency of the previews).</summary>
         public static CVmScriptResult? Last { get; private set; }
@@ -52,8 +52,8 @@ namespace fire.Compiler
             lock (FireLock)
             {
                 if (_fire != null && File.Exists(_fire)) return _fire;
-                try { _fire = CVm.Locate(64, 64); }
-                catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException) { _fire = null; }
+                try { _fire = CVm.Locate(64, 64); Unavailable = null; }
+                catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException) { _fire = null; Unavailable = ex.Message; }
                 return _fire;
             }
         }

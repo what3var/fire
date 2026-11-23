@@ -308,14 +308,14 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    **Umgesetzt** ([VM_C.md](spec/VM_C.md#gepackte-programme-schritt-8)): eine Datei - `fire` der Breiten des Programms, dahinter die `.fbc` und die
    Bibliotheken der Pakete (Payload `FIREVMP1`); die Bibliotheken werden beim ersten Start in den Cache des Benutzers ausgepackt (ein Ordner je
    Prüfsumme; entschieden: ausgepackt statt aus dem Speicher, wegen Windows). `fire` neben forge, sonst mit dem C-Compiler der Maschine in den Cache
-   gebaut. Die .NET-Einzeldatei bleibt bis M1 wählbar: `FIRE_VM_ENGINE=dotnet`. hello world: 748 KB (die .NET-Einzeldatei 729 KB plus das installierte
+   gebaut. Die .NET-Einzeldatei (`FIRE_VM_ENGINE=dotnet`) ist mit M1 (6) weg. hello world: 748 KB (die .NET-Einzeldatei 729 KB plus das installierte
    .NET). Windows (MinGW) übersetzt, nicht gelaufen. Tests: `FIRE_TESTS_ONLY=packer`.
 9. **spark auf die C-VM** (L4): Ausführen als Kindprozess, Debuggen über `NativeDebugTarget`, `LiveSession` und `UiPreview` über Kindprozess und
    gemeinsamen Speicher, Treiber-Agent und Geräte.
    **Zum größten Teil umgesetzt** ([VM_C.md](spec/VM_C.md#spark-auf-der-c-vm-schritt-9)): F5/F10/F11/Ctrl+F5 mit der Engine `vm` übersetzen über
    `forge bytecode ... --report json` (mit den Overlays; der Bericht nennt die `.fbc`, die Bibliotheken der Pakete und das `fire` der Breiten) und starten
    `fire run x.fbc` als Kindprozess - Ausgabe ins Output-Panel (zeilenweise: `FIRE_STDOUT_LINES`), Eingabe über die Pipe, Exitcode, Stop; Debug über
-   `NativeDebugTarget` (TCP, `"engine": "vm"`), dieselben Panels wie nativ. `FIRE_SPARK_VM=dotnet` behält die C#-VM in spark bis M1. `LiveSession`
+   `NativeDebugTarget` (TCP, `"engine": "vm"`), dieselben Panels wie nativ (`FIRE_SPARK_VM=dotnet`, die C#-VM in spark, ist seit M1 (6) weg). `LiveSession`
    (Schaltplan-Editor) läuft in `fire`: Bilder, Zeiger und Ereignisse über eine Datei, die beide abbilden (`FIRE_DISPLAY_SHM`, der Host-Display der
    Bibliothek von graphics/windows), Nachrichten über stdout (`FIRE_PRINT_RECORDS`), Befehle über stdin (`__HostCommand`); ein Programm, das in `fire`
    scheitert, endet mit dem Grund (der Rückfall in die C#-VM ist seit 22.11. weg). Behoben in der VM: der Hauptthread wartete am Einstieg mit der GIL (Scopes am Einstieg hingen).
@@ -339,12 +339,11 @@ Umgebung der Bibliothek); alle Fälle zusätzlich in Release, Debug und Performa
 Lauf wechselt, und Performance, wo die C#-VM ungeprüft liest (undefiniert; sie stürzt dabei teils mit einer .NET-Ausnahme ab); Debug hat jetzt die
 Warnung für Verweise auf zerstörte Objekte (`vm_dangle.c`); der Schaltplan-Editor läuft in `fire` ohne den Rückfall (die Ursache war schon mit
 `40e81bcb` behoben). Der Rückfall der Live-Sitzung ist **weg** (22.11.2026: ein Programm, das in `fire` scheitert, beendet seine Ansicht mit dem Grund);
-`FIRE_SPARK_VM=dotnet` bleibt bis zum Entfernen von `fire.Runtime` (es hält den Weg über `DebugSession.CompileAsync`/`VmDebugTarget` und die C#-VM für die
-Live-Sitzung und die Vorschauen offen; nicht nur ein Schalter, sondern mit dem Code von M1 zu entfernen) ([VM_C.md](spec/VM_C.md#stand-gegen-den-korpus));
+`FIRE_SPARK_VM=dotnet` ist seit dem 22.11.2026 weg (siehe (6)) ([VM_C.md](spec/VM_C.md#stand-gegen-den-korpus));
 (2) ~~fire-Plugins in der C-VM (Treiber-Agent, `Library.Load` von `.fireplugin`)~~ - **erledigt** (22.11.2026,
 [VM_C.md](spec/VM_C.md#plugins)): `vm_plugin.c` lädt den Bytecode eines Plugins wie die C#-VM (Prüfungen und Meldungen, Basisklassen, Natives nach Namen und in
 C++, `class extends`, Einheiten, Enums, statische Initialisierer, Debuggen mit dem Ereignis `sources`); die Programmdatei trägt dafür die Schnittstellen ihrer
-Module (Bit 3, C#-forge und forge-c); der Treiber-Agent läuft in `fire` (`FIRE_DRIVER_AGENT=dotnet` behält die C#-VM); alle Plugin-Fälle von
+Module (Bit 3, C#-forge und forge-c); der Treiber-Agent läuft in `fire` (`FIRE_DRIVER_AGENT=dotnet` ist seit (6) weg); alle Plugin-Fälle von
 `FIRE_TESTS_FILTER=plugin` auch in der C-VM; offen: die C-VM unter Windows; (3) ~~das geteilte Gerät zwischen spark und einem Programm
 (`fire_host.dev_*`, `DeviceManager`)~~ - **erledigt** (22.11.2026): ein Protokoll statt Phase F - die 16 `dev_*` von `fire_host` gehen über eine lokale
 Verbindung zum `DeviceManager` von spark (`FIRE_DEVICE_HOST=tcp:127.0.0.1:PORT;token=T`, `native/vm/vm_devhost.c`, `DeviceHostServer`; Treiber, Teilen,
@@ -352,14 +351,85 @@ Mitschnitt, Standardgerät wie in der C#-VM; ohne die Variable die Geräte der M
 Gerät"); (4) ~~`UiPreview`/Blockvorschau in `fire`~~ - **erledigt** (22.11.2026): beide als Kindprozess `fire` (`CVmScript`), die Entwurfsansicht über
 `FIRE_DISPLAY_SHM` (`Window.Idle` nach dem Dump legt das Bild in die Datei - keine Aufnahme in `fire_gfx_host.h` nötig), Pixel, Orte und PNG-Bytes wie in
 der C#-VM; Latenz nach einer Änderung 604 ms gegen 520 ms im Prozess (der Prozess `fire` 16 ms, der Rest Übersetzen in spark); Test `FIRE_TESTS_ONLY=previews`;
-(5) `forge run`, `forge test` und die Tests (`fire.Testing`: RuntimeSession, VmDebugTarget, die C#-VM als Vergleich) hängen an `fire.Runtime`;
-(6) `forge build --engine vm` mit `FIRE_VM_ENGINE=dotnet`, der .NET-Packer; (7) ~~Windows: `fire` ungeprüft gelaufen, `FIRE_DISPLAY_SHM`, `__HostCommand`,
+(5) ~~`forge run`, `forge test` und die Tests (`fire.Testing`: RuntimeSession, VmDebugTarget, die C#-VM als Vergleich) hängen an `fire.Runtime`~~ - **erledigt**
+(22.11.2026): `forge run`, `forge test` und `forge data` des C#-forge übersetzen wie bisher und lassen das Programm in `fire` laufen, wie forge-c
+(`CVmRun`: `Linker { PackageLibraries }`, die `.fbc` mit Zeilentabellen nach `<temp>/fire-run-|fire-test-|fire-data-<guid>`, `fire run x.fbc -- <args>` mit der VM
+der Breiten, `FIRE_PKG_PATH` mit den Ordnern der Bibliotheken; `run` mit der Konsole von forge - `CommandLineRunner.WritersAreConsole`, sonst über die Writer
+des Aufrufers -, `test` liest die Zeilen des Treibers, während sie kommen (`FIRE_STDOUT_LINES`; der Test-Explorer von spark und `Cancel` beenden den Prozess),
+eine unbehandelte Ausnahme ist die Zeile `Unhandled exception of type ...` von `fire`). Ausgabe und Exitcodes wie vorher (`tests/compare-commands.sh` gegen
+forge-c: siehe "Geprüft" unten). Der Übersetzer braucht die C#-Bridges nicht mehr: die Namen der Natives von graphics, windows und reflection kommen aus
+`native/tables/bridges.def` (`BridgeNatives`, wie forge-c), die Host-Natives der Pakete sind nur Namen. `fire.Testing`: jede Prüfung, die die C#-VM als Engine
+oder als Vergleich nahm, läuft in `fire` (`CVmTest`: übersetzt hier, `fire run` mit `FIRE_PRINT_RECORDS`; `CVmTest.Debug`: unter dem Debugger wie spark) oder
+gegen die `.expected` der Fälle; was nur die C#-VM selbst prüft, ist als solches markiert und läuft nur mit `FIRE_TESTS_DOTNET_VM=1` (`DotnetVm.Skip`) - die
+Standardrunde braucht `fire.Runtime` nicht (Liste der Gruppen unten);
+(6) ~~`forge build --engine vm` mit `FIRE_VM_ENGINE=dotnet`, der .NET-Packer~~ - **erledigt** (22.11.2026): `CVm.UseDotnet`/`EngineOverride` und der Weg über
+`fire.Runtime.Packer` sind aus forge entfernt, `forge build --engine vm` packt nur die VM in C; `CVmPayload` (das Format, das `fire` liest) liegt jetzt in
+`src/fire` (der Kern), der Stempel von `publish` nennt die Quellen der VM statt der Assembly der C#-VM. spark: `FIRE_SPARK_VM=dotnet` mit allem, was es
+offen hielt, ist weg (`CVmLaunch.UseDotnet`, `RunsAsChild`, `CompileAndPrepareAsync`/`DebugSession.CompileAsync`/`VmDebugTarget` in spark - `Compile`/
+`CompileAsync` leben nur noch im Testprogramm, `DebugSessionVm.cs` -, `LiveSession` im Prozess, `UiPreview.RenderHere`, der Rückweg der Blockvorschau,
+`FIRE_DRIVER_AGENT=dotnet`, die Zeilenzählung `LineProfile` der C#-VM im Profiler); das Werkzeug `check` des MCP-Servers übersetzt mit forge wie Start.
+spark referenziert `fire.Runtime` nicht mehr (nur noch `fire.Terminal` für die Bilder des Pixel-Editors);
+(7) ~~Windows: `fire` ungeprüft gelaufen, `FIRE_DISPLAY_SHM`, `__HostCommand`,
 `Environment.Args`~~ - **erledigt unter Wine** (22.11.2026, [VM_C.md](spec/VM_C.md#windows-m1-7)): `FIRE_DISPLAY_SHM` über `CreateFileMapping`/`MapViewOfFile`
 (`HostDisplayFile` mit `DeleteOnClose`), `__HostCommand` über `PeekNamedPipe` oder einen Lese-Thread, `FIRE_STDOUT_LINES` ungepuffert, `Environment.Args` aus der
 UTF-16-Befehlszeile (nur die des Programms), UTF-8-Pfade (`_wfopen`, `LoadLibraryW`, ...), die Variante über `CreateProcessW`, die Namen der Bibliotheken einer
 `.fbc` eines anderen Systems; Test `FIRE_TESTS_ONLY=cvmwin` (`fire.exe` mit MinGW aus den Quellen von forge, unter Wine: Befehlszeile, gepackte Programme, die
 Ansicht des Hosts mit dem Leser von spark, Befehle, das geteilte Gerät, der Korpus `native` 501 von 501 und 4 mit einer Ausgabe von Windows); offen: ein echtes
 Windows, Plugins und Debuggen der C-VM unter Windows, spark selbst unter Windows.
+
+**Was nach (5) und (6) noch auf `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget` verweist** (22.11.2026; geprüft mit einem
+Build von `fire.Compiler` ohne die Referenz und ohne die Dateien unten - es übersetzt -, und von spark ohne die Referenz und ohne transitive Referenzen - es
+übersetzt mit `fire.Terminal`). Das Entfernen ist danach mechanisch:
+
+* **`src/fire.Compiler`** (Programm `forge`): die Referenz auf `fire.Runtime` in `fire.Compiler.csproj` hält nur noch Code, den forge und spark nicht mehr
+  ausführen - zu löschen mit der Referenz: `RuntimeSession.cs` (die Sitzung der C#-VM; ihr `CreateProjectDirectiveRegistry` leitet nur noch an
+  `ProjectDirectives.CreateRegistry` weiter), `Debugging/VmDebugTarget.cs`, `HostRenderer.cs` (fire.Terminal), `GraphicsLibrary.InProcess.cs` (die Bibliothek
+  von graphics/windows im Prozess: `Register`, `Pixels`, `Instance`, `WarnFallback` - `PackageNativeBinding`, `PackageHost`), `PackageImports.InProcess.cs`
+  (`RegisterForRun` - `PackageNativeBinding`), `Tables.Bridges.cs` (`forge tables` schreibt `native/tables/bridges.def` aus `GraphicsBridge.RegisterStubs`,
+  `WindowsBridge.RegisterStubs`, `ReflectionNatives.Register`: danach ist `bridges.def` die Quelle - in `Tables.cs` der Eintrag `["bridges.def"] = Bridges()`
+  und in `TablesTests` dessen Vergleich weg), in `GraphicsLibrary.cs` der Record `HostWindows` (nur `RuntimeSession`). `fire.Device.Manager` referenziert
+  forge jetzt direkt (kam vorher über `fire.Runtime`). Die vielen `using fire.Runtime;`/`fire.Runtime.X` in forge sind der **Namensraum** des Kerns
+  (`src/fire/Runtime`: `LinkedProgram`, `VmExecutionMode`, `TargetProfile`, `CVmPayload`, ...), nicht das Projekt.
+* **`src/fire.Editor`** (spark): keine Referenz auf `fire.Runtime` mehr (sie kommt nur noch transitiv über `fire.Compiler`); direkt referenziert ist
+  `fire.Terminal` - für Bilder, nicht für die VM: `PixelCanvas`, `ImageDecoder`/`ImageEncoder`/`ImageData` (`Editors/PixelEditorControl.cs`,
+  `MainWindow/MainWindow.Projects.cs`). Wer `fire.Terminal` ganz entfernen will, zieht diese Codecs vorher in ein eigenes Projekt (oder nach spark).
+  `Help/Embedding.md` beschreibt noch das Einbetten der C#-VM (`RuntimeSession`) - mit dem Projekt zu streichen (L6: `fire_embed.h`).
+* **`src/fire.Testing`**: die Referenz auf `fire.Runtime` hält nur noch, was die C#-VM selbst prüft; die Standardrunde führt es nicht aus
+  (`DotnetVm.Skip`, eine Zeile "(C#-VM: ... goes away with fire.Runtime ...)"; `FIRE_TESTS_DOTNET_VM=1` führt es aus, solange es das Projekt gibt):
+  in `Program.cs` die Abschnitte zwischen `goto dotnetVm1` ... `dotnetVm22` und `dotnetVmUi` (Bytecode-Tests mit `new VM`, Multithreading/Actors über
+  `FireRuntime`, Operatoren/Format/Strings/IO mit eigenen Natives, VmExecutionMode, Namespaces, ParseMultiple, die Familien vm-* in ihren C#-Helfern
+  `CheckExt`/`CheckArr`/`CheckPerf`/`CheckClone`/`CheckLife`/`CheckShutdown`/`CheckGl`/`CheckLq`/`CheckRf`/`CheckSc` - die Fälle selbst laufen in `fire`
+  über `TestCasesVm` -, "Grafik aus fire", "Netzwerk: Host-Richtlinie", die Callbacks, "Globals und Fire-Threads", LINQ/Reflection/Scope, Embedding.md, die
+  UI-Bibliothek mit Test-Anzeige und den Test-Natives `__TestEvent`/`__TestClose`/`__TestMillis`/`__TestDragAnswer`/`__TestCanDrag`), im Packer-Abschnitt
+  die Teile 1-4 (PackagePlan, PayloadFile, PayloadLoader, `Packer`) und die Single-File-Runtime (`BundleWriter`, `Packer`), die Helfer `UseIoPackage`,
+  `FakeRenderer`, `TestHostDisplay`; `DebuggerTests.cs` (`VmRun`, `TargetRun`), `DebuggerPluginTests.cs` (`PluginRun`), `DebugSessionVm.cs`
+  (`DebugSession.Compile`/`CompileAsync` über `VmDebugTarget`), `NativeDebugTests.cs` (`RunCsVm`/`RunVmLocked`), `NativeDebugTests.Vm.cs` (die Fälle C-VM
+  gegen C#-VM), `DialogTests.cs`, `DockingTests.cs`, `WindowManagerTests.cs` (ganz: die Fenster von fire.Terminal.Windows mit Schein-Renderern),
+  `ProgramFileTests.cs` (die Klasse `Session`, unbenutzt). Alles andere führt seine Programme in `fire` aus (`CVmTest`, `CVmTest.Debug`, `TestCasesVm`) oder
+  vergleicht mit den `.expected` der Fälle.
+* **`src/fire.Benchmarks`**: misst die C#-VM gegen die C-VM (`VM.Run()`), mit `fire.Runtime` zu entfernen oder auf `fire` allein umzustellen.
+* **Die Projekte selbst**: `src/fire.Runtime` (mit `Packer`, `BundleWriter`, `PayloadLoader`, `PackagePlan`, `PackageNativeBinding`, `PackageHost`,
+  `HostNatives`/`TimeNatives`, `ReflectionNatives`, `LineProfile`, dem Programm `runtime`, das der Build neben forge legt), `src/fire.Terminal.Bridge`,
+  `src/fire.Windows.Bridge`, `src/fire.Terminal.Windows`, `src/fire.Terminal` (bis auf die Bild-Codecs von spark, oben), ihre Einträge in `fire.sln`.
+* **Verhalten, das sich mit (5) geändert hat** (offen, nicht im Bereich dieses Schritts): `Environment.ProgramPath` ist bei `forge run` jetzt der Pfad von
+  `fire` (die C-VM nimmt den Pfad ihres Programms, `fire_rt.h`), nicht mehr die letzte Quelle wie in der C#-VM - forge-c tut dasselbe; die Ausgabe eines
+  Threads in spark trägt im Output-Panel nicht mehr den Namen des Threads (`fire` schreibt sie auf stdout, nicht je Thread); die Prüfungen der
+  UI-Bibliothek, der Dialoge, des Dockings und des WindowManagers laufen nur noch mit der C#-VM, bis die C-VM eine Test-Anzeige mit Test-Natives hat
+  (die UI-Pakete sind sonst über die Fälle "native == VM" und die Live-Sitzung geprüft).
+* **Geprüft** (23.11.2026, Linux x64): `tests/compare-commands.sh` C#-forge gegen forge-c **100 von 103** gleich (alle `run`, `test`, `data` gleich; die drei
+  sind Dateien nativer Builds und die gepackte Datei von `build -m debug --types strict` - das C#-forge vor dieser Änderung schreibt Byte für Byte dieselben,
+  die gepackte Datei ist schon von Lauf zu Lauf verschieden); `tests/run-cases.sh` mit dem C#-forge **1152 von 1152**, `tests/run-cases-vm.sh` **1152 von
+  1152**. Die Standardrunde von `fire.Testing` ohne `native` (`FIRE_TEST_NO_NATIVE=1`, 9 min): 2204 Prüfungen, danach behoben: die Fälle `.error` zur
+  Laufzeit in `TestCasesVm`, die Prüfung "Eigener Manager" der Geräte (die C#-VM baute einen eigenen Manager ab) - übrig ein Fehler, der schon vorher da war
+  (die Sprachdoku verlinkt `../spec/PLUGINS.md`, die Prüfung will Links im selben Ordner); einzeln danach grün: `debugger` 43, `cvmrun` 26, `previews` 10,
+  `trace` 27, `syntax` 58, `diagnostics` 76, `types` 268, `programfile` 138, `testing` 32, `drivers` 10, `circuiteditor` 53, `packer` 40, `completion` 62
+  (`windows`, `dialogs`, `docking` melden sich als Prüfungen der C#-VM ab; `linkage` 107 von 120 in 29 min, der Rest MinGW/Wine; `native`: die 505 Fälle
+  "VM: die erwartete Ausgabe" alle grün, die nativen Builds mit ASan brauchen länger als 30 min je Prozess - unberührt von diesem Schritt). Unter Xvfb
+  mit spark: ein Konsolenprogramm (Ausgabe, Eingabe über die Zeile des Output-Panels), ein Haltepunkt (Halt, Scope-Panel, weiter bis zum Ende), ein
+  Fensterprogramm (sein Fenster aus `fire`), der Schaltplan-Editor (Live-Sitzung in `fire`, Simulation läuft), das Werkzeug `check` des MCP-Servers über forge.
+* **Gefunden** (nicht behoben, `native/vm`): `inline c` in der C-VM beendet das Programm mit `fire runtime error: the VM in C does not support the inline C
+  function M_Add yet`, statt wie die C#-VM eine abfangbare Ausnahme `'M.Add' is an inline C function: it runs only in a native build` zu werfen - die zwei
+  Prüfungen "inline c ... in der VM" der Gruppe `native` zeigen es (rot gelassen).
 
 Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt die `Value` der VM direkt, keine Kopien, Objekte dürfen hinüber).
 

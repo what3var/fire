@@ -63,26 +63,11 @@ namespace fire.Compiler
                 string script = Script(w, h, d, f3d, dir, animation, fast, yaw, frames);
                 string engine, said;
                 double compileMs, runMs;
-                if (CVmScript.Available)
-                {
-                    var run = CVmScript.Run(script, dir, timeoutMs: 120000, cancel: cancel);
-                    engine = "c"; compileMs = run.CompileMs; runMs = run.RunMs;
-                    if (run.Failure is { } failure) return (null, failure, engine, compileMs, runMs);
-                    said = string.Join("\n", run.Printed);
-                }
-                else
-                {
-                    var clock = System.Diagnostics.Stopwatch.StartNew();
-                    var printed = new List<string>();
-                    var session = RuntimeSession.Build(new[] { script }, fire.Runtime.VmExecutionMode.Release,
-                        a => { printed.Add(a.Length > 0 ? a[0].ToString() ?? "" : ""); return fire.Values.Value.MakeUndefined(); });
-                    compileMs = clock.Elapsed.TotalMilliseconds;
-                    clock.Restart();
-                    session.Run();
-                    engine = "dotnet"; runMs = clock.Elapsed.TotalMilliseconds;
-                    if (session.VirtualMachine?.UnhandledException is { } ex) return (null, ex.ToString(), engine, compileMs, runMs);
-                    said = string.Join("\n", printed);
-                }
+                if (!CVmScript.Available) return (null, "The preview needs `fire` (the VM in C), which could not be had on this machine: " + CVmScript.Unavailable, "", 0, 0);
+                var run = CVmScript.Run(script, dir, timeoutMs: 120000, cancel: cancel);
+                engine = "c"; compileMs = run.CompileMs; runMs = run.RunMs;
+                if (run.Failure is { } failure) return (null, failure, engine, compileMs, runMs);
+                said = string.Join("\n", run.Printed);
                 var list = new List<byte[]>();
                 for (int i = 0; i < frames; i++)
                 {

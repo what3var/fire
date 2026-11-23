@@ -300,7 +300,7 @@ namespace fire.Editor
                         _checkDone = done;
                         _quietCompile = true;
                         bool ok;
-                        try { ok = await CompileAndPrepareAsync(null); }
+                        try { ok = await CheckAsync(); }
                         finally { _quietCompile = false; }
                         done.TrySetResult(ok);
                         return true;

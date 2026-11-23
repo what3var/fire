@@ -133,25 +133,21 @@ namespace fire.Compiler
             return RunDriver(all, allPaths, driver);
         }
 
-        /// <summary>Runs <paramref name="driver"/> (fire, at the top level) with the classes of the sources in the VM: what it printed, or the error.</summary>
+        /// <summary>Runs <paramref name="driver"/> (fire, at the top level) with the classes of the sources in the VM in C (`fire run`, CVmRun - as forge-c does it): what it
+        /// printed, or the error.</summary>
         public static (string Output, string? Error, bool Compile) RunDriver(IReadOnlyList<string> sources, IReadOnlyList<string?> paths, string driver)
         {
-            var printed = new StringBuilder();
-            RuntimeSession session;
+            LinkedProgram linked;
             Linker.TestDriver = (program, first) => driver;
             try
             {
-                session = RuntimeSession.Build(sources, VmExecutionMode.Release, values =>
-                {
-                    if (values.Length > 0) lock (printed) printed.Append(values[0].ToString()).Append('\n');
-                    return Value.MakeUndefined();
-                }, sourcePaths: paths);
+                linked = new Linker { SourcePaths = paths, PackageLibraries = true }.CompileAndLink(sources, null, null, VmExecutionMode.Release, null);
             }
             catch (Exception ex) when (CommandLineRunner.IsCompileError(ex)) { return ("", CommandLineRunner.DescribeErrors(ex), true); }
             finally { Linker.TestDriver = null; }
-            session.Run();
-            if (session.VirtualMachine!.UnhandledException is { } error) return (printed.ToString(), new UncaughtScriptException(error).Message, false);
-            return (printed.ToString(), null, false);
+            var (output, errors, _) = CVmRun.RunCaptured(linked, "fire-data-");
+            // (the VM in C reports an exception nobody caught as UncaughtScriptException does)
+            return (output, CVmRun.UnhandledLine(errors), false);
         }
 
         /// <summary>The package of the driver for the scheme of the URL.</summary>

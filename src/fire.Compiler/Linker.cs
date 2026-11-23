@@ -1,9 +1,6 @@
 ﻿using fire.Bytecode;
 using fire.Compiler.Assembly;
 using fire.Runtime;
-using fire.Terminal;
-using fire.Terminal.Bridge;
-using fire.Terminal.Windows;
 using fire.Utilities;
 using fire.Values;
 using System;
@@ -678,7 +675,7 @@ namespace fire.Compiler
             // graphics and windows in C (the default of the VM): a packed program binds their natives to the library of both, which travels with it
             List<string>? graphicsNatives = null;
             // (the VM in C has graphics and windows only in C: its packed program always carries the library)
-            if ((!string.IsNullOrEmpty(outname) || PackageLibraries) && Engine != "native" && nativeImports.Contains(NativeImports.Graphics) && (PackageLibraries || GraphicsLibrary.Wanted(false) || !CVm.UseDotnet) && GraphicsLibrary.Locate() is { } gfxLibrary)
+            if ((!string.IsNullOrEmpty(outname) || PackageLibraries) && Engine != "native" && nativeImports.Contains(NativeImports.Graphics) && GraphicsLibrary.Locate() is { } gfxLibrary)
             {
                 graphicsNatives = natives.Names.Where(n => n.StartsWith("__GRPH", StringComparison.Ordinal)).OrderBy(natives.IndexOf).ToList();
                 (packageLibraryFiles ??= new List<string>()).Add(gfxLibrary);
@@ -696,7 +693,7 @@ namespace fire.Compiler
 
             if (!string.IsNullOrEmpty(outname))
             {
-                // Icon and version info belong into the apphost BEFORE it becomes the bundle (see Packer.PackProgram).
+                // Icon and version info belong into the copy of the VM BEFORE the program goes behind it (CVm.Pack).
                 var verInfo = assemblyInfo.ToVersionInfo();
                 var tempfile = outname + ".tmp";
                 try
@@ -711,9 +708,8 @@ namespace fire.Compiler
                         if (File.Exists(assemblyInfo.IconPath))
                             PeResourceEditor.SetIcon(apphost, assemblyInfo.IconPath);
                     }
-                    // the VM in C with the program behind it (phase B step 8, CVm); FIRE_VM_ENGINE=dotnet: the .NET runtime as before (until M1)
-                    if (CVm.UseDotnet) Packer.PackProgram(linkedProgram, tempfile, Customize);
-                    else CVm.Pack(linkedProgram, tempfile, Customize);
+                    // the VM in C with the program behind it (phase B step 8, CVm; the .NET packer is gone with M1)
+                    CVm.Pack(linkedProgram, tempfile, Customize);
                     File.Move(tempfile, outname, true);
                 }
                 finally

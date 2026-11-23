@@ -46,11 +46,8 @@ namespace fire.Compiler
 
         public bool IsRunning => _session?.IsRunning == true;
 
-        /// <summary>The agent runs in the C# VM of this process (FIRE_DRIVER_AGENT=dotnet), not in `fire` (the VM in C, the default).</summary>
-        public bool InProcessOnly { get; init; } = Environment.GetEnvironmentVariable("FIRE_DRIVER_AGENT") == "dotnet";
-
-        /// <summary>The running agent is a process `fire` (the VM in C), not the C# VM of this process.</summary>
-        public bool RunsInFire => _session is { InProcess: false };
+        /// <summary>The agent runs as a process `fire` (the VM in C; M1: FIRE_DRIVER_AGENT=dotnet, the C# VM of this process, is gone).</summary>
+        public bool RunsInFire => _session != null;
 
         /// <summary>The drivers the installed packages offer (the `drivers` of their imports).</summary>
         public static List<PackageDriver> FindDrivers(PackageStore? store = null)
@@ -161,7 +158,7 @@ namespace fire.Compiler
             for (int i = 0; i < names.Count && i < files.Count; i++)
                 if (mine.Contains(names[i]))
                 {
-                    if (files[i] == fire.Runtime.PackageNativeBinding.HostLibrary) yield return (names[i], files[i]);
+                    if (files[i] == PackageImports.HostLibrary) yield return (names[i], files[i]);
                     else if (files[i] == own && library != null) yield return (names[i], library);
                 }
         }
@@ -171,7 +168,8 @@ namespace fire.Compiler
         {
             var sb = new StringBuilder();
             sb.Append("driver-plugin 1\n").Append(fire.Runtime.ModuleInterface.Format).Append('\n').Append(mode).Append('\n');
-            foreach (var type in new[] { typeof(PackageDriverAgent), typeof(fire.Runtime.VM), typeof(fire.Values.Value), typeof(fire.Standard.Prelude) })
+            sb.Append("vm ").Append(CVm.SourceKey()).Append('\n');   // (the VM in C that loads the plugin)
+            foreach (var type in new[] { typeof(PackageDriverAgent), typeof(fire.Values.Value), typeof(fire.Standard.Prelude) })
                 sb.Append(type.Assembly.ManifestModule.ModuleVersionId).Append('\n');
             sb.Append(fire.Standard.Prelude.Source).Append('\n');
             sb.Append(import.Package.Name).Append('@').Append(import.Package.Version).Append(' ').Append(import.Key).Append(' ').Append(library).Append('\n').Append(prelude).Append('\n');
@@ -389,9 +387,9 @@ namespace fire.Compiler
             lock (_lock) _pluginFailures.Clear();
             var ready = new ManualResetEventSlim();
             // (in `fire`, the VM in C, as a process of its own - it loads the drivers' plugins like the C# VM, docs/spec/VM_C.md "Plugins"; the devices it makes reach
-            // spark's DeviceManager through the lines of this protocol, AgentDriver. FIRE_DRIVER_AGENT=dotnet - or FIRE_SPARK_VM=dotnet - keeps it in the C# VM of this
-            // process. There is no fallback: if the agent fails in `fire`, it ends with the reason (EndedWith), like LiveSession)
-            var session = new LiveSession { InProcessOnly = InProcessOnly };
+            // spark's DeviceManager through the lines of this protocol, AgentDriver. There is no fallback: if the agent fails in `fire`, it ends with the reason
+            // (EndedWith), like LiveSession)
+            var session = new LiveSession();
             session.Message += line =>
             {
                 if (_session != session) return;
@@ -414,9 +412,7 @@ namespace fire.Compiler
                 {
                     try
                     {
-                        var externs = new fire.Bytecode.ExternRegistry();
-                        externs.Register("__HostCommand", _ => fire.Values.Value.MakeUndefined());
-                        RuntimeSession.Build(new[] { BuildScript(new[] { d }, plugins) }, fire.Runtime.VmExecutionMode.Release, _ => fire.Values.Value.MakeUndefined(), externs: externs);
+                        new Linker().CompileAndLink(new[] { BuildScript(new[] { d }, plugins) }, null, null, fire.Runtime.VmExecutionMode.Release, null);   // (only compiled)
                         good.Add(d);
                     }
                     catch (Exception ex) { lock (_lock) _startErrors.Add($"The driver {d.Class} of {d.Package} could not be made: {CompileErrors.Describe(ex)}"); }

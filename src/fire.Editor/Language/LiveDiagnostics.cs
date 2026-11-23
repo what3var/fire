@@ -152,13 +152,13 @@ namespace fire.Editor
                 }
 
                 // The same registry as in REAL compiling (see
-                // RuntimeSession.CreateProjectDirectiveRegistry) - otherwise
+                // ProjectDirectives.CreateRegistry) - otherwise
                 // e.g. '#import "graphics"' would be wrongly squiggled here as an
                 // unknown preprocessor directive, although
                 // it is long accepted when actually executing.
                 // The callback remembers the switched-on extensions,
                 // whose preludes are inserted below.
-                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name), tryLibrary: name => IsOwn(name) || ProjectLibraries.TryImport(plan, name, projectImports, nativeImports),
+                var registry = ProjectDirectives.CreateRegistry(name => nativeImports.Add(name), tryLibrary: name => IsOwn(name) || ProjectLibraries.TryImport(plan, name, projectImports, nativeImports),
                     unknownHint: name => ProjectLibraries.UnknownHint(plan, name), libraryNamespace: name => ProjectLibraries.NamespaceOf(plan, name));
                 processed.Add(Preprocessor.Process(fire.Standard.Prelude.Source, cwd, alreadyIncluded, registry));
                 // the other files of the project come before the document (each from its own folder; one that cannot be preprocessed right now is left out)

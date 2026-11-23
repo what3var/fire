@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text;
 using fire.Bytecode;
 using fire.Runtime;
-using fire.Values;
 
 namespace fire.Compiler
 {
@@ -123,7 +122,7 @@ namespace fire.Compiler
     }
 
     /// <summary>
-    /// `forge test` (docs/tools/testing.md): compiles a program with its tests (the top level of its files does not run), runs the generated driver in the VM or as a native program and reports.
+    /// `forge test` (docs/tools/testing.md): compiles a program with its tests (the top level of its files does not run), runs the generated driver in the VM in C (`fire`) or as a native program and reports.
     /// While it runs, a console that is not redirected shows a spinner (`\ - / |`) with the running test; at the end a list of the tests and the sums.
     /// </summary>
     public sealed class TestRunner
@@ -136,7 +135,6 @@ namespace fire.Compiler
         private int _shownWidth;
 
         private volatile bool _cancelled;
-        private VM? _vm;
         private Process? _process;
 
         public TestRunner(TextWriter output, bool live)
@@ -157,20 +155,20 @@ namespace fire.Compiler
         /// <summary>Was the run stopped with <see cref="Cancel"/>?</summary>
         public bool Cancelled => _cancelled;
 
-        /// <summary>Stops the run from another thread: the VM leaves at its next check point, a native test program is killed. The running test ends as an error "cancelled".</summary>
+        /// <summary>Stops the run from another thread: the program of the tests (in `fire` or native) is killed. The running test ends as an error "cancelled".</summary>
         public void Cancel()
         {
             _cancelled = true;
             lock (_lock)
             {
-                _vm?.RequestLeave();
                 try { if (_process is { HasExited: false }) _process.Kill(entireProcessTree: true); }
                 catch (InvalidOperationException) { }
                 catch (System.ComponentModel.Win32Exception) { }
             }
         }
 
-        /// <summary>Runs the tests of <paramref name="sources"/> in the VM.</summary>
+        /// <summary>Runs the tests of <paramref name="sources"/> in the VM - the VM in C: the program file of the tests as `fire run tests.fbc` (CVmRun, as forge-c does it), its
+        /// lines read as they come.</summary>
         /// <param name="files">The names of the files of <paramref name="sources"/> (for the messages), when there is no plan.</param>
         /// <param name="basePath">The folder `#include` of a file without a plan starts from (else the current folder).</param>
         /// <param name="sourcePaths">The files of <paramref name="sources"/>, when there is no plan: each `#include` is relative to the file that has it and a message names its file
@@ -182,26 +180,24 @@ namespace fire.Compiler
             var protocol = Attach(run);
             var watch = Stopwatch.StartNew();
             using var spinner = StartSpinner();
-            RuntimeSession session;
+            LinkedProgram linked;
             int tests = 0;
             Linker.TestDriver = (program, first) => Driver(program, first, plan, files, run, out tests);
             try
             {
-                session = RuntimeSession.Build(sources, mode, args =>
-                {
-                    if (args.Length > 0) protocol.Line(args[0].ToString());
-                    return Value.MakeUndefined();
-                }, basePath: basePath, floatWidth: floatWidth, defines: defines, plan: plan, sourcePaths: sourcePaths);
+                linked = new Linker { BasePath = basePath, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, PackageLibraries = true }
+                    .CompileAndLink(sources, null, null, mode, floatWidth);
             }
             finally { Linker.TestDriver = null; }
             if (tests > 0 && !_cancelled)
             {
-                lock (_lock) _vm = session.VirtualMachine;
-                try { session.Run(); }
-                finally { lock (_lock) _vm = null; }
+                // (FIRE_STDOUT_LINES: the lines of the driver as they come - the live display, spark's test explorer)
+                var (_, errors, code) = CVmRun.RunCaptured(linked, "fire-test-", line => { lock (_lock) protocol.Line(line); }, process => { lock (_lock) _process = process; },
+                    new Dictionary<string, string> { ["FIRE_STDOUT_LINES"] = "1" });
                 if (_cancelled && !protocol.Done) protocol.Stopped("cancelled");
-                else if (session.VirtualMachine!.UnhandledException is { } ex) protocol.Stopped(new UncaughtScriptException(ex).Message);
-                else if (!protocol.Done) protocol.Stopped("the program ended before the tests were done (`leave`/`terminate`?)");
+                else if (!protocol.Done)
+                    // (the VM in C reports an exception nobody caught as UncaughtScriptException does: "Unhandled exception of type 'X': message")
+                    protocol.Stopped(code != 0 && CVmRun.UnhandledLine(errors) is { } unhandled ? unhandled : "the program ended before the tests were done (`leave`/`terminate`?)");
             }
             run.Duration = watch.Elapsed;
             return run;

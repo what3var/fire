@@ -818,7 +818,7 @@ und `fbc` (mit dem Modus `native`) für Projekte.
 * **Zeiten**: `ProjectContent.CopyFile` setzt die Zeit der letzten Änderung in Ticks (100 ns, wie .NET), nicht die Zugriffszeit; Stempel von Publish und Vergleich
   "neuer" in Ticks.
 * **Der Stempel von Publish** hasht forge-c selbst, wo C# seine zwei Assemblies hasht: was der eine forge veröffentlicht hat, baut der andere neu.
-* **Was fehlt, sagt es** (`unported: ...`): `FIRE_VM_ENGINE=dotnet` (ein Programm mit der .NET-Runtime statt `fire`) und `-f` mit der Engine vm für eine einzelne Datei
+* **Was fehlt, sagt es** (`unported: ...`): `FIRE_VM_ENGINE=dotnet` (ein Programm mit der .NET-Runtime statt `fire`; das C#-forge kennt es seit M1 nicht mehr) und `-f` mit der Engine vm für eine einzelne Datei
   (der Linker einer Datei kennt die Breite der Befehlszeile nicht). Die Meldungen des Deserialisierers geben den Pfad im JSON nur an der Wurzel genau an (`Path: $` bei
   Lesefehlern).
 * **Die Quellen der VM**: das C#-forge trägt sie als Ressourcen, forge-c liest sie aus `native/` (`FIRE_NATIVE_ROOT`, sonst neben den Tabellen) - der Schlüssel ist gleich,
@@ -999,7 +999,7 @@ Die Befehle des C#-forge (`Program.cs`, `CommandLine*.cs`) und was davon in forg
 | `stats` (zwei Berichte von `--stats`) | ja (Schritt 4) |
 | `install-standard`, `build-vm` | ja (Schritt 3) |
 | `prebuild-standard`, `tables` | **nein** (`unported`: Werkzeuge des Baus der Solution; `pkglib --all` baut die Bibliotheken, die Tabellen schreibt das C#) |
-| der Packer | `fire.Runtime.Packer` packt nur noch mit `FIRE_VM_ENGINE=dotnet` die .NET-Einzeldatei - in C entfällt er; das Packen mit der VM in C (`CVm.Pack`, `FIREVMP1`) ist die Engine `vm` von Schritt 3 |
+| der Packer | `fire.Runtime.Packer` (die .NET-Einzeldatei, `FIRE_VM_ENGINE=dotnet`) ist seit M1 auch aus dem C#-forge entfernt - in C entfällt er; das Packen mit der VM in C (`CVm.Pack`, `FIREVMP1`) ist die Engine `vm` von Schritt 3 |
 
 ## Nachziehen
 

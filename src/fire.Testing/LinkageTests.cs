@@ -33,11 +33,8 @@ static class LinkageTests
 
     private static string Vm(IReadOnlyList<string> sources, BuildPlan? plan = null)
     {
-        var output = new StringBuilder();
-        var session = RuntimeSession.Build(sources, null, args => { output.AppendLine(args.Length > 0 ? args[0].ToString() : ""); return Value.MakeUndefined(); }, plan: plan);
-        session.Run();
-        Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
-        return output.ToString().Replace("\r\n", "\n");
+        // (in the VM in C, M1)
+        return CVmTest.Run(sources, null, plan: plan).Text;
     }
 
     /// <summary>The program `fire` (the VM in C) the plugin tests run programs in: next to the tests (CVm.Locate), else built from native/vm/fire.c; null with a reason.</summary>

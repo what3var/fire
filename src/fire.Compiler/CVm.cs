@@ -22,16 +22,10 @@ namespace fire.Compiler
     /// `#intwidth`/`#floatwidth`: one VM per pair of widths, the same sources with FIRE_INT32/FIRE_INT16/FIRE_FLOAT32 (`fire-i32`, `fire-f32`, `fire-i32-f32`,
     /// `fire-i16`, `fire-i16-f32`), found and built like `fire`.
     ///
-    /// Until M1 the .NET runtime stays selectable: FIRE_VM_ENGINE=dotnet packs it as before (fire.Runtime.Packer).
+    /// The VM in C is the only engine of a packed program (M1: the .NET packer and FIRE_VM_ENGINE=dotnet are gone).
     /// </summary>
     public static class CVm
     {
-        /// <summary>For tests: "dotnet" or "c" instead of FIRE_VM_ENGINE.</summary>
-        public static string? EngineOverride { get; set; }
-
-        /// <summary>FIRE_VM_ENGINE=dotnet: a program of the VM is packed with the .NET runtime (the old way, until M1).</summary>
-        public static bool UseDotnet => (EngineOverride ?? Environment.GetEnvironmentVariable("FIRE_VM_ENGINE"))?.Trim().ToLowerInvariant() is "dotnet" or ".net" or "net";
-
         private static string Extension => OperatingSystem.IsWindows() ? ".exe" : "";
 
         /// <summary>The name of the VM for a pair of widths: fire, fire-i32, fire-f32, fire-i32-f32, fire-i16, fire-i16-f32 (without .exe).</summary>
@@ -117,7 +111,7 @@ namespace fire.Compiler
             var (ok, text) = Build(cached, intWidth, floatWidth, log);
             if (!ok)
                 throw new VmUnavailableException($"The VM in C ({VariantName(intWidth, floatWidth)}) for the program could not be built on this machine:\n{text}\n" +
-                    "Install a C compiler (gcc, clang, tcc or cl), or set FIRE_VM_ENGINE=dotnet to pack the program with the .NET runtime, or build it with --engine native.");
+                    "Install a C compiler (gcc, clang, tcc or cl), or set FIRE_VM_EXE to a `fire` built elsewhere, or build it with --engine native.");
             return cached;
         }
 
@@ -235,8 +229,8 @@ namespace fire.Compiler
             return failed == 0 ? 0 : 1;
         }
 
-        /// <summary>Packs <paramref name="program"/> with the VM of its widths into <paramref name="outName"/>: the VM, then the program file (without line tables, as
-        /// the .NET packer writes it) and the libraries of its packages (<see cref="LinkedProgram.PackageLibraryFiles"/>, with graphics and windows). `customizeExe`
+        /// <summary>Packs <paramref name="program"/> with the VM of its widths into <paramref name="outName"/>: the VM, then the program file (with line tables only for a
+        /// stack trace) and the libraries of its packages (<see cref="LinkedProgram.PackageLibraryFiles"/>, with graphics and windows). `customizeExe`
         /// gets the copy of the VM before the payload goes behind it (subsystem, icon, version of a Windows program).</summary>
         public static void Pack(LinkedProgram program, string outName, Action<string>? customizeExe = null, Action<string>? log = null)
         {

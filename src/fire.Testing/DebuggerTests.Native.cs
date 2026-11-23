@@ -772,10 +772,9 @@ static partial class DebuggerTests
             Check(built.Ok, "Ende-zu-Ende: Debug-Build (-O0 -g) gelingt", built.Log.Length > 2000 ? built.Log[..2000] : built.Log);
             if (!built.Ok) return;
 
-            // the VM as the reference: the stop at line 5, then t = 10 and Step Over to the unhandled exception, then on after it
-            VM.ResetTerminateForTests();
+            // the VM as the reference - the VM in C under the debugger (M1): the stop at line 5, then t = 10 and Step Over to the unhandled exception, then on after it
             var vmOutput = new ConcurrentQueue<string>();
-            using var vm = VmDebugTarget.Build(new[] { script }, VmExecutionMode.Debug);
+            using var vm = CVmTest.Debug(new[] { script }, VmExecutionMode.Debug, dir);
             vm.Output += (_, line) => vmOutput.Enqueue(line);
             int vmSrc = vm.FirstUserSourceIndex;
             vm.MainThread.RunUntilBreakpoint(new HashSet<(int, int)> { (vmSrc, 5) }, () => false);
@@ -787,7 +786,6 @@ static partial class DebuggerTests
             string vmStop = $"{vm.MainThread.IsPausedOnUnhandled} {vm.MainThread.CurrentLocation.Line} {vm.MainThread.UnhandledError}";
             vm.MainThread.TryResumeUnhandled();
             vm.MainThread.RunUntilEnd(() => false);
-            VM.ResetTerminateForTests();
 
             var lines = new ConcurrentQueue<string>();
             using var native = NativeLaunch.LaunchDebug(built.Output, Array.Empty<string>(), dir, TimeSpan.FromSeconds(30));
