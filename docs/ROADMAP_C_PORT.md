@@ -327,7 +327,7 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    Der Schaltplan-Editor braucht den Rückfall nicht mehr (22.11.: die `DestroyedException` in `UI.CircuitView.DrawBackground` war das `SetField` auf ein
    Objekt mit Sonden, behoben mit `40e81bcb`; `vm-life/0110`, die Live-Sitzung mit jedem Beispiel-Schaltplan ohne Rückfall).
    **Offen**: das Debuggen der Plugins ist da, der Treiber-Agent läuft seit dem 22.11. in `fire` (fire-Plugins in der C-VM);
-   `FIRE_DISPLAY_SHM` und `__HostCommand` unter Windows; "Build virtual" und `check` (MCP) übersetzen noch in spark (M2).
+   ~~`FIRE_DISPLAY_SHM` und `__HostCommand` unter Windows~~ (unter Wine geprüft, `cvmwin`, siehe M1 (7)); "Build virtual" und `check` (MCP) übersetzen noch in spark (M2).
 
 **M1:** forge (noch C#) und spark benutzen nur noch die C-VM. `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget`
 werden entfernt.
@@ -353,8 +353,13 @@ Gerät"); (4) ~~`UiPreview`/Blockvorschau in `fire`~~ - **erledigt** (22.11.2026
 `FIRE_DISPLAY_SHM` (`Window.Idle` nach dem Dump legt das Bild in die Datei - keine Aufnahme in `fire_gfx_host.h` nötig), Pixel, Orte und PNG-Bytes wie in
 der C#-VM; Latenz nach einer Änderung 604 ms gegen 520 ms im Prozess (der Prozess `fire` 16 ms, der Rest Übersetzen in spark); Test `FIRE_TESTS_ONLY=previews`;
 (5) `forge run`, `forge test` und die Tests (`fire.Testing`: RuntimeSession, VmDebugTarget, die C#-VM als Vergleich) hängen an `fire.Runtime`;
-(6) `forge build --engine vm` mit `FIRE_VM_ENGINE=dotnet`, der .NET-Packer; (7) Windows: `fire` ungeprüft gelaufen, `FIRE_DISPLAY_SHM`, `__HostCommand`,
-`Environment.Args`.
+(6) `forge build --engine vm` mit `FIRE_VM_ENGINE=dotnet`, der .NET-Packer; (7) ~~Windows: `fire` ungeprüft gelaufen, `FIRE_DISPLAY_SHM`, `__HostCommand`,
+`Environment.Args`~~ - **erledigt unter Wine** (22.11.2026, [VM_C.md](spec/VM_C.md#windows-m1-7)): `FIRE_DISPLAY_SHM` über `CreateFileMapping`/`MapViewOfFile`
+(`HostDisplayFile` mit `DeleteOnClose`), `__HostCommand` über `PeekNamedPipe` oder einen Lese-Thread, `FIRE_STDOUT_LINES` ungepuffert, `Environment.Args` aus der
+UTF-16-Befehlszeile (nur die des Programms), UTF-8-Pfade (`_wfopen`, `LoadLibraryW`, ...), die Variante über `CreateProcessW`, die Namen der Bibliotheken einer
+`.fbc` eines anderen Systems; Test `FIRE_TESTS_ONLY=cvmwin` (`fire.exe` mit MinGW aus den Quellen von forge, unter Wine: Befehlszeile, gepackte Programme, die
+Ansicht des Hosts mit dem Leser von spark, Befehle, das geteilte Gerät, der Korpus `native` 501 von 501 und 4 mit einer Ausgabe von Windows); offen: ein echtes
+Windows, Plugins und Debuggen der C-VM unter Windows, spark selbst unter Windows.
 
 Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt die `Value` der VM direkt, keine Kopien, Objekte dürfen hinüber).
 

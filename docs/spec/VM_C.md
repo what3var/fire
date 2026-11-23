@@ -71,9 +71,7 @@ fire help | fire version
   auf der Maschine, nicht vorgebaut je RID** - forge trägt die Quellen (eingebettet: `native/vm`, `native/base`, `native/tables`, die Runtime aus
   fire.Native) und baut `fire` sonst beim ersten Packen eines Programms in den Cache des Benutzers (siehe unten); ein vorgebautes `fire` je RID wie
   `Prebuilt/` wäre nur für Maschinen ohne C-Compiler nötig, die ohnehin keine Paket-Natives bauen können (spark bietet dort TinyCC an).
-* Übersetzt mit gcc 13, clang 18, tcc und MinGW-w64 (x86_64, `-lws2_32`); unter Windows ungeprüft gelaufen (das Wine hier startet keine Programme).
-  **Offen**: unter Windows liest die Runtime `Environment.Args` aus der ganzen Befehlszeile (`fire_plat_eachArg` nimmt `GetCommandLineW`) - `fire run x.fbc a`
-  gibt dort `run x.fbc a` statt `a` (ein gepacktes Programm nicht: alle Argumente sind seine).
+* Übersetzt mit gcc 13, clang 18, tcc und MinGW-w64 (x86_64, `-lws2_32`); unter Windows geprüft unter Wine (`FIRE_TESTS_ONLY=cvmwin`, siehe [Windows](#windows-m1-7)).
 
 ### Benchmarks gegen die C#-VM
 
@@ -131,6 +129,48 @@ liest `fire` den Fuß seiner eigenen Datei (`fire_plat_programPath`): ist ein Pa
   nichts, eine beschädigte Bibliothek wird ersetzt), `#intwidth 32` mit `fire-i32`, `fire run`/`help`/`version`/Exitcodes der Befehlszeile,
   `FIRE_VM_ENGINE=dotnet`; die Prüfungen der .NET-Einzeldatei laufen mit `FIRE_VM_ENGINE=dotnet`.
 
+## Windows (M1 (7))
+
+`fire.exe` baut mit MinGW-w64 aus denselben Quellen (`CVm.WriteSources(..., target: TargetProfile.Windows)` schreibt das Plattform-Paket von Windows, auch auf
+Linux) und läuft unter Wine wie unter Linux. Was dafür in der VM und der Runtime geändert ist (22.11.2026):
+
+* **Argumente**: `main` nimmt die Argumente aus der UTF-16-Befehlszeile (`fire_plat_eachCommandLineArg`, die Regeln der C-Runtime) als UTF-8 statt aus `argv`
+  (ANSI-Codepage); mit `FIRE_ARGS_UTF8` (fire.c) gibt `fire_plat_eachArg` der Runtime die übergebenen weiter - `fire run x.fbc a` gibt dem Programm nur `a`
+  (vorher `run x.fbc a`). Leerzeichen, Umlaute, CJK, Emoji, Anführungszeichen, Backslashes, leere Argumente.
+* **Pfade**: UTF-8 überall (die Argumente, `fire_plat_programPath`): `vmFopen` (`_wfopen`, auch für `fbReadFile` über `FB_FOPEN` in `fire_base.h`), `_wmkdir`,
+  `_wremove`, `MoveFileExW`, `FindFirstFileW`, `fire_plat_dlopen` (`LoadLibraryW`; Backslashes; ein voller Pfad mit `LOAD_WITH_ALTERED_SEARCH_PATH`, damit die DLLs
+  neben einer DLL gefunden werden). Variablen mit Pfaden (`FIRE_PKG_PATH`, `FIRE_VM_CACHE`, `LOCALAPPDATA`, `TEMP`, `FIRE_DISPLAY_SHM`) wide gelesen, `FIRE_PKG_PATH`
+  wide gesetzt (`_wputenv_s`).
+* **Die Variante der Breiten**: `CreateProcessW` mit der Befehlszeile dieses Prozesses (nur das Programm vorn ausgetauscht) statt `_spawnv` - das setzte die
+  Argumente ohne Anführungszeichen zusammen (`"a b"` kam als zwei an).
+* **Bibliotheken der Pakete**: eine Programmdatei nennt sie, wie die Maschine sie nennt, die sie übersetzte (`PackageLibrary.FileNameFor`: `libfire_pkg_x.so`,
+  `.dylib`, `fire_pkg_x.dll`); die VM sucht zuerst den Namen, dann den dieses Systems (`vmPkgLocalName`) - eine `.fbc` von Linux läuft unter Windows mit den
+  DLLs. Das Auspacken eines gepackten Programms nach `%LOCALAPPDATA%\fire\native` (oder `FIRE_VM_CACHE`) geht wie unter Linux.
+* **`FIRE_STDOUT_LINES=1`**: die C-Runtime von Windows kennt kein Zeilenpuffern (`_IOLBF` ist dort voll gepuffert) - stdout ist dann ungepuffert.
+  Zeilenenden: stdout ist im Textmodus (`\r\n`, wie ein natives Programm unter Windows; spark liest Zeilen).
+* **`FIRE_DISPLAY_SHM`** und **`__HostCommand`**: siehe [Programme im Fenster der IDE](#spark-auf-der-c-vm-schritt-9). `FIRE_PRINT_RECORDS` braucht nichts
+  Eigenes. Das geteilte Gerät (`FIRE_DEVICE_HOST`) hatte `WSAStartup` schon.
+* Eine `.fbc` ist zwischen den Systemen dieselbe; ein gepacktes Programm für Windows packt forge **auf** Windows (`--engine vm -t windows` lehnt forge auf
+  Linux ab: es packt die VM und die Bibliotheken dieser Maschine) - oder auf Linux mit `FIRE_VM_EXE=fire.exe` für ein Programm ohne Natives von Paketen.
+
+**Test** (`FIRE_TESTS_ONLY=cvmwin`, `src/fire.Testing/CVmWindowsTests.cs`; Wine, MinGW, Xvfb für die Fenster des Korpus; ein eigener `WINEPREFIX`): baut `fire.exe`
+und die 5 Varianten aus den Quellen, die forge trägt, die DLLs der Pakete (`GenerateCWrapper`/`GenerateWrapper` für Windows) und `fire_gfx.dll`
+(`GenerateGraphicsWrapper`) mit MinGW, und prüft unter Wine: die Befehlszeile (Exitcodes, `Environment.Args`, Pfade mit Umlauten und CJK, zwei Programme in
+einem Prozess, `#intwidth 32` über `fire-i32.exe`, `FIRE_STDOUT_LINES` durch eine Pipe); gepackte Programme (`forge build` mit `FIRE_VM_EXE=fire.exe`; ein Payload
+mit den DLLs von io und time: der Cache, der zweite Start schreibt nichts, eine beschädigte DLL wird ersetzt, `FIRE_VM_CACHE` mit Umlaut; mit
+`FIRE_TEST_WIN_FORGE` packt auch `forge.exe` für win-x64 unter Wine); die Ansicht des Hosts (`HostDisplayFile` von spark unter Linux liest das Bild, das
+`fire.exe` in die von Wine abgebildete Datei schreibt, und gibt ihm einen Klick über den Ring; `FIRE_PRINT_RECORDS`; Befehle über stdin bis `quit`); das geteilte
+Gerät (`DeviceHostServer` mit dem Loopback-Treiber, ein falsches Token); und den Korpus (`tests/cases/native`, jeder Fall von forge unter Linux zur `.fbc`
+übersetzt, verglichen wie `tests/run-cases-vm.sh`). Stand 22.11.2026: alle Prüfungen richtig; der Korpus **501 von 501** wie `.expected`, dazu 4 mit einer
+Ausgabe von Windows (`2160` `Path.Combine` mit `\`, `2630` startet `sh`, `3470` das ALSA-Gerät von Linux, `3380` die Simulation eines Schaltkreises über 20 ms:
+die Mathematik der C-Runtime von Windows rundet anders - 27 statt 28 Zündungen); 23 Prüfungen, 17-20 Minuten mit dem ersten Bau aller DLLs (Korpus 9-13 min,
+4 Kerne). Dazu die Prüfung mit `FIRE_TEST_WIN_FORGE` in `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=vmgraphics` (`forge.exe run` mit `fire_gfx.dll` öffnet ein Fenster):
+richtig, seit sie den Stempel `.runtime` schreibt, den `forge.exe pkglibplan` nennt (der unter Linux für Windows berechnete ist ein anderer). Wine selbst: ein
+`forge.exe` mit `WINEDLLOVERRIDES=mscoree=` stürzt ab (und `winedbg` wartete dann ewig: der Test schaltet ihn ab).
+**Nicht geprüft**: ein echtes Windows (Wine ist nicht Windows: Pipes, Konsole, `DeleteOnClose` mit Abbildung, Defender, Pfade über 260 Zeichen), MSVC und
+TinyCC für Windows (`fire_gfx_host.h` nimmt dort die Interlocked-Funktionen), Plugins, der Debugger der C-VM unter Windows (der Agent selbst ist unter Wine
+geprüft: `NativeDebugTests`), die Fenster des Desktops (nur ohne Prüfung des Bildes unter Xvfb), spark selbst unter Windows (`LiveSession` startet `fire.exe`).
+
 ## spark auf der C-VM (Schritt 9)
 
 spark führt Programme der Engine `vm` nicht mehr in seinem Prozess aus (L4), sondern als Kindprozess `fire`. **Schalter**: `FIRE_SPARK_VM=dotnet` behält den
@@ -162,9 +202,11 @@ bleibt in spark (die Ansicht reicht die Tasten weiter, das Programm hat kein Fen
   ist), Breite, Höhe, Fenster, Zeiger, pid; dahinter das Bild (RGBA, Platz für 3840 x 2160). Kein Pipe, keine Sperre zwischen den Prozessen: spark schaut
   etwa alle 8 ms nach; ein Bild mit vsync wartet im Programm 1/60 s. Im Programm ist das der Host-Display von `fire_display_headless.h` (`fire_display_host`) -
   `fire_gfx_host_fromEnvironment` in `fire_gfx_host.h`, gerufen von `fire_pkg_set_host` der Bibliothek von graphics und windows, also **nur in der Bibliothek der
-  VM**, nicht im nativen Build. Windows: noch nicht (die Variable wird dort übergangen).
+  VM**, nicht im nativen Build. Windows: `CreateFileMappingW`/`MapViewOfFile` derselben Datei (die Ansichten einer Datei sind zwischen Prozessen kohärent);
+  `HostDisplayFile` legt sie dort mit `FileShare.Delete` und `DeleteOnClose` an, damit sie auch geht, solange das Programm sie noch abbildet.
 * **Nachrichten**: stdout, `FIRE_PRINT_RECORDS=1` - ein `print` ist eine Zeile, ein Zeilenumbruch in seinem Text kommt als `\x1F` (ein Haken an `print` der VM).
-* **Befehle**: stdin, eine Zeile je Befehl; `__HostCommand()` ohne `#extern` liest sie ohne zu warten (ein Haken in `vmCallExtern`, POSIX: `poll`).
+* **Befehle**: stdin, eine Zeile je Befehl; `__HostCommand()` ohne `#extern` liest sie ohne zu warten (ein Haken in `vmCallExtern`, POSIX: `poll`; Windows: `PeekNamedPipe`, wo eine Pipe das nicht kann -
+  Wines Pipes des Wirtssystems - oder stdin eine Konsole ist, ein eigener Lese-Thread ab dem ersten Aufruf).
 * **Übersetzt** wird das Programm der Ansicht in spark (`Linker` mit `PackageLibraries`, `ProgramFile.Write`) - wie die übrigen Sprachdienste bis M2 (`forge serve`).
 * **Kein Rückfall mehr** (22.11.2026): bis dahin startete `LiveSession` ein Programm, das in `fire` vor seinem ersten Bild scheiterte, in der C#-VM von spark
   neu. Der Schaltplan-Editor brauchte ihn zuletzt nicht mehr: seine `DestroyedException` in `UI.CircuitView.DrawBackground` (nur über `UI.Root.Update`)
@@ -441,13 +483,13 @@ eine andere Schnittstelle von `Api`, zwei Plugins mit derselben Methode, JSON, N
 (`FIRE_TESTS_ONLY=drivers`, 10 von 10) läuft in `fire` (Plugin und `#import`, ohne Rückfall; ein Plugin gegen eine andere Schnittstelle von `devices` wird
 gemeldet, der Agent startet mit `#import` neu). Korpus: `native/4440` (eine `.fireplugin`, die keine ist: dieselben Meldungen in beiden VMs). Die
 Programmdateien beider forges mit den Schnittstellen der Module sind byte-gleich (Stichprobe des Korpus und ein Projekt mit Library).
-Windows: `fire.exe` (MinGW) unter Wine lädt Kit und Kit2 wie unter Linux (von Hand geprüft, kein Test: Meter braucht die Bibliothek seiner Natives als DLL).
+Windows: `fire.exe` (MinGW) unter Wine lädt Kit und Kit2 wie unter Linux (von Hand geprüft; `cvmwin` prüft die VM unter Windows, aber keine Plugins).
 Ein Plugin in einem fire-Thread: `PluginsInThreads` (TKit mit statischen Feldern - ein Objekt mit Destruktor, Listen, ein Text -, in einem Thread geladen,
 nach dessen Ende vom Hauptprogramm und einem zweiten Thread benutzt, frische Objekte eines Threads in einer statischen Liste; TKit2 mit Initialisierern,
 die warten, von einem Thread und dem Hauptprogramm gleichzeitig geladen; UKit mit `lib.Unload()`, einem zweiten `Unload`, einem neuen `Load`, dem `Unload`
 einer C-Bibliothek und der Reihenfolge am Ende) - nativ, VM, C-VM und die C-VM zweimal in einem Prozess mit ASan dieselbe Ausgabe.
 Ein Fall des Korpus geht dafür nicht: ein Plugin ist ein eigenes Projekt, das gebaut werden muss (die Fälle sind eine Datei).
-Offen: ein Test der C-VM unter Windows.
+Offen: Plugins in einem Test der C-VM unter Windows (`cvmwin` hat die übrige VM, [Windows](#windows-m1-7)).
 
 ## JSON
 
