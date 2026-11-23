@@ -1,0 +1,4 @@
+#import "io"
+print("first")
+var line = IO.Stdio.ReadLine()
+print("second " + line)

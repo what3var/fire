@@ -123,4 +123,5 @@ if (hasAlsa) {
 out.Close()
 try { var q = out.Queued } catch (Audio.AudioException e) { print("closed " + e.code) }
 print("avail " + Audio.Board.Available() + " " + Audio.Sim.Played())
+//# windows: the simulated device of audio is ALSA's null device of Linux
 //# name: Audio: simuliertes Geraet - Schreiben, Wellen, Lautstaerke, WAV, Halten/Stop, Fehler

@@ -1,0 +1,4 @@
+#intwidth 32
+var x = 2147483647
+print("max " + x + " args " + Environment.Args.length + " " + Environment.Args[0])
+terminate(5)

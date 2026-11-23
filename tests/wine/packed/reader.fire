@@ -1,0 +1,4 @@
+#import "io"
+#import "time"
+var line = IO.Stdio.ReadLine()
+print("read " + line + " " + (DateTime.Now.Year > 2000))

@@ -1,0 +1,36 @@
+title: Plugins unter Windows (MinGW, Wine): die DLL des Plugins gegen die DLLs des Programms (fire_link), Einheiten, Natives in C++ und JSON der Plugins; ohne --host sagt der Bau, dass das Plugin fuer ein Programm gebaut wird; ein Native in C einer Library, eines, das das Programm nicht hat
+# (LinkageTests.Plugins and PluginNativesC, the parts for Windows)
+needs: wine mingw
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/win $OUT/c && cp -r ../../linkage/plugins/sln $OUT/sln && cp -r ../../linkage/plugin-natives-c/sln $OUT/csln
+cd $OUT/sln
+# (the program with JSON: the JSON rows of the plugins' classes are checked there too)
+forge build All.firesln -p HostJ --engine native -t windows --config $CASE/../mingw.json --toolchain mingw -o $OUT/win/host.exe
+forge build All.firesln -p Kit --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --host $OUT/win/host.exe -o $OUT/win/kit
+forge build All.firesln -p Meter --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --host $OUT/win/host.exe -o $OUT/win/meter
+forge! build All.firesln -p Kit --engine native -t windows --config $CASE/../mingw.json --toolchain mingw -o $OUT/win/nohost
+contains "--host"
+cd $OUT/win
+env FIRE_TEST_PLUGIN=kit.dll
+wine $OUT/win/host.exe
+expect $CASE/../../linkage/plugins/plugin.expected
+env FIRE_TEST_UNITS=meter.dll
+env FIRE_TEST_JSON=1
+wine $OUT/win/host.exe
+expect $CASE/../../linkage/plugins/json.expected
+unenv FIRE_TEST_UNITS
+unenv FIRE_TEST_JSON
+# a plugin that calls a native in C of a library (fire_cn_ of the program); one the program does not have
+cd $OUT/csln
+forge build C.firesln -p CHost --engine native -t windows --config $CASE/../mingw.json --toolchain mingw -o $OUT/c/host.exe
+forge build C.firesln -p CPlug --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --host $OUT/c/host.exe -o $OUT/c/cplug
+sh echo 'static inline Value capi_hundred(Value x) { return Int(x.i * 100); }' >> CApi/native/capi.h && sed -i 's/__capi_ten(x)/__capi_hundred(x)/' CPlug/cplug.script
+forge build C.firesln -p CPlug --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --host $OUT/c/host.exe -o $OUT/c/cplug2
+cd $OUT/c
+env FIRE_TEST_PLUGIN=cplug.dll
+wine $OUT/c/host.exe
+expect-text "2\n40\n"
+env FIRE_TEST_PLUGIN=cplug2.dll
+wine=3 $OUT/c/host.exe
+contains "load: The plugin '"
+contains "cannot be loaded: it calls the native function 'capi_hundred' in C, which this program does not export to plugins"

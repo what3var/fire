@@ -323,7 +323,7 @@ static const char* cfStepVar(CfSteps* S, const char* name, size_t n, FcBuf* tmp)
     if (CF_IS("EXE")) return "";
     if (CF_IS("SO")) return ".so";
 #endif
-    if (CF_IS("WINE") || CF_IS("WINFIRE") || CF_IS("WINLIBS") || CF_IS("MINGW")) {
+    if (CF_IS("WINE") || CF_IS("WINFIRE") || CF_IS("WINLIBS") || CF_IS("MINGW") || CF_IS("WINEPREFIX")) {
         FcBuf why;
         cfBufInit(&why);
         if (!cfWineSetup(R, 2, &why)) { fcBufFree(&why); return NULL; }
@@ -331,6 +331,7 @@ static const char* cfStepVar(CfSteps* S, const char* name, size_t n, FcBuf* tmp)
         if (CF_IS("WINE")) return R->wine;
         if (CF_IS("WINFIRE")) return R->winFire;
         if (CF_IS("MINGW")) return R->mingw;
+        if (CF_IS("WINEPREFIX")) return R->winePrefix;
         return R->winLibs;
     }
 #undef CF_IS
@@ -491,12 +492,17 @@ static void cfStepProcess(CfSteps* S, const char* cmd, char** words, int count) 
     if (!timeout) timeout = R->runTimeout;
     if (S->hasLast) cfRunFree(&S->last);
     started = cfNowMs();
-    if (wine) cfSpawnWine(R, argv, S->cwd, R->wine ? timeout + 60 : timeout, S->envCount ? S->env : NULL, S->input, &S->last);
-    else {
+    {
+        /* (the entries of `winenv` - "W:" - for the programs under Wine only) */
         char* envEnd[66];
-        for (i = 0; i < S->envCount; i++) envEnd[i] = S->env[i];
-        envEnd[i] = NULL;
-        cfSpawnEx(exe, argv, S->cwd, timeout, envEnd, S->input, &S->last);
+        int n = 0;
+        for (i = 0; i < S->envCount; i++) {
+            if (strncmp(S->env[i], "W:", 2) == 0) { if (wine) envEnd[n++] = S->env[i] + 2; }
+            else envEnd[n++] = S->env[i];
+        }
+        envEnd[n] = NULL;
+        if (wine) cfSpawnWine(R, argv, S->cwd, timeout + 60, envEnd, S->input, &S->last);
+        else cfSpawnEx(exe, argv, S->cwd, timeout, envEnd, S->input, &S->last);
     }
     S->seconds = (double)(cfNowMs() - started) / 1000.0;
     S->hasLast = true;
@@ -586,11 +592,41 @@ static void cfStepsCase(CfRunner* R, CfJob* j) {
                 char* d = count > 1 ? (words[1][0] == '/' ? cfDup(words[1]) : cfPrintf("%s/%s", S.cwd, words[1])) : cfDup(k->dir);
                 free(S.cwd); S.cwd = d;
             }
-            else if (streq0(cmd, "env") || streq0(cmd, "unenv")) {
-                if (count < 2 || S.envCount >= 63) cfStepFail(&S, "env NAME=VALUE / unenv NAME", NULL, 0);
-                else S.env[S.envCount++] = streq0(cmd, "env") ? cfDup(words[1]) : cfPrintf("-%s", words[1]);
+            else if (streq0(cmd, "env") || streq0(cmd, "winenv") || streq0(cmd, "unenv")) {
+                if (count < 2 || S.envCount >= 63) cfStepFail(&S, "env NAME=VALUE / winenv NAME=VALUE / unenv NAME", NULL, 0);
+                else if (streq0(cmd, "unenv")) S.env[S.envCount++] = cfPrintf("-%s", words[1]);
+                else {
+                    /* (NAME=win:<path>: the path as Wine sees it; winenv: for the programs under Wine only) */
+                    const char* eq = strchr(words[1], '=');
+                    const char* only = streq0(cmd, "winenv") ? "W:" : "";
+                    if (eq && strncmp(eq + 1, "win:", 4) == 0) { char* w = cfWinPath(eq + 5); S.env[S.envCount++] = cfPrintf("%s%.*s%s", only, (int)(eq + 1 - words[1]), words[1], w); free(w); }
+                    else S.env[S.envCount++] = cfPrintf("%s%s", only, words[1]);
+                }
             }
             else if (streq0(cmd, "input")) { free(S.input); S.input = cfDup(joined); }
+            else if (streq0(cmd, "pack")) {
+                /* pack <out.exe> <vm> <program.fbc> [<library>...]: the VM with the program and the libraries behind it (CVmPayload.Append) - a packed program as
+                 * forge packs one on Windows, with the DLLs of its packages */
+                FcList* items = fcListNew(&ctx);
+                const char* error = NULL;
+                int a;
+                bool okPack = count >= 4 && nbCopyFile(&ctx, words[2], words[1]);
+                for (a = 3; okPack && a < count; a++) {
+                    size_t n = 0;
+                    uint8_t* data = fbReadFile(words[a], &n);
+                    NvItem* it = (NvItem*)fcAlloc(&ctx, sizeof *it);
+                    if (!data) { okPack = false; error = fcFmt(&ctx, "'%s' is not there", words[a]); break; }
+                    it->kind = a == 3 ? 0 : 1;
+                    it->name = a == 3 ? "program.fbc" : nbFileName(fcStr(&ctx, words[a]));
+                    it->data = (const uint8_t*)fcAlloc(&ctx, n + 1);
+                    memcpy((void*)it->data, data, n);
+                    it->size = n;
+                    free(data);
+                    fcListAdd(&ctx, items, it);
+                }
+                if (okPack) okPack = nvAppend(&ctx, words[1], items, &error);
+                if (!okPack) cfStepFail(&S, error ? error : "pack <out.exe> <vm> <program.fbc> [<library>...]", NULL, 0);
+            }
             else if (!S.hasLast) cfStepFail(&S, "a check before any process", NULL, 0);
             else if (streq0(cmd, "expect") || streq0(cmd, "expect-text") || streq0(cmd, "same")) {
                 char* path = streq0(cmd, "expect") ? (count > 1 ? (words[1][0] == '/' ? cfDup(words[1]) : cfPrintf("%s/%s", k->dir, words[1])) : NULL) : streq0(cmd, "same") ? cfPrintf("%s/.saved-%s", S.out, count > 1 ? words[1] : "") : NULL;

@@ -1,0 +1,36 @@
+title: fire.exe unter Wine: die Befehlszeile (version, help, Exitcodes), Environment.Args (UTF-16 der Befehlszeile als UTF-8: Leerzeichen, Umlaute, CJK, Emoji, Anfuehrungszeichen, Backslashes, leer), Pfade mit Umlauten und CJK, zwei Programme in einem Prozess, #intwidth 32 (fire-i32.exe daneben), die Eingabe (UTF-8, FIRE_STDOUT_LINES)
+# (CVmWindowsTests.CommandLine)
+needs: wine mingw
+wine $WINFIRE version
+contains "int 64, float 64, win-x64"
+wine $WINFIRE help
+contains "fire run"
+wine=2 $WINFIRE run
+wine=2 $WINFIRE win:$OUT/nothing.fbc
+err-contains "cannot read"
+wine=2 $WINFIRE --nope x.fbc
+forge bytecode args.fire -o $OUT/args.fbc
+# only the arguments of the program (not `run x.fbc`), terminate(3)
+wine=3 $WINFIRE run win:$OUT/args.fbc -- a "b c" ä 日本 😀 "q\"x" "back\\slash\\" ""
+expect args.expected
+# fire run x.fbc a b (without --): the arguments after the program
+wine=3 $WINFIRE run win:$OUT/args.fbc x "y z"
+contains "args 2\n[x] 1\n[y z] 3\n"
+# a program file in a folder with other letters (the paths UTF-8, opened with _wfopen), and two programs in one process (the arguments after --)
+sh mkdir -p "$OUT/Ördner 日本" && cp $OUT/args.fbc "$OUT/Ördner 日本/prögram.fbc"
+cd "$OUT/Ördner 日本"
+wine=3 $WINFIRE run "win:$OUT/Ördner 日本/prögram.fbc" ü
+contains "args 1\n[ü] 1\n"
+cd
+wine=3 $WINFIRE win:$OUT/args.fbc "win:$OUT/Ördner 日本/prögram.fbc" -- z
+expect-text "args 1\n[z] 1\npäh 日本 😀\nargs 1\n[z] 1\npäh 日本 😀\n"
+# a program of 32-bit ints: fire.exe starts fire-i32.exe beside it with the same command line (CreateProcessW) and ends with its code
+forge bytecode i32.fire -o $OUT/i32.fbc
+wine=5 $WINFIRE run win:$OUT/i32.fbc "a b" ö
+expect-text "max 2147483647 args 2 a b\n"
+# the input (UTF-8) through a pipe, the lines of the output through a pipe (FIRE_STDOUT_LINES=1)
+forge bytecode lines.fire -o $OUT/lines.fbc
+env FIRE_STDOUT_LINES=1
+input "über\n"
+wine $WINFIRE run win:$OUT/lines.fbc
+expect-text "first\nsecond über\n"

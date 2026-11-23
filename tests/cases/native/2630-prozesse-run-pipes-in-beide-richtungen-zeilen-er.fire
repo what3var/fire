@@ -37,4 +37,5 @@ s.Kill()
 print(s.WaitForExit() + " " + s.ExitCode)
 try { Process.Run("sleep", ["5"], undefined, 200) } catch (ProcessException ex) { print(ex.message) }
 print(Process.Run("sh", ["-c", "printf 'arg:%s|' \"$@\"", "x", "a b", "c\"d"]).Output)
+//# windows: Process.Run starts 'sh', which Windows does not have
 //# name: Prozesse: Run, Pipes in beide Richtungen, Zeilen-Ereignisse, Umgebung, Arbeitsordner, Fehler, Timeout, Kill, Argumente

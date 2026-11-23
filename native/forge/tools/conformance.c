@@ -161,6 +161,8 @@ typedef struct CfRun { int code; bool timedOut; FcBuf out, err; } CfRun;
 static pthread_mutex_t cfForkLock = PTHREAD_MUTEX_INITIALIZER;
 static void cfCloexec(int fd) { fcntl(fd, F_SETFD, FD_CLOEXEC); }
 static long long cfNowMs(void) { struct timeval tv; gettimeofday(&tv, NULL); return (long long)tv.tv_sec * 1000 + tv.tv_usec / 1000; }
+#else
+static long long cfNowMs(void) { return (long long)GetTickCount64(); }
 #endif
 /* the environment of a child: this process's, with `env` applied (NAME=VALUE sets, -NAME removes; NULL-terminated, NULL: none) - malloc'd, NULL-terminated */
 #ifndef _WIN32
@@ -181,7 +183,16 @@ static char** cfChildEnvironment(char* const* env) {
         }
         if (!replaced) r[k++] = environ[i];
     }
-    for (i = 0; i < e; i++) if (env[i][0] != '-') r[k++] = env[i];
+    for (i = 0; i < e; i++) {
+        /* (a later entry for the same name wins) */
+        size_t x, nl = strcspn(env[i][0] == '-' ? env[i] + 1 : env[i], "=");
+        bool later = false;
+        for (x = i + 1; x < e; x++) {
+            const char* other = env[x][0] == '-' ? env[x] + 1 : env[x];
+            if (strncmp(other, env[i][0] == '-' ? env[i] + 1 : env[i], nl) == 0 && (other[nl] == '=' || other[nl] == 0)) later = true;
+        }
+        if (!later && env[i][0] != '-') r[k++] = env[i];
+    }
     r[k] = NULL;
     return r;
 }
@@ -934,6 +945,8 @@ static void cfRunJob(CfRunner* R, CfJob* j) {
     j->other = false;
     if (j->kase->skip || (j->engine == CF_VM && j->kase->varies)) { j->state = CF_SKIP; return; }
     if (j->kase->needs && cfUnmet(R, j->kase->needs, &j->why)) { j->state = CF_SKIP; return; }
+    /* (--wine: `//# windows: not run - <why>` - a case that cannot end on Windows is left out there) */
+    if (R->wine && j->kase->windows && strncmp(j->kase->windows, "not run - ", 10) == 0) { fcBufFmt(&j->why, "not on Windows: %s", j->kase->windows + 10); j->state = CF_SKIP; return; }
     if (j->engine == CF_VM) cfVmCase(R, j);
     else if (j->engine == CF_NATIVE) cfNativeCase(R, j);
     else if (j->engine == CF_CGEN) cfCgenCase(R, j);
@@ -1210,6 +1223,11 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
     setenv("FIRE_NATIVE_ROOT", fcFullPath(c, ".", nbNativeRoot), 1);
     /* the look of the desktop stays out (FIRE_SYSTEM_THEME=off, as the test program and the scripts); the libraries of the packages' natives next to forge-c */
     setenv("FIRE_SYSTEM_THEME", "off", 1);
+    /* the fonts of "the system" are the ones of the cases (tests/cases/native/resources/fonts: FireSans.ttf, as the test program had them), not the machine's */
+    if (!getenv("FIRE_FONT_DIRS") || !*getenv("FIRE_FONT_DIRS")) {
+        const char* fonts = nbCombine(c, casesRoot, "native/resources/fonts");
+        if (nbDirExists(fonts)) setenv("FIRE_FONT_DIRS", fonts, 1);
+    }
     {
         const char* old = getenv("FIRE_PKG_PATH");
 #ifdef _WIN32

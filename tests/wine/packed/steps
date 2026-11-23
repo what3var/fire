@@ -1,0 +1,36 @@
+title: Gepackte Programme unter Wine: forge build (engine vm) mit FIRE_VM_EXE=fire.exe - jedes Argument gehoert dem Programm, terminate, eine unbehandelte Ausnahme; ein Programm mit den DLLs seiner Pakete, ausgepackt in %LOCALAPPDATA%\fire\native (einmal; eine beschaedigte ersetzt; FIRE_VM_CACHE mit Umlaut)
+# (CVmWindowsTests.Packed)
+needs: wine mingw
+env FIRE_VM_EXE=$WINFIRE
+forge build hello.fire -o $OUT/hello.exe
+wine=6 $OUT/hello.exe run --stats "ä b"
+expect-text "hello 3\nrun\n--stats\nä b\n"
+wine=1 $OUT/hello.exe throw
+err-contains "thrown"
+unenv FIRE_VM_EXE
+# the payload with the DLLs of io and time (as forge.exe packs on Windows): unpacked into the cache of the user, loaded from there
+forge bytecode reader.fire -o $OUT/reader.fbc
+pack $OUT/reader.exe $WINFIRE $OUT/reader.fbc $WINLIBS/fire_pkg_fire_io_io.dll $WINLIBS/fire_pkg_fire_time_time.dll
+env FIRE_PKG_PATH=
+sh rm -rf "$WINEPREFIX/drive_c/users/$(id -un)/AppData/Local/fire/native"
+input "eins\n"
+wine $OUT/reader.exe
+expect-text "read eins True\n"
+sh test $(find "$WINEPREFIX/drive_c/users/$(id -un)/AppData/Local/fire/native" -name '*.dll' | wc -l) -eq 2 && touch $OUT/stamp
+# the second start writes nothing into the cache
+input "zwei\n"
+wine $OUT/reader.exe
+expect-text "read zwei True\n"
+sh test -z "$(find "$WINEPREFIX/drive_c/users/$(id -un)/AppData/Local/fire/native" -name '*.dll' -newer $OUT/stamp)"
+# a damaged DLL in the cache is replaced (MoveFileExW)
+sh f=$(find "$WINEPREFIX/drive_c/users/$(id -un)/AppData/Local/fire/native" -name '*io_io.dll') && printf 'abc' > "$f"
+input "drei\n"
+wine $OUT/reader.exe
+expect-text "read drei True\n"
+sh f=$(find "$WINEPREFIX/drive_c/users/$(id -un)/AppData/Local/fire/native" -name '*io_io.dll') && test $(stat -c %s "$f") -gt 3
+# FIRE_VM_CACHE (a folder with an umlaut): the DLLs there
+env "FIRE_VM_CACHE=win:$OUT/cache ö"
+input "vier\n"
+wine $OUT/reader.exe
+expect-text "read vier True\n"
+sh test $(find "$OUT/cache ö" -name '*.dll' | wc -l) -eq 2
