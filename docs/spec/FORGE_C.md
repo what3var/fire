@@ -636,26 +636,30 @@ Teilung über den Korpus. Ein Programm, das das C#-forge gebaut hat, nimmt forge
 | `build/peres.c` | `PeVersionInfo`, `ToVersionInfo`, VS_VERSIONINFO, die Bilder eines Icons und ihre Gruppe, `SetSubsystem`, `ApplyPeMetadata`; `peres` | `src/fire/Utilities/PeResourceEditor.cs`, `Assembly/AssemblyInfo.cs`, `NativeBuilder.cs` (`ApplyPeMetadata`) |
 | `build/bootimage.c` | `Fat12Image` (`Create`, `FromFolder`, `ShortName`), der Bootsektor von bios16, `AfterLink`; `bootimage` | `Toolchains/Fat12Image.cs`, `Toolchains/BiosBootSectors.cs`, `Toolchains/WatcomToolchain.cs` (`AfterLink`) |
 | `build/tools.c` | die Befehle der Werkzeuge (`pkglib` und die Messungen) | `BuilderToolsDump.cs` (die Messungen auf der Seite von C#) |
+| `win32.h` | Windows als Host: `opendir`, `stat`/`lstat`, `mkdir`, `realpath`, `rename`, `flock`, `utimes`, `sysconf`, die Zeit, `setenv`, `pthread_*`, `fwRun` (`CreateProcess` mit zwei Pipes), `fwResolveExe`, `fwQuoteArg`, `fwSelfPath` | - (in C# die Laufzeit von .NET) |
+| `tools/setup.c` | Schritt 5: `DownloadTransfer.Fetch` (WinHTTP; ein Socket für http, curl/wget für https), `InstallW64devkit`, `FindDownloadUrl`, `SaveMachineToolchain`, `WatcomSetup.Install`/`Unpack`/`FindRoot`, `TinyccSetup.Install`/`Verify`/`Unpack`, `toolchain-setup` | `src/fire.Native/ToolchainSetup.cs`, `TinyccSetup.cs`, `DownloadTransfer.cs` |
 | `build/stats.c` | `--stats`: `MapOptions`, die Map von GNU ld und Open Watcom (`ReadMap`), woher jede Funktion kommt (`OriginsOf` mit der `DefinitionRegex` ausgeschrieben), `Analyze`, `Text`, `Json` (wie System.Text.Json eingerückt mit dem Standard-Encoder), `DosLoadBytes`, `WriteStats` | `NativeStats.cs`, `NativeBuilder.cs` (`WriteStats`) |
 
 ### Entscheidungen
 
-* **Nur POSIX** (Linux, macOS): `Run` startet die Werkzeuge mit `fork`/`execve`, `CompileUnits` mit pthreads. Unter Windows baut forge-c `build/` nicht ein.
+* **POSIX und Windows**: `Run` startet die Werkzeuge unter Linux und macOS mit `fork`/`execve`, `CompileUnits` mit pthreads; unter Windows (seit 23.11.2026,
+  [Windows als Host](#windows-als-host-phase-d-schritte-2-und-3)) mit `CreateProcess` und den Threads von `win32.h`.
 * **Die Argumente** gehen als eine Zeile in `ProcessStartInfo`; forge-c teilt sie wie .NET (Anführungszeichen, Backslashes) - die Zeilen im Protokoll sind dieselben.
 * **Zeitstempel**: `FileInfo` einer symbolischen Verknüpfung (`/usr/bin/gcc -> /etc/alternatives/gcc`) hat Größe und Zeit der Verknüpfung selbst - die
   Stempel von Toolchain und Cache nehmen darum `lstat`; sonst wäre der Schlüssel für gcc ein anderer als in C#.
-* **Was fehlt, sagt es** (`unported: ...`): Windows als Host, das Herunterladen von Toolchains.
+* **Was fehlt, sagt es** (`unported: ...`). Windows als Host und das Herunterladen von Toolchains sind seit 23.11.2026 da ([Windows als Host](#windows-als-host-phase-d-schritte-2-und-3),
+  [Schritt 5](#phase-d-schritt-5-toolchains-herunterladen)).
 * **Linkage static/shared** (`build/linkage.c`: die Wahl in `Build`, `BuildStatic`, `LinkDlls`, `WriteStaticFiles`): die Bibliotheken, die nicht im Cache sind, übersetzt
   forge-c nacheinander (C#: nebeneinander mit `Parallel.For`) - das Protokoll ist dasselbe, die Zeilen jeder Bibliothek beisammen in der Reihenfolge des Plans.
   `buildplan static|shared` (FrontendDump.DumpStaticPlan) zeigt, was `BuildStatic` ausführen würde: der Plan in einen leeren Cache (`<cache>`), die Befehle jeder
   Bibliothek (die temporäre Datei heißt dort `TEMP.a`/`TEMP.so`) und des Programms, die Dateien des Builds, das C jeder Bibliothek mit seinem Hash und bei shared
   die Beschreibung für Plugins. Ein Rückfall auf linkage source (kein Compiler, `files`, ein Programm, das sich nicht teilen lässt) ist dort der Plan von source.
 * **`ToolchainProvider`**: der Host von forge-c ist die Befehlszeile - gefragt wird nur, wenn jemand da ist (Ein- und Ausgabe ein Terminal), und dann wie das C#-forge
-  hier: w64devkit lädt fire nur unter Windows, also steht der Text da und die Antwort ist "abbrechen"; Open Watcom ließe sich unter Linux x64 laden, das
-  Herunterladen ist aber Schritt 5 - forge-c zeigt den Text und sagt das.
-* **PE-Ressourcen**: das C#-forge schreibt sie mit der Ressourcen-API von Win32 (`UpdateResource`) und nur unter Windows; forge-c baut nur unter POSIX, also lässt
-  `ApplyPeMetadata` das Programm wie das C#-forge dort in Ruhe (auch beim Cross-Build mit MinGW). Portiert ist der Inhalt der Ressourcen (gemessen mit `peres`) und
-  das Subsystem (`-mwindows`). Ein Fehler des Icons (`ReadIconImages`) ist in C ein Text statt einer Ausnahme; die Meldungen von .NET für eine zu kurze Datei sind
+  (`ConsoleToolchainPrompt`): der Text, und wo fire die Toolchain laden kann (w64devkit unter Windows x64, Open Watcom unter Windows und Linux x64) "Fix automatically?
+  [F]ix / [C]ancel (f): " - die Antwort `f` lädt sie ([Schritt 5](#phase-d-schritt-5-toolchains-herunterladen)), sonst steht der Text da und die Antwort ist "abbrechen".
+* **PE-Ressourcen**: das C#-forge schreibt sie mit der Ressourcen-API von Win32 (`UpdateResource`) und nur unter Windows - forge-c ebenso (seit 23.11.2026:
+  `SetVersionInfo`, `SetIcon` mit den alten Bildern entfernt und der Gruppe unter ihren Namen, die Zeilen des Protokolls); unter POSIX lässt `ApplyPeMetadata` das
+  Programm wie das C#-forge in Ruhe (auch beim Cross-Build mit MinGW). Der Inhalt der Ressourcen ist gemessen mit `peres`, dazu das Subsystem (`-mwindows`). Ein Fehler des Icons (`ReadIconImages`) ist in C ein Text statt einer Ausnahme; die Meldungen von .NET für eine zu kurze Datei sind
   nachgeschrieben.
 * **Boot-Image**: Open Watcom ist hier nicht installiert - `bootimage` prüft `AfterLink` auf einer beliebigen Datei als FIRE.EXE; ein echter Build für bios16 ruft
   dieselbe Funktion nach dem Link. Die Zeit von FIRE.EXE ist `DateTime.Now` (die Messung lässt diese 10 Bytes aus), die der Dateien von `disk` ihre Änderungszeit,
@@ -704,7 +708,8 @@ Gefunden und behoben:
   falsche Einheit mehr in den Tabellen (kein Fall des Korpus hatte JSON mit Einheiten des Programms; die 25 Fälle mit JSON sind mit `default` und `static`
   weiter gleich).
 
-Offen: Windows als Host (forge-c baut `build/` nur unter POSIX), msvc (wie in C#: ein Plugin braucht gcc/clang/MinGW).
+Offen: msvc (wie in C#: ein Plugin braucht gcc/clang/MinGW); ein Plugin mit Windows als Host ist nicht gemessen (unter Wine fehlt ein Compiler, siehe
+[Windows als Host](#windows-als-host-phase-d-schritte-2-und-3)).
 
 ## Phase D Schritt 3: Projekte, Solutions, Pakete
 
@@ -840,7 +845,7 @@ und `fbc` (mit dem Modus `native`) für Projekte.
 * **Vorlagen und Beispiele**: forge selbst nutzt `TemplateInstaller`, `TemplateCatalog` und `SampleCatalog` nicht (das tun spark - die Dialoge "Neues Projekt",
   "Beispiele" - und der MCP-Teil von `fire.Project`); was forge davon braucht, ist portiert: der Ordner `templates/` einer Bibliothek geht ins Paket, die Dateilisten eines
   Projekts lassen ihn aus. Die Vorlagen selbst sind als Projekte gemessen (`Templates`, oben).
-* **Nur POSIX**, wie der Builder.
+* **POSIX und Windows**, wie der Builder (der Lock der Installation: `flock`, unter Windows `LockFileEx`).
 
 ## Phase D Schritt 4: der Rest der Befehlszeile
 
@@ -863,11 +868,17 @@ forge-c native <datei>... [-o out.c] [-t <ziel>] [--config <datei>] ...      (da
 forge-c bytecode <datei>... | <projekt|solution> [-p <projekt>] [-o <out.fbc>] [-m ...] [-D name] ...
 forge-c build <datei>... | <projekt|solution> ... [-D name] [-i 32] [--overlay ...] [--debug-info] [--global-jobs ...]
 forge-c data migrate|status|diff|import [<datei>... | <projekt|solution>] --url <url> [...]   (DataCommand: der Treiber des Schemas in der VM in C)
-forge-c dump <datei>... | <projekt|solution> [-o <datei>] [-m ...] [-D name] ...   (ProgramDump: das gelinkte Programm als Text)
+forge-c dump <datei>... | <projekt|solution> | <programm.fbc> [-o <datei>] [-m ...] [-D name] ...   (ProgramDump: das gelinkte Programm als Text; eine Programmdatei
+                                                     liest ProgramFile.Read, ein Fehler ist "<datei>: <meldung>" und 1)
+forge-c tables <ordner>                              (Tables.Write: opcodes.def, errors.def, natives.def, prelude.fire - geschrieben, was sich geändert hat)
+forge-c prebuild-standard <Source> <Prebuilt>        (StandardSources.Prebuild: die Bibliotheken der Standardpakete für diese Maschine nach Prebuilt/, mit .hash und .runtime)
+forge-c publish <projekt | solution> ... [--overlay <quelle>=<datei>]... [-D name] [-i 32] [--types ...] [--global-jobs ...]   (die Overlays als TextOf; -D, -i,
+                                                     --types, --global-jobs nimmt publish an und nutzt sie nicht - wie das C#-forge)
 forge-c stats <vorher.stats.json> <nachher.stats.json>   (NativeStats.Compare: zwei Berichte von `build --stats` nebeneinander)
 forge-c ui|biscuit|fdata|falstad <datei> [-o <datei>]
 tests/compare-commands.sh <forge> <forge-c> [<ordner>]   (jeder dieser Befehle mit beiden forges in einer Kopie eines kleinen Beispiels: Ausgabe, Fehler,
-                                                     Exitcode, geschriebene Dateien; COMMANDS_PACKAGES="vm native": dazu `test` jedes Paketprojekts)
+                                                     Exitcode, geschriebene Dateien; COMMANDS_PACKAGES="vm native": dazu `test` jedes Paketprojekts;
+                                                     COMMANDS_PREBUILD=1: dazu `prebuild-standard`)
 tests/compare-frontend.sh <forge> <forge-c> model [<ordner>]   (tests/model-corpus.py: jede Datei mit `model` beider forges - Exitcode, Ausgabe, erste Zeile der
                                                      Fehler, die .f3d Byte für Byte - und als Ressource eines Programms, `fbc release`)
 ```
@@ -918,10 +929,19 @@ Ergebnis. Die Zeilen der Werkzeuge kommen, wenn sie gelaufen sind, das Protokoll
 | `test --engine native`: jedes Paketprojekt von `packages` | 54 | 53 (`tls` - das C#-forge fand mit tcc `fire_net_c.h` nicht, behoben, unten - nach der Behebung einzeln nachgemessen) | 0 | 1: `windows` (beide scheitern an tcc, in verschiedenen Zeilen des C) |
 | `dump` jeder Quelle von `tests/cases` und `packages` (aus ihrem Ordner) | 1222 | 1222 (vor dem Wechsel zu `fgRoundTrip`: 7 nur in der Schreibweise von Zahlen) | 0 | 0 |
 | `tests/compare-commands.sh`: `build|publish|bytecode --report json` (Dateien, VM und nativ, Fehler, `--overlay`, `--config`, `-t`, `--debug-info`, Projekt, Bibliothek, `--check`, `--all`, Publish), `run`, `native`, `bytecode` von Projekten und mehreren Dateien, `build` mit `-D`/`-i`/`--global-jobs`, `test` mit mehreren Dateien, `-D`, `-f`, `-i`, `#include` vom Ordner der Datei und Meldungen mit ihrem Namen, eine Paketreferenz, die fehlt, `data` (migrate, status, diff, import mit memory: und sqlite:), `dump`, `stats` (zwei Berichte eines C#-Builds mit `--stats`, kaputte Berichte), Fehler der Befehlszeile | 103 | 103 | 0 | 0 |
+| `tests/compare-commands.sh` nach dem Rest (23.11.2026, `COMMANDS_PREBUILD=1`): dazu `dump` von Programmdateien des C#-forge (Release, Debug, abgeschnitten, eine andere Version), `tables` (in einen neuen Ordner, über eine Kopie der Tabellen), `publish` mit `--overlay`, `-D`, `-i`, `--types`, `--global-jobs` (auch mit `--report json`), `prebuild-standard`, die Ereignisse `background` und `FIRE_PROGRESS_LINES` mit einem leeren Store (53 Pakete installiert) | 116 | 114 | 0 | 2 (unten) |
+| `dump <programm.fbc>`: die Programmdateien jedes 30. Quelltexts von `tests/cases` und `packages` (forge-c `bytecode`, Debug und Release) mit beiden forges; dazu 8 beschädigte (abgeschnitten, Bytes dahinter, Version, ungültiges UTF-8, gekippte Bytes) | 72 + 8 | 80 | 0 | 0 |
+| `prebuild-standard Source <ordner>`: mit `Prebuilt/` neben den forges und ohne (alle frisch gebaut) | 25 + 25 | 50 (Ausgabe, Fehlerausgabe, die Bibliotheken byte-gleich, `.hash`, `.runtime`) | 0 | 0 |
 | `test` (VM und `--engine native`): die Quellen von `src/fire.Testing/TestingTests.cs` und weitere (Parameter mit Bereichen und Texten, Phasen, `[CleanTest]` wirft, `[PrepareTesting]` wirft, generische Klasse, Ausgaben mit Zeilenumbrüchen und Markern, `leave`, eine Ausnahme in einem Thread, keine Tests, ein Übersetzungsfehler, eine Solution aus Bibliothek und Programm, `-p`, `--filter` mit `*`, `-m debug`, eine fehlende Datei, ein Projekt mit fehlender Referenz) | 15 (VM) / 9 (native) | 15 / 9 | 0 | 0 |
 
 (Verglichen werden stdout, stderr und Exitcode; die Sekunden der Summenzeile sind ausgenommen, ebenso auf der Seite von C# die Zeilen "Building the native part of
 the package ..." - sie hängen vom Cache der Bibliotheken ab.)
+
+Die zwei Abweichungen von `compare-commands` sind älter als der Rest (das forge-c von 044bb27b weicht ebenso ab, die Programme beider forge-c sind byte-gleich):
+`build a.fire --engine native --report json` und dasselbe mit `-t wasm` - das C#-forge übersetzt die Dateien im Bericht ohne ihre Pfade (`ReportBuildFiles` gibt
+`NativeBuilder.BuildSafe` keine `sourcePaths`; das Programm nennt seine Quelle `fire:source/0`), forge-c mit ihnen (`a.fire`, wie `build` ohne Bericht in beiden) -
+gemeldet, nicht geändert (für wasm nicht im Einzelnen nachgesehen). Eine dritte (`build ... -m debug` im Bericht) war keine: ein Debug-Programm nennt die Pfade seiner
+Quellen, und die Kopien der beiden forges liegen in verschiedenen Ordnern (jetzt `nofiles`; im selben Ordner byte-gleich).
 
 ### Dateien
 
@@ -933,9 +953,11 @@ the package ..." - sie hängen vom Cache der Bibliotheken ab.)
 | `model/command.c` | `ResourceTable.Add` für Modelle, `fcResourceRead`, `forge-c model` | `Preprocessor.cs` (`ResourceTable`), `Program.cs` (`model`) |
 | `tools/testdriver.c` | `TestFilter`, `TestDriver.Generate`, `fcTestDriverApply` (der Teil des Linkers) | `TestDriver.cs`, `TestFilter.cs`, `Linker.cs` (`TestDriver`) |
 | `tools/testrunner.c` | `TestProtocol`, `RunInVm`, `RunNative`, `Driver`, `WriteSummary`, `forge-c test` | `TestRunner.cs`, `CommandLine.cs` (`Test`) |
-| `tools/commands.c` | `CommandLineParser.Parse`, `Run` (der Verteiler), `Execute`/`RunProject`/`ExecutePlan` (`run`), `Bytecode`, `Native`, `Build`/`NativeBuild` mit mehreren Dateien, `TextOf`, `ReadSource`, der Plan der Dateien, `DataCommand` | `CommandLine.cs`, `CommandLine.Report.cs` (`TextOf`), `DataCommand.cs`, `NativeStats.cs` (`FromJson`, `Compare`), `Program.cs` (`stats`; `tables`, `prebuild-standard`: was fehlt) |
+| `tools/commands.c` | `CommandLineParser.Parse`, `Run` (der Verteiler), `Execute`/`RunProject`/`ExecutePlan` (`run`), `Bytecode`, `Native`, `Build`/`NativeBuild` mit mehreren Dateien, `TextOf`, `ReadSource`, der Plan der Dateien, `DataCommand` | `CommandLine.cs`, `CommandLine.Report.cs` (`TextOf`), `DataCommand.cs`, `NativeStats.cs` (`FromJson`, `Compare`), `Program.cs` (`stats`, `tables` mit `Tables.cs`, `prebuild-standard` mit `StandardSources.Prebuild`/`StorePrebuilt`), `CommandLine.Publish` (die Optionen) |
+| `diag.c` (Teil) | `BackgroundWork` (`fcBgBegin`, `fcBgEnd`, `Latest`, `WriteLines`) | `src/fire.Native/BackgroundWork.cs` |
 | `tools/usage.inc` | `CommandLineParser.Usage` | `CommandLine.cs` |
 | `tools/dump.c` | `ProgramDump.Text` (Q, L, F, UnitText, ConstantText, TypeText, Class, ProtoRef, ChunkRef, Code) | `src/fire/Bytecode/ProgramDump.cs` |
+| `programread.c` | `ProgramFile.Read` (der Leser: Tabellen, Konstanten, Funktionen, Chunks, Klassen, Typen, Externs, `RelinkAfterDeserialize`), `IsProgram` | `src/fire/Bytecode/ProgramFile.cs` (`Reader`) |
 | `tools/report.c` | `ForgeReportWriter`, `WantsReport`, `BeginReport`, `RunReported`, `ReportBuild`, `ReportBytecode`, `ReportBuildFiles`, `ToolchainFor`, `NativeOutcome`, `ReportCopyContent`, `ReportBuildProject`, `BuildProgram`, `ReportBuildAll`, `ReportPublish`, `BuildSafe` | `ForgeReport.cs`, `CommandLine.Report.cs`, `Debugging/NativeLaunch.cs` (`DebugToolchain`), `NativeBuilder.cs` (`BuildSafe`) |
 
 `json.c` hat dafür einen strengen Modus (`JsonDocument.Parse` ohne Optionen, wie glTF gelesen wird: keine Kommentare, keine Kommas am Ende) und die Meldung einer Zahl, die
@@ -959,15 +981,31 @@ nach ihrem Bruchteil falsch endet ("Expected 'E' or 'e'.", wie .NET - vorher "Ex
   den Cache (`CVm.Locate`).
 * **Nicht portiert**: der Kreisel einer Konsole (`[\] ...` während ein Test läuft - nur in einem Terminal; forge-c liest die Ausgabe der VM, wenn sie geendet hat);
   das Abbrechen eines Tests ist `TestRunner.Cancel` - spark ruft es, die Befehlszeile hat es nicht.
-* **Der Bericht**: die Ereignisse `background` (`BackgroundWork`: das Installieren der Standardpakete, das Bauen der Natives eines Pakets - spark zeigt sie in der
-  Statusleiste) sind nicht portiert; die Meldungen dieser Arbeit stehen im Protokoll. Abbrechen: forge-c beendet die Werkzeuge, die laufen (die Kinder des Prozesses,
+* **Der Bericht**: die Ereignisse `background` (seit 23.11.2026; `BackgroundWork` in `diag.c`: `fcBgBegin`/`fcBgEnd` beim Installieren der Standardpakete -
+  "Installing the package <name> (<i>/<n>)", das Warten auf ein anderes Programm, das installiert - und beim Bauen der Bibliothek von graphics und windows; spark zeigt
+  sie in der Statusleiste) kommen, wenn die Arbeit beginnt und endet, ohne Text, wenn nichts mehr läuft; ohne Bericht mit `FIRE_PROGRESS_LINES` als Zeilen
+  `##fire-progress <done> <total> <text>` auf der Fehlerausgabe (`BackgroundWork.WriteLines`). Die Meldungen des Installierens gehen als Zeilen des Protokolls durch
+  einen Haken (`nsEnsureInstalledIn`, vorher eine Datei im Speicher), so stehen sie zwischen den Ereignissen wie in C#. Abbrechen: forge-c beendet die Werkzeuge, die laufen (die Kinder des Prozesses,
   unter Linux), und hält beim nächsten Schritt an; ein Schritt des Frontends läuft zu Ende, und der Ordner des Builds bleibt (das C# räumt ihn im `finally` auf).
 * **`run`**: `Environment.ProgramPath` ist im Programm der Pfad der VM, nicht der der Quelle (das C#-forge setzt ihn in seiner VM; die VM in C nimmt den, den das
-  System ihr sagt). `dump` einer Programmdatei (`ProgramFile.Read` - forge-c hat nur den Schreiber), `tables` (die Tabellen von `native/tables` werden aus den
-  Definitionen in C# geschrieben, forge-c liest sie) und `prebuild-standard` (ein Werkzeug des Baus der Solution) sagen `unported: ...`; `publish` mit `--overlay`,
-  `-D`, `-i`, `--types`, `--global-jobs` ebenso, `--host` (linkage plugin) auch. `stats` liest die Berichte wie `JsonSerializer.Deserialize<Report>` (die Namen
+  System ihr sagt). `--host` (linkage plugin) nimmt `publish` wie das C#-forge nicht (eine Meldung der Befehlszeile). `stats` liest die Berichte wie `JsonSerializer.Deserialize<Report>` (die Namen
   genau, was nicht passt, ist kein Bericht); die Zahlen von `Compare` sind aus ihren genauen Dezimalstellen gerundet, die Hälfte von der Null weg (die Formate von
   .NET). `dump` schreibt die Zahlen wie `double.ToString("R")` (`fgRoundTrip` des Generators).
+* **`dump` einer Programmdatei** (seit 23.11.2026, `programread.c`: `ProgramFile.Read` 1:1): was der C#-Leser aus den Bytes macht - die Einheit, wie sie geschrieben ist
+  (`Unit.Restore`), ein Int eines Enums wie `MakeEnum` (64 Bit, nicht breit, ohne Einheit), ein Schlüssel, der zweimal kommt, an seinem ersten Platz mit dem letzten
+  Wert (Dictionary), die Enums neu interniert, die Basen der Klassen über ihre Namen (`RelinkAfterDeserialize`). Die Fehler sind die `ProgramFileException`s mit ihren
+  Texten, die Ausnahmen von .NET, die der Leser in "damaged (...)" einpackt, mit den Meldungen von .NET (Index außerhalb, Überlauf, ungültiges UTF-8 - von diesem das
+  erste falsche Byte); eine fehlende Basisklasse endet wie in C# als unbehandelte `InvalidOperationException` (134).
+* **`tables`** (seit 23.11.2026): forge-c schreibt die Tabellen aus dem, was es selbst trägt - opcodes.def, errors.def und natives.def sind beim Übersetzen von
+  forge-c eingebunden und werden Zeile für Zeile wieder ausgegeben (`Tables.CString` nachgeschrieben), prelude.fire ist das Prelude, das forge-c liest (`FIRE_TABLES`).
+  Die Quelle der Tabellen bleibt das C# (`ErrorCatalog`, `OpCode`, `NativeRegistry`, `Prelude.Source`), solange es lebt; `tables` von forge-c über `native/tables`
+  sagt "The tables are up to date." genau dann, wenn forge-c mit diesen Dateien gebaut ist. bridges.def schreibt keins von beiden (seit M1 ist die Datei die Quelle).
+* **`prebuild-standard`** (seit 23.11.2026): `StandardSources.Prebuild` 1:1 - die Projekte von Source in einen Store unter dem Temp-Ordner (`nsEnsureInstalledIn` ohne
+  `UsePrebuilt`), jede Bibliothek mit `nlEnsure` (das schon Gebaute unter `Prebuilt/` neben forge-c nimmt es, wie `Locate`), `StorePrebuilt` mit `.hash` und `.runtime`,
+  danach graphics und windows; der Store wird gelöscht.
+* **`publish` mit `--overlay`, `-D`, `-i`** (seit 23.11.2026): wie das C#-forge - die Overlays gehen als `PublishOptions.TextOf` in den Plan jedes Projekts
+  (`pjPublishPlanHook`), `-D`, `-i`, `--types` und `--global-jobs` nimmt die Befehlszeile an, und `ProjectPublisher` nutzt sie nicht (es baut mit den Einstellungen
+  der Projekte). Das ist das Verhalten des C#-forge, kein Fehler des Ports: wer es ändern will, ändert beide.
 * **Beobachtet am C#-forge** (behoben): `forge test packages/tls/tls.fireproj --engine native` mit tcc scheiterte: `fire_net_c.h` wurde nicht gefunden (ein Header des
   Projekts wird eingesetzt, wo er eingebunden wird - `NativeHeaders.Inline` -, sein `#include` des Headers von `net`, das `tls` über `native.uses` nimmt, zeigte nicht
   auf `pkg/net/`). `InstalledImport.ReadNativeSources` richtet jetzt auch die eingesetzten Header aus (`NativeHeaders.Point`); forge-c legt den Header dazu. Das Protokoll eines nativen Builds mit einem
@@ -989,17 +1027,76 @@ Die Befehle des C#-forge (`Program.cs`, `CommandLine*.cs`) und was davon in forg
 | `model` | ja (Schritt 4) |
 | `test` | ja (Schritt 4), mit mehreren Dateien, `-D`, `-f`, `-i`, `--types` |
 | `build` | Dateien und Projekt/Solution, die Engines `vm` und `native`, `--report json`, `--overlay`, `--debug-info`, `-D`, `-i`, `--global-jobs` (Schritt 4), linkage static/shared/plugin mit `--host` (Schritt 2); ohne `--stats` |
-| `publish` | ja (Schritt 3), mit `--report json` (Schritt 4); ohne `--overlay`, `-D`, `-i` |
+| `publish` | ja (Schritt 3), mit `--report json`, `--overlay`, `-D`, `-i` (Schritt 4) |
 | `bytecode` | Dateien und Projekte, `--report json`, `-D`, `-i`, `-f`, `--overlay` (Schritt 4) |
 | `serve` | ja (Phase C 6) |
 | `data migrate\|status\|diff\|import` | ja (Schritt 4): der Treiber in der VM in C |
 | `run` | ja (Schritt 4): in der VM in C |
 | `native` (das C nach `out.c`) | ja (Schritt 4) |
-| `dump` (ein Programm als Text) | ja (Schritt 4), Quellen und Projekte; eine Programmdatei (`.fbc`) nicht (`unported`) |
+| `dump` (ein Programm als Text) | ja (Schritt 4), Quellen, Projekte und Programmdateien (`.fbc`) |
 | `stats` (zwei Berichte von `--stats`) | ja (Schritt 4) |
 | `install-standard`, `build-vm` | ja (Schritt 3) |
-| `prebuild-standard`, `tables` | **nein** (`unported`: Werkzeuge des Baus der Solution; `pkglib --all` baut die Bibliotheken, die Tabellen schreibt das C#) |
+| `prebuild-standard`, `tables` | ja (Schritt 4, 23.11.2026; `tables` aus den Tabellen, die forge-c trägt) |
+| `toolchain-setup w64devkit\|watcom\|tcc [--archive <datei>]` | nur forge-c (Schritt 5): was das Setup von spark tut (SetupSteps), auf der Befehlszeile |
 | der Packer | `fire.Runtime.Packer` (die .NET-Einzeldatei, `FIRE_VM_ENGINE=dotnet`) ist seit M1 auch aus dem C#-forge entfernt - in C entfällt er; das Packen mit der VM in C (`CVm.Pack`, `FIREVMP1`) ist die Engine `vm` von Schritt 3 |
+
+## Windows als Host (Phase D Schritte 2 und 3)
+
+Stand 23.11.2026. forge-c läuft auch unter Windows - der Builder, die Projekte und der Rest der Befehlszeile, nicht nur das Frontend. Was diese Teile von POSIX nehmen,
+gibt ihnen `native/forge/win32.h` mit den Mitteln von Win32 und der C-Laufzeit: die Ordner (`opendir` über `FindFirstFile`), die Dateien (`stat`, `mkdir`, `realpath`
+über `_fullpath`, `rename`, das ersetzt, `flock` über `LockFileEx`, die Zeiten), die Threads (`pthread_create` über `_beginthreadex`, der Mutex ein SRW-Lock - auch
+`PTHREAD_MUTEX_INITIALIZER`), die Umgebung, die Zeit, und die Programme eines Builds (`fwRun`: `CreateProcess` mit der Befehlszeile, wie .NET `Arguments` weitergibt,
+die Ausgabe und die Fehler über zwei Pipes, die Umgebung - `PATH` mit dem Ordner des Compilers, die Variablen von Open Watcom, `FIRE_PKG_PATH` - unter einem Lock um
+`CreateProcess`). Gebaut wird es mit MinGW ohne eine Bibliothek von POSIX (weder `unistd.h` noch `dirent.h` noch winpthreads) und ohne Konstrukte nur von GNU
+(`__attribute__` hat überall einen Ersatz), damit MSVC es auch übersetzt:
+
+```
+x86_64-w64-mingw32-gcc -O2 native/forge/forge.c -o forge-c.exe -static      (WinHTTP für Schritt 5 wird zur Laufzeit geladen: keine Bibliothek zu linken)
+cl /O2 native\forge\forge.c /Fe:forge-c.exe                                (nicht geprüft: kein MSVC hier)
+```
+
+Was unter Windows anders ist: die Pfade sind innen UTF-8 mit `/` (`fcFullPath` kennt das Laufwerk, `C:/a/b`; `fcDirectoryName` von `C:/a` ist `C:/`, `fcIsRootDir`
+beendet die Wege nach oben - `.git`, `fire.native.json` -; `nbIsRooted`, `nbDirName`, `nbFileName` auch `\`), die Namen wie in C# (`PackageLibrary.Rid` `win-x64`, die
+Bibliotheken der Pakete `fire_pkg_<paket>_<import>.dll` ohne `lib`, die VM `fire.exe`, das Programm der VM eines Projekts `<name>.exe`), der
+Temp-Ordner ist `GetTempPath`, der Ordner von forge-c `GetModuleFileName`, die Programme haben `.exe` (`FindProgram` wie in C#: `<name>.exe` vor `<name>`, der `PATH`
+mit `;`, dazu die bekannten Orte von w64devkit, MSYS2, MinGW, LLVM; Open Watcom in `binnt64`/`binnt`), die GUIDs der Ordner sind das SHA-256 von Zeit, Zähler,
+Prozess und Thread (kein `/dev/urandom`), die Zeiten der Dateien haben Sekunden, stdout und stderr sind binär (kein CR vor LF), die PE-Ressourcen werden geschrieben
+(`ApplyPeMetadata`, [oben](#phase-d-schritt-2-der-builder)). Nicht unter Windows: das Beenden der Werkzeuge beim Abbrechen (`frEndChildren` liest `/proc`),
+Pfade außerhalb der Codepage (die ANSI-Funktionen des Systems).
+
+Gemessen unter Wine (Ubuntu, Wine 9.0, eigenes `WINEPREFIX`, `env -u TMPDIR`; `fire.exe` mit MinGW aus `native/vm/fire.c` gebaut wie die Gruppe `cvmwin` von
+fire.Testing): `forge-c.exe tokens`, `bytecode` (die `.fbc` byte-gleich mit der von forge-c unter Linux), `dump` (gleich), `run` (in `fire.exe`), `build` (Engine vm:
+`fire.exe` mit dem Programm dahinter, das gepackte Programm läuft), `build` und `projectplan` einer Solution (Bibliothek und Programm: `App.exe` läuft), `test`
+einer Datei mit einem Paket (`#import "testing"`, Ausgabe wie unter Linux), ein nativer Build
+mit der Toolchain `files` (die Quellen für `windows`, mit MinGW übersetzt, läuft unter Wine) und ohne Compiler (die Meldung E7003). Ein nativer Build mit einem
+Compiler in Wine ist nicht gemessen: ein MinGW für Windows (w64devkit) gibt es hier nicht (kein Netz), und Wine startet zwar Programme von Linux, gibt aber ihren
+Exitcode nicht zurück.
+
+## Phase D Schritt 5: Toolchains herunterladen
+
+Stand 23.11.2026, `native/forge/tools/setup.c` (von `src/fire.Native/ToolchainSetup.cs`, `TinyccSetup.cs`, `DownloadTransfer.cs`, `ToolchainProvider.Require`): wenn
+kein Compiler da ist, bietet forge-c wie das C#-forge an, einen zu laden (`ConsoleToolchainPrompt`: nur mit einem Terminal, "Fix automatically? [F]ix / [C]ancel (f): ")
+- w64devkit unter Windows x64 (`InstallW64devkit`: die neueste Version über die API von GitHub, sonst v2.0.0, das 7z entpackt sich selbst mit `-y -o<Toolchain>`,
+danach `toolchain.json` wie `SaveMachineToolchain`), Open Watcom unter Windows und Linux x64 für seine Ziele (`WatcomSetup.Install`: `ow_portable_v2_stable.zip`,
+`Unpack` mit `FindRoot`, die Rechte von `binl64`/`binl`). Dieselben Quellen, dieselben Ordner (`Toolchain/` neben forge-c), dieselben Meldungen und Zeilen
+("Downloading... n% (m MB)"). Das portable TinyCC (`TinyccSetup`: die Zips von savannah mit ihrem festen SHA-256, nur Windows) fragt das C#-forge nicht an - das tut
+das Setup von spark; forge-c hat dafür `toolchain-setup`:
+
+```
+forge-c toolchain-setup w64devkit|watcom|tcc [--archive <datei>]   (laden, prüfen - tcc: SHA-256 -, entpacken; --archive: diese Datei statt des Downloads)
+FIRE_TOOLCHAIN_ANSWER=f                                            (die Antwort auf die Frage ohne Terminal - für Tests)
+```
+
+Der Download geht über das System, nicht über ein TLS von forge-c: unter Windows WinHTTP (zur Laufzeit geladen; der Proxy des Systems oder `http_proxy`/`https_proxy`),
+unter POSIX `http://` über einen Socket (HTTP/1.0, Weiterleitungen, `http_proxy`) und `https://` mit `curl` (sonst `wget`) der Maschine. Die Zips entpackt forge-c
+selbst (der Leser von `.fpk`, `project/fpk.c`: stored und deflate, die CRC geprüft, kein Name außerhalb des Ziels).
+
+Gemessen ohne Netz (die Server der Toolchains sind von hier nicht erreichbar) mit einem lokalen Server, der als `http_proxy` jede Anfrage mit einer Datei beantwortet:
+`toolchain-setup watcom` unter Linux und unter Wine (WinHTTP mit dem Proxy; ein Zip im Aufbau von `ow_portable_v2_stable.zip`, die Dateien byte-gleich mit dem
+Entpacken durch Python, `owcc` ausführbar), ein nativer Build für `dos32` ohne Open Watcom mit `FIRE_TOOLCHAIN_ANSWER=f` (die Frage, der Download, das Entpacken, dann
+der Build mit dem gefundenen `owcc`), `toolchain-setup w64devkit --archive` unter Wine (ein falsches 7z, das sich "entpackt": `toolchain.json` geschrieben),
+`toolchain-setup tcc --archive` mit einem falschen Zip (die Meldung des SHA-256), die Meldungen von w64devkit und TinyCC unter Linux. Nicht gemessen: ein echter
+Download (https, w64devkit, TinyCC) - kein Netz.
 
 ## Nachziehen
 
@@ -1035,3 +1132,7 @@ Sekunden, Fehler, Exitcode) an den Paketprojekten und den Quellen von `src/fire.
 `CommandLine.cs`, `CommandLine.Report.cs`, `ForgeReport.cs`, `DataCommand.cs`, `Program.cs`, `Debugging/NativeLaunch.cs` (`DebugToolchain`), `NativeBuilder.cs`
 (`BuildSafe`, die Schritte des Monitors) - Stand b833e71b, `src/fire/Bytecode/ProgramDump.cs` - Stand a3e43117, `src/fire.Native/NativeStats.cs` (`FromJson`,
 `Compare`) - Stand 808e9788; das Maß ist `tests/compare-commands.sh` (mit `COMMANDS_PACKAGES="vm native"`) und `dump` beider forges über das Korpus.
+Dazu (Stand 044bb27b) `src/fire/Bytecode/ProgramFile.cs` (`Reader`, `programread.c`), `src/fire.Compiler/Tables.cs`, `StandardSources.cs` (`Prebuild`, `StorePrebuilt`),
+`src/fire.Native/BackgroundWork.cs`, `CommandLine.cs` (`Publish` und die Werte `Linker.Process*`); das Maß ist `tests/compare-commands.sh` (mit
+`COMMANDS_PREBUILD=1`) und `dump` der Programmdateien des C#-forge mit beiden. Der Download (Schritt 5, `tools/setup.c`): `src/fire.Native/ToolchainSetup.cs`,
+`TinyccSetup.cs`, `DownloadTransfer.cs`, `src/fire.Compiler/ConsoleToolchainPrompt.cs` - Stand 044bb27b, geprüft mit einem lokalen Server als Proxy.

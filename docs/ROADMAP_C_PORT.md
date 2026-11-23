@@ -574,10 +574,15 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    `BuildStatic`, der Cache der Bibliotheken, `LinkDlls`, `WriteStaticFiles`; gemessen mit `buildplan static|shared` und echten Builds - `buildplan` 40 von 40 Quellen je Satz, echte Builds mit gcc, tcc und MinGW: Protokoll und Programm gleich; zwei Fehler des C#-Generators mit Modulen und einer mit TinyCC gefunden, siehe FORGE_C.md).
    Dazu (22.11.2026) linkage `plugin` ([FORGE_C.md](spec/FORGE_C.md#linkage-plugin-der-generator-eines-plugins-und-buildplugin): `build/plugin.c` - `BuildPlugin`
    mit `--host`, die DLL für Windows, `PluginVmNatives`, `PluginBytecode.Write`; `buildplan plugin` 125 von 125 gleich, der `.fireplugin` byte-gleich; LinkageTests
-   `FIRE_TESTS_FILTER=plugin` mit `FIRE_TESTS_FORGE=<forge-c>` 29 von 29, auch unter Wine). Offen: Windows als Host (dort auch das Schreiben der PE-Ressourcen), das Herunterladen von Toolchains (Schritt 5). Seither
-   portiert: `--stats` (NativeStats: die Map, der Bericht als Text und JSON).
+   `FIRE_TESTS_FILTER=plugin` mit `FIRE_TESTS_FORGE=<forge-c>` 29 von 29, auch unter Wine). Seither
+   portiert: `--stats` (NativeStats: die Map, der Bericht als Text und JSON). Dazu (23.11.2026) **Windows als Host**
+   ([FORGE_C.md](spec/FORGE_C.md#windows-als-host-phase-d-schritte-2-und-3): `native/forge/win32.h` - Ordner, Dateien, Threads, `CreateProcess` für die Werkzeuge
+   des Builds, die Pfade mit Laufwerk, `FindProgram` mit `.exe` und den bekannten Orten; die PE-Ressourcen mit `UpdateResource` wie in C#): forge-c baut mit MinGW
+   (`x86_64-w64-mingw32-gcc -O2 native/forge/forge.c -o forge-c.exe -static`, nichts nur von GNU - MSVC nicht geprüft) und läuft unter Wine: `bytecode` byte-gleich
+   mit Linux, `run` in `fire.exe`, `build` mit der VM, `test`, ein nativer Build mit `files` (mit MinGW übersetzt, läuft). Offen: ein nativer Build mit einem
+   Compiler unter Windows (unter Wine fehlt er: kein w64devkit ohne Netz), Pfade außerhalb der Codepage, das Beenden der Werkzeuge beim Abbrechen unter Windows.
 3. Projekt, Solution, Bauplan, Vorlagen, Beispiele; von der Paketverwaltung, was forge braucht (Manifest, Store, `.fpk`). ember bleibt bis Phase F das C#-Programm.
-   **Umgesetzt bis auf Windows** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-3-projekte-solutions-pakete)): `native/forge/project/` (Stand de45e7e4) - das Laden von
+   **Umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-3-projekte-solutions-pakete); Windows als Host seit 23.11.2026, wie in Schritt 2): `native/forge/project/` (Stand de45e7e4) - das Laden von
    `.fireproj`/`.firesln`, die Dateien, Ordner (mit `.gitignore`) und Build-Aktionen eines Projekts, Bauordnung und Startprojekt, der `BuildPlan` mit Bibliotheken und
    Natives, der Linker mit Plan, `forge-c build` eines Projekts oder einer Solution (eine Bibliothek wird gepackt, ein Programm nativ gebaut, die Copy-Dateien daneben;
    `--check`, `--all`), `forge-c publish`, das Paketformat `.fpk` (Manifest, Zip schreiben und lesen). Maß: `forge projectplan`/`forge fpk` gegen `forge-c`
@@ -589,9 +594,9 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    (`build/cvm.c`: `fire` gefunden oder gebaut wie in C# - dieselbe VM, derselbe Schlüssel -, das Programm und die Bibliotheken der Pakete dahinter; 188 von 188 Fällen
    und 43 von 43 Projekten gleich, die Programme byte-gleich bis auf `Scene3D Models`), die C++-Natives eines Projekts (im nativen Programm und als Bibliothek für die VM),
    `settings.globalJobs`, Paketreferenzen `github:...` (über `ember-lock.json`), das Installieren der Standardpakete in den Store (`StandardSources.EnsureInstalled`:
-   derselbe Store, dieselben Stempel). Vorlagen und Beispiele nutzt forge nicht (nur spark). Offen: `FIRE_VM_ENGINE=dotnet`, Windows; `ember install` bleibt C#.
+   derselbe Store, dieselben Stempel). Vorlagen und Beispiele nutzt forge nicht (nur spark). Offen: `FIRE_VM_ENGINE=dotnet`; `ember install` bleibt C#.
 4. Rest der Befehlszeile: Testläufer, `forge data`, Modellwandler (`.fmesh`, `.fblocks`, glTF), Packer.
-   **Umgesetzt bis auf `tables` und `prebuild-standard`** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-4-der-rest-der-befehlszeile)): der **Modellwandler** in `native/forge/model/` (Stand 6c1b0f0e:
+   **Umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-4-der-rest-der-befehlszeile)): der **Modellwandler** in `native/forge/model/` (Stand 6c1b0f0e:
    `ModelConverter`, `BlockModel`, `MeshModel` - glTF/`.glb`, `.fblocks`, `.fmesh` -, eine Modellressource wird beim Einfügen zur Modelldatei, `forge-c model`):
    `tests/compare-frontend.sh ... model` **576 von 576** Dateien des Korpus (`tests/model-corpus.py`: die Modelle des Repositorys, zufällige Modelle aller Formate,
    ihre Fehlerpfade, beschädigte Kopien) gleich - Ausgabe, Fehler, `.f3d` Byte für Byte, auch als Ressource eines Programms; damit ist `Scene3D Models` in `cgen`,
@@ -604,10 +609,19 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
    `dump`, `stats`, `bytecode` von Projekten, der Link mehrerer Quellen (`build`/`bytecode`/`run`/`test` mit mehreren Dateien, `-D`, `-i`, `--overlay`,
    `--debug-info`, `--global-jobs`), `CommandLineParser.Parse` mit seinen Meldungen und `-o` von `ui|biscuit|fdata|falstad`: `tests/compare-commands.sh` 95 von 95
    Befehlen gleich (Ausgabe, Fehler, Exitcode, geschriebene Dateien), `dump` 1222 von 1222 Quellen des Korpus. `install-standard` und `build-vm` sind aus Schritt 3.
-   Offen (`unported: ...`): `tables`, `prebuild-standard` (Werkzeuge des Baus der Solution), `dump` einer Programmdatei, die Ereignisse `background` des Berichts,
-   `publish` mit `--overlay`/`-D`/`-i`, `--host`. Der Packer: `fire.Runtime.Packer` packt nur
+   Dazu (23.11.2026) der Rest: `tables` (aus den Tabellen, die forge-c trägt - über `native/tables` "up to date"), `prebuild-standard` (die 25 Bibliotheken byte-gleich
+   mit denen des C#-forge, `.hash` und `.runtime` gleich, auch frisch gebaut), `dump` einer Programmdatei (`programread.c`: `ProgramFile.Read`; 72 von 72 Programmen
+   aus `tests/cases` und `packages` gleich, die Fehler beschädigter Dateien gleich), die Ereignisse `background` des Berichts und `FIRE_PROGRESS_LINES`
+   (`BackgroundWork`), `publish` mit `--overlay`/`-D`/`-i` (wie in C#: die Overlays gehen in die Pläne, `-D` und `-i` nutzt publish nicht); `tests/compare-commands.sh`
+   mit diesen Befehlen. `--host` nimmt publish auch in C# nicht. Der Packer: `fire.Runtime.Packer` packt nur
    noch die .NET-Einzeldatei (`FIRE_VM_ENGINE=dotnet`) und entfällt in C; das Packen mit der VM in C ist die Engine `vm` (Schritt 3).
 5. `ToolchainSetup` (lädt unter Windows einen Compiler): braucht HTTPS und Entpacken im Werkzeug - über das System (WinHTTP) statt eigener TLS.
+   **Umgesetzt** ([FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-5-toolchains-herunterladen), 23.11.2026): `native/forge/tools/setup.c` - `ToolchainProvider.Require`
+   fragt wie `ConsoleToolchainPrompt` und lädt w64devkit (Windows x64) oder Open Watcom (Windows, Linux x64) mit denselben Quellen in dieselben Ordner
+   (`Toolchain/` neben forge-c, `toolchain.json`); TinyCC mit seinem SHA-256 über `forge-c toolchain-setup tcc` (was das Setup von spark tut). Der Download über das
+   System: WinHTTP unter Windows (zur Laufzeit geladen), unter POSIX `http://` über einen Socket und `https://` mit `curl`/`wget`; die Zips entpackt forge-c selbst.
+   Gemessen mit einem lokalen Server als Proxy (hier kein Netz): Open Watcom unter Linux und unter Wine, die Frage eines nativen Builds für `dos32` bis zum Build mit dem
+   geladenen Compiler, w64devkit (ein falsches 7z) und die Prüfung des SHA-256 von TinyCC mit `--archive`. Offen: ein echter Download (https) - nicht geprüft.
 6. `forge conformance` ersetzt den Kern von `fire.Testing`; Installer (`setup.iss`) und Paketierung ohne .NET-Werkzeuge.
 7. `fire_embed.h` und die Packages `forge`/`script` (L6), mit Tests in fire (ein Programm übersetzt und startet ein Skript, VM und nativ).
 8. **forge mit einem Frontend in fire** (Wunsch vom 19.11.2026): ein kleines fire-Programm (`tools/forge.fire`: `#import "forge"`, die
