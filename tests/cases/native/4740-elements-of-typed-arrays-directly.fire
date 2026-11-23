@@ -1,0 +1,11 @@
+class A {
+    static defined float Fill(defined float a[], defined int n) {
+        for (defined int i = 0; i < n; i++) { a[i] = i * 0.5 }
+        defined float s = 0.0
+        for (defined int i = 0; i < n; i++) { s = s + a[i] }
+        return s
+    }
+}
+defined float a[] = new float[4]
+print(A.Fill(a, 4))
+//# name: Elemente typisierter Arrays nativ direkt: ein defined float-Array wird mit einem Laden gelesen, eine C-Zahl an ihren Platz geschrieben (kein Value, kein claimToHolder, keine Liste je Runde)

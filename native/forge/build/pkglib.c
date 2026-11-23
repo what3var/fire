@@ -29,8 +29,11 @@ static const char* nlRid(void) {
     snprintf(rid, sizeof rid, "%s-%s", os, arch);
     return rid;
 }
+/* The target the wrappers are generated for: this machine, or another one for a test (`conformance --wine` builds the libraries of Windows with MinGW) */
+static const FgTarget* nlTargetOverride;
+static const FgTarget* nlTarget(void) { return nlTargetOverride ? nlTargetOverride : fgHostTarget(); }
 /* HostPlatformKeys: `vm` first, then the platform package and the name of this machine's target */
-static FcList* nlHostPlatformKeys(FcCtx* c) { return nbStrings(c, 3, "vm", fgHostTarget()->platform, fgHostTarget()->name); }
+static FcList* nlHostPlatformKeys(FcCtx* c) { return nbStrings(c, 3, "vm", nlTarget()->platform, nlTarget()->name); }
 #if defined(_WIN32)
 #define NL_EXTENSION ".dll"
 #define NL_PREFIX ""
@@ -276,7 +279,7 @@ static void nlEntryPoints(FcCtx* c, FcBuf* sb, const char* nullName, const char*
 /* GenerateCWrapper: the runtime in library mode (fire_rt.h as C), the sources of the import for this machine, the entry points of the ABI around its functions */
 static const char* nlGenerateCWrapper(FcCtx* c, FcDict* cache, FcStore* store, const FgInstImport* imp) {
     const FgPkgNativeM* native = imp->native;
-    const FgTarget* target = fgHostTarget();
+    const FgTarget* target = nlTarget();
     FcBuf sb = {0};
     FcList* libs = fgLinkLibrariesFor(c, native, nlHostPlatformKeys(c));
     FcList* sources = fgReadNativeSources(c, cache, store, imp, nlHostPlatformKeys(c));
@@ -321,7 +324,7 @@ static const char* nlGenerateCWrapper(FcCtx* c, FcDict* cache, FcStore* store, c
 /* GenerateWrapper: the same in C++ (fire_rt.h as C++, fire_rt_cpp.hpp) */
 static const char* nlGenerateWrapper(FcCtx* c, FcDict* cache, FcStore* store, const FgInstImport* imp) {
     const FgPkgNativeM* native = imp->native;
-    const FgTarget* target = fgHostTarget();
+    const FgTarget* target = nlTarget();
     FcBuf sb = {0};
     FcList* libs = fgLinkLibrariesFor(c, native, nlHostPlatformKeys(c));
     FcList* sources = fgReadNativeSources(c, cache, store, imp, nlHostPlatformKeys(c));

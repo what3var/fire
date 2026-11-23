@@ -1,0 +1,8 @@
+class M {
+    static defined int Mask() {
+        var wb = Word.Bits
+        return (1 << (wb - 2)) + 1
+    }
+}
+print(M.Mask())
+//# name: readonly static mit Konstante: Word.Bits ist im erzeugten C eine C-Zahl (kein Lesen des Feldes, die Rechnung bleibt in C-Zahlen)

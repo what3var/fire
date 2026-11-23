@@ -1,0 +1,16 @@
+# arithmetic of defined numbers is C (as fast as possible natively): Math.*, int division, ^, casts, ~ - no generic Value function
+# (the rare paths - a division by 0 - ask the generic one: the lines with `Value m_` are left out)
+@static Real f*_c(Real P0, FireInt P1)
+sqrt(
+floor(
+fire_realToInt(
+/Value m_
+!\bdivide(
+!\bmathCall(
+!\bbitNot(
+!\bcoerceType(
+!\bpower(
+!\bpowerF(
+!\bFloat(
+!\bInt(
+!\bSF

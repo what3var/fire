@@ -1,0 +1,7 @@
+# a defined float array is read with one load into a C number, a C number is stored in its place (no Value, no claimToHolder, no list per round)
+@static Real f*_c(*)
+((Real*)ra_->typed->data)[
+] = cv_;
+!claimToHolder
+!.mark = poolMark()
+!arrPackedAt

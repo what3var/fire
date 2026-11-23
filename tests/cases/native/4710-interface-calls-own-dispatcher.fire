@@ -1,0 +1,7 @@
+interface IShape { int Area(int scale) }
+class Square : IShape { int Area(int scale) { return 4 * scale } }
+class Disc : IShape { int Area(int scale) { return 3 * scale } }
+class Vault { private int Area(int scale) { return 1000 } int Open() { return this.Area(1) } }
+class Report { static int Use(IShape s) { return s.Area(2) } }
+print(Report.Use(new Square()) + Report.Use(new Disc()) + new Vault().Open())
+//# name: Interface-Aufrufe: eigener Verteiler ohne Aufruferklasse und Zugriffspruefung (fremde private Methode gleichen Namens)

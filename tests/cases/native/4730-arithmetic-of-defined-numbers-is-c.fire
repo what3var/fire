@@ -1,0 +1,9 @@
+class M {
+    static defined float F(defined float x, defined int n) {
+        defined float r = Math.Sqrt(x * x) + Math.Abs(x) - Math.Max(x - 1.0, 0.0) + Math.Sin(x) + x ^ 2 + Math.PI
+        defined int k = (n / 7) % 13 + (r!int) + (~n & 255) + n ^ 3
+        return r + k + Math.Floor(x)
+    }
+}
+print(M.F(1.5, 9))
+//# name: Rechnen auf defined Zahlen ist im erzeugten C reines C: Math.*, int-Division, ^, !int, ~, Math.PI (keine Value-Funktion)
