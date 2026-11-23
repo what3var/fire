@@ -204,6 +204,125 @@ static class CVmRunTests
         Devices(dir, forge.Value);
         Debug(dir, forge.Value, source, env);
         Memory(dir, forge.Value);
+        if (OperatingSystem.IsLinux()) Ending(dir, forge.Value);
+    }
+
+    // ---- the children of spark end with it (ChildProcesses): SIGTERM kills them, and fire also ends when spark is killed (PR_SET_PDEATHSIG) ----
+    /// <summary>The stand-in for spark (FIRE_TESTS_ONLY=cvmrun-child, args: fire, the program file, FIRE_PKG_PATH): ties its children to itself as spark does, starts
+    /// `fire run` and a plain program (`sleep`, as a native build of spark's Run) from a thread that ends at once (the kernel's parent-death signal follows the
+    /// thread that started a child), then says "children &lt;fire&gt; &lt;sleep&gt;" and waits.</summary>
+    public static void ChildHost(string[] args)
+    {
+        ChildProcesses.TieToThisProcess();
+        int firePid = 0, sleepPid = 0;
+        var starter = new Thread(() =>
+        {
+            firePid = CVmLaunch.Start(args[0], args[1], Array.Empty<string>(), Path.GetDirectoryName(args[1]), _ => { }, null, new Dictionary<string, string> { ["FIRE_PKG_PATH"] = args[2] }).Id;
+            sleepPid = NativeLaunch.Start("sleep", new[] { "300" }, null, _ => { }).Id;
+        });
+        starter.Start();
+        starter.Join();
+        Thread.Sleep(1000);   // (the thread is gone: its end must not end fire)
+        Console.WriteLine($"children {firePid} {sleepPid}");
+        Console.Out.Flush();
+        Thread.Sleep(Timeout.Infinite);
+    }
+
+    /// <summary>Whether the process runs (not ended, not a zombie nobody reaps - in a container the orphans' new parent may not).</summary>
+    private static bool Alive(int pid)
+    {
+        try
+        {
+            string stat = File.ReadAllText($"/proc/{pid}/stat");
+            int close = stat.LastIndexOf(')');
+            return close > 0 && close + 2 < stat.Length && stat[close + 2] != 'Z' && stat[close + 2] != 'X';
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    private static bool EndsWithin(int pid, int ms)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(ms);
+        while (Alive(pid)) { if (DateTime.UtcNow > deadline) return false; Thread.Sleep(20); }
+        return true;
+    }
+
+    private static void KillIfAlive(int pid)
+    {
+        if (pid <= 0 || !Alive(pid)) return;
+        try { using var p = Process.GetProcessById(pid); p.Kill(); } catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+    }
+
+    private static void Ending(string dir, (string Program, IReadOnlyList<string> Prefix) forge)
+    {
+        string source = Path.Combine(dir, "long.fire");
+        File.WriteAllText(source, "#import \"time\"\nvar i = 0\nwhile (i < 600) {\n    Sleep(100)\n    i = i + 1\n}\nprint(\"end\")\n");
+        string fbc = Path.Combine(dir, "bin", "long.fbc");
+        var built = ForgeProcess.Run(new[] { "bytecode", source, "-m", "RELEASE", "-o", fbc }, new ForgeSink(), CancellationToken.None, dir, forge);
+        if (!built.Ok || built.Output("vm") is not { } vm) { Check("Ende mit spark: Programmdatei", false, built.Error + "\n" + built.Log); return; }
+        string pkgPath = CVmLaunch.Environment(built.Outputs.Where(o => o.Kind == "library").Select(o => o.Path).ToList()).GetValueOrDefault("FIRE_PKG_PATH", "");
+        string self = Environment.ProcessPath!;
+        foreach (bool hard in new[] { false, true })
+        {
+            var info = new ProcessStartInfo(self) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            if (Path.GetFileNameWithoutExtension(self) == "dotnet") info.ArgumentList.Add(typeof(CVmRunTests).Assembly.Location);
+            foreach (string a in new[] { vm, fbc, pkgPath }) info.ArgumentList.Add(a);
+            info.Environment["FIRE_TESTS_ONLY"] = "cvmrun-child";
+            using var host = Process.Start(info)!;
+            var said = host.StandardOutput.ReadLineAsync();
+            int firePid = 0, sleepPid = 0;
+            if (said.Wait(60000) && said.Result is { } line && line.StartsWith("children ", StringComparison.Ordinal))
+            {
+                var parts = line.Split(' ');
+                firePid = int.Parse(parts[1]);
+                sleepPid = int.Parse(parts[2]);
+            }
+            try
+            {
+                if (firePid == 0) { Check("Ende mit spark: der Stellvertreter startet fire und ein Programm", false, said.IsCompleted ? said.Result : "(nichts)"); return; }
+                bool survived = Alive(firePid) && Alive(sleepPid);
+                if (!hard)
+                {
+                    // spark gets SIGTERM: ProcessExit/the handler of the signal kill its children (fire and the plain program)
+                    Process.Start("kill", new[] { "-TERM", host.Id.ToString() })!.WaitForExit();
+                    bool fireEnded = EndsWithin(firePid, 10000), sleepEnded = EndsWithin(sleepPid, 10000);
+                    Check("Ende mit spark: SIGTERM beendet spark und seine Kinder (fire, ein natives Programm); das Ende des startenden Threads beendet fire nicht",
+                        survived && fireEnded && sleepEnded && host.WaitForExit(10000), $"vorher {survived}, fire {fireEnded}, Programm {sleepEnded}");
+                }
+                else
+                {
+                    // spark is killed (nothing of it runs any more): fire ends by itself (FIRE_END_WITH_PARENT, PR_SET_PDEATHSIG)
+                    host.Kill();
+                    bool fireEnded = EndsWithin(firePid, 10000);
+                    Check("Ende mit spark: wird spark getoetet (SIGKILL), endet fire von selbst (PR_SET_PDEATHSIG)", survived && fireEnded, $"vorher {survived}, fire {fireEnded}");
+                }
+            }
+            finally
+            {
+                try { if (!host.HasExited) host.Kill(); } catch (InvalidOperationException) { }
+                KillIfAlive(firePid);
+                KillIfAlive(sleepPid);
+            }
+        }
+
+        // a grandchild that inherits the variable (fire started by a program, by forge) does not take it: its parent is another process
+        var grand = new ProcessStartInfo("sh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        grand.ArgumentList.Add("-c");
+        grand.ArgumentList.Add("\"$0\" run \"$1\" & echo $!; wait");
+        grand.ArgumentList.Add(vm);
+        grand.ArgumentList.Add(fbc);
+        grand.Environment["FIRE_PKG_PATH"] = pkgPath;
+        grand.Environment[ChildProcesses.EnvironmentVariable] = Environment.ProcessId.ToString();
+        using (var sh = Process.Start(grand)!)
+        {
+            int pid = int.TryParse(sh.StandardOutput.ReadLine(), out int p) ? p : 0;
+            Thread.Sleep(500);
+            bool runs = pid > 0 && Alive(pid);
+            try { sh.Kill(); } catch (InvalidOperationException) { }
+            Thread.Sleep(300);
+            Check("Ende mit spark: ein Enkel mit geerbter Variable (Eltern ein anderer Prozess) laeuft weiter", runs && Alive(pid), $"pid {pid}");
+            KillIfAlive(pid);
+        }
     }
 
     // ---- several programs in one process: what each of them had is gone before the next (VM_C.md "Das Programm fire"), checked with LeakSanitizer ----

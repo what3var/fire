@@ -201,6 +201,7 @@ namespace fire.Editor
                 foreach (string a in arguments) info.ArgumentList.Add(a);
                 var p = Process.Start(info);
                 if (p == null) return false;
+                fire.Debugging.ChildProcesses.Add(p);
                 p.EnableRaisingEvents = true;
                 // what it writes goes into the log of the status bar only when it fails
                 var output = new System.Text.StringBuilder();

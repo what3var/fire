@@ -7,6 +7,9 @@ namespace fire.Editor
         [STAThread]
         public static int Main(string[] args)
         {
+            // what spark starts (fire with its live sessions and runs, forge, forge serve, native programs) ends with spark: also on SIGTERM, and fire also when
+            // spark is killed (Linux: PR_SET_PDEATHSIG; Windows: a job object)
+            fire.Debugging.ChildProcesses.TieToThisProcess();
             int code = BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
             // The window is closed and spark has cleaned up (MainWindow.OnClosing). What still runs must not keep the process alive in the background, where
             // nobody sees it: a thread of a program that ran in the VM (a fire thread, a server loop, a call that waits), a device driver's program. They get

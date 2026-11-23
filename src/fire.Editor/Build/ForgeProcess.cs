@@ -127,7 +127,7 @@ namespace fire.Editor
             }
 
             using var process = new Process { StartInfo = info };
-            try { process.Start(); }
+            try { process.Start(); fire.Debugging.ChildProcesses.Add(process); }
             catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
             {
                 return new ForgeOutcome { ExitCode = -1, Error = $"forge could not be started ({f.Program}): {ex.Message}" };

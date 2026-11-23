@@ -84,7 +84,7 @@ namespace fire.Editor
             info.ArgumentList.Add("--packages");
             info.ArgumentList.Add(packages ?? fire.Package.Manager.PackageStore.Default.Root);
             if (log != null) { info.ArgumentList.Add("--log"); info.ArgumentList.Add(log); }
-            var process = Process.Start(info) ?? throw new IOException("forge serve did not start.");
+            var process = fire.Debugging.ChildProcesses.Add(Process.Start(info) ?? throw new IOException("forge serve did not start."));
             var client = new ServeClient(process);
             var result = client.Request("initialize", new JsonObject { ["client"] = "spark", ["debounce"] = debounceMs }, 20000);
             client.Capabilities = result?["capabilities"]?.AsArray().Select(c => c!.GetValue<string>()).ToList() ?? new List<string>();

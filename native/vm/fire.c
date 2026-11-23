@@ -611,6 +611,43 @@ static int vmOption(int argc, char** argv, int* i, bool* stats) {
     return 0;
 }
 
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/prctl.h>
+/* FIRE_END_WITH_PARENT=<pid> (spark: fire.Debugging.ChildProcesses): fire ends with that process, also when it is killed - the kernel sends a signal when the
+ * parent ends (PR_SET_PDEATHSIG). Only when that process is the parent of fire: a grandchild that inherits the variable (fire started by a program, by forge)
+ * leaves it; so does fire after a crash of the parent before this point (it can no longer tell). The kernel sends the signal when the THREAD that started fire
+ * ends, not only the process (spark starts children from threads of the .NET pool, which end): the handler ends fire only when the parent has really gone
+ * (another pid as parent), else fire goes on - the signal comes again when the next thread of the parent that stands as parent ends. Not SIGTERM/SIGKILL for it:
+ * a real-time signal nobody else sends, whose handler can look. (Survives the execv of a variant of other widths: pid and parent stay, the variant sets it up
+ * again.) */
+#define VM_PARENT_SIGNAL (SIGRTMIN + 4)
+static pid_t g_vmParentPid;
+static void vmParentSignal(int sig) {
+    (void)sig;
+    if (getppid() != g_vmParentPid) _exit(143);   /* (the code of a process ended by SIGTERM, as a kill from spark's end would give) */
+}
+static void vmEndWithParent(void) {
+    const char* v = getenv("FIRE_END_WITH_PARENT");
+    struct sigaction sa;
+    long pid;
+    char* end = NULL;
+    if (v == NULL || *v == 0) return;
+    pid = strtol(v, &end, 10);
+    if (end == v || *end != 0 || pid <= 1 || (pid_t)pid != getppid()) return;
+    g_vmParentPid = (pid_t)pid;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = vmParentSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    if (sigaction(VM_PARENT_SIGNAL, &sa, NULL) != 0) return;
+    if (prctl(PR_SET_PDEATHSIG, VM_PARENT_SIGNAL, 0, 0, 0) != 0) return;
+    if (getppid() != g_vmParentPid) _exit(143);   /* (it ended between the look above and prctl) */
+}
+#else
+static void vmEndWithParent(void) { }   /* (Windows: spark puts its children into a job object that kills them with it) */
+#endif
+
 #if defined(_WIN32)
 typedef struct VmArgList { char** v; int n, cap; } VmArgList;
 static void vmArgAdd(const char* utf8, void* ctx) {
@@ -640,6 +677,7 @@ int main(int argc, char** argv) {
     VmPayEntry* entries;
     uint32_t nentries;
     int packed;
+    vmEndWithParent();
     /* FIRE_STDOUT_LINES=1: stdout is written line by line also into a pipe (spark's Output panel shows a running program's lines as they come; the C runtime
      * of Windows has no line buffering - _IOLBF is full buffering there - so stdout is not buffered at all) */
     { const char* lines = getenv("FIRE_STDOUT_LINES"); if (lines != NULL && *lines == '1') {

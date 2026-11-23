@@ -220,6 +220,12 @@ MCP-Servers übersetzt mit forge (`forge bytecode`, wie Start), nicht mehr mit d
   Threads, `set`, Profil sind die des Agenten (Schritt 6); das Stack-Panel (Operandenstapel) ist wie bei nativ ausgeblendet. **Nicht** gerahmt über stdio
   (`NativeLaunch.LaunchDebugStdio` gibt es, `framed: true`): die Natives der Pakete (io) lesen stdin selbst und nähmen die Rahmen mit.
 * **`FIRE_STDOUT_LINES=1`** (setzt spark): `fire` schreibt stdout auch in eine Pipe zeilenweise (`setvbuf`), sonst käme die Ausgabe erst am Ende.
+* **Das Ende mit spark** (`fire.Debugging.ChildProcesses`): was spark startet (`fire` mit Run, Debug, Live-Sitzungen, Skripten; forge, `forge serve`, native
+  Programme, der Test-Runner) endet mit spark - bei `ProcessExit` und SIGTERM/SIGHUP tötet spark sie samt Baum. Linux, auch wenn spark getötet wird:
+  `FIRE_END_WITH_PARENT=<pid von spark>`; ist das der Elternprozess von `fire`, verlangt `fire` beim Start `prctl(PR_SET_PDEATHSIG)` mit einem Echtzeitsignal
+  und endet (Code 143), wenn der Elternprozess weg ist - der Kernel schickt es schon beim Ende des Threads, der `fire` startete (die Threads des .NET-Pools
+  enden), der Handler sieht darum nach `getppid()`. Ein Enkel, der die Variable erbt, nimmt sie nicht. Windows: jedes Kind kommt in ein Job-Objekt mit
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, das mit spark endet. Geprüft: `FIRE_TESTS_ONLY=cvmrun` ("Ende mit spark").
 * **Behoben**: der Hauptthread wartete am Einstieg mit der GIL (der Agent parkt ihn als einen ohne - ein natives Programm startet so); `scopes`/`globals`/`this`
   am Einstieg - die Panels von spark fragen sofort - hingen im Agenten für immer (`vmDbgBegin` gibt die GIL ab, solange er wartet).
 

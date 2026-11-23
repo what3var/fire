@@ -24,6 +24,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "publish") { Enviro
 // FIRE_TESTS_ONLY=forgereport: spark builds through forge - the report of `forge build --report json` written and read, spark's runner against a fake forge (cancel included), the real forge on a library (ForgeReportTests.cs; seconds)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "forgereport") { Environment.ExitCode = TestResume.Group("ForgeReportTests", ForgeReportTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=cvmrun: spark on the VM in C - Run/Debug as a child process `fire run x.fbc` against a fake fire and with the real forge and fire (CVmRunTests.cs; seconds)
+// (FIRE_TESTS_ONLY=cvmrun-child: the stand-in for spark of CVmRunTests.Ending - its children end with it)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmrun-child") { CVmRunTests.ChildHost(args); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmrun") { Environment.ExitCode = TestResume.Group("CVmRunTests", CVmRunTests.Run, 0) == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=cvmwin: the VM in C on Windows - fire.exe built with MinGW, run under Wine: the command line, a sample of the corpus, packed programs, FIRE_DISPLAY_SHM, __HostCommand, FIRE_DEVICE_HOST (CVmWindowsTests.cs; minutes)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "cvmwin") { Environment.ExitCode = TestResume.Group("CVmWindowsTests", CVmWindowsTests.Run, 0) == 0 ? 0 : 1; return; }

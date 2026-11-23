@@ -56,6 +56,7 @@ namespace fire.Debugging
             process.ErrorDataReceived += (_, e) => { if (e.Data != null) output(e.Data); };
             if (exited != null) process.Exited += (_, _) => { process.WaitForExit(); exited(process.ExitCode); };
             process.Start();
+            ChildProcesses.Add(process);
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             return process;
@@ -76,6 +77,7 @@ namespace fire.Debugging
             if (workingDirectory != null) psi.WorkingDirectory = workingDirectory;
             foreach (var a in arguments) psi.ArgumentList.Add(a);
             if (environment != null) foreach (var (k, v) in environment) psi.Environment[k] = v;
+            ChildProcesses.Prepare(psi);   // (spark: the program ends with it)
             return psi;
         }
 
@@ -100,6 +102,7 @@ namespace fire.Debugging
                 t?.WriteOutput(e.Data);
             };
             process.Start();
+            ChildProcesses.Add(process);
             process.BeginErrorReadLine();
             var transport = new FramedDebugTransport(process.StandardOutput.BaseStream, process.StandardInput.BaseStream);
             try
