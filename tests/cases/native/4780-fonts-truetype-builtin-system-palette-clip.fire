@@ -1,0 +1,66 @@
+#import "graphics"
+class H { static int Of(b) { var bytes = b.ReadBytes(); var h = 17; for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 } return h } }
+var f = Fonts.Add(new Resource("resources/tester.ttf"), "tester")
+print(f.Name() + " " + f.IsBitmap())
+print(Fonts.Get("TESTER").Name() + " " + Fonts.Get("fire test").Name() + " " + Fonts.Get("FireSans").Name())
+print(Fonts.Get("8x8").Name() + " " + Fonts.Get("8x14").IsBitmap() + " " + Fonts.Get("14x8").Name() + " " + Fonts.Get("").Name() + " " + Fonts.Get("no such font").Name())
+print(Fonts.Has("tester") + " " + Fonts.Has("firesans") + " " + Fonts.Has("8x8") + " " + Fonts.Has("zzz"))
+var fb = new Framebuffer(130, 70)
+var r = new Renderer(fb)
+var white = new SolidBrush(0xFFFFFFFF)
+var ghost = new SolidBrush(0x80FFFFFF)
+var blue = new SolidBrush(0xFFFF0000)
+print(r.TextWidth("AVAVHO iAi.Á", f, 20) + " " + r.TextHeight(f, 20) + " " + r.TextAscent(f, 20) + " " + r.TextWidth("AVA", f, 10) + " " + r.TextHeight(f, 10))
+print(r.TextWidth("AVA", undefined, 20) + " " + r.TextHeight() + " " + r.TextWidth("AVA", Fonts.Get("8x8")) + " " + r.TextHeight(Fonts.Get("8x8")) + " " + r.TextAscent(Fonts.Get("8x8")))
+print(r.TextWidth("AVA", f, 0) + " " + r.TextWidth("AVA", f, -5) + " " + r.TextWidth("AVA", f, 14) + " " + r.TextHeight(f, 100000) + " " + r.TextHeight(f, 512))
+// 1: white on black
+r.DrawText(2, 2, "AVAVHO iAi.Á", white, undefined, f, 20)
+print(H.Of(fb))
+// 2: translucent over a background, with a background brush for the line
+r.ClearTo(0xFF804020)
+r.DrawText(3, 4, "HOAV iA", ghost, blue, f, 18)
+r.DrawText(3, 30, "HOAV iA", white, ghost, f, 11)
+print(H.Of(fb))
+// 3: without blending
+r.AlphaBlending = false
+r.DrawText(1, 40, "AVA", ghost, undefined, f, 24)
+r.AlphaBlending = true
+print(H.Of(fb))
+// 4: clipped, partly outside, odd sizes
+r.ClearTo(0xFF101010)
+r.SetClip(10, 10, 60, 30)
+r.DrawText(0, 0, "AVAVHO iAi.", white, undefined, f, 30)
+r.ResetClip()
+r.DrawText(-6, 50, "HOAV", white, undefined, f, 16)
+r.DrawText(120, 60, "HOAV", white, undefined, f, 16)
+r.DrawText(5, 5, "HO", white, undefined, f, 1)
+r.DrawText(40, 5, "HO", white, undefined, f, 400)
+print(H.Of(fb))
+// 5: bitmap fonts of the library next to the font of the renderer
+r.ClearTo(0xFF000000)
+r.DrawText(2, 2, "console", white)
+r.DrawText(2, 18, "eight by eight", white, blue, Fonts.Get("8x8"))
+r.DrawText(2, 30, "8x14 é中", ghost, blue, Fonts.Get("8x14"), 99)
+r.DrawText(2, 48, "console font", white, undefined, Fonts.Console(), 30)
+print(H.Of(fb))
+// 6: a palette framebuffer: from alpha 128 up a pixel is drawn
+var pfb = new Framebuffer(130, 40, ColorMode.Palette)
+var pr = new Renderer(pfb)
+pr.DrawText(2, 2, "AVAVHO iAi.", new SolidBrush(7), undefined, f, 20)
+pr.DrawText(2, 22, "HOAV", new SolidBrush(0xFFFF0000), new SolidBrush(2), f, 14)
+print(H.Of(pfb))
+// 7: the same font from bytes, a font that is not one, a released font
+var g = Fonts.FromBytes(new Resource("resources/tester.ttf").Bytes())
+r.ClearTo(0xFF000000)
+r.DrawText(2, 2, "AVAVHO iAi.Á", white, undefined, g, 20)
+print(g.Name() + " " + g.IsBitmap() + " " + (g.id != f.id))
+g.Release()
+try {
+    Fonts.Add(new Resource("resources/notafont.txt"))
+    print("no error")
+} catch (GraphicsException e) {
+    print("error " + e.message)
+}
+try { Fonts.FromBytes(new byte[3]) } catch (GraphicsException e) { print("error " + e.message) }
+//# note: the fonts are tests/cases/native/resources/ - FireSans.ttf the font of the system (conformance sets FIRE_FONT_DIRS to resources/fonts, as the test program did)
+//# name: Schriften: TrueType-Text, eingebaute Schriften, Systemschrift, Palette, Clip - nativ == VM

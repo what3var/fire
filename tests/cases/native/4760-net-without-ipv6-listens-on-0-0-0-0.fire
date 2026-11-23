@@ -1,0 +1,32 @@
+#extern "libc.so.6"
+#import "net"
+#import "http"
+extern int setenv(string name, string value, int overwrite)
+setenv("FIRE_NET_NO_IPV6", "1", 1)
+try {
+    var l = new Net.TcpListener("", 0)
+    print("listener " + l.Host + " " + (l.Port > 0))
+    var c = new Net.TcpClient("127.0.0.1", l.Port)
+    var s = l.Accept(2000)
+    c.WriteString("hi")
+    var buf = new byte[8]
+    print("tcp " + s.Read(buf, 0, 8))
+    s.Close()
+    c.Close()
+    l.Close()
+    var u = new Net.UdpSocket("", 0)
+    var v = new Net.UdpSocket("127.0.0.1", 0)
+    v.SendString("ping", "127.0.0.1", u.Port)
+    print("udp " + u.ReceiveFrom(buf, 0, 8, 2000) + " " + u.FromHost)
+    try { u.SendString("x", "::1", v.Port) } catch (Net.NetException e) { print("udp ipv4 only " + e.code) }
+    u.Close()
+    v.Close()
+    var server = new Http.Server("", 0)
+    print("http " + (server.Port > 0))
+    server.Close()
+} catch (Net.NetException e) { print("error " + e.message) }
+setenv("FIRE_NET_NO_IPV6", "0", 1)
+//# note: an empty host without IPv6 (a container): FIRE_NET_NO_IPV6=1, set by the program through the C library of Linux so the natives see it too
+//# needs: linux
+//# windows: not run - setenv of libc.so.6, a name of Linux
+//# name: Net: ohne IPv6 (FIRE_NET_NO_IPV6=1) lauscht ein leerer Host auf 0.0.0.0 - TcpListener, UdpSocket, Http.Server
