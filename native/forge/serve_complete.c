@@ -4,8 +4,8 @@
  *     not use (`private`: only in the declaring class, `protected`: also in its derived classes), at a class only the static members, at an object only
  *     the instance members (at `this.` both); an unknown type: the accessible instance members of the program's own classes (those of the libraries
  *     only when the program has none that fit what was typed, and only their API);
- *   - a name being typed: keywords, type keywords, the types reachable here without qualification, the top-level namespaces, the parameters and
- *     variables visible here, the members of the class around (in a static method only the static ones), named arguments `name: ` at the start of an
+ *   - a name being typed: keywords (the contextual ones - is, of, from, under, where - only where they mean something: svFitsContext), type keywords,
+ *     the types reachable here without qualification, the top-level namespaces, the parameters and variables visible here, the members of the class around (in a static method only the static ones), named arguments `name: ` at the start of an
  *     argument;
  *   - the score (CompareKeywords): what starts with the typed text first, exactly the typed case before, the shorter the name the better; the base
  *     scores: parameters and variables 0.25, members of the class 0.2 (less with every base), the own types 0.1, keywords 0.05, the library types 0;
@@ -21,16 +21,45 @@ typedef struct SvItem { const char* text; SvItemKind kind; float score; const ch
 static const char* const svKeywords[] = {
     "var", "func", "class", "construct", "destruct", "return",
     "if", "else", "while", "do", "for", "foreach", "in", "on", "new", "base", "this",
-    "try", "catch", "finally", "throw", "is", "of", "from", "under",
+    "try", "catch", "finally", "throw",
     "extern", "unsafe", "interface", "readonly", "enum", "override",
     "public", "private", "protected",
     "namespace",
-    "with", "extends", "switch", "case", "default", "break", "continue", "where",
+    "with", "extends", "switch", "case", "default", "break", "continue",
     "fire", "await", "dedicated", "until", "taking", "handover", "sync", "flat", "copy", "take", "replace", "leave", "terminate", "actor", "process", "operator", "defined", "trust",
     "true", "false", "undefined", "and", "or",
     "unit", "prefixed", "unprefixed", "coerce",
 };
 static const char* const svTypeKeywords[] = { "bool", "int", "float", "char", "string", "byte", "word", "any" };
+/* The contextual words (docs/language/01-basics.md "Keywords"): names everywhere, words only where they mean something - offered only there (svFitsContext) */
+static const char* const svContextualKeywords[] = { "is", "of", "from", "under", "where" };
+
+/* Does the contextual word `kw` mean something at `wordStart` (the start of the word being typed), as the parser reads it: `is` after an operand on the same
+ * line (`x is of T`, `x is in "m"`, `where T is of A`), `of`/`under` after `is`, `from` after `is` or `coerce`, `where` after the head of a generic class
+ * or method (`>` or `)`). */
+static bool svFitsContext(FcCtx* t, const uint16_t* s, int wordStart, const char* kw) {
+    int p = wordStart - 1, e, b;
+    const char* before = NULL;
+    bool r;
+    size_t i;
+    while (p >= 0 && svIsSpaceTab(s[p])) p--;
+    if (p < 0 || s[p] == '\n' || s[p] == '\r') return false;
+    if (streq0(kw, "where")) return s[p] == '>' || s[p] == ')';
+    if (!svIsWord(s[p])) return streq0(kw, "is") && (s[p] == ')' || s[p] == ']' || s[p] == '"' || s[p] == '\'');
+    e = p + 1;
+    for (b = p; b > 0 && svIsWord(s[b - 1]); b--) {}
+    before = fc8FromU16(t, s + b, e - b);
+    if (streq0(kw, "is")) {
+        /* (an operand: a name, a number, `this` - not a keyword that stands before an expression) */
+        r = true;
+        for (i = 0; i < sizeof svKeywords / sizeof svKeywords[0]; i++)
+            if (streq0(before, svKeywords[i]) && !streq0(before, "this") && !streq0(before, "true") && !streq0(before, "false") && !streq0(before, "undefined")) r = false;
+        for (i = 0; i < sizeof svContextualKeywords / sizeof svContextualKeywords[0]; i++) if (streq0(before, svContextualKeywords[i])) r = false;
+    }
+    else if (streq0(kw, "from")) r = streq0(before, "is") || streq0(before, "coerce");
+    else r = streq0(before, "is");
+    return r;
+}
 
 #define SV_OWN_TYPE_SCORE 0.1f
 
@@ -281,6 +310,9 @@ static void svGetIdentifierSuggestions(SvCompletion* q, int offset, const char* 
     int k;
     for (i = 0; i < sizeof svKeywords / sizeof svKeywords[0]; i++)
         if (svMatchesPrefix(svKeywords[i], prefix)) svAdd(q, svKeywords[i], CK_KEYWORD, svCompareKeywords(prefix, svKeywords[i], 0.05f), NULL, NULL);
+    for (i = 0; i < sizeof svContextualKeywords / sizeof svContextualKeywords[0]; i++)
+        if (svMatchesPrefix(svContextualKeywords[i], prefix) && svFitsContext(q->t, q->src, offset - fc8Units(prefix), svContextualKeywords[i]))
+            svAdd(q, svContextualKeywords[i], CK_KEYWORD, svCompareKeywords(prefix, svContextualKeywords[i], 0.05f), NULL, NULL);
     for (i = 0; i < sizeof svTypeKeywords / sizeof svTypeKeywords[0]; i++)
         if (svMatchesPrefix(svTypeKeywords[i], prefix)) svAdd(q, svTypeKeywords[i], CK_TYPEKEYWORD, svCompareKeywords(prefix, svTypeKeywords[i], 0.05f), NULL, NULL);
     svAddVisibleTypes(q, offset, prefix, true, true);

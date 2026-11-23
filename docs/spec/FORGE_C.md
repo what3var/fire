@@ -206,8 +206,7 @@ Raser.Game: 64 Dateien, 1,4 MB - 450-800 ms); ein Tastendruck (ein Edit, dann `c
 (gemerkt). Die vollständige Analyse beim Tippen: ein Syntaxfehler 40-100 ms (der Parser hält an), sonst die volle Übersetzung.
 
 **Offen**: Hover, Signatur und Definition gehen in spark über den Server, haben aber noch keine Vergleichsprüfung gegen `NavigationEngine`;
-die Prüfung aller Dateien eines Projekts (`AnalyzeProjectFiles`) läuft noch in spark; die C++-Natives eines Bibliotheksprojekts
-(`ProjectNativeOverlay`) kennt die Analyse nicht; eine laufende Analyse lässt sich nicht abbrechen (sie läuft zu Ende, ihr Ergebnis ist
+die Prüfung aller Dateien eines Projekts (`AnalyzeProjectFiles`) läuft noch in spark; eine laufende Analyse lässt sich nicht abbrechen (sie läuft zu Ende, ihr Ergebnis ist
 `stale`); übersetzte Einheiten (Prelude, Bibliotheken) werden nicht über Analysen hinweg gemerkt - jede Analyse übersetzt alles (dafür müssten
 Parser und Resolver ihren Zustand vom Kontext einer Übersetzung lösen); Highlighting (`SyntaxHighlighter`) bleibt in spark.
 
@@ -1138,7 +1137,7 @@ Zeilen), zu jedem falschen Fall steht die erste Zeile, die abweicht.
 Gemessen mit forge-c (gebaut neben dem C#-forge, Stand 5ed7c1c7 von `clippy`): `forge-c conformance -j 2` **1173 von 1173** Fällen richtig (3 min 30 s),
 `tests/run-cases-vm.sh <forge-c> -j 2 --list` mit derselben VM ebenso - dieselben Urteile Fall für Fall; an einer Kopie mit drei verdorbenen Fällen (eine
 `.expected`, eine `.diagnostics`, eine `.error`) melden beide dieselben drei. Nativ (`--engine native`, die Toolchain, die forge wählt: hier tcc) **515 von 517**:
-`native/1370` (inline c: `bool` aus C - mit tcc `2` statt `1`; mit `--toolchain gcc` richtig) und `native/4440` (Library.Load einer `.fireplugin`-Datei: das native
+`native/1370` (inline c: mit tcc `2` statt `1` - nicht der `bool` aus C, wie zuerst vermutet - `_Bool` normalisieren tcc und gcc gleich -, sondern `Compiler()` des Falls: `#if defined(__GNUC__)`, das tcc nicht setzt; seit dem 23.11.2026 fragt der Fall `INT32_MAX` und ist mit tcc und gcc richtig) und `native/4440` (Library.Load einer `.fireplugin`-Datei: das native
 Programm mit linkage `source` meldet "cannot load fire plugins", der Fall erwartet die Meldung der VM - der Fall ist seit dem 23.11.2026 `vm-rf/0190`;
 gemeldet, nicht geändert). Seit dem 23.11.2026 auch die Sanitizer (`--sanitize address|thread`), `-Wall -Wextra` mit einer Warnung als Fehler (`--werror`),
 die Muster im erzeugten C (`.cgen-contains`), Windows unter Wine (`--wine`) und die Suiten der Linkages und Plugins ([unten](#die-lücken-von-firetesting-geschlossen-23112026-nach-m3));

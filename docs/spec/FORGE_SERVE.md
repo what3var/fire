@@ -65,7 +65,7 @@ forge-c serve [--tables <ordner>] [--packages <ordner>] [--debounce <ms>] [--log
 | `open` | Mitteilung | `path`, `version`, `text`, `kind?` (`fire`; `fxml`: nur Markup-Vervollständigung, keine Analyse), `project?` (Schlüssel), `base?` (Ordner für `#include`, Standard: der von `path`), `includes?` |
 | `change` | Mitteilung | `path`, `version`, **entweder** `text` (der ganze Text) **oder** `edits`: `[{"offset":o,"removed":n,"text":"..."}]` (der Reihe nach, jeder auf den Text nach dem vorigen); `includes?`, `project?` |
 | `close` | Mitteilung | `path` |
-| `project` | Mitteilung | `key`, `files`, `libraries?`, `typeChecking?` (`lax`/`strict`), `library?` + `projectImport?` (das Projekt ist selbst eine Bibliothek: sein eigener Import) |
+| `project` | Mitteilung | `key`, `files`, `libraries?`, `typeChecking?` (`lax`/`strict`), `library?` + `projectImport?` (das Projekt ist selbst eine Bibliothek: sein eigener Import), `projectFile?` (die `.fireproj` des Projekts: seine Natives) |
 | `dropProject` | Mitteilung | `key` |
 
 * Passt ein Edit nicht in den Text, verwirft der Server ihn und schickt `{"method":"resync","params":{"path":...}}` - der Client schickt den
@@ -74,10 +74,16 @@ forge-c serve [--tables <ordner>] [--packages <ordner>] [--debounce <ms>] [--log
   anderen Dateien des Projekts, das erzeugte Skript einer `#include`ten `.fxml`), `[{"path","text"?}]`. Ohne `includes` nimmt der Server die
   Dateien des Projekts des Dokuments und die der Bibliotheken, die das Programm importiert (`ProjectFilesFor` von spark).
 * Ein **Projekt** ist der Kontext einer **Analyse** (was `BuildPlan` weiß): `files` (`[{"path","text"?}]`, ohne `text` liest der Server die
-  Datei), `libraries` (`[{"names":[...],"import","name","namespace"|null,"requires":[...],"files":[...]}]`: unter welchen Namen `#import` sie
-  findet, `ProjectLibraries.NamespaceOf`, die Bibliotheken, die sie braucht - `BuildPlan.LibraryOrder` -, ihre Dateien). Ist eine Datei des
+  Datei), `libraries` (`[{"names":[...],"import","name","namespace"|null,"requires":[...],"files":[...],"projectFile"?}]`: unter welchen Namen `#import` sie
+  findet, `ProjectLibraries.NamespaceOf`, die Bibliotheken, die sie braucht - `BuildPlan.LibraryOrder` -, ihre Dateien, ihre `.fireproj`). Ist eine Datei des
   Projekts als Dokument offen, gilt dessen Text (**Overlay**), für den Index und die Analyse jedes anderen Dokuments; eine Änderung eines
   Dokuments plant die anderen offenen Dokumente seiner Projekte neu (nach ihm).
+* **Die Natives der Projekte** kennt die Analyse wie `build` (`project/linkplan.c`): aus `projectFile` des Projekts und seiner Bibliotheken liest
+  der Server ihren Teil `native` (`ProjectNatives.Resolve`: die `functions`, mit `discover` die Funktionen der C/C++-Dateien) und stellt ihn vor die
+  installierten Pakete (`ProjectNativeOverlay`) - die eigenen Natives des Projekts gelten immer, die einer Bibliothek, sobald sie importiert wird.
+  Ist das Projekt eine Standardbibliothek eines Imports, den der Compiler kennt (`graphics`, `windows`, `reflection`), gelten dazu die Natives
+  ihrer Brücke (`bridges.def`, `Linker.BuiltInKey`). Gelesen wird bei jeder Analyse (eine geänderte Liste der Natives gilt ohne neues `project`);
+  fehlt `projectFile` oder ist die Datei nicht lesbar, kennt die Analyse nur die Natives der installierten Pakete.
 * Gemerkt nach Inhalt (der "inkrementelle" Teil): der Index einer anderen Datei hängt an Pfad und Text (FNV-1a über die UTF-16-Einheiten) und wird
   nur neu gebaut, wenn ihr Text sich ändert; die Indizes der Preludes und die Schlüssel der Importe einmal; der Index eines Dokuments, solange
   sein Text und der seines Kontexts gleich sind; die `#import`-Namen eines Textes einmal; je Dokument die **letzten vier Analysen** nach dem
@@ -114,7 +120,7 @@ Alle mit `path` (offenes Dokument), wo eine Stelle gemeint ist mit `offset`. `do
 
 | Methode | Ergebnis |
 |---|---|
-| `completion` | `{"replaceStart","items":[{"text","kind","score","detail"?,"doc"?}]}` - **das beste zuerst** (absteigend nach `score`; bei Gleichstand nach Text ohne Groß-/Kleinschreibung, wie spark sortiert). `kind`: `keyword`, `typeKeyword`, `class`, `enum`, `enumMember`, `namespace`, `field`, `method`, `property`, `variable`, `parameter` |
+| `completion` | `{"replaceStart","items":[{"text","kind","score","detail"?,"doc"?}]}` - **das beste zuerst** (absteigend nach `score`; bei Gleichstand nach Text ohne Groß-/Kleinschreibung, wie spark sortiert). `kind`: `keyword`, `typeKeyword`, `class`, `enum`, `enumMember`, `namespace`, `field`, `method`, `property`, `variable`, `parameter`. Die kontextuellen Wörter `is`, `of`, `from`, `under`, `where` (sonst Namen, [Keywords](../language/01-basics.md#keywords)) kommen nur, wo sie etwas bedeuten: `is` nach einem Operanden auf derselben Zeile, `of`/`under` nach `is`, `from` nach `is` oder `coerce`, `where` nach `>` oder `)` (dem Kopf einer generischen Klasse oder Methode) - wie die Syntaxfarben von spark (`SyntaxHighlighter.IsContextKeyword`) |
 | `hover` | `{"header","kind","doc","path"|"prelude","line"}` oder `null` - das Symbol unter `offset` (`TryResolveSymbol`; `header` wie `ResolvedSymbol.Header`, `kind`: `class`, `interface`, `enum`, `method`, `constructor`, `property`, `field`, `lambdaParameter`) |
 | `signature` | `{"paren","active","symbol":{wie hover},"parameters":[...]}` oder `null` - der Aufruf, in dessen Klammern `offset` steht (`FindOpenCall`, `TryResolveCall`: die dokumentierte Überladung, die zu den begonnenen Argumenten passt) |
 | `definition` | `{"path"|"prelude","line"}` oder `null` - die Deklaration: im Dokument, in einer anderen Datei, in einer Prelude (`standard` oder ein Import; Text per `preludeSource`), bei einer `#include`-Zeile die Datei (Zeile 1) |

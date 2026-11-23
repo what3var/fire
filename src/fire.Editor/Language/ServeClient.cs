@@ -17,8 +17,10 @@ namespace fire.Editor
     /// <summary>A file the server knows besides a document: its path and text (null: the server reads the file).</summary>
     public sealed record ServeFile(string Path, string? Text);
 
-    /// <summary>A library of a project for the analysis (`ProjectLibraries`): the names `#import` finds it by, its import name and namespace, what it needs, its files.</summary>
-    public sealed record ServeLibrary(IReadOnlyList<string> Names, string Import, string Name, string? Namespace, IReadOnlyList<string> Requires, IReadOnlyList<ServeFile> Files);
+    /// <summary>A library of a project for the analysis (`ProjectLibraries`): the names `#import` finds it by, its import name and namespace, what it needs, its files,
+    /// its project file (the server reads its C++ natives from it; null: none).</summary>
+    public sealed record ServeLibrary(IReadOnlyList<string> Names, string Import, string Name, string? Namespace, IReadOnlyList<string> Requires, IReadOnlyList<ServeFile> Files,
+        string? ProjectFile = null);
 
     /// <summary>
     /// The client of the language services as a process (docs/spec/FORGE_SERVE.md, docs/ROADMAP_C_PORT.md L4 and Phase C step 6): starts `forge-c serve`, keeps the open
@@ -255,8 +257,9 @@ namespace fire.Editor
         public void Close(string path) => Notify("close", new JsonObject { ["path"] = path });
 
         /// <summary>The context of the analyses of the documents of a project (what BuildPlan knows): its files, its libraries, the type checking, its own import name when it is a
-        /// library.</summary>
-        public void Project(string key, IEnumerable<ServeFile> files, IEnumerable<ServeLibrary>? libraries = null, string? typeChecking = null, string? ownImport = null)
+        /// library, and its project file (the server reads the C++ natives of the project from it).</summary>
+        public void Project(string key, IEnumerable<ServeFile> files, IEnumerable<ServeLibrary>? libraries = null, string? typeChecking = null, string? ownImport = null,
+            string? projectFile = null)
         {
             var libs = new JsonArray();
             foreach (var l in libraries ?? Array.Empty<ServeLibrary>())
@@ -268,10 +271,12 @@ namespace fire.Editor
                     ["namespace"] = l.Namespace,
                     ["requires"] = new JsonArray(l.Requires.Select(n => (JsonNode)JsonValue.Create(n)!).ToArray()),
                     ["files"] = FilesJson(l.Files),
+                    ["projectFile"] = l.ProjectFile,
                 });
             var p = new JsonObject { ["key"] = key, ["files"] = FilesJson(files), ["libraries"] = libs };
             if (typeChecking != null) p["typeChecking"] = typeChecking;
             if (ownImport != null) { p["library"] = true; p["projectImport"] = ownImport; }
+            if (projectFile != null) p["projectFile"] = projectFile;
             Notify("project", p);
         }
 
@@ -555,7 +560,7 @@ namespace fire.Editor
                 string key = "document:" + path;
                 var libraries = plan.Libraries.Values.Distinct().Select(l => new ServeLibrary(
                     plan.Libraries.Where(e => ReferenceEquals(e.Value, l)).Select(e => e.Key).ToList(), l.ImportName, l.Name,
-                    l.Project.Project.Standard ? null : l.ImportName, l.Requires, l.Sources.Select(f => new ServeFile(f.Path, f.Text)).ToList())).ToList();
+                    l.Project.Project.Standard ? null : l.ImportName, l.Requires, l.Sources.Select(f => new ServeFile(f.Path, f.Text)).ToList(), l.Project.Project.FilePath)).ToList();
                 var files = others.Select(f => new ServeFile(f.Path, f.Text)).ToList();
                 string? ownImport = plan.Type == fire.Projects.OutputType.Library ? plan.Project.Project.ImportName : null;
                 long hash = 17;
@@ -566,7 +571,7 @@ namespace fire.Editor
                 {
                     if (!Projects.TryGetValue(key, out var known) || known.Hash != hash || known.Client != client)
                     {
-                        client.Project(key, files, libraries, plan.Settings?.TypeChecking, ownImport);
+                        client.Project(key, files, libraries, plan.Settings?.TypeChecking, ownImport, plan.Project.Project.FilePath);
                         Projects[key] = (hash, client);
                     }
                 }

@@ -16625,6 +16625,79 @@ static const char* fcSLRoot(FcExpr* e) {
     if (e->kind == EK_IndexExpr) return fcSLRoot(((FcIndexExpr*)e)->target);
     return NULL;
 }
+/* TC036 of `var x = M(...)`: does the caller own what the call hands back, for sure? Stricter than ReturnsFresh (the measure of TC031): a local of the
+ * method counts only when nothing but its own members and `return` use it - a local the method gives away (`p.TakeTo(this)`, `take p`, an argument of a
+ * call such as `this.ports.Add(p)`, stored anywhere, captured) comes back as a reference, its owner stays (`Circuit.AddPort`). */
+static bool CallReturnsOwned(FcTC* t, FcExpr* e, int depth);
+static bool LocalStaysOwn(FcTC* t, FcNodes* nodes, const char* name) {
+    int i, uses = 0, allowed = 0;
+    for (i = 0; i < nodes->nodes->count; i++) {
+        FcNodeTag tag = (FcNodeTag)FC_VALI(nodes->tags->items[i]);
+        void* node = nodes->nodes->items[i];
+        FcExpr* x;
+        if (Moves(tag, node, name)) return false;
+        if (tag == FN_STMT && ((FcStmt*)node)->kind == SK_ReturnStmt && ((FcReturnStmt*)node)->value && fcIsName(((FcReturnStmt*)node)->value, name)) allowed++;
+        if (tag != FN_EXPR) continue;
+        x = (FcExpr*)node;
+        if (fcIsName(x, name)) uses++;
+        else if (x->kind == EK_MemberExpr && fcIsName(((FcMemberExpr*)x)->target, name)) allowed++;
+        else if (x->kind == EK_IndexExpr && fcIsName(((FcIndexExpr*)x)->target, name)) allowed++;
+    }
+    return uses <= allowed;
+}
+static bool ReturnsOwnValue(FcTC* t, FcMethodDecl* m, FcNodes* nodes, FcExpr* value, int depth) {
+    int i, k;
+    if (!value) return false;
+    switch (value->kind) {
+        case EK_NewExpr: case EK_NewArrayExpr: case EK_NewBufferExpr: case EK_ArrayLiteralExpr: return true;
+        case EK_CallExpr: return CallReturnsOwned(t, value, depth + 1);
+        case EK_ConditionalExpr: return ReturnsOwnValue(t, m, nodes, ((FcConditionalExpr*)value)->then, depth) && ReturnsOwnValue(t, m, nodes, ((FcConditionalExpr*)value)->otherwise, depth);
+        case EK_IdentifierExpr: {
+            const char* n = ((FcIdentifierExpr*)value)->name;
+            int made = 0;
+            for (k = 0; k < m->params->count; k++) if (streq0(((FcLambdaParam*)m->params->items[k])->name, n)) return false;
+            for (i = 0; i < nodes->nodes->count; i++)
+                if (FC_VALI(nodes->tags->items[i]) == FN_STMT && ((FcStmt*)nodes->nodes->items[i])->kind == SK_VarDeclStmt && streq0(((FcVarDeclStmt*)nodes->nodes->items[i])->name, n)) {
+                    FcExpr* init = ((FcVarDeclStmt*)nodes->nodes->items[i])->initializer;
+                    if (!init || !(init->kind == EK_NewExpr || init->kind == EK_NewArrayExpr || init->kind == EK_NewBufferExpr || init->kind == EK_ArrayLiteralExpr)) return false;
+                    made++;
+                }
+            return made == 1 && LocalStaysOwn(t, nodes, n);
+        }
+        default: return false;
+    }
+}
+static bool MethodReturnsOwned(FcTC* t, FcMethodDecl* m, int depth) {
+    FcNodes nodes;
+    int i, returns = 0;
+    if (!m->body || depth > 8) return false;
+    nodes = AllNodes(t, FN_STMT, m->body, true, true);
+    for (i = 0; i < nodes.nodes->count; i++)
+        if (NODE_IS_S(nodes, i, SK_ReturnStmt)) {
+            returns++;
+            if (!ReturnsOwnValue(t, m, &nodes, ((FcReturnStmt*)nodes.nodes->items[i])->value, depth)) return false;
+        }
+    return returns > 0;
+}
+/* the method resolved for the call hands back a value of its own at every `return` - and, unless it is static, so does every method of a derived class
+ * that may override it (the call may land there); an interface's method has no body: no */
+static bool CallReturnsOwned(FcTC* t, FcExpr* e, int depth) {
+    FcMethodDecl* m;
+    const char* cls;
+    int k;
+    if (e->kind != EK_CallExpr || (m = (FcMethodDecl*)fcDictGet(&t->callTargets, e)) == NULL || !MethodReturnsOwned(t, m, depth)) return false;
+    if (m->isStatic) return true;
+    if ((cls = MethodClass(t, m)) == NULL) return false;
+    FC_DICT_EACH(t->classes, ce) {
+        FcClassDecl* decl = (FcClassDecl*)ce->value;
+        if (streq0((const char*)ce->key, cls) || !DerivesFrom(t, (const char*)ce->key, cls)) continue;
+        for (k = 0; k < decl->members->count; k++) {
+            FcMethodDecl* o = (FcMethodDecl*)decl->members->items[k];
+            if (((FcStmt*)o)->kind == SK_MethodDecl && !o->isStatic && streq0(o->name, m->name) && o->params->count == m->params->count && !MethodReturnsOwned(t, o, depth)) return false;
+        }
+    }
+    return true;
+}
 static void CheckStoredLocal(FcTC* t, const char* name, FcTLFrame* frame) {
     FcDict* inner = fcDictNew(TC_, FC_KEY_STR);
     FcList* restT = fcListNew(TC_);
@@ -16717,7 +16790,8 @@ static void TakeLocalWalk(FcTC* t, FcList* statements, FcTLFrame* outer, FcList*
         if (outer != NULL && (name = TakeLocalTarget(stmt)) != NULL) CheckBlockTakeLocal(t, name, here, stmt->line);
         if (stmt->kind == SK_VarDeclStmt && ((FcVarDeclStmt*)stmt)->initializer && !(outer == NULL && statements == t->tlProgramTop)) {
             FcExprKind ik = ((FcVarDeclStmt*)stmt)->initializer->kind;
-            if (ik == EK_NewExpr || ik == EK_NewArrayExpr || ik == EK_NewBufferExpr || ik == EK_ArrayLiteralExpr) CheckStoredLocal(t, ((FcVarDeclStmt*)stmt)->name, here);
+            if (ik == EK_NewExpr || ik == EK_NewArrayExpr || ik == EK_NewBufferExpr || ik == EK_ArrayLiteralExpr || CallReturnsOwned(t, ((FcVarDeclStmt*)stmt)->initializer, 0))
+                CheckStoredLocal(t, ((FcVarDeclStmt*)stmt)->name, here);
         }
         fcDirectExprs(t, stmt, direct);
         for (k = 0; k < direct->count; k++) TakeLocalLambdas(t, (FcExpr*)direct->items[k]);
@@ -26434,7 +26508,7 @@ static const char* fgHeadersInline(FcCtx* c, const char* text, FcDict* headers, 
                     const char* inner = fgReadText(c, path);
                     const char* r;
                     size_t n;
-                    if (nesting > 32) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: PackageException: The headers include each other without end ('%s').", fileName));
+                    if (nesting > 32) fcThrow(c, FC_ERR_PACKAGE, 0, 0, NULL, fcFmt(c, "The headers include each other without end ('%s').", fileName));
                     r = fgHeadersInline(c, fgReplace(c, inner ? inner : "", "\r\n", "\n"), headers, sources, placed, level, nesting + 1);
                     n = strlen(r);
                     while (n > 0 && r[n - 1] == '\n') n--;
@@ -26533,12 +26607,21 @@ static FcList* fgUsedImports(FcCtx* c, FcDict* cache, FcStore* store, const FgIn
             other = fgInstalledImport(c, cache, pi);
             if (other->native) found = other;
         }
-        if (!found) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: PackageException: The natives of '%s' use the platform layer of '%s', which is not installed.", imp->name, use->import));
+        if (!found) fcThrow(c, FC_ERR_PACKAGE, 0, 0, NULL, fcFmt(c, "The natives of '%s' use the platform layer of '%s', which is not installed.", imp->name, use->import));
         fcListAdd(c, r, found);
     }
     return r;
 }
 typedef struct FgNamedText { const char* name; const char* text; } FgNamedText;
+/* (ReadNativeSources.Display: a source shown relative to the package - or the project - when its path is in that folder) */
+static const char* fgSourceDisplay(FcCtx* c, const FgInstImport* imp, const char* name) {
+    size_t n;
+    if (!(name[0] == '/' || name[0] == '\\' || (name[0] && name[1] == ':')) || !imp->dir) return name;
+    n = strlen(imp->dir);
+    while (n > 0 && (imp->dir[n - 1] == '/' || imp->dir[n - 1] == '\\')) n--;
+    if (strncmp(name, imp->dir, n) != 0 || !(name[n] == '/' || name[n] == '\\')) return name;
+    return fgReplace(c, name + n + 1, "\\", "/");
+}
 /* InstalledImport.ReadNativeSources */
 static FcList* fgReadNativeSources(FcCtx* c, FcDict* cache, FcStore* store, const FgInstImport* imp, FcList* keys) {
     FcList* used = fcListNew(c);
@@ -26579,22 +26662,30 @@ static FcList* fgReadNativeSources(FcCtx* c, FcDict* cache, FcStore* store, cons
         if (!t->text) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: the source %s cannot be read", t->name));
         fcListAdd(c, texts, t);
     }
-    /* NativeSourceOrder.CheckIncludes: a source that includes one built after it */
-    for (i = 0; i < texts->count; i++) {
-        FcList* lines = fgLinesOf(c, ((FgNamedText*)texts->items[i])->text);
-        for (k = 0; k < lines->count; k++) {
-            const char* line = (const char*)lines->items[k];
-            const char* name;
-            const char* after;
-            int nameLen;
-            if (!fgIncludeAt(line, line + strlen(line), true, &name, &nameLen, &after)) continue;
-            for (m = i + 1; m < texts->count; m++)
-                if (streq0(fgFileNameOf(c, ((FgNamedText*)texts->items[m])->name), fgFileNameOf(c, fcStrN(c, name, (size_t)nameLen)))) {
-                    int first;
-                    for (first = 0; first < m; first++) if (streq0(fgFileNameOf(c, ((FgNamedText*)texts->items[first])->name), fgFileNameOf(c, fcStrN(c, name, (size_t)nameLen)))) break;
-                    if (first == m) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "unported: PackageException: The build order of the natives of '%s' is wrong", imp->name));
-                }
+    /* NativeSourceOrder.CheckIncludes: a source that includes one built after it - a PackageException naming the file and the line of each `#include` */
+    {
+        FcList* problems = fcListNew(c);
+        for (i = 0; i < texts->count; i++) {
+            FcList* lines = fgLinesOf(c, ((FgNamedText*)texts->items[i])->text);
+            for (k = 0; k < lines->count; k++) {
+                const char* line = (const char*)lines->items[k];
+                const char* name;
+                const char* after;
+                const char* written;
+                const char* fileName;
+                int nameLen, at = -1;
+                if (!fgIncludeAt(line, line + strlen(line), true, &name, &nameLen, &after)) continue;
+                written = fcStrN(c, name, (size_t)nameLen);
+                fileName = fgFileNameOf(c, written);
+                /* (the position of a file name: its first source; not a source of the list, or built before it - or itself: fine) */
+                for (m = 0; m < texts->count && at < 0; m++) if (streq0(fgFileNameOf(c, ((FgNamedText*)texts->items[m])->name), fileName)) at = m;
+                if (at <= i) continue;
+                fcListAdd(c, problems, (void*)fcFmt(c, "%s:%d: #include \"%s\" is a source of the same package that is built after it - give '%s' a smaller build order (\"order\") than '%s', or list it before.",
+                    fgSourceDisplay(c, imp, ((FgNamedText*)texts->items[i])->name), k + 1, written, fgSourceDisplay(c, imp, ((FgNamedText*)texts->items[at])->name),
+                    fgSourceDisplay(c, imp, ((FgNamedText*)texts->items[i])->name)));
+            }
         }
+        if (problems->count > 0) fcThrow(c, FC_ERR_PACKAGE, 0, 0, NULL, fcFmt(c, "The build order of the natives of '%s' is wrong:\n  %s", imp->name, fgJoin(c, problems, "\n  ")));
     }
     for (i = 0; i < sources->count; i++) fcSetAdd(names, fgFileNameOf(c, (const char*)sources->items[i]));
     for (i = 0; i < used->count; i++) fcSetAdd(names, fgFileNameOf(c, ((FgNamedText*)used->items[i])->name));
@@ -29657,6 +29748,19 @@ static FcList* fgClassListCopy(FgGen* g) { return fcListCopy(g->c, g->classList)
 
 /* Pulls in what dispatching needs: the method of every class for every called name, destructors, ToString, the index methods, and the enumerator
  * class that `foreach` over an array creates. */
+/* The constructor makeClassError makes a class of `fireError("Class", "text")` with (as the VM in C, vm_core.c): the one of one parameter, else the one of
+ * the fewest parameters (2..16: the message first, undefined for the rest - IndexOutOfBoundsException, UnitMismatchException); NULL: none */
+static FcProto* fgErrorConstructor(const FcRtClass* rc) {
+    FcProto* one = fgFindConstructor(rc, 1);
+    FcProto* best = NULL;
+    int i;
+    if (one && one->paramCount == 1) return one;
+    for (i = 0; i < rc->ctorProtos->count; i++) {
+        FcProto* p = (FcProto*)rc->ctorProtos->items[i];
+        if (p->paramCount > 1 && p->paramCount <= 16 && (!best || p->paramCount < best->paramCount)) best = p;
+    }
+    return best;
+}
 static void RegisterTargets(FgGen* g) {
     FcList* classes;
     int i, k;
@@ -29706,7 +29810,7 @@ static void RegisterTargets(FgGen* g) {
             const char* name = (const char*)g->errorClasses->items[i];
             if (!fcDictHas(g->program->program->classes, name)) continue;
             c = RegisterClass(g, name);
-            if ((ctor = fgFindConstructor(c->rc, 1)) && ctor->paramCount == 1) GetFunc(g, ctor, FK_Ctor, 0);
+            if ((ctor = fgErrorConstructor(c->rc)) != NULL) GetFunc(g, ctor, FK_Ctor, 0);
         }
     }
     {
@@ -30710,16 +30814,42 @@ static const char* RuntimeHooks(FgGen* g) {
         if (!(unitClass = (FgClassInfo*)fcDictGet(g->classes, "UnitMismatchException"))) FG_NOTSUP("exceptions need the prelude class UnitMismatchException");
         fcBufStr(&sb, fgMakeError(g, "Value makeUnitError(Value message, Value expected, Value actual)", unitClass, 3, "message, expected, actual"));
         fcBufStr(&sb, fgMakeError(g, "Value makeIndexError(Value message, int64_t index, int64_t length)", indexClass, 3, "message, Int(index), Int(length)"));
+        /* (`fireError("Class", "text")` of a package native or of the runtime: a class without a constructor of one parameter gets the message first and
+         * undefined for the rest, with its constructor of the fewest parameters; the index and the length of an IndexOutOfBoundsException that indexError
+         * wrote into the text - "Array index 7 out of range (length 3)." - are read back from it: as makeClassError of the VM in C) */
         fcBufStr(&sb, "Value makeClassError(const char* cls, Value message) {\n");
         fcBufStr(&sb, "    (void)cls; (void)message;\n");
+        if (fcListHasStr(g->errorClasses, "IndexOutOfBoundsException")) {
+            fcBufStr(&sb, "    if (strcmp(cls, \"IndexOutOfBoundsException\") == 0) {\n");
+            fcBufStr(&sb, "        char t_[200]; const char* p_; int64_t n_[2]; int k_;\n");
+            fcBufStr(&sb, "        strToUtf8(message, t_, sizeof t_);\n");
+            fcBufStr(&sb, "        p_ = strstr(t_, \" out of range (length \");\n");
+            fcBufStr(&sb, "        if (p_) {\n");
+            fcBufStr(&sb, "            while (p_ > t_ && p_[-1] != ' ') p_--;\n");
+            fcBufStr(&sb, "            for (k_ = 0; k_ < 2; k_++) {\n");
+            fcBufStr(&sb, "                bool neg_ = *p_ == '-', any_ = false;\n");
+            fcBufStr(&sb, "                if (neg_) p_++;\n");
+            fcBufStr(&sb, "                for (n_[k_] = 0; *p_ >= '0' && *p_ <= '9'; p_++) { n_[k_] = n_[k_] * 10 + (*p_ - '0'); any_ = true; }\n");
+            fcBufStr(&sb, "                if (!any_) break;\n");
+            fcBufStr(&sb, "                if (neg_) n_[k_] = -n_[k_];\n");
+            fcBufStr(&sb, "                if (k_ == 0) { if (strncmp(p_, \" out of range (length \", 22) != 0) break; p_ += 22; }\n");
+            fcBufStr(&sb, "                else if (strcmp(p_, \").\") == 0) return makeIndexError(message, n_[0], n_[1]);\n");
+            fcBufStr(&sb, "            }\n");
+            fcBufStr(&sb, "        }\n");
+            fcBufStr(&sb, "    }\n");
+        }
         for (i = 0; i < g->errorClasses->count; i++) {
             const char* name = (const char*)g->errorClasses->items[i];
             FgClassInfo* errorClass = (FgClassInfo*)fcDictGet(g->classes, name);
             FcProto* ctor;
-            if (!errorClass || !(ctor = fgFindConstructor(errorClass->rc, 1)) || ctor->paramCount != 1) continue;
+            FcBuf args = {0};
+            int a;
+            if (!errorClass || !(ctor = fgErrorConstructor(errorClass->rc))) continue;
+            fcBufStr(&args, "o, message");
+            for (a = 1; a < ctor->paramCount; a++) fcBufStr(&args, ", Undef()");
             fcBufFmt(&sb, "    if (strcmp(cls, %s) == 0) {\n", CString(g, name));
             fcBufFmt(&sb, "        Value o = %s;\n", NewObjectCall(g, errorClass, "g_globalOwn"));
-            fcBufFmt(&sb, "        %s\n", Nested(g, fcFmt(g->c, "%s(o, message);", ((FgFunc*)fcDictGet(g->funcByProto, ctor))->name)));
+            fcBufFmt(&sb, "        %s\n", Nested(g, fcFmt(g->c, "%s(%s);", ((FgFunc*)fcDictGet(g->funcByProto, ctor))->name, fcBufDone(g->c, &args))));
             fcBufStr(&sb, "        return o;\n");
             fcBufStr(&sb, "    }\n");
         }
@@ -43853,6 +43983,16 @@ static const char* NativeSourcesHash(FgGen* g, const char* module) {
     texts = fgReadNativeSources(g->c, g->instImports, g->store, imp, fgPlatformKeys(g));
     fcBufStr(&b, "");
     for (i = 0; i < texts->count; i++) { FgNamedText* t = (FgNamedText*)texts->items[i]; fcBufFmt(&b, "%s\n%s\n", t->name, t->text); }
+    /* (the units, `native.units`: linkage static/shared compiles them into the library of the module - their bytes, as pkglib.c's stamp has them) */
+    for (i = 0; imp->native->units && i < imp->native->units->count; i++) {
+        size_t n = 0;
+        uint8_t* data = fbReadFile(fgPkgFile(g->c, imp->dir, (const char*)imp->native->units->items[i]), &n);
+        FcSha256 h;
+        fcShaInit(&h);
+        if (data && n) fcShaUpdate(&h, data, n);
+        free(data);
+        fcBufFmt(&b, "unit %s %s\n", fgFileNameOf(g->c, (const char*)imp->native->units->items[i]), fcShaHex(g->c, &h));
+    }
     return fcSha256OfText(g->c, fcBufDone(g->c, &b));
 }
 
@@ -47971,6 +48111,34 @@ static FcList* nbPackageUnits(FcCtx* c, FcStore* store, FcDict* instImports, con
     }
     return r;
 }
+/* the units of one library module of linkage static/shared (build/linkage.c): those of its import when the module is a package (`pkg:<import>`) */
+static FcList* nbModuleUnits(FcCtx* c, FcStore* store, FcDict* instImports, const char* module) {
+    FcList* r = fcListNew(c);
+    FcPkgImport* pi = module && fcStartsWith(module, "pkg:") ? fcStoreFindKey(c, store, module) : NULL;
+    FgInstImport* x = pi ? fgInstalledImport(c, instImports, pi) : NULL;
+    int k;
+    if (!x || !x->native || !x->native->units) return r;
+    for (k = 0; k < x->native->units->count; k++) {
+        NbPkgUnit* u = (NbPkgUnit*)fcAlloc(c, sizeof *u);
+        u->import = x->name;
+        u->file = fgPkgFile(c, x->dir, (const char*)x->native->units->items[k]);
+        u->name = fcFmt(c, "fire_unit_%s.c", nbUnitName(c, x->name, k, false));
+        fcListAdd(c, r, u);
+    }
+    return r;
+}
+/* the toolchain that compiles units: the options of the build without warnings (the package's code); for a shared library position-independent and with
+ * hidden symbols where the compiler has them (as pkglib.c builds them into the library of the package for the VM) */
+static NbToolchain* nbUnitToolchain(FcCtx* c, const NbToolchain* t, bool shared) {
+    NbToolchain* ut = (NbToolchain*)fcAlloc(c, sizeof *ut);
+    const char* kind = nbKind(t);
+    *ut = *t;
+    ut->args = t->args ? fcListCopy(c, t->args) : fcListNew(c);
+    if (!fcListHasStr(ut->args, streq0(kind, "msvc") ? "/w" : "-w")) fcListAdd(c, ut->args, (void*)(streq0(kind, "msvc") ? "/w" : "-w"));
+    if (shared && !streq0(kind, "msvc")) fcListAdd(c, ut->args, (void*)"-fPIC");
+    if (shared && !streq0(kind, "msvc") && !streq0(kind, "tcc")) fcListAdd(c, ut->args, (void*)"-fvisibility=hidden");
+    return ut;
+}
 /* the toolchain with the defines FIRE_PKG_UNITS_<IMPORT> of the units (a copy) */
 static NbToolchain* nbWithUnitDefines(FcCtx* c, NbToolchain* t, FcList* units) {
     NbToolchain* r;
@@ -48272,7 +48440,8 @@ static FgStaticPlan* nbGenerateStatic(FcCtx* c, FcLinked* linked, FcNatives* reg
 }
 
 /* Linkage "shared" on Windows: links the DLLs that are not in the cache from their object files, in the order of the plan. NULL: done, else the failure. */
-static const char* nbLinkDlls(FcCtx* c, const NbToolchain* toolchain, const FgTarget* target, FcList* all, FcList* missing, FcList* objects, const char* programFile, const char* workDir, FcBuf* log) {
+static const char* nbLinkDlls(FcCtx* c, const NbToolchain* toolchain, const FgTarget* target, FcList* all, FcList* missing, FcList* objects, FcList* unitObjects, const char* programFile,
+    const char* workDir, FcBuf* log) {
     const char* found = nbFindC(c, toolchain);
     const char* cc = found ? found : nbEffectiveCCompiler(c, toolchain);
     FcList* libs = fcListNew(c);
@@ -48304,6 +48473,7 @@ static const char* nbLinkDlls(FcCtx* c, const NbToolchain* toolchain, const FgTa
             NbRunResult run;
             nbMkdirs(c, tempDir);
             fcBufFmt(&args, "-shared -static-libgcc -o \"%s\" \"%s\"", temp, (const char*)objects->items[at]);
+            for (k = 0; k < ((FcList*)unitObjects->items[at])->count; k++) fcBufFmt(&args, " \"%s\"", (const char*)((FcList*)unitObjects->items[at])->items[k]);   /* (its units, `native.units`) */
             for (k = 0; k < before->count; k++) fcBufFmt(&args, " \"%s\"", (const char*)before->items[k]);
             fcBufFmt(&args, " -Wl,--export-all-symbols -s %s", fgJoin(c, libs, " "));
             fcBufFmt(log, "%s %s\n", cc, args.p);
@@ -48321,6 +48491,14 @@ static const char* nbLinkDlls(FcCtx* c, const NbToolchain* toolchain, const FgTa
     return NULL;
 }
 
+/* the object of a library and those of its units for nbArchiveCommand, which puts its argument in quotes: `a.o" "u.o` */
+static const char* nbObjectsArg(FcCtx* c, const char* obj, const FcList* more) {
+    FcBuf b = {0};
+    int i;
+    fcBufStr(&b, obj);
+    for (i = 0; more && i < more->count; i++) fcBufFmt(&b, "\" \"%s", (const char*)more->items[i]);
+    return fcBufDone(c, &b);
+}
 /* the commands of a library that is not in the cache (the dry run prints them, BuildLibrary runs them) */
 static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, const FgTarget* target, NbToolchain* toolchain, const char* output, bool shared) {
     NbResult r = { false, output, "", NULL };
@@ -48343,6 +48521,8 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
     bool dll = shared && streq0(target->platform, "windows");
     const char* ext;
     FcList* missing;
+    FcList* unitObjects;          /* per library of `missing`: the objects of its units (`native.units`) */
+    NbToolchain* programToolchain;
     FcList* objects;
     FcList* libraries;
     FcList* commands;
@@ -48384,6 +48564,8 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
     objects = fcListNew(c);
     for (i = 0; i < plan->libraries->count; i++) if (!((FgStaticLibrary*)plan->libraries->items[i])->cached) fcListAdd(c, missing, plan->libraries->items[i]);
     commands = fcListNew(c);
+    unitObjects = fcListNew(c);
+    programToolchain = toolchain;
     /* the libraries that are not in the cache: each its C (the generator wrote it there) to an object file, that into the library, then its interface */
     for (i = 0; i < missing->count; i++) {
         FgStaticLibrary* library = (FgStaticLibrary*)missing->items[i];
@@ -48391,11 +48573,41 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
         const char* temp = nbCombine(c, library->directory, b->dryRun ? fcFmt(c, "TEMP%s", ext) : fcFmt(c, "%s%s", nbGuid(c), ext));
         FcBuf libLog = {0};
         long long libraryWatch = nbNowMs();
+        /* (the units of the package of the module, `native.units`: compiled once - with the library, which the cache keeps - and put into it; the module's C gets
+         * FIRE_PKG_UNITS_<IMPORT>, so the bridge calls them directly) */
+        FcList* units = nbModuleUnits(c, &store, instImports, library->module);
+        FcList* libUnitObjects = fcListNew(c);
+        NbToolchain* lt = nbWithUnitDefines(c, programToolchain, units);
         fcBufStr(&libLog, "");
         fcListAdd(c, objects, (void*)obj);
+        fcListAdd(c, unitObjects, libUnitObjects);
+        if (units->count > 0) {
+            NbToolchain* ut = nbUnitToolchain(c, programToolchain, shared && !dll);
+            if (nbIsWatcom(kind))
+                fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: the package '%s' has a unit of its own (`native.units`), which the toolchain '%s' does not build.", ((NbPkgUnit*)units->items[0])->import, kind));
+            for (k = 0; k < units->count; k++) {
+                const NbPkgUnit* u = (const NbPkgUnit*)units->items[k];
+                const char* file = nbCombine(c, workDir, fcFmt(c, "%s_%s", library->libraryName, u->name));
+                const char* unitObj = nbChangeExtension(c, file, streq0(kind, "msvc") ? ".obj" : ".o");
+                NbCommand* compile;
+                NbRunResult run;
+                if (!nbCopyFile(c, u->file, file)) { r.error = fcFmt(c, "native-config: the unit '%s' of the package '%s' cannot be read.", u->file, u->import); goto failed; }
+                compile = nbCompilerCommand(c, ut, target, file, workDir, unitObj, false, NULL, false, "c", true, NULL, NULL, NULL, false);
+                fcListAdd(c, libUnitObjects, (void*)unitObj);
+                if (b->dryRun) { fcListAdd(c, commands, compile); continue; }
+                fcBufFmt(&libLog, "%s %s\n", compile->exe, compile->args);
+                run = nbRun(compile->exe, compile->args, workDir);
+                nbAppendRun(&libLog, &run);
+                if (!run.ok || !nbFileExists(unitObj)) {
+                    fcBufPut(&log, libLog.p, libLog.len);
+                    r.error = fcFmt(c, "The C compiler reported errors in the unit '%s' of the package '%s' (see the build log).", fgFileNameOf(c, u->file), u->import);
+                    goto failed;
+                }
+            }
+        }
         if (dll) {
             /* a DLL: here only its object file - it is linked below, after the DLLs it imports from */
-            NbCommand* compile = nbCompilerCommand(c, toolchain, target, library->cFile, workDir, obj, false, NULL, false, "c", true, NULL, NULL, NULL, false);
+            NbCommand* compile = nbCompilerCommand(c, lt, target, library->cFile, workDir, obj, false, NULL, false, "c", true, NULL, NULL, NULL, false);
             if (b->dryRun) { fcListAdd(c, commands, compile); continue; }
             fcBufFmt(&libLog, "%s %s\n", compile->exe, compile->args);
             {
@@ -48410,7 +48622,7 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
         if (shared) {
             /* a shared library: position-independent, its own name inside; what it needs of the program the program exports (-rdynamic) */
             const char* so = fgLibraryFile(c, library, ext);
-            NbCommand* link = nbCompilerCommand(c, toolchain, target, library->cFile, workDir, temp, true, NULL, false, "c", false, NULL, NULL, NULL, false);
+            NbCommand* link = nbCompilerCommand(c, lt, target, library->cFile, workDir, temp, true, NULL, false, "c", false, libUnitObjects->count > 0 ? libUnitObjects : NULL, NULL, NULL, false);
             const char* args = fcFmt(c, "%s -Wl,-soname,%s -lm", link->args, fcBaseName(so));
             NbRunResult run;
             if (b->dryRun) { NbCommand* k2 = (NbCommand*)fcAlloc(c, sizeof *k2); k2->exe = link->exe; k2->args = args; fcListAdd(c, commands, k2); continue; }
@@ -48425,11 +48637,11 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
             continue;
         }
         {
-            NbCommand* compile = nbCompilerCommand(c, toolchain, target, library->cFile, workDir, obj, false, NULL, false, "c", true, NULL, NULL, NULL, true);
+            NbCommand* compile = nbCompilerCommand(c, lt, target, library->cFile, workDir, obj, false, NULL, false, "c", true, NULL, NULL, NULL, true);
             NbCommand* archive;
             NbRunResult run;
             const char* lib = fgLibraryFile(c, library, ext);
-            archive = nbArchiveCommand(c, toolchain, temp, obj);
+            archive = nbArchiveCommand(c, lt, temp, nbObjectsArg(c, obj, libUnitObjects));
             if (b->dryRun) { fcListAdd(c, commands, compile); fcListAdd(c, commands, archive); continue; }
             fcBufFmt(&libLog, "%s %s\n", compile->exe, compile->args);
             run = nbRun(compile->exe, compile->args, workDir);
@@ -48446,16 +48658,47 @@ static NbResult nbBuildStatic(FcCtx* c, const NbBuild* b, NbConfig* config, cons
         }
     }
     if (dll && !b->dryRun) {
-        const char* failure = nbLinkDlls(c, toolchain, target, plan->libraries, missing, objects, cFile, workDir, &log);
+        const char* failure = nbLinkDlls(c, toolchain, target, plan->libraries, missing, objects, unitObjects, cFile, workDir, &log);
         if (failure) { r.error = failure; goto failed; }
     }
     /* (a library before the ones it needs: the linker resolves in that order) */
     libraries = fcListNew(c);
     watch = nbNowMs();
+    {
+        /* (the units of a package whose natives are in the program's file - no module of its own: compiled with the program and linked into it, as with
+         * linkage "source") */
+        FcList* all = nbPackageUnits(c, &store, instImports, linked);
+        NbToolchain* ut = NULL;
+        for (i = 0; i < all->count; i++) {
+            const NbPkgUnit* u = (const NbPkgUnit*)all->items[i];
+            const char* key = fcFmt(c, "pkg:%s", fcAsciiLower(c, u->import));
+            const char* file;
+            const char* unitObj;
+            NbCommand* compile;
+            NbRunResult run;
+            bool inModule = false;
+            for (k = 0; k < plan->libraries->count; k++) if (streq0(((FgStaticLibrary*)plan->libraries->items[k])->module, key)) inModule = true;
+            if (inModule) continue;
+            if (nbIsWatcom(kind))
+                fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "native-config: the package '%s' has a unit of its own (`native.units`), which the toolchain '%s' does not build.", u->import, kind));
+            if (!ut) ut = nbUnitToolchain(c, toolchain, false);
+            file = nbCombine(c, workDir, u->name);
+            unitObj = nbChangeExtension(c, file, streq0(kind, "msvc") ? ".obj" : ".o");
+            if (!nbCopyFile(c, u->file, file)) { r.error = fcFmt(c, "native-config: the unit '%s' of the package '%s' cannot be read.", u->file, u->import); goto failed; }
+            compile = nbCompilerCommand(c, ut, target, file, workDir, unitObj, false, NULL, gui, "c", true, NULL, NULL, NULL, false);
+            fcListAdd(c, libraries, (void*)unitObj);
+            if (b->dryRun) { fcListAdd(c, commands, compile); continue; }
+            fcBufFmt(&log, "%s %s\n", compile->exe, compile->args);
+            run = nbRun(compile->exe, compile->args, workDir);
+            nbAppendRun(&log, &run);
+            if (!run.ok || !nbFileExists(unitObj)) { r.error = fcFmt(c, "The C compiler reported errors in the unit '%s' of the package '%s' (see the build log).", fgFileNameOf(c, u->file), u->import); goto failed; }
+        }
+    }
     for (i = plan->libraries->count - 1; i >= 0; i--) fcListAdd(c, libraries, (void*)fgLibraryFile(c, (FgStaticLibrary*)plan->libraries->items[i], ext));
     if (config->stats && !shared && nsMapOptions(c, kind, "x")) statsMap = nsMapFileOf(c, exe);
     {
-        FcList* programCommands = nbBuildCommands(c, toolchain, target, cFile, nativesFile, workDir, exe, gui, libraries);
+        /* (the program gets the defines of the units its packages have, as with linkage "source") */
+        FcList* programCommands = nbBuildCommands(c, nbWithUnitDefines(c, toolchain, nbPackageUnits(c, &store, instImports, linked)), target, cFile, nativesFile, workDir, exe, gui, libraries);
         for (k = 0; k < programCommands->count; k++) {
             NbCommand* cmd = (NbCommand*)programCommands->items[k];
             const char* args = cmd->args;
@@ -62935,36 +63178,38 @@ static void pjLinkDirective(FcCtx* c, void* state, const char* name, FcList* arg
     }
     fcLinkerDirective(c, &P->L, name, args, line, importNamespaces);
 }
+/* ProjectNativeOverlay.Register for one native part: the package it stands for (also `forge serve`, serve_diag.c) */
+static FcPkgImport* pjOverlayImport(FcCtx* c, const PjNativePart* part, const char* version) {
+    FcPkgImport* pi = (FcPkgImport*)fcAlloc(c, sizeof *pi);
+    int k;
+    pi->name = part->importName;
+    pi->requires = fcListNew(c);
+    pi->hasNative = true;
+    pi->functions = fcListNew(c);
+    pi->returns = fcListNew(c);
+    pi->hosts = fcListNew(c);
+    for (k = 0; k < part->native->m.functions->count; k++) {
+        const FgPkgFn* fn = (const FgPkgFn*)part->native->m.functions->items[k];
+        fcListAdd(c, pi->functions, (void*)fn->name);
+        fcListAdd(c, pi->returns, (void*)fn->returns);
+        fcListAdd(c, pi->hosts, FC_IVAL(fn->host));
+    }
+    pi->dir = part->directory;
+    pi->packageName = fcFmt(c, "project:%s", part->projectName);
+    pi->packageVersion = version;
+    pi->overlay = true;
+    pi->overlayNative = &part->native->m;
+    pi->overlayBuildDir = nbCombine(c, nbCombine(c, part->directory, "obj"), "native");
+    pi->overlayFile = part->projectFile;
+    return pi;
+}
 /* ProjectNativeOverlay.Register: the native parts of the plan stand for packages that are not installed (before the installed ones) */
 static void pjOverlayRegister(FcCtx* c, FcStore* store, const PjPlan* plan) {
     FcList* parts = pjNativeParts(c, plan);
     FcList* merged = fcListNew(c);
-    int i, k;
+    int i;
     if (!store->loaded) fcStoreLoad(c, store);
-    for (i = 0; i < parts->count; i++) {
-        const PjNativePart* part = (const PjNativePart*)parts->items[i];
-        FcPkgImport* pi = (FcPkgImport*)fcAlloc(c, sizeof *pi);
-        pi->name = part->importName;
-        pi->requires = fcListNew(c);
-        pi->hasNative = true;
-        pi->functions = fcListNew(c);
-        pi->returns = fcListNew(c);
-        pi->hosts = fcListNew(c);
-        for (k = 0; k < part->native->m.functions->count; k++) {
-            const FgPkgFn* fn = (const FgPkgFn*)part->native->m.functions->items[k];
-            fcListAdd(c, pi->functions, (void*)fn->name);
-            fcListAdd(c, pi->returns, (void*)fn->returns);
-            fcListAdd(c, pi->hosts, FC_IVAL(fn->host));
-        }
-        pi->dir = part->directory;
-        pi->packageName = fcFmt(c, "project:%s", part->projectName);
-        pi->packageVersion = pjPackageVersion(c, plan->settings->version);
-        pi->overlay = true;
-        pi->overlayNative = &part->native->m;
-        pi->overlayBuildDir = nbCombine(c, nbCombine(c, part->directory, "obj"), "native");
-        pi->overlayFile = part->projectFile;
-        fcListAdd(c, merged, pi);
-    }
+    for (i = 0; i < parts->count; i++) fcListAdd(c, merged, pjOverlayImport(c, (const PjNativePart*)parts->items[i], pjPackageVersion(c, plan->settings->version)));
     for (i = 0; i < store->imports->count; i++) fcListAdd(c, merged, store->imports->items[i]);
     store->imports = merged;
 }
@@ -77099,8 +77344,8 @@ static SvType svResolveName(SvIndex* x, const char* name, int offset, int depth)
  *     not use (`private`: only in the declaring class, `protected`: also in its derived classes), at a class only the static members, at an object only
  *     the instance members (at `this.` both); an unknown type: the accessible instance members of the program's own classes (those of the libraries
  *     only when the program has none that fit what was typed, and only their API);
- *   - a name being typed: keywords, type keywords, the types reachable here without qualification, the top-level namespaces, the parameters and
- *     variables visible here, the members of the class around (in a static method only the static ones), named arguments `name: ` at the start of an
+ *   - a name being typed: keywords (the contextual ones - is, of, from, under, where - only where they mean something: svFitsContext), type keywords,
+ *     the types reachable here without qualification, the top-level namespaces, the parameters and variables visible here, the members of the class around (in a static method only the static ones), named arguments `name: ` at the start of an
  *     argument;
  *   - the score (CompareKeywords): what starts with the typed text first, exactly the typed case before, the shorter the name the better; the base
  *     scores: parameters and variables 0.25, members of the class 0.2 (less with every base), the own types 0.1, keywords 0.05, the library types 0;
@@ -77116,16 +77361,45 @@ typedef struct SvItem { const char* text; SvItemKind kind; float score; const ch
 static const char* const svKeywords[] = {
     "var", "func", "class", "construct", "destruct", "return",
     "if", "else", "while", "do", "for", "foreach", "in", "on", "new", "base", "this",
-    "try", "catch", "finally", "throw", "is", "of", "from", "under",
+    "try", "catch", "finally", "throw",
     "extern", "unsafe", "interface", "readonly", "enum", "override",
     "public", "private", "protected",
     "namespace",
-    "with", "extends", "switch", "case", "default", "break", "continue", "where",
+    "with", "extends", "switch", "case", "default", "break", "continue",
     "fire", "await", "dedicated", "until", "taking", "handover", "sync", "flat", "copy", "take", "replace", "leave", "terminate", "actor", "process", "operator", "defined", "trust",
     "true", "false", "undefined", "and", "or",
     "unit", "prefixed", "unprefixed", "coerce",
 };
 static const char* const svTypeKeywords[] = { "bool", "int", "float", "char", "string", "byte", "word", "any" };
+/* The contextual words (docs/language/01-basics.md "Keywords"): names everywhere, words only where they mean something - offered only there (svFitsContext) */
+static const char* const svContextualKeywords[] = { "is", "of", "from", "under", "where" };
+
+/* Does the contextual word `kw` mean something at `wordStart` (the start of the word being typed), as the parser reads it: `is` after an operand on the same
+ * line (`x is of T`, `x is in "m"`, `where T is of A`), `of`/`under` after `is`, `from` after `is` or `coerce`, `where` after the head of a generic class
+ * or method (`>` or `)`). */
+static bool svFitsContext(FcCtx* t, const uint16_t* s, int wordStart, const char* kw) {
+    int p = wordStart - 1, e, b;
+    const char* before = NULL;
+    bool r;
+    size_t i;
+    while (p >= 0 && svIsSpaceTab(s[p])) p--;
+    if (p < 0 || s[p] == '\n' || s[p] == '\r') return false;
+    if (streq0(kw, "where")) return s[p] == '>' || s[p] == ')';
+    if (!svIsWord(s[p])) return streq0(kw, "is") && (s[p] == ')' || s[p] == ']' || s[p] == '"' || s[p] == '\'');
+    e = p + 1;
+    for (b = p; b > 0 && svIsWord(s[b - 1]); b--) {}
+    before = fc8FromU16(t, s + b, e - b);
+    if (streq0(kw, "is")) {
+        /* (an operand: a name, a number, `this` - not a keyword that stands before an expression) */
+        r = true;
+        for (i = 0; i < sizeof svKeywords / sizeof svKeywords[0]; i++)
+            if (streq0(before, svKeywords[i]) && !streq0(before, "this") && !streq0(before, "true") && !streq0(before, "false") && !streq0(before, "undefined")) r = false;
+        for (i = 0; i < sizeof svContextualKeywords / sizeof svContextualKeywords[0]; i++) if (streq0(before, svContextualKeywords[i])) r = false;
+    }
+    else if (streq0(kw, "from")) r = streq0(before, "is") || streq0(before, "coerce");
+    else r = streq0(before, "is");
+    return r;
+}
 
 #define SV_OWN_TYPE_SCORE 0.1f
 
@@ -77376,6 +77650,9 @@ static void svGetIdentifierSuggestions(SvCompletion* q, int offset, const char* 
     int k;
     for (i = 0; i < sizeof svKeywords / sizeof svKeywords[0]; i++)
         if (svMatchesPrefix(svKeywords[i], prefix)) svAdd(q, svKeywords[i], CK_KEYWORD, svCompareKeywords(prefix, svKeywords[i], 0.05f), NULL, NULL);
+    for (i = 0; i < sizeof svContextualKeywords / sizeof svContextualKeywords[0]; i++)
+        if (svMatchesPrefix(svContextualKeywords[i], prefix) && svFitsContext(q->t, q->src, offset - fc8Units(prefix), svContextualKeywords[i]))
+            svAdd(q, svContextualKeywords[i], CK_KEYWORD, svCompareKeywords(prefix, svContextualKeywords[i], 0.05f), NULL, NULL);
     for (i = 0; i < sizeof svTypeKeywords / sizeof svTypeKeywords[0]; i++)
         if (svMatchesPrefix(svTypeKeywords[i], prefix)) svAdd(q, svTypeKeywords[i], CK_TYPEKEYWORD, svCompareKeywords(prefix, svTypeKeywords[i], 0.05f), NULL, NULL);
     svAddVisibleTypes(q, offset, prefix, true, true);
@@ -77556,9 +77833,11 @@ static FcList* svGetSuggestions(SvLang* S, SvIndex* x, int offset, int* replaceS
  * NamespaceOf; BuildPlan.LibraryOrder), on the frontend in C (linker.c). The prelude, the other files of the project (each a source of its own,
  * before the document), the libraries the program imports, the preludes of the `#import`s, the document as the last source; parser (the first error),
  * resolver and compiler (all their errors), the type check (warnings lax, errors strict). Only what lies in the document is reported (and the warnings
- * of the libraries, with their path). Not ported: the C++ natives of a library project (ProjectNativeOverlay), a standard library project's own
- * built-in natives (Linker.BuiltInKey), the check of all the files of a project at once (AnalyzeProjectFiles). Runs on the analysis thread: everything
- * in the context of the analysis, nothing shared with the requests. */
+ * of the libraries, with their path). The natives of the projects as the build has them (project/linkplan.c): the C++ natives of the project and of
+ * its libraries from their project files (`projectFile`: ProjectNativeOverlay - the project's own always, a library's when it is imported), a standard
+ * library project's own built-in natives (the bridge lists of graphics, windows, reflection: Linker.BuiltInKey). Not ported: the check of all the
+ * files of a project at once (AnalyzeProjectFiles). Runs on the analysis thread: everything in the context of the analysis, nothing shared with the
+ * requests. */
 
 typedef struct SvLib {
     FcList* names;        /* the names `#import` finds it by (plan.Libraries) */
@@ -77568,6 +77847,7 @@ typedef struct SvLib {
     FcList* requires;     /* names */
     SvFile* files;
     int nfiles;
+    const char* projectFile;   /* its .fireproj (its C++ natives), NULL: not known */
 } SvLib;
 
 typedef struct SvAnalysisIn {
@@ -77581,6 +77861,7 @@ typedef struct SvAnalysisIn {
     bool hasPlan;             /* a project (with or without libraries) */
     bool strict;
     const char* ownImport;    /* the import name of a library project itself, NULL: none */
+    const char* projectFile;  /* the project's .fireproj (its C++ natives), NULL: not known */
 } SvAnalysisIn;
 
 typedef struct SvAnalyzer {
@@ -77589,6 +77870,7 @@ typedef struct SvAnalyzer {
     const SvAnalysisIn* in;
     FcList* projectImports;   /* the imported libraries' import names */
     const char* preludePath;
+    FcDict* nativeLibs;       /* the lower import names of the libraries with C++ natives */
 } SvAnalyzer;
 
 static const SvLib* svLibFind(const SvAnalysisIn* in, const char* name) {
@@ -77607,7 +77889,57 @@ static bool svTryImportLibrary(SvAnalyzer* A, const char* name) {
     if (!lib) return false;
     for (i = 0; i < A->projectImports->count; i++) if (svEqIC((const char*)A->projectImports->items[i], lib->import)) known = true;
     if (!known) fcListAdd(A->c, A->projectImports, (void*)lib->import);
+    /* (the C++ of the library comes with it, as in pjLinkDirective) */
+    if (A->nativeLibs && fcDictHas(A->nativeLibs, svLowerAscii(A->c, lib->import))) fcSetAdd(&A->L->nativeImports, pjOverlayKey(A->c, lib->import));
     return true;
+}
+
+/* the native part of a project file (ProjectNatives.Resolve), NULL: none or it cannot be read */
+static PjNativePart* svNativePartOf(FcCtx* c, const char* projectFile) {
+    PjNativePart* volatile part = NULL;
+    if (!projectFile || !*projectFile) return NULL;
+    FC_TRY(c) {
+        PjLoaded* l = (PjLoaded*)fcAlloc(c, sizeof *l);
+        l->project = pjProjectLoad(c, projectFile);
+        part = pjNativesResolve(c, l, NULL);
+    } FC_CATCH(c) {
+        part = NULL;
+    } FC_END_TRY;
+    return part;
+}
+
+/* the natives of the projects as project/linkplan.c has them: ProjectNativeOverlay.Register (the project's and the libraries' C++ natives before
+ * the installed packages; the project's own import at once, a library's when it is imported) and a standard library's own built-in natives */
+static void svProjectNatives(SvAnalyzer* A) {
+    FcCtx* c = A->c;
+    FcLinker* L = A->L;
+    const SvAnalysisIn* in = A->in;
+    FcList* parts = fcListNew(c);
+    PjNativePart* own = svNativePartOf(c, in->projectFile);
+    int i;
+    if (own) fcListAdd(c, parts, own);
+    A->nativeLibs = fcDictNew(c, FC_KEY_STR);
+    for (i = 0; in->hasPlan && i < in->nlibs; i++) {
+        PjNativePart* part = svNativePartOf(c, in->libs[i].projectFile);
+        if (!part) continue;
+        fcListAdd(c, parts, part);
+        fcSetAdd(A->nativeLibs, svLowerAscii(c, in->libs[i].import));
+    }
+    if (parts->count > 0) {
+        FcList* merged = fcListNew(c);
+        if (!L->store.loaded) fcStoreLoad(c, &L->store);
+        for (i = 0; i < parts->count; i++) fcListAdd(c, merged, pjOverlayImport(c, (const PjNativePart*)parts->items[i], ""));
+        for (i = 0; i < L->store.imports->count; i++) fcListAdd(c, merged, L->store.imports->items[i]);
+        L->store.imports = merged;
+    }
+    if (own) fcSetAdd(&L->nativeImports, pjOverlayKey(c, own->importName));
+    /* Linker.BuiltInKey: the natives of the VM that a standard library of an import the compiler knows has (its prelude is the project's own files) */
+    if (in->ownImport) {
+        const char* lower = svLowerAscii(c, in->ownImport);
+        if (streq0(lower, "graphics")) fcRegisterBridge(L, FC_BRIDGE_graphics);
+        else if (streq0(lower, "windows")) fcRegisterBridge(L, FC_BRIDGE_windows);
+        else if (streq0(lower, "reflection")) fcRegisterBridge(L, FC_BRIDGE_reflection);
+    }
 }
 
 /* ProjectLibraries.UnknownHint */
@@ -77807,6 +78139,7 @@ FIRE_NATIVE(37, "__SbCall", 0)
         c->resourceNames = NULL;
         c->directiveHook = svAnalysisDirective;
         c->directiveState = &A;
+        svProjectNatives(&A);
         if (extraImports)
             for (i = 0; i < extraImports->count; i++) {
                 const char* name = (const char*)extraImports->items[i];
@@ -78072,8 +78405,8 @@ static char* svDup(const char* s) { size_t n; char* r; if (!s) return NULL; n = 
 
 /* ---- documents and projects ---- */
 typedef struct SvPFile { char* path; SvText* text; } SvPFile;
-typedef struct SvPLib { char** names; int nnames; char* import; char* name; char* ns; char** requires; int nrequires; SvPFile* files; int nfiles; } SvPLib;
-typedef struct SvProject { char* key; SvPFile* files; int nfiles; SvPLib* libs; int nlibs; bool strict; char* ownImport; int stamp; } SvProject;
+typedef struct SvPLib { char** names; int nnames; char* import; char* name; char* ns; char** requires; int nrequires; SvPFile* files; int nfiles; char* projectFile; } SvPLib;
+typedef struct SvProject { char* key; SvPFile* files; int nfiles; SvPLib* libs; int nlibs; bool strict; char* ownImport; char* projectFile; int stamp; } SvProject;
 
 #define SV_REMEMBERED 4
 
@@ -78249,7 +78582,7 @@ typedef struct SvJob {
     SvText* text;
     SvText** others; char** otherPaths; int nothers;
     SvProject* project;          /* (only the scalar settings are read) */
-    bool strict; char* ownImport;
+    bool strict; char* ownImport; char* projectFile;
     int nlibs;
     SvLib* libs;                 /* built in the job's context */
     SvText** libTexts; int nlibTexts;
@@ -78273,6 +78606,7 @@ static SvJob* svTakeJob(SvServer* S, SvDoc* d) {
     if (p) {
         j->strict = p->strict;
         j->ownImport = svDup(p->ownImport);
+        j->projectFile = svDup(p->projectFile);
         j->others = (SvText**)calloc((size_t)p->nfiles + 1, sizeof(SvText*));
         j->otherPaths = (char**)calloc((size_t)p->nfiles + 1, sizeof(char*));
         for (i = 0; i < p->nfiles; i++) {
@@ -78298,6 +78632,7 @@ static SvJob* svTakeJob(SvServer* S, SvDoc* d) {
             l->ns = fcStr(j->c, pl->ns);
             l->requires = fcListNew(j->c);
             for (k = 0; k < pl->nrequires; k++) fcListAdd(j->c, l->requires, (void*)fcStr(j->c, pl->requires[k]));
+            l->projectFile = fcStr(j->c, pl->projectFile);
             l->nfiles = pl->nfiles;
             l->files = (SvFile*)fcAlloc(j->c, sizeof(SvFile) * (size_t)(pl->nfiles + 1));
             for (k = 0; k < pl->nfiles; k++) {
@@ -78321,7 +78656,7 @@ static void svFreeJob(SvJob* j) {
     for (i = 0; i < j->nothers; i++) { svTextUnref(j->others[i]); free(j->otherPaths[i]); }
     for (i = 0; i < j->nlibTexts; i++) svTextUnref(j->libTexts[i]);
     free(j->others); free(j->otherPaths); free(j->libTexts);
-    free(j->path); free(j->base); free(j->ownImport);
+    free(j->path); free(j->base); free(j->ownImport); free(j->projectFile);
     svFreeCtx(j->c);
     free(j);
 }
@@ -78364,6 +78699,7 @@ static char* svRunJob(SvServer* S, SvLang* lang, SvJob* j) {
     in.hasPlan = j->libs != NULL;
     in.strict = j->strict;
     in.ownImport = j->ownImport;
+    in.projectFile = j->projectFile;
     lang->tmp = svNewCtx();
     diags = svAnalyzeInProject(j->c, lang, S->preludePath, S->storeRoot, &in);
     svFreeCtx(lang->tmp);
@@ -78555,10 +78891,10 @@ static void svProjectFree(SvProject* p) {
         SvPLib* l = &p->libs[i];
         for (k = 0; k < l->nnames; k++) free(l->names[k]);
         for (k = 0; k < l->nrequires; k++) free(l->requires[k]);
-        free(l->names); free(l->requires); free(l->import); free(l->name); free(l->ns);
+        free(l->names); free(l->requires); free(l->import); free(l->name); free(l->ns); free(l->projectFile);
         svFreeFiles(l->files, l->nfiles);
     }
-    free(p->libs); free(p->key); free(p->ownImport);
+    free(p->libs); free(p->key); free(p->ownImport); free(p->projectFile);
     free(p);
 }
 
@@ -78904,6 +79240,7 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
                 p->stamp = (int)++S->clock;
                 p->strict = tc && svEqIC(tc, "strict");
                 p->ownImport = svJBool(params, "library") ? svDup(svJStr(params, "projectImport")) : NULL;
+                p->projectFile = svDup(svJStr(params, "projectFile"));
                 svUnlock(&S->mu);   /* (reading the files from the disk without the lock) */
                 svFileList(&mc, fcJsonGet(params, "files"), &p->files, &p->nfiles);
                 if (libs && libs->kind == FJ_ARR) {
@@ -78915,6 +79252,7 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
                         pl->import = svDup(svJStr(l, "import"));
                         pl->name = svDup(svJStr(l, "name") ? svJStr(l, "name") : pl->import);
                         pl->ns = svDup(svJStr(l, "namespace"));
+                        pl->projectFile = svDup(svJStr(l, "projectFile"));
                         pl->names = svStrArray(fcJsonGet(l, "names"), &pl->nnames);
                         if (pl->nnames == 0) { free(pl->names); pl->names = (char**)calloc(2, sizeof(char*)); pl->names[0] = svDup(pl->import); pl->nnames = 1; }
                         pl->requires = svStrArray(fcJsonGet(l, "requires"), &pl->nrequires);

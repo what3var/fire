@@ -628,7 +628,7 @@ static void jsWriteValue(JsWriter* w, Value v, const char* type, const void* con
                 jsPush16(J, &w->out, '[');
                 for (k = 0; k < b->length; k++) {
                     if (k) jsPush16(J, &w->out, ',');
-                    snprintf(t, sizeof t, "%llu", (unsigned long long)bufWords(b)[k]);
+                    snprintf(t, sizeof t, "%llu", (unsigned long long)bufWordGet(b, k));
                     jsAscii(J, &w->out, t);
                 }
                 jsPush16(J, &w->out, ']');
@@ -1113,7 +1113,7 @@ static Value jsBuildArray(JsReader* r, JsNode* a, const char* type, OwnList* own
         }
         if (jsEq(element, "word") && !r->plain) {
             /* a word array (`word data[]`): a buffer of machine words (SPEC 8.10) */
-            Buf* buf = allocBufOf((uint32_t)a->nitems, (uint8_t)sizeof(FireWord), owner);
+            Buf* buf = allocBufOf((uint32_t)a->nitems, FIRE_WORD_ELEM, owner);
             Value bv = BufV(buf);
             for (i = 0; i < a->nitems; i++) {
                 JsNode* item = a->items[i];
@@ -1121,7 +1121,7 @@ static Value jsBuildArray(JsReader* r, JsNode* a, const char* type, OwnList* own
                 if (item->kind != JN_NUMBER) return jsReadFail(r, jsCat(J, jsIndexPath(J, path, i), ": expected a whole number."));
                 wv = jsReadNumber(r, item->num, true, "word", 0, jsIndexPath(J, path, i));
                 if (J->failed) return bv;
-                bufWords(buf)[i] = (FireWord)wv.w;
+                bufWordSet(buf, (uint32_t)i, wv.w);
             }
             if (hasId) jsIdSet(r, id, bv);
             return bv;

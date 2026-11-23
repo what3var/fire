@@ -1,0 +1,51 @@
+class Maker {
+    List<int> kept = new List<int>()
+    static List<int> Make() {
+        var l = new List<int>()
+        l.Add(7)
+        return l
+    }
+    List<int> Fresh() { return new List<int>() }
+    List<int> Kept() { return this.kept }
+    List<int> Maybe() { return new List<int>() }
+    List<int> Given() {
+        var g = new List<int>()
+        g.TakeTo(this)
+        return g
+    }
+}
+class Sub : Maker {
+    override List<int> Maybe() { return this.kept }
+}
+class Holder {
+    List<int> a
+    List<int> b
+    List<int> c
+    List<int> d
+    List<int> e
+    List<int> f
+    construct(Maker m) {
+        var x = Maker.Make()
+        this.a = x
+        var y = m.Fresh()
+        this.b = y
+        var z = m.Kept()
+        this.c = z
+        var w = m.Maybe()
+        this.d = w
+        var v = Maker.Make()
+        this.e = take v
+        var u = m.Given()
+        this.f = u
+    }
+}
+var maker = new Sub()
+var h = new Holder(maker)
+try { print(h.a.Count) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+try { print(h.b.Count) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+print(h.c.Count)
+print(h.d.Count)
+print(h.e.Count)
+print(h.f.Count)
+//# modes: Release
+//# name: types: TC036 - a value a call hands back with its ownership (every `return` of the method gives a new value of its own, and no override returns another) stored plainly in a field; not a field the method returns, not a local the method gives away (TakeTo, take, an argument, stored), not a method a derived class overrides with one, not with `take`

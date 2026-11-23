@@ -115,8 +115,8 @@ static char* svDup(const char* s) { size_t n; char* r; if (!s) return NULL; n = 
 
 /* ---- documents and projects ---- */
 typedef struct SvPFile { char* path; SvText* text; } SvPFile;
-typedef struct SvPLib { char** names; int nnames; char* import; char* name; char* ns; char** requires; int nrequires; SvPFile* files; int nfiles; } SvPLib;
-typedef struct SvProject { char* key; SvPFile* files; int nfiles; SvPLib* libs; int nlibs; bool strict; char* ownImport; int stamp; } SvProject;
+typedef struct SvPLib { char** names; int nnames; char* import; char* name; char* ns; char** requires; int nrequires; SvPFile* files; int nfiles; char* projectFile; } SvPLib;
+typedef struct SvProject { char* key; SvPFile* files; int nfiles; SvPLib* libs; int nlibs; bool strict; char* ownImport; char* projectFile; int stamp; } SvProject;
 
 #define SV_REMEMBERED 4
 
@@ -292,7 +292,7 @@ typedef struct SvJob {
     SvText* text;
     SvText** others; char** otherPaths; int nothers;
     SvProject* project;          /* (only the scalar settings are read) */
-    bool strict; char* ownImport;
+    bool strict; char* ownImport; char* projectFile;
     int nlibs;
     SvLib* libs;                 /* built in the job's context */
     SvText** libTexts; int nlibTexts;
@@ -316,6 +316,7 @@ static SvJob* svTakeJob(SvServer* S, SvDoc* d) {
     if (p) {
         j->strict = p->strict;
         j->ownImport = svDup(p->ownImport);
+        j->projectFile = svDup(p->projectFile);
         j->others = (SvText**)calloc((size_t)p->nfiles + 1, sizeof(SvText*));
         j->otherPaths = (char**)calloc((size_t)p->nfiles + 1, sizeof(char*));
         for (i = 0; i < p->nfiles; i++) {
@@ -341,6 +342,7 @@ static SvJob* svTakeJob(SvServer* S, SvDoc* d) {
             l->ns = fcStr(j->c, pl->ns);
             l->requires = fcListNew(j->c);
             for (k = 0; k < pl->nrequires; k++) fcListAdd(j->c, l->requires, (void*)fcStr(j->c, pl->requires[k]));
+            l->projectFile = fcStr(j->c, pl->projectFile);
             l->nfiles = pl->nfiles;
             l->files = (SvFile*)fcAlloc(j->c, sizeof(SvFile) * (size_t)(pl->nfiles + 1));
             for (k = 0; k < pl->nfiles; k++) {
@@ -364,7 +366,7 @@ static void svFreeJob(SvJob* j) {
     for (i = 0; i < j->nothers; i++) { svTextUnref(j->others[i]); free(j->otherPaths[i]); }
     for (i = 0; i < j->nlibTexts; i++) svTextUnref(j->libTexts[i]);
     free(j->others); free(j->otherPaths); free(j->libTexts);
-    free(j->path); free(j->base); free(j->ownImport);
+    free(j->path); free(j->base); free(j->ownImport); free(j->projectFile);
     svFreeCtx(j->c);
     free(j);
 }
@@ -407,6 +409,7 @@ static char* svRunJob(SvServer* S, SvLang* lang, SvJob* j) {
     in.hasPlan = j->libs != NULL;
     in.strict = j->strict;
     in.ownImport = j->ownImport;
+    in.projectFile = j->projectFile;
     lang->tmp = svNewCtx();
     diags = svAnalyzeInProject(j->c, lang, S->preludePath, S->storeRoot, &in);
     svFreeCtx(lang->tmp);
@@ -598,10 +601,10 @@ static void svProjectFree(SvProject* p) {
         SvPLib* l = &p->libs[i];
         for (k = 0; k < l->nnames; k++) free(l->names[k]);
         for (k = 0; k < l->nrequires; k++) free(l->requires[k]);
-        free(l->names); free(l->requires); free(l->import); free(l->name); free(l->ns);
+        free(l->names); free(l->requires); free(l->import); free(l->name); free(l->ns); free(l->projectFile);
         svFreeFiles(l->files, l->nfiles);
     }
-    free(p->libs); free(p->key); free(p->ownImport);
+    free(p->libs); free(p->key); free(p->ownImport); free(p->projectFile);
     free(p);
 }
 
@@ -947,6 +950,7 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
                 p->stamp = (int)++S->clock;
                 p->strict = tc && svEqIC(tc, "strict");
                 p->ownImport = svJBool(params, "library") ? svDup(svJStr(params, "projectImport")) : NULL;
+                p->projectFile = svDup(svJStr(params, "projectFile"));
                 svUnlock(&S->mu);   /* (reading the files from the disk without the lock) */
                 svFileList(&mc, fcJsonGet(params, "files"), &p->files, &p->nfiles);
                 if (libs && libs->kind == FJ_ARR) {
@@ -958,6 +962,7 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
                         pl->import = svDup(svJStr(l, "import"));
                         pl->name = svDup(svJStr(l, "name") ? svJStr(l, "name") : pl->import);
                         pl->ns = svDup(svJStr(l, "namespace"));
+                        pl->projectFile = svDup(svJStr(l, "projectFile"));
                         pl->names = svStrArray(fcJsonGet(l, "names"), &pl->nnames);
                         if (pl->nnames == 0) { free(pl->names); pl->names = (char**)calloc(2, sizeof(char*)); pl->names[0] = svDup(pl->import); pl->nnames = 1; }
                         pl->requires = svStrArray(fcJsonGet(l, "requires"), &pl->nrequires);
