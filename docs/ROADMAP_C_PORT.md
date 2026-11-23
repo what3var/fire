@@ -469,6 +469,15 @@ Wortpuffer eines 16-Bit-Ziels an eine Bibliothek. **Offen** dabei: die C-VM rech
 nimmt es aber nicht) - die C#-VM nahm die Breite des Ziels; die Vergleiche dos16/bios16/win16 mit Open Watcom, DOSBox-X, QEMU und Wine (auf dieser Maschine
 nicht vorhanden, ungeprüft) weichen deshalb in der Zeile eines `word` ab, sobald die Werkzeuge da sind.
 
+**Geprüft** (23.11.2026, Linux x64, nach dem Entfernen): Builds von `fire.Compiler`, spark, `fire.Testing` und `fire.Benchmarks` (Release) ohne Fehler,
+`cc -O2 native/forge/forge.c` übersetzt; einzeln grün: `tables` 8, `cvmrun` 26, `drivers` 10, `previews` 10, `trace` 27, `debugger` 43, `testing` 32,
+`packer` 46, `programfile` 138, `types` 268, `diagnostics` 76, `circuiteditor` 63, `linkage` 124 (36 min); die Standardrunde ohne `native`
+(`FIRE_TEST_NO_NATIVE=1`, 13 min): 2206 Prüfungen, rot nur der Fehler, der schon vorher da war (die Sprachdoku verlinkt `../spec/PLUGINS.md`). Fünf
+Laufzeitfehler aus den Prüfungen der C#-VM sind jetzt Fälle in `tests/cases/smoke` (0590-0630). Unter Xvfb mit spark (über das Werkzeug `run` des
+MCP-Servers): ein Konsolenprogramm (Ausgabe im Output-Panel) und ein Fensterprogramm (sein Fenster aus `fire`).
+**Gefunden** (nicht behoben): der Trace einer Ausnahme, die beim Eintritt in eine Methode geworfen wird (die Signatur eines Lambda-Arguments passt
+nicht), nennt für die Methode `(prelude)` statt ihrer Quelle und Zeile (`at Runner2.Execute (prelude)`, `smoke/0610` - der Fall prüft den Trace nicht).
+
 Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt die `Value` der VM direkt, keine Kopien, Objekte dürfen hinüber).
 
 ### Phase C - das Frontend in C
