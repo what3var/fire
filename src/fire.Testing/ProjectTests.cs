@@ -632,7 +632,7 @@ static class ProjectTests
         ForgeCheck.Install(store.Root, forged.PackagePath);
         var installedCatalog = TemplateCatalog.Load(builtinRoot: Path.Combine(root, "nope1"), userRoot: Path.Combine(root, "nope2"), store: store);
         var starterApp = installedCatalog.Find(TemplateScope.Project, "Starter App");
-        Check("Vorlagen: die Templates eines installierten Pakets stehen in der Liste", starterApp != null && starterApp.Source == "From tpkg 1.0.0" && starterApp.AddPackageReference && installedCatalog.Find(TemplateScope.Code, "Tpkg Thing") != null && installedCatalog.All.Count == 2, string.Join(",", installedCatalog.All.Select(x => x.Display)));
+        Check("Vorlagen: die Templates eines installierten Pakets stehen in der Liste", starterApp != null && starterApp.Source == "From tpkg 1.0.0" && starterApp.AddPackageReference && installedCatalog.Find(TemplateScope.Code, "Tpkg Thing") != null && installedCatalog.All.Count(x => x.Source == "From tpkg 1.0.0") == 2   /* (ember installs the standard packages into the store too: their templates are there as well) */, string.Join(",", installedCatalog.All.Select(x => x.Display)));
         string starterProject = TemplateInstaller.CreateProject(starterApp!, Path.Combine(t, "from-package"), "Fresh");
         var fresh = FireProject.Load(starterProject);
         Check("Vorlagen: ein Projekt aus dem Template eines Pakets verweist auf das Paket", fresh.References.Count == 1 && fresh.References[0].Package == "tpkg" && fresh.References[0].Version == "1.0.0" && File.ReadAllText(Path.Combine(t, "from-package", "Fresh", "main.script")).Contains("Fresh starts"));
@@ -972,6 +972,7 @@ static class ForgeCheck
             int n = 0;
             foreach (var f in plan.Sources.Concat(plan.Libraries.Values.Distinct().SelectMany(l => l.Sources)))
             {
+                if (FireProject.IsMarkupFile(f.Path)) continue;   // (forge reads a markup file itself: its text in the plan is the generated script)
                 string onDisk;
                 try { onDisk = File.ReadAllText(f.Path); } catch (IOException) { onDisk = ""; }
                 if (onDisk == f.Text) continue;

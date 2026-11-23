@@ -257,10 +257,10 @@ static class ServeTests
         Compare("ein Syntaxfehler in der Bibliothek", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, greeter) ? "class Greeter {\n    static string Hello(string name { return name }\n}\n" : null,
             d => Errs(d, x => x.File != null && fire.Projects.ProjectFiles.PathComparer.Equals(x.File, greeter) && x.Line == 2));
         Compare("eine andere Datei kaputt: das Dokument allein", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, helper) ? "class Helper {\n    static int Twice(int x { return x }\n" : null,
-            d => Errs(d, x => x.Message.Contains("Nope")) && !d.Any(x => x.Message.Contains("Helper")));
+            d => Errs(d, x => x.Message.Contains("Nope")) && Errs(d, x => x.Message.Contains("Helper")));   // (the broken file is left out: Helper is unknown)
         Compare("unbekannter Import mit dem Hinweis auf die Bibliotheken", ws, "App", main, p => fire.Projects.ProjectFiles.PathComparer.Equals(p, Path.GetFullPath(main)) ? "#import \"Core\"\nprint(1)\n" : null,
             d => Errs(d, x => x.Line == 1 && x.Message.Contains("Core")));
-        Compare("eine Bibliothek selbst (ihr eigener Import)", ws, "Util", Path.Combine(root, "Util/text.fire"), expected: d => !d.Any(x => x.IsError));
+        Compare("eine Bibliothek selbst (ihr eigener Import)", ws, "Util", Path.Combine(root, "Util/text.fire"), expected: d => d.Count(x => x.IsError) == 1 && d.Any(x => x.Line == 1 && x.Message.Contains("core.lib")));   // (Util does not reference Core)
 
         // a big solution of this machine (read only)
         string? solution = Environment.GetEnvironmentVariable("FIRE_SERVE_SOLUTION");

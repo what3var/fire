@@ -36,8 +36,13 @@ Environment.SetEnvironmentVariable("FIRE_PACKAGES", store);
 fire.Projects.PackageStore.Default = new fire.Projects.PackageStore(store);
 Forge.Reset();
 var standardInstalled = StandardSources.EnsureInstalled(m => Console.WriteLine(m));
-if (fire.Projects.PackageStore.Default.Installed().Count < fire.Projects.StandardPackages.Bridges.Count)
-    Console.WriteLine($"FEHLER: Standardpakete: nur {fire.Projects.PackageStore.Default.Installed().Count} von {fire.Projects.StandardPackages.Bridges.Count} installiert");
+// (the list of the standard packages: StandardPackages.Bridges of fire.Project, kept the same as fcStandardBridges of forge-c - every one installed by forge)
+{
+    var installedNames = fire.Projects.PackageStore.Default.Installed().Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var missing = fire.Projects.StandardPackages.Bridges.Select(fire.Projects.StandardPackages.PackageNameOf).Where(n => !installedNames.Contains(n)).ToList();
+    Console.WriteLine(missing.Count == 0 ? $"OK: Standardpakete: alle {fire.Projects.StandardPackages.Bridges.Count} von forge installiert"
+        : $"FEHLER: Standardpakete: {missing.Count} von {fire.Projects.StandardPackages.Bridges.Count} nicht installiert ({string.Join(", ", missing)})");
+}
 
 // Fonts for the tests: a synthetic TrueType font of about 1 KB, written as "FireSans.ttf" into a folder that FIRE_FONT_DIRS names (the previews draw text with it).
 byte[] fireTestFont = Convert.FromBase64String("AAEAAAALAIAAAwAwT1MvMkUCRH0AAAE4AAAAYGNtYXACMAFTAAABvAAAAGxnbHlmPzzozgAAAjwAAAEGaGVhZC+Ah2AAAAC8AAAANmhoZWEGEAH+AAAA9AAAACRobXR4EyQCWAAAAZgAAAAka2Vybv/h//wAAANEAAAAJGxvY2EBEQFeAAACKAAAABRtYXhwABAAGgAAARgAAAAgbmFtZaJXW7UAAANoAAAAZnBvc3QEn3EYAAAD0AAAADgAAQAAAAEAAEv3EAlfDzz1AAMD6AAAAADm8CF+AAAAAObwIX4AAAAAAooDhAAAAAMAAgAAAAAAAAABAAADIP84AGQCvAAAAAACigABAAAAAAAAAAAAAAAAAAAACQABAAAACQAQAAIABwACAAIAAAAAAAAAAAAAAAAAAgABAAMCIAGQAAUABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAD8/Pz8AAAAgAMEDIP84AAADIADIAAAAAAAAAAAAAAAAAAAAIAAAAlgAZAEsAAACvAAyAlgAAAK8AGQCvABkASwAZAK8ADIBLABkAAAAAgAAAAMAAAAUAAMAAQAAABQABABYAAAAEgAQAAMAAgAgAC4AQQBIAE8AVgBpAMH//wAAACAALgBBAEgATwBWAGkAwf///+H/2P/B/73/tf+t/5//RgABAAAAAAAAAAAAAAAAAAAAAAAAAAAADQANABoALQBJAGAAawB3AIMAAQBkAAAB9AK8AAMAADMRIRFkAZACvP1EAAABADIAAAKKArwAAgAAMwEBMgEsASwCvP1EAAEAAAAAAlgCvAAFAAARAQEjAwMBLAEseLS0Arz9RAK8/j4BwgAAAgBkAAACWAK8AAcADwAAExAzMhEQIyITFDMyNTQjImT6+vr6eIKCgoIBXgFe/qL+ogFelpaWAAABAGQAAAJYArwACwAAMxEzESERMxEjESERZGQBLGRk/tQCvP7UASz9RAEs/tQAAQBkAAAAyAB4AAMAADM1MxVkZHh4//8AMgAAAooDhAAmAAIAAAAHAAYA+gMMAAEAZAAAAMgCvAADAAAzETMRZGQCvP1EAAAAAAABAAAAIAABAAMADAABAAYAAgAD/7AAAwAC/8QABQAEAB4AAAAEADYAAQAAAAAAAQAJAAAAAQAAAAAAAgAHAAkAAwABBAkAAQASABAAAwABBAkAAgAOACJGaXJlIFRlc3RSZWd1bGFyAEYAaQByAGUAIABUAGUAcwB0AFIAZQBnAHUAbABhAHIAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkAAAADACQAOQAyACsBAgDJAEwDZG90");

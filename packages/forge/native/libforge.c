@@ -67147,9 +67147,46 @@ static const char* trWithTrace(FcCtx* c, const char* text) {
     for (i = first; i < cut; i++) { fcBufChar(&b, '\n'); fcBufStr(&b, (const char*)lines->items[i]); }
     return fcBufDone(c, &b);
 }
+/* `forge test --report json` (M3: spark's test explorer): one JSON object per line on stdout, as the run goes - `run` (a run begins: its title), `start` (a test
+ * begins), `result` (a test is over: status passed|failed|error, message, what it printed), `problem` (not a test: an attribute, a test object that could not
+ * be made, a program that stopped), `error` (the run could not be compiled: the errors as forge prints them), `done` (the run is over: seconds and counts),
+ * `end` (all is over: ok, the exit code). Without it: the summary as text. */
+static bool trReport;
+static const char* trReportRun;   /* the title of the run that is going */
+static void trEmitBegin(FcBuf* b, const char* type) { fcBufStr(b, "{\"type\":"); fcEsc(b, type); if (trReportRun) { fcBufStr(b, ",\"run\":"); fcEsc(b, trReportRun); } }
+static void trEmitStr(FcBuf* b, const char* key, const char* value) { fcBufFmt(b, ",\"%s\":", key); fcEsc(b, value ? value : ""); }
+static void trEmitEnd(FcBuf* b) { fcBufStr(b, "}\n"); fwrite(b->p, 1, b->len, stdout); fflush(stdout); fcBufFree(b); }
+static void trEmitResult(const TrResult* r, bool started) {
+    FcBuf b = {0};
+    fcBufStr(&b, "");
+    trEmitBegin(&b, started ? "start" : "result");
+    trEmitStr(&b, "class", r->cls); trEmitStr(&b, "method", r->method); trEmitStr(&b, "name", r->name); trEmitStr(&b, "description", r->description);
+    if (!started) {
+        trEmitStr(&b, "status", r->status == TR_PASSED ? "passed" : r->status == TR_FAILED ? "failed" : "error");
+        trEmitStr(&b, "message", r->message);
+        trEmitStr(&b, "output", r->output.p ? r->output.p : "");
+    }
+    trEmitEnd(&b);
+}
+static void trEmitText(const char* type, const char* text) {
+    FcBuf b = {0};
+    fcBufStr(&b, "");
+    trEmitBegin(&b, type);
+    trEmitStr(&b, "text", text);
+    trEmitEnd(&b);
+}
+/* a message of a run that could not be compiled (or another error): the error output, with --report json an event `error` */
+static void trErrorText(const char* text) {
+    size_t n = strlen(text);
+    if (!trReport) { fputs(text, stderr); return; }
+    while (n > 0 && (text[n - 1] == '\n' || text[n - 1] == '\r')) n--;
+    { FcCtx t; fcCtxInit(&t); trEmitText("error", fcStrN(&t, text, n)); fcCtxFree(&t); }
+}
+
 static void trClose(TrProtocol* p) {
     if (!p->current) return;
     if (!p->current->finished && !p->current->message[0]) p->current->message = "the test did not finish";
+    if (trReport) trEmitResult(p->current, false);
     p->current = NULL;
 }
 /* TestProtocol.Line */
@@ -67172,6 +67209,7 @@ static void trLine(TrProtocol* p, const char* line) {
         fcBufStr(&r->output, "");
         fcListAdd(c, p->run->results, r);
         p->current = r;
+        if (trReport) trEmitResult(r, true);
     } else if (strcmp(kind, "P") == 0) {
         if (p->current) { p->current->status = TR_PASSED; p->current->finished = true; }
     } else if (strcmp(kind, "F") == 0 || strcmp(kind, "E") == 0) {
@@ -67208,6 +67246,30 @@ static void trLines(TrProtocol* p, const char* text, size_t n) {
         } else i++;
     }
     if (start < n) trLine(p, fcStrN(p->c, text + start, n - start));
+}
+
+/* the protocol that reads the output of the program while it runs (--report json: the events come live); NULL: it is read when the program has ended */
+static TrProtocol* trLive;
+static FcBuf trLivePending;
+static void trLiveFeed(const char* data, size_t n) {
+    size_t i, start = 0;
+    if (!trLive) return;
+    for (i = 0; i < n; i++) {
+        if (data[i] == '\n') {
+            size_t len;
+            fcBufPut(&trLivePending, data + start, i - start);
+            len = trLivePending.len;
+            if (len > 0 && trLivePending.p[len - 1] == '\r') len--;
+            trLine(trLive, fcStrN(trLive->c, len ? trLivePending.p : "", len));
+            trLivePending.len = 0;
+            start = i + 1;
+        }
+    }
+    if (start < n) fcBufPut(&trLivePending, data + start, n - start);
+}
+static void trLiveFlush(void) {
+    if (trLive && trLivePending.len > 0) trLine(trLive, fcStrN(trLive->c, trLivePending.p, trLivePending.len));
+    trLivePending.len = 0;
 }
 
 /* a program with its arguments: what it writes to stdout and stderr, its exit code (Process.ExitCode: 128 + the signal when one ended it) */
@@ -67249,7 +67311,7 @@ static int trExec(FcCtx* c, char** argv, FcBuf* out, FcBuf* err) {
             ssize_t n;
             if (fds[k].fd < 0 || !(fds[k].revents & (POLLIN | POLLHUP | POLLERR))) continue;
             n = read(fds[k].fd, buf, sizeof buf);
-            if (n > 0) fcBufPut(k == 0 ? out : err, buf, (size_t)n);
+            if (n > 0) { fcBufPut(k == 0 ? out : err, buf, (size_t)n); if (k == 0) trLiveFeed(buf, (size_t)n); }
             else { close(fds[k].fd); fds[k].fd = -1; }
         }
     }
@@ -67292,6 +67354,9 @@ typedef struct TrArgs {
     int floatWidth, intWidth, types;   /* -f, -i (0: none), --types (-1: none) */
     NbConfig* (*config)(FcCtx* c, const struct TrArgs* a);   /* the configuration of --engine native with the switches of the command line (KeepAll) */
     const void* options;    /* (the TcOptions of tools/commands.c) */
+    bool report;            /* --report json */
+    bool overlays;          /* --overlay: the texts of files from other files (an editor's unsaved text) */
+    void (*planHook)(FcCtx* c, const void* options, PjPlan* plan);   /* the overlays into the plan of a project */
 } TrArgs;
 /* (tools/commands.c) a plan of texts without a project: the files with the defines and the type checking of the command line */
 static PjPlan* tcTestFilesPlan(FcCtx* c, FcList* paths, FcList* defines, int types);
@@ -67309,7 +67374,7 @@ static void trPlanOptions(FcCtx* c, const TrArgs* a, PjPlan* plan) {
     plan->settings = s;
 }
 /* the files need the link of a plan (several, or what the link of one file does not take) */
-static bool trPlanWanted(const TrArgs* a) { return (a->files && a->files->count > 1) || (a->defines && a->defines->count > 0) || a->floatWidth || a->intWidth || a->types >= 0; }
+static bool trPlanWanted(const TrArgs* a) { return (a->files && a->files->count > 1) || (a->defines && a->defines->count > 0) || a->floatWidth || a->intWidth || a->types >= 0 || a->overlays; }
 
 /* the VM for the widths of a program (CVm.Locate: FIRE_VM_EXE, next to forge-c, in the cache, or built into it now - build/cvm.c; the C# forge runs the
  * tests in its own VM) */
@@ -67409,10 +67474,13 @@ static TrRun* trRunInVm(FcCtx* c, const char* title, const TrArgs* a, PjPlan* pl
         fcBufFree(&fbc);
         argv[0] = (char*)vm; argv[1] = (char*)"run"; argv[2] = (char*)file; argv[3] = NULL;
         fcBufStr(&out, ""); fcBufStr(&err, "");
+#ifndef _WIN32
+        if (trReport) trLive = &p;
+#endif
         code = trExec(c, argv, &out, &err);
         trPkgPath = NULL;
         trRemoveTree(dir);
-        trLines(&p, out.p, out.len);
+        if (trLive) { trLiveFlush(); trLive = NULL; } else trLines(&p, out.p, out.len);
         if (!p.done) {
             /* (the VM in C reports an exception nobody caught as UncaughtScriptException does: "Unhandled exception of type 'X': message") */
             const char* unhandled = strstr(err.p, "Unhandled exception of type ");
@@ -67548,7 +67616,7 @@ static const char* trFindHere(FcCtx* c, const char* extension, int* count) {
 }
 
 /* the line of a compile error of a run (DescribeErrors, after the title) */
-static void trDescribe(FcCtx* step, const char* title, FILE* err) {
+static void trDescribe(FcCtx* step, const char* title) {
     FcList* diags = fcDiagnosticsOf(step, &step->err, NULL);
     FcBuf b = {0};
     int i;
@@ -67558,8 +67626,39 @@ static void trDescribe(FcCtx* step, const char* title, FILE* err) {
         fcDiagLogLine(&b, d);
     }
     if (diags->count == 0) fcBufChar(&b, '\n');
-    fwrite(b.p, 1, b.len, err);
+    trErrorText(b.p);
     fcBufFree(&b);
+}
+/* --report json: the end of all runs */
+static void trReportEnd(bool ok, int code) {
+    FcBuf b = {0};
+    if (!trReport) return;
+    trReportRun = NULL;
+    fcBufStr(&b, "");
+    trEmitBegin(&b, "end");
+    fcBufFmt(&b, ",\"ok\":%s,\"exitCode\":%d", ok ? "true" : "false", code);
+    trEmitEnd(&b);
+}
+/* --report json: a run begins, a run is over (its problems, its counts) */
+static void trReportBegin(const char* title) {
+    FcBuf b = {0};
+    if (!trReport) return;
+    trReportRun = NULL;
+    fcBufStr(&b, "");
+    trEmitBegin(&b, "run");
+    trEmitStr(&b, "title", title);
+    trEmitEnd(&b);
+    trReportRun = title;
+}
+static void trReportDone(const TrRun* run) {
+    FcBuf b = {0};
+    int i;
+    if (!trReport) return;
+    for (i = 0; i < run->problems->count; i++) trEmitText("problem", (const char*)run->problems->items[i]);
+    fcBufStr(&b, "");
+    trEmitBegin(&b, "done");
+    fcBufFmt(&b, ",\"seconds\":%.3f,\"passed\":%d,\"failed\":%d,\"errors\":%d", run->seconds, trCount(run, TR_PASSED), trCount(run, TR_FAILED), trCount(run, TR_ERROR));
+    trEmitEnd(&b);
 }
 
 /* `forge-c test [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m <mode>] [--filter A.B,C] [-D name] [-f 32|64] [-i 16|32|64]`
@@ -67589,6 +67688,8 @@ static int trTestRun(TrArgs* args, const char* prelude, const char* storeRoot) {
     }
     for (i = 0; i < a.files->count; i++) if (!nbFileExists((const char*)a.files->items[i])) { fprintf(stderr, "File not found: %s\n", (const char*)a.files->items[i]); fcCtxFree(c); return 2; }
     filter = a.filter ? tdFilterParse(c, a.filter) : NULL;
+    trReport = a.report;
+    trReportRun = NULL;
     engine = a.engine ? a.engine : "vm";
     runs = fcListNew(c);
     fcBufStr(&out, "");
@@ -67605,13 +67706,14 @@ static int trTestRun(TrArgs* args, const char* prelude, const char* storeRoot) {
 #define TR_GUARDED(title, call) do { \
         FcCtx step; \
         fcCtxInit(&step); step.collecting = true; \
-        FC_TRY(&step) { TrRun* run_ = (call); trWarnings(&step, stderr); fcListAdd(c, runs, run_); } \
+        trReportBegin(title); \
+        FC_TRY(&step) { TrRun* run_ = (call); trWarnings(&step, stderr); fcListAdd(c, runs, run_); trReportDone(run_); } \
         FC_CATCH(&step) { \
             trWarnings(&step, stderr); \
-            if (step.err.kind == FC_ERR_NATIVE) { fprintf(stderr, "%s: error E7001: Not supported by the native backend yet: %s\n", (title), step.err.message); compileFailed = true; } \
-            else if (pjIsCompileErrorKind(step.err.kind) || step.err.kind == FC_ERR_PROJECT) { trDescribe(&step, (title), stderr); compileFailed = true; } \
-            else if (step.err.kind == FC_ERR_INTERNAL && step.err.message && fcStartsWith(step.err.message, "native-config: ")) { fprintf(stderr, "%s\n", step.err.message + 15); compileFailed = true; } \
-            else { const char* m_ = step.err.message ? step.err.message : "internal error"; fprintf(stderr, "%s\n", fcStartsWith(m_, "vm: ") ? m_ + 4 : m_); fcCtxFree(&step); fcCtxFree(c); return 1; } \
+            if (step.err.kind == FC_ERR_NATIVE) { trErrorText(fcFmt(&step, "%s: error E7001: Not supported by the native backend yet: %s\n", (title), step.err.message)); compileFailed = true; } \
+            else if (pjIsCompileErrorKind(step.err.kind) || step.err.kind == FC_ERR_PROJECT) { trDescribe(&step, (title)); compileFailed = true; } \
+            else if (step.err.kind == FC_ERR_INTERNAL && step.err.message && fcStartsWith(step.err.message, "native-config: ")) { trErrorText(fcFmt(&step, "%s\n", step.err.message + 15)); compileFailed = true; } \
+            else { const char* m_ = step.err.message ? step.err.message : "internal error"; trErrorText(fcFmt(&step, "%s\n", fcStartsWith(m_, "vm: ") ? m_ + 4 : m_)); trReportEnd(false, 1); fcCtxFree(&step); fcCtxFree(c); return 1; } \
         } FC_END_TRY; \
         /* (the runs live in the context of their step: it is freed with the command) */ \
     } while (0)
@@ -67631,8 +67733,9 @@ static int trTestRun(TrArgs* args, const char* prelude, const char* storeRoot) {
         for (i = 0; i < projects->count; i++) {
             PjLoaded* project = (PjLoaded*)projects->items[i];
             PjPlan* plan = pjPlanCreate(w, project, true);
-            if (plan->errors->count > 0) { fprintf(stderr, "%s: %s\n", project->project->name, fgJoin(c, plan->errors, "\n")); compileFailed = true; continue; }
+            if (plan->errors->count > 0) { trReportBegin(project->project->name); trErrorText(fcFmt(c, "%s: %s\n", project->project->name, fgJoin(c, plan->errors, "\n"))); compileFailed = true; continue; }
             trPlanOptions(c, &a, plan);
+            if (a.planHook) a.planHook(c, a.options, plan);
             if (strcmp(engine, "native") == 0) TR_GUARDED(project->project->name, trRunNative(&step, project->project->name, &a, plan, NULL, filter, prelude, storeRoot, config));
             else TR_GUARDED(project->project->name, trRunInVm(&step, project->project->name, &a, plan, NULL, filter, prelude, storeRoot));
         }
@@ -67657,6 +67760,7 @@ static int trTestRun(TrArgs* args, const char* prelude, const char* storeRoot) {
             fcBufChar(&out, '\n');
         }
         if (runs->count > 1) fcBufFmt(&out, "All: %d tests, %d passed, %d failed, %d errors\n", all, passed, failed, errors);
+        if (trReport) { fcBufFree(&out); trReportEnd(ok, ok ? 0 : 1); fcCtxFree(c); return ok ? 0 : 1; }
         {
             FcBuf utf8 = {0};
             fcBufStr(&utf8, "");
@@ -68591,7 +68695,7 @@ static TcOptions* tcParse(FcCtx* c, int argc, char** argv) {
             o->keepAll = true;
         } else if (tcTryOption(arg, "--report", "--report", &inl)) {
             const char* v;
-            if (!tcIn(k, TC_BUILD, TC_PUBLISH, TC_BYTECODE)) TC_FAIL("--report is only available with build, publish and bytecode.");
+            if (!(tcIn(k, TC_BUILD, TC_PUBLISH, TC_BYTECODE) || k == TC_TEST)) TC_FAIL("--report is only available with build, publish, bytecode and test.");
             v = TC_NEXT(inl);
             if (!v || !fcAsciiIEq(tcUnquote(c, v), "json")) TC_FAIL("--report must be followed by json.");
             o->report = "json";
@@ -68600,7 +68704,7 @@ static TcOptions* tcParse(FcCtx* c, int argc, char** argv) {
             const char* text;
             const char* eq;
             int at;
-            if (!tcIn(k, TC_BUILD, TC_PUBLISH, TC_BYTECODE)) TC_FAIL("--overlay is only available with build, publish and bytecode.");
+            if (!(tcIn(k, TC_BUILD, TC_PUBLISH, TC_BYTECODE) || k == TC_TEST)) TC_FAIL("--overlay is only available with build, publish, bytecode and test.");
             v = TC_NEXT(inl);
             text = v ? tcUnquote(c, v) : NULL;
             eq = text ? strrchr(text, '=') : NULL;
@@ -68767,6 +68871,7 @@ static PjPlan* tcFilesPlan(FcCtx* c, const TcOptions* o, FcList* paths, FcList* 
 }
 /* the files of `forge test` (the Linker/NativeBuilder.Build with their paths, as `forge build <file>`: each `#include` from the folder of its file, a
  * message names its file) - each File.ReadAllText */
+static const TcOptions* tcTestOverlays;   /* `test --overlay`: the options with the overlays (NULL: none) */
 static PjPlan* tcTestFilesPlan(FcCtx* c, FcList* paths, FcList* defines, int types) {
     TcOptions o;
     FcList* texts = fcListNew(c);
@@ -68776,6 +68881,8 @@ static PjPlan* tcTestFilesPlan(FcCtx* c, FcList* paths, FcList* defines, int typ
     o.types = types;
     for (i = 0; i < paths->count; i++) {
         FcU16 t = {0};
+        const char* overlay = tcTestOverlays ? tcTextOf(c, tcTestOverlays, (const char*)paths->items[i]) : NULL;
+        if (overlay) { fcListAdd(c, texts, (void*)overlay); continue; }
         if (!fcReadText((const char*)paths->items[i], &t)) fcThrow(c, FC_ERR_INTERNAL, 0, 0, NULL, fcFmt(c, "cannot read '%s'", (const char*)paths->items[i]));
         fcListAdd(c, texts, (void*)fc8FromU16(c, t.p, t.len));
         fcU16Free(&t);
@@ -69126,12 +69233,15 @@ static NbConfig* tcTestConfig(FcCtx* c, const TrArgs* a) {
     b.keepAll = o->keepAll; b.stats = o->stats;
     return pjConfigFor(c, &b, a->file);
 }
+static void tcTestPlanHook(FcCtx* c, const void* options, PjPlan* plan) { tcApplyOverlays(c, (const TcOptions*)options, plan); }
 static int tcTest(const TcOptions* o, const char* prelude, const char* storeRoot) {
     TrArgs a;
     memset(&a, 0, sizeof a);
     a.files = o->files; a.projectName = o->projectName; a.engine = o->engine; a.filter = o->testFilter; a.toolchainName = o->toolchainName; a.configFile = o->configFile;
     a.mode = o->mode; a.keepAll = o->keepAll; a.defines = o->defines; a.floatWidth = o->floatWidth; a.intWidth = o->intWidth; a.types = o->types;
     a.config = tcTestConfig; a.options = o;
+    a.report = o->report != NULL; a.overlays = o->overlays->count > 0; a.planHook = tcTestPlanHook;
+    tcTestOverlays = a.overlays ? o : NULL;
     return trTestRun(&a, prelude, storeRoot);
 }
 
@@ -70850,16 +70960,35 @@ static void frEndChildren(void) {
 #endif
 }
 static void frOnSignal(int sig) { (void)sig; frCancel = 1; }
+/* the input, line by line: read() on the descriptor, not fgets on stdin - a thread blocked in fgets holds the lock of stdin, and exit() (which flushes every
+ * FILE, stdin too) would wait for it for ever: a forge whose input stays open (spark keeps it open for "cancel") never ended after its report */
 static void* frReadInput(void* arg) {
     char line[512];
+    size_t len = 0;
     (void)arg;
-    while (fgets(line, sizeof line, stdin)) {
-        size_t a = 0, n = strlen(line);
-        while (a < n && (line[a] == ' ' || line[a] == '\t')) a++;
-        while (n > a && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' ' || line[n - 1] == '\t')) n--;
-        if (n - a == 6 && memcmp(line + a, "cancel", 6) == 0) { frCancel = 1; frEndChildren(); return NULL; }
+    for (;;) {
+        size_t start = 0, i;
+#ifdef _WIN32
+        int got = _read(0, line + len, (unsigned)(sizeof line - 1 - len));
+#else
+        ssize_t got = read(0, line + len, sizeof line - 1 - len);
+        if (got < 0 && errno == EINTR) continue;
+#endif
+        if (got <= 0) return NULL;
+        len += (size_t)got;
+        for (i = 0; i < len; i++) {
+            if (line[i] != '\n') continue;
+            {
+                size_t a = start, n = i;
+                while (a < n && (line[a] == ' ' || line[a] == '\t')) a++;
+                while (n > a && (line[n - 1] == '\r' || line[n - 1] == ' ' || line[n - 1] == '\t')) n--;
+                if (n - a == 6 && memcmp(line + a, "cancel", 6) == 0) { frCancel = 1; frEndChildren(); return NULL; }
+            }
+            start = i + 1;
+        }
+        if (start > 0) { memmove(line, line + start, len - start); len -= start; }
+        else if (len == sizeof line - 1) len = 0;   /* (a line too long for a command: dropped) */
     }
-    return NULL;
 }
 /* BuildMonitor.Step: cancelled, the build stops here (ThrowIfCancellationRequested); else the progress */
 static void frCheckpoint(void) {
@@ -72985,7 +73114,7 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
  * The layout (flat, as setup.iss installs the publish folder into {app}; spark starts forge from its own folder):
  *   <folder>/forge[.exe]          this forge-c (--name: another name; default forge, so that spark finds it)
  *   <folder>/fire[.exe], fire-i32, fire-i16, fire-f32, fire-i32-f32, fire-i16-f32 (+ .key)   the VM in C and its variants (`build-vm --all`)
- *   <folder>/native/              what forge-c reads at run time: tables/ (the prelude, the .def), runtime/, abi/, platform/ (the C runtime of native
+ *   <folder>/native/              what forge-c reads at run time: tables/ (the prelude, the .def), runtime/, abi/, platform/, forge/ (the sources of libforge, M3) (the C runtime of native
  *                                 builds), vm/ and base/ (the sources of the VM, built on a machine without one next to forge)
  *   <folder>/Source/              the standard packages as projects (packages/ of the repository: StandardSources.EnsureInstalled installs them)
  *   <folder>/Prebuilt/<package>/<rid>/   the libraries of their natives for this machine (`prebuild-standard`)
@@ -73087,9 +73216,12 @@ static int pdPackageDistMain(int argc, char** argv) {
     static const char* const headers[] = { ".h", ".hpp", ".asm", NULL };
     static const char* const vmSources[] = { ".c", ".h", NULL };
     static const char* const baseHeaders[] = { ".h", NULL };
+    static const char* const forgeSources[] = { ".c", ".h", ".inc", NULL };
     /* native/: what forge-c reads from its native root (builder.c nbResources, cvm.c nvSources, forge.c fcFindPrelude) */
     static const struct { const char* sub; const char* const* exts; bool recursive; } parts[] = {
         { "tables", NULL, false }, { "runtime", NULL, true }, { "abi", NULL, false }, { "platform", headers, true }, { "vm", vmSources, false }, { "base", baseHeaders, false },
+        /* (forge/: the sources of libforge - build-embed builds it for the packages forge and script, M3) */
+        { "forge", forgeSources, true },
     };
     fcCtxInit(c);
     for (i = 2; i < argc; i++) {
@@ -73142,6 +73274,14 @@ static int pdPackageDistMain(int argc, char** argv) {
         int n = pdCopyTree(c, nbCombine(c, nbNativeRoot, parts[i].sub), nbCombine(c, nbCombine(c, folder, "native"), parts[i].sub), parts[i].exts, parts[i].recursive, dry, &b);
         if (n < 0) { fcCtxFree(c); return 1; }
         printf("  %-34s %4d files, %6lld KB (from %s/%s)\n", fcFmt(c, "native/%s/", parts[i].sub), n, (b + 1023) / 1024, nbNativeRoot, parts[i].sub);
+        total += n; bytes += b;
+    }
+    /* packages/compression/native/: the deflater libforge includes from native/forge/project/fpk.c (`../../../packages/...`) - build-embed compiles libforge here */
+    {
+        long long b = 0;
+        int n = pdCopyTree(c, nbCombine(c, nbCombine(c, packages, "compression"), "native"), nbCombine(c, nbCombine(c, nbCombine(c, folder, "packages"), "compression"), "native"), headers, false, dry, &b);
+        if (n < 0) { fcCtxFree(c); return 1; }
+        printf("  %-34s %4d files, %6lld KB (from %s/compression/native)\n", "packages/compression/native/", n, (b + 1023) / 1024, packages);
         total += n; bytes += b;
     }
     /* Source/ */
@@ -77254,7 +77394,7 @@ static void svCompletionResult(SvServer* S, SvDoc* d, int offset, FcBuf* b) {
 }
 
 static void svCapabilities(FcBuf* b) {
-    fcBufStr(b, "[\"diagnostics\",\"completion\",\"hover\",\"signature\",\"definition\",\"references\",\"symbols\",\"folding\",\"preludeSource\"");
+    fcBufStr(b, "[\"diagnostics\",\"completion\",\"hover\",\"signature\",\"definition\",\"references\",\"symbols\",\"folding\",\"preludeSource\",\"tests\"");
 #ifdef SV_HAVE_MARKUP
     fcBufStr(b, ",\"markupCompletion\"");
 #endif
@@ -77265,6 +77405,113 @@ static void svCapabilities(FcBuf* b) {
 static void svNavRequest(SvServer* S, SvDoc* d, const char* method, int offset, FcBuf* b);
 static void svPreludeSourceResult(SvServer* S, const char* name, FcBuf* b);
 static void svMarkupCompletion(SvServer* S, SvDoc* d, int offset, FcBuf* b);
+
+/* `tests` (M3, the test explorer of spark - TestDiscovery.InFile of the C# forge): the methods with [Test] of the classes of one file, found by parsing only - its
+ * `#include` lines left out (blank, so the lines stay), nothing compiled or run. params: `path`, `text?` (else the file is read). Result:
+ * {"tests":[{"class","method","title","description","line","parameters"}],"problems":["<file>: <message>"]} - a file that does not parse has no tests and a problem. */
+static void svTestsCollect(FcCtx* c, FcList* stmts, FcBuf* b, bool* first) {
+    int i, k;
+    for (i = 0; i < stmts->count; i++) {
+        const FcStmt* s = (const FcStmt*)stmts->items[i];
+        if (s->kind == SK_NamespaceDecl) { svTestsCollect(c, ((const FcNamespaceDecl*)s)->members, b, first); continue; }
+        if (s->kind != SK_ClassDecl) continue;
+        {
+            const FcClassDecl* cls = (const FcClassDecl*)s;
+            for (k = 0; cls->members && k < cls->members->count; k++) {
+                const FcStmt* ms = (const FcStmt*)cls->members->items[k];
+                const FcMethodDecl* m;
+                const FcAttributeDecl* test;
+                const char* title;
+                const char* description;
+                if (ms->kind != SK_MethodDecl) continue;
+                m = (const FcMethodDecl*)ms;
+                if (!(test = tdFirst(m, "Test"))) continue;
+                title = tdStringArg(test, 0);
+                description = tdStringArg(test, 1);
+                if (!*first) fcBufChar(b, ',');
+                *first = false;
+                fcBufStr(b, "{\"class\":"); fcEsc(b, cls->name);
+                fcBufStr(b, ",\"method\":"); fcEsc(b, m->name);
+                fcBufStr(b, ",\"title\":"); fcEsc(b, title ? title : m->name);
+                fcBufStr(b, ",\"description\":"); fcEsc(b, description ? description : "");
+                fcBufFmt(b, ",\"line\":%d,\"parameters\":%s}", ms->line, tdParamCount(m) > 0 ? "true" : "false");
+            }
+        }
+    }
+}
+static void svTestsResult(SvServer* S, FcJson* params, FcBuf* b) {
+    const char* path = params ? svJStr(params, "path") : NULL;
+    const char* text = params ? svJStr(params, "text") : NULL;
+    const char* name;
+    FcCtx t;
+    FcU16 src = {0};
+    bool first = true;
+    (void)S;
+    if (!path) fcThrow(S->lang.tmp, FC_ERR_INTERNAL, 0, 0, NULL, "params");
+    name = strrchr(path, '/');
+    name = name ? name + 1 : path;
+    fcBufStr(b, "{\"tests\":[");
+    if (fcEndsWith(path, ".fxml") || fcEndsWith(path, ".biscuit") || fcEndsWith(path, ".fdata")) { fcBufStr(b, "],\"problems\":[]}"); return; }   /* (the markup has no tests) */
+    if (text) fcU16FromFc8(text, &src);
+    else if (!fcReadText(path, &src)) {
+        fcBufStr(b, "],\"problems\":[");
+        { FcCtx e; fcCtxInit(&e); fcEsc(b, fcFmt(&e, "%s: cannot read the file", name)); fcCtxFree(&e); }
+        fcBufStr(b, "]}");
+        return;
+    }
+    fcCtxInit(&t);
+    {
+        /* the cheap answer for most files: no "[Test" */
+        static const uint16_t needle[] = { '[', 'T', 'e', 's', 't' };
+        bool has = false;
+        int i, j, n = src.len;
+        uint16_t* u = (uint16_t*)fcAlloc(&t, sizeof(uint16_t) * (size_t)(n + 1));
+        for (i = 0; i + 5 <= n && !has; i++) { for (j = 0; j < 5 && src.p[i + j] == needle[j]; j++) {} if (j == 5) has = true; }
+        if (has) {
+            /* the #include lines blank (the line numbers stay those of the file) */
+            int start = 0;
+            if (n) memcpy(u, src.p, sizeof(uint16_t) * (size_t)n);
+            for (i = 0; i <= n; i++) {
+                if (i == n || u[i] == '\n') {
+                    int a = start;
+                    while (a < i && (u[a] == ' ' || u[a] == '\t')) a++;
+                    if (i - a >= 8 && u[a] == '#' && u[a + 1] == 'i' && u[a + 2] == 'n' && u[a + 3] == 'c' && u[a + 4] == 'l' && u[a + 5] == 'u' && u[a + 6] == 'd' && u[a + 7] == 'e'
+                        && (a + 8 == i || !(u[a + 8] == '_' || (u[a + 8] >= 'a' && u[a + 8] <= 'z') || (u[a + 8] >= 'A' && u[a + 8] <= 'Z') || (u[a + 8] >= '0' && u[a + 8] <= '9'))))
+                        for (j = start; j < i; j++) if (u[j] != '\r') u[j] = ' ';
+                    start = i + 1;
+                }
+            }
+            FC_TRY(&t) {
+                FcProcessed* processed;
+                FcList* program;
+                fcSymbolsForHost(&t, t.symbols);
+                processed = fcPreprocess(&t, u, n, fcDirectoryName(&t, fcFullPath(&t, ".", path)));
+                processed->name = fcStr(&t, name);
+                program = fcParseMultiple(&t, &processed, 1);
+                svTestsCollect(&t, program, b, &first);
+                fcBufStr(b, "],\"problems\":[]}");
+            } FC_CATCH(&t) {
+                FcList* diags = fcDiagnosticsOf(&t, &t.err, NULL);
+                FcBuf m = {0};
+                int k;
+                fcBufStr(&m, "");
+                for (k = 0; k < diags->count; k++) {
+                    const FcDiagnostic* d = (const FcDiagnostic*)diags->items[k];
+                    fcBufFmt(&m, "%s%s%s", k ? "\n" : "", d->message, d->line > 0 ? fcFmt(&t, " (line %d)", d->line) : "");
+                }
+                if (diags->count == 0) fcBufStr(&m, t.err.message ? t.err.message : "?");
+                /* (the tests found before the error are dropped: a file that does not parse has none) */
+                b->len = 0;
+                fcBufStr(b, "{\"tests\":[],\"problems\":[");
+                fcEsc(b, fcFmt(&t, "%s: %s", name, m.p));
+                fcBufStr(b, "]}");
+                fcBufFree(&m);
+            } FC_END_TRY;
+        } else fcBufStr(b, "],\"problems\":[]}");
+    }
+    fcU16Free(&src);
+    fcCtxFree(&t);
+}
 
 /* one message; false: exit */
 static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
@@ -77452,6 +77699,12 @@ static bool svHandle(SvServer* S, SvMsg* m, int* exitCode) {
             if (strcmp(method, "completion") == 0) svCompletionResult(S, d, offset, &b);
             else if (strcmp(method, "markupCompletion") == 0) svMarkupCompletion(S, d, offset, &b);
             else svNavRequest(S, d, method, offset, &b);
+            svReply(S, id, b.p);
+            fcBufFree(&b);
+        } else if (strcmp(method, "tests") == 0) {
+            FcBuf b = {0};
+            fcBufStr(&b, "");
+            svTestsResult(S, params, &b);
             svReply(S, id, b.p);
             fcBufFree(&b);
         } else if (strcmp(method, "preludeSource") == 0) {
