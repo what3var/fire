@@ -207,7 +207,7 @@ ember cache clean    empty it
 
 * `src/fire.Package.Manager`: the manifest (`PackageManifest`), the package file (`Fpk`), the installed packages (`PackageStore`), the sources (`FolderSource`, `IndexSource`),
   install/remove/update (`PackageManagerService`), packages straight from GitHub (`GitHubSpec`, `GitHubSource`) and the lock file (`PackageLock`). The tests:
-  `FIRE_TESTS_ONLY=registry` (`src/fire.Testing/RegistryTests*.cs`; `FIRE_TESTS_FILTER=github` only the GitHub part, against a fake GitHub on this machine). A library: fire.Native and fire.Project reference it (the compiler and the editor get it from them). The command line is `src/fire.Ember` (`Program`), an executable that only uses the library.
+  `FIRE_TESTS_ONLY=registry` (`src/fire.Testing/RegistryTests*.cs`; `FIRE_TESTS_FILTER=github` only the GitHub part, against a fake GitHub on this machine). A library: fire.Native and fire.Project reference it (the compiler and the editor get it from them). The command line is `src/fire.Ember` (`Program`), an executable that only uses the library. The same command line written in fire is `tools/ember/` ([ember on the command line](../tools/ember.md)): the same commands, messages, exit codes, store and lock file (`tests/compare-ember.sh` compares the two).
 * The compiler keeps the imports of packages in its set of imports under the key `pkg:name` (`PackageStore.KeyPrefix`): `ImportedPreludes` resolves `#import`, inserts the prelude
   and registers the names of the natives; `LinkedProgram.PackageNatives` carries those names so that a run in the virtual machine (also of a packed program) keeps the
   indexes of the native calls right.

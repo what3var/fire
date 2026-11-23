@@ -633,6 +633,51 @@ Eigener Plan, sobald M3 steht. Was dafür in den Packages fehlt bzw. zu prüfen 
 **ember** ist der erste Härtetest (wie in ROADMAP.md vorgesehen): klein, Befehlszeile, braucht Prozesse, SHA-256, Zip und HTTP - alles als
 Package vorhanden. Den Teil, den auch forge braucht, bekommt es über das Package `forge`. Ob ember wirklich fire wird oder doch mit nach C geht, ist noch offen.
 
+**ember in fire - umgesetzt** (23.11.2026, `tools/ember/`, 3 650 Zeilen fire in 9 Dateien, ein Projekt `ember.fireproj`): die ganze Befehlszeile des
+C#-ember (`src/fire.Ember` mit `src/fire.Package.Manager`) - `find`, `install` (Name, `Name@Version`, `.fpk`, `github:owner/repo[@ref][#name]`, `--name`,
+`--force`, Abhängigkeiten), `update` (Quellen und GitHub: Releases, Zweige, Tags/Commits gepinnt), `remove` (auch `github:`), `list`, `sources`, `create`,
+`blank`, `forge` (Prüfung der Beschreibung und der Bauordnung der Natives, Dokumente, Vorlagen, die Kopie mit absoluten Pfaden), `index`, `cache [clean]`;
+dazu die Quellen (Ordner, Index im Netz, `file:`, `ember.json`), Prüfsumme und Größe der Downloads, nur https (http nur von dieser Maschine), die
+GitHub-API (Releases, Commits, Assets mit `digest`/`.sha256`/`SHA256SUMS`, trust on first use, Umleitungen von Hand, das Token nur für den Host der
+API, Ratenlimit), der Quellbau aus dem Tarball (ein Tar-Leser in fire, `package.json` im Wurzelordner oder `forge build` eines Bibliotheksprojekts),
+`ember-lock.json` und der Aufruf von `forge install-standard` (die Stempel schreibt weiter forge). Gleiche Ablage, gleiches JSON (das Format von
+System.Text.Json bis auf die Rohwerte von `{ "file": ..., "order": n }` und die beiden Escaper: alle 53 `package.json` des Stores liest und schreibt
+ember in fire Byte für Byte gleich), gleiche Meldungen und Exitcodes - die beiden sind austauschbar. Der Teil, den forge zum Bauen braucht, bleibt in
+forge-c (`native/forge/project`) und wird nicht doppelt gehalten; ember braucht kein Package `forge` (Schritt 7): es ruft forge als Prozess.
+Gebaut mit `forge build tools/ember/ember.fireproj -o ember` (VM, 1,9 MB), mit `--engine native` (tcc) oder mit forge-c. **Geprüft**
+(`tests/compare-ember.sh <C#-Bin> <ember in fire>`: beide in einem eigenen Store am selben Ort, ein Index und ein GitHub auf dieser Maschine -
+`tests/ember-fake-github.py` -, 45 Befehle mit Ausgabe, Fehlerausgabe, Exitcode und vier Abzügen des Stores und der geschriebenen Dateien): **139 von
+139 gleich**, mit dem Programm der VM (C#-forge und forge-c) und nativ. Verschieden und vom Skript ausgeblendet: die Bytes eines selbst gepackten `.fpk`
+(Deflater von `packages/compression` gegen zlib-ng, wie bei forge-c) und damit dessen Prüfsumme. Die C#-Fassung bleibt, bis die fire-Fassung im
+Alltag läuft.
+
+Was der Härtetest an der Sprache und den Packages gefunden hat (nichts davon geändert, die Semantik bleibt):
+
+* **Kein `??`** (nur `??.`): `a ?? b` ist ein Syntaxfehler; ember hat eine Hilfsfunktion `Ci.Or(a, b)`.
+* **Schlüsselwörter als Namen**: `from`, `where`, `is`, `word`, `in`, `of`, ... sind auch als lokale Variablen verboten (`string from = ...` ist
+  E3057) - beim Portieren aus C# stolpert man oft darüber; die Meldung ist klar.
+* **Besitz**: `obj.feld = lokaleListe` macht nur eine Referenz; die Liste stirbt mit dem Block, und erst die nächste Benutzung ist eine
+  `DestroyedException` (zur Laufzeit, ohne Warnung des Typprüfers - TC031 gibt es nur für Argumente von Konstruktoren und Methoden). Richtig ist
+  `obj.feld = take lokaleListe`. Das war der einzige Laufzeitfehler des Ports.
+* **Lambdas fangen Kopien**: eine Sortierung nach einer Liste von Schlüsseln (`index.Sort((a, b) => orders[a] - orders[b])`) kopiert die Liste
+  (Warnung TC023); ember sortiert stabil von Hand.
+* **`json`**: `Json.Parse` liest keine Kommentare und kein Komma am Ende (beides nimmt der C#-ember), und es gibt kein Schreiben mit festem Format.
+  ember hat einen eigenen Leser und Schreiber in fire (`tools/ember/json.fire`, Format und Escaper von System.Text.Json) - ein Kandidat für das Package.
+* **`compression`** hat Zip und gzip, aber kein **Tar**: der Leser für die Tarballs von GitHub (ustar, pax `path`, GNU-Langnamen) steht in ember
+  (`Tar` in `github.fire`) - ein Kandidat für das Package.
+* **`http`**: `Http.Client` hält den Körper im Speicher (eine Antwort von GitHub bis 100 MB auch); ein Download mit eigenen Kopfzeilen je Sprung
+  (das Token nur für den Host der API) geht nur mit `followRedirects = false` und dem Client. Eine zu große Antwort ist `HttpException` Code 4 ohne die
+  angekündigte Länge - ember meldet dann "is bigger than", wo der C#-ember bei einem zu großen `Content-Length` "has N bytes" sagt. `Http.Url.Resolve`
+  löst `../` nicht auf (ein relativer `url` eines Index mit `..`).
+* **Keine regulären Ausdrücke** (die Namensmuster, `#include`, SHA-256 in einem Text sind von Hand), kein `Guid`, kein Vergleich ohne Groß- und
+  Kleinschreibung (`ToUpper` auf beiden Seiten statt OrdinalIgnoreCase).
+* `Process.Run` nimmt die Argumente nur als `string[]`, eine `List<string>` ist eine `ArgumentException` zur Laufzeit.
+* `Environment.ProgramPath` ist unter `forge run` der Pfad von `fire`, nicht die Quelldatei (anders als in 19-standard-library.md beschrieben).
+
+Offen: die Meldungen eines kaputten JSON sind eigene Texte im Stil von System.Text.Json (Zeile/Byte können abweichen); der Quellbau eines
+Bibliotheksprojekts (`forge build` als Prozess) und echtes https gegen api.github.com sind nicht im Vergleich; Windows ungeprüft. Danach: ember in
+spark (das Fenster des Package Managers ruft heute die C#-Bibliothek) und das Entfernen von `src/fire.Ember`.
+
 Reihenfolge der IDE: Rahmen mit Projektmappe und Texteditor -> Bauen/Ausgabe -> Debugger -> Designer (fxml, Schaltplan, Datenmodell, Pixel, Hex,
 Mesh, Blöcke) -> Notizen, Git, Pakete, Geräte -> Installer. Die Protokolle aus L4 sind dann schon da und erprobt; wo ein Prozess zu schwer
 ist, nimmt die IDE die Packages aus L6.
@@ -670,6 +715,7 @@ Vom Benutzer entschieden (15.11.2026):
 Offen:
 
 * **ember**: in C mit forge, oder wie die IDE in fire (Tendenz des Benutzers: fire). Der Plan nimmt fire an und hält nur den Teil in C, den
-  forge selbst zum Bauen braucht; die Entscheidung muss erst vor Phase D Schritt 3 fallen.
+  forge selbst zum Bauen braucht; die Entscheidung muss erst vor Phase D Schritt 3 fallen. Stand 23.11.2026: ember gibt es in fire (`tools/ember`,
+  [Phase F](#phase-f---die-ide-und-ember-nach-fire-ausblick)), gleich zum C#-ember; das C#-Programm bleibt, bis der Benutzer es entfernt.
 * ~~**L1** (VM auf `fire_rt.h`): vom Spike abhängig, unter Bedingung 3.~~ Entschieden durch den Spike (19.11.2026, [VM_SPIKE.md](spec/VM_SPIKE.md)):
   L1 hält, Bedingung 3 ist erfüllt.
