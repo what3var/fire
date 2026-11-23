@@ -517,7 +517,7 @@ Tests: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugin` hat zu jedem Fall der 
 eine andere Schnittstelle von `Api`, zwei Plugins mit derselben Methode, JSON, Natives in C, gepackte Objekte über Module, Debuggen (`fire --debug`,
 `NativeDebugTarget`, der Plan `DebuggerTests.PluginPlan`) - am 22.11. alle 43 Prüfungen richtig (14 davon die der C-VM; mit MinGW/Wine). Der Treiber-Agent
 (`FIRE_TESTS_ONLY=drivers`, 10 von 10) läuft in `fire` (Plugin und `#import`, ohne Rückfall; ein Plugin gegen eine andere Schnittstelle von `devices` wird
-gemeldet, der Agent startet mit `#import` neu). Korpus: `native/4440` (eine `.fireplugin`, die keine ist: dieselben Meldungen in beiden VMs). Die
+gemeldet, der Agent startet mit `#import` neu). Korpus: `vm-rf/0190` (eine `.fireplugin`, die keine ist: dieselben Meldungen in beiden VMs). Die
 Programmdateien beider forges mit den Schnittstellen der Module sind byte-gleich (Stichprobe des Korpus und ein Projekt mit Library).
 Windows: `fire.exe` (MinGW) unter Wine lädt Kit und Kit2 wie unter Linux (von Hand geprüft; `cvmwin` prüft die VM unter Windows, aber keine Plugins).
 Ein Plugin in einem fire-Thread: `PluginsInThreads` (TKit mit statischen Feldern - ein Objekt mit Destruktor, Listen, ein Text -, in einem Thread geladen,
