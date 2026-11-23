@@ -1,0 +1,6 @@
+lambda greet = func () => { print("hi") }
+greet()
+lambda bad = func (x) => x
+print("nicht erreicht")
+//# note: from the C# VM's checks (Program.cs "Bytecode-Test: ... muss zur Laufzeit fehlschlagen", gone with it at M1) - the VM fails at run time
+//# name: 'lambda' ohne '<>' hat 0 Parameter

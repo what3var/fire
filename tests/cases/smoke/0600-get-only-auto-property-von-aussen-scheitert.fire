@@ -1,0 +1,11 @@
+class Person2 {
+    int Age { get; }
+    construct(int age) {
+        this._AutoAge = age
+    }
+}
+var p = new Person2(30)
+p.Age = 99
+print("nicht erreicht")
+//# note: from the C# VM's checks (Program.cs "Bytecode-Test: ... muss zur Laufzeit fehlschlagen", gone with it at M1) - the VM fails at run time
+//# name: get-only Auto-Property von aussen zuweisen scheitert
