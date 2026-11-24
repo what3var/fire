@@ -647,6 +647,8 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
             const char* flag;
             /* msvc: the C library has the maths, and the runtime takes threads and libraries from Win32 - no pthread.lib, dl.lib, m.lib */
             if (streq0(kind, "msvc") && (streq0(lib, "pthread") || streq0(lib, "dl") || streq0(lib, "m"))) continue;
+            /* clang on Windows (Visual Studio's LLVM: the ABI of MSVC, lld-link) has no pthread.lib or m.lib either - fire's runtime uses Win32 there */
+            if (streq0(kind, "clang") && streq0(target->platform, "windows") && (streq0(lib, "pthread") || streq0(lib, "m"))) continue;
             /* MinGW has no libdl (LoadLibrary is in kernel32) */
             if (streq0(target->platform, "windows") && streq0(lib, "dl")) continue;
             flag = fcStartsWith(lib, "framework:") ? fcFmt(c, "-framework %s", lib + 10) : streq0(kind, "msvc") ? fcFmt(c, "%s.lib", lib) : fcFmt(c, "-l%s", lib);
@@ -738,7 +740,7 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
             return nbCommand(c, found ? found : isC ? nbEffectiveCCompiler(c, t) : nbEffectiveCompiler(t), fcBufDone(c, &args));
         }
         /* the C library of the program: libm */
-        if (isC && !sharedLibrary && !streq0(kind, "emscripten") && !fcListHasStr(libs, "-lm")) fcListAdd(c, libs, (void*)"-lm");
+        if (isC && !sharedLibrary && !streq0(kind, "emscripten") && !(streq0(kind, "clang") && streq0(target->platform, "windows")) && !fcListHasStr(libs, "-lm")) fcListAdd(c, libs, (void*)"-lm");
         for (i = 0; i < libs->count; i++) fcBufFmt(&args, " %s", (const char*)libs->items[i]);
         /* a program without symbols and debug information is about half the size; "size" lets the linker drop what nothing uses */
         if (!sharedLibrary && !streq0(kind, "emscripten")) {

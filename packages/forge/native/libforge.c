@@ -46279,7 +46279,7 @@ static NbToolchain* nbBuiltIn(FcCtx* c, const char* name) {
         case 0: t->kind = "gcc"; t->compiler = "g++"; t->std = "c++17"; t->optimization = "-O2"; t->args = nbStrings(c, 2, "-Wall", "-Wextra"); break;
         case 1: t->kind = "clang"; t->compiler = "clang++"; t->std = "c++17"; t->optimization = "-O2"; t->args = nbStrings(c, 2, "-Wall", "-Wextra"); break;
         /* /utf-8: the sources and the strings of a program are UTF-8 (without it cl reads them in the code page of the machine) */
-        case 2: t->kind = "msvc"; t->compiler = "cl"; t->std = "c++17"; t->optimization = "/O2"; t->args = nbStrings(c, 3, "/nologo", "/EHsc", "/utf-8"); break;
+        case 2: t->kind = "msvc"; t->compiler = "cl"; t->std = "c++17"; t->optimization = "/O2"; t->args = nbStrings(c, 4, "/nologo", "/EHsc", "/utf-8", "/D_CRT_SECURE_NO_WARNINGS"); break;   /* (_CRT_SECURE_NO_WARNINGS: no deprecation warnings for fopen, getenv, strcpy - portable C) */
         /* Emscripten (emsdk): C++ to WebAssembly - exceptions on, ASYNCIFY for `Sleep` and the window loop, the .wasm inside the page */
         case 3: t->kind = "emscripten"; t->compiler = "em++"; t->std = "c++17"; t->cstd = "gnu11"; t->optimization = "-O2";
             t->args = nbStrings(c, 7, "-Wall", "-Wextra", "-fexceptions", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0"); break;
@@ -46799,8 +46799,15 @@ static NbToolchain* nbMachineDefFor(FcCtx* c, const NbMachine* m, const char* ki
 }
 static bool nbMachineFound(FcCtx* c, const NbMachine* m, const char* kind) { return nbBuiltIn(c, kind) && nbFind(c, nbMachineDefFor(c, m, kind)) != NULL; }
 static NbToolchain* nbMark(FcCtx* c, const NbToolchain* def) { NbToolchain* t = nbCopy(c, def); t->machineChoice = true; return t; }
+#ifdef _WIN32
+/* Windows: cl before clang - a clang on the PATH (Visual Studio's LLVM) targets the ABI of MSVC and links with lld-link, which knows none of the gcc libraries
+ * (pthread, m) the gcc way of the command line asks for; MinGW's gcc stays first */
+static const char* const nbOrderBuild[] = { "tcc", "gcc", "msvc", "clang" };
+static const char* const nbOrderPublish[] = { "gcc", "msvc", "clang", "tcc" };
+#else
 static const char* const nbOrderBuild[] = { "tcc", "gcc", "clang", "msvc" };
-static const char* const nbOrderPublish[] = { "gcc", "clang", "msvc", "tcc" };   /* (not Windows) */
+static const char* const nbOrderPublish[] = { "gcc", "clang", "msvc", "tcc" };
+#endif
 /* The toolchain for the purpose on this machine, marked as the machine's choice; NULL when no compiler is there. source: where it comes from. */
 static NbToolchain* nbMachineResolve(FcCtx* c, const NbMachine* m, int purpose, const char** source) {
     const char* choice = purpose == NB_PURPOSE_BUILD ? m->build : m->publish;
@@ -46827,7 +46834,11 @@ static NbToolchain* nbLoadMachineToolchain(FcCtx* c) { return nbMachineLoad(c, N
 static NbToolchain* nbDetect(FcCtx* c) {
     NbToolchain* chosen = nbLoadMachineToolchain(c);
     FcList* dirs;
+#ifdef _WIN32
+    static const char* const kinds[] = { "gcc", "msvc", "clang", "tcc" };   /* (TinyCC last: it compiles no C++; Windows: cl before clang, as above) */
+#else
     static const char* const kinds[] = { "gcc", "clang", "msvc", "tcc" };   /* (TinyCC last: it compiles no C++) */
+#endif
     int i;
     if (chosen && nbFind(c, chosen)) return chosen;
     dirs = nbSearchDirectories(c);
@@ -47731,6 +47742,8 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
             const char* flag;
             /* msvc: the C library has the maths, and the runtime takes threads and libraries from Win32 - no pthread.lib, dl.lib, m.lib */
             if (streq0(kind, "msvc") && (streq0(lib, "pthread") || streq0(lib, "dl") || streq0(lib, "m"))) continue;
+            /* clang on Windows (Visual Studio's LLVM: the ABI of MSVC, lld-link) has no pthread.lib or m.lib either - fire's runtime uses Win32 there */
+            if (streq0(kind, "clang") && streq0(target->platform, "windows") && (streq0(lib, "pthread") || streq0(lib, "m"))) continue;
             /* MinGW has no libdl (LoadLibrary is in kernel32) */
             if (streq0(target->platform, "windows") && streq0(lib, "dl")) continue;
             flag = fcStartsWith(lib, "framework:") ? fcFmt(c, "-framework %s", lib + 10) : streq0(kind, "msvc") ? fcFmt(c, "%s.lib", lib) : fcFmt(c, "-l%s", lib);
@@ -47822,7 +47835,7 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
             return nbCommand(c, found ? found : isC ? nbEffectiveCCompiler(c, t) : nbEffectiveCompiler(t), fcBufDone(c, &args));
         }
         /* the C library of the program: libm */
-        if (isC && !sharedLibrary && !streq0(kind, "emscripten") && !fcListHasStr(libs, "-lm")) fcListAdd(c, libs, (void*)"-lm");
+        if (isC && !sharedLibrary && !streq0(kind, "emscripten") && !(streq0(kind, "clang") && streq0(target->platform, "windows")) && !fcListHasStr(libs, "-lm")) fcListAdd(c, libs, (void*)"-lm");
         for (i = 0; i < libs->count; i++) fcBufFmt(&args, " %s", (const char*)libs->items[i]);
         /* a program without symbols and debug information is about half the size; "size" lets the linker drop what nothing uses */
         if (!sharedLibrary && !streq0(kind, "emscripten")) {
