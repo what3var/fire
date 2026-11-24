@@ -1248,14 +1248,14 @@ Was M3 mit dem C#-forge aus `fire.Testing` nahm, ist größtenteils wieder da - 
 * **C#** (`fire.Testing`, Gruppe `debugger`, `DebuggerTests.Plugin.cs`): Debuggen über Module - ein Plugin nativ und in `fire` (seine Quelle bekommt den
   nächsten Index, ein Haltepunkt nach Datei darin, Step Into/Out, Scopes, `this`), ein Haltepunkt in einer statischen Bibliothek, `profile`, `pause`, `terminate`.
 
-**Gemessen** (Linux, gcc 13, MinGW 13, Wine 9.0, `-j 2`):
+**Gemessen** (Linux, gcc 13, MinGW 13, Wine 9.0, `-j 2`; nach dem Merge von `clippy` 7c113641, der Lauf der VM, `linkage` und ein Teil von `native` auch nach 99187483):
 
 | Lauf | Fälle | richtig | falsch | nicht gelaufen |
 | --- | --- | --- | --- | --- |
 | `conformance linkage` (die Linkages, Plugins, `Library.Load`, TLS) | 18 | 18 | 0 | 0 |
 | `conformance wine` (fire.exe, gepackt, forge-c.exe, Linkages, Plugins, `Library.Load`, SChannel) | 7 | 7 | 0 | 0 |
 | `conformance native --wine` (der Korpus in fire.exe) | 533 | 523 | 0 | 6 (dazu 4 anders unter Windows: 2160, 2630, 3380, 3470) |
-| `conformance native --sanitize address` | @ASAN@ |
+| `conformance native --sanitize address` | 533 | 530 | 0 | 3 (die Server) |
 | `conformance native --sanitize thread` (die Fälle `Threads:`) | 80 | 80 | 0 | 0 |
 | `conformance native --werror` | 533 | 530 | 0 | 3 (die Server) |
 | `conformance native --engine native --toolchain tcc --filter "Threads:"` | 81 | 81 | 0 | 0 |
