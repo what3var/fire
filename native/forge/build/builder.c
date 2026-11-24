@@ -681,12 +681,13 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
         bool smallMsvc = nbIsSizeProfile(t->optimization);
         bool windowsGui;
         const char* found;
-        fcBufFmt(&args, "%s %s ", isC ? fcFmt(c, "/std:%s /TC", std) : fcFmt(c, "/std:%s", std), debugBuild ? "/Od /Zi" : smallMsvc ? "/O1 /Gy /Gw" : t->optimization ? t->optimization : "/O2");
+        fcBufFmt(&args, "%s %s ", fcFmt(c, "/std:%s", std), debugBuild ? "/Od /Zi" : smallMsvc ? "/O1 /Gy /Gw" : t->optimization ? t->optimization : "/O2");
         if (sharedLibrary) fcBufStr(&args, "/LD ");
         if (compileOnly) fcBufStr(&args, "/c ");
         if (t->args) for (i = 0; i < t->args->count; i++) fcBufFmt(&args, "%s ", (const char*)t->args->items[i]);
         for (i = 0; i < target->compileArgCount; i++) fcBufFmt(&args, "%s ", target->compileArgs[i]);
-        fcBufFmt(&args, "\"%s\" ", cppFile);
+        /* /Tc marks only the generated file as C: /TC would make cl take every file on its command line for C, also the .obj/.lib inputs and libraries (C1083) */
+        fcBufFmt(&args, isC ? "/Tc\"%s\" " : "\"%s\" ", cppFile);
         for (i = 0; i < extraInputs->count; i++) fcBufFmt(&args, "\"%s\" ", (const char*)extraInputs->items[i]);
         fcBufFmt(&args, "/I\"%s\" ", includeDir);
         for (i = 0; i < includes->count; i++) fcBufFmt(&args, "/I\"%s\" ", (const char*)includes->items[i]);
@@ -696,10 +697,11 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
             return nbCommand(c, found ? found : nbEffectiveCompiler(t), fcBufDone(c, &args));
         }
         fcBufFmt(&args, "/Fe:\"%s\" /Fo:\"%s\"", exe, nbCombine(c, includeDir, isC ? "fire_program.obj" : "fire_natives.obj"));
-        for (i = 0; i < libs->count; i++) fcBufFmt(&args, " %s", (const char*)libs->items[i]);
         windowsGui = gui && !sharedLibrary && streq0(target->name, "windows");
-        if (smallMsvc && !sharedLibrary) fcBufFmt(&args, " /link /OPT:REF /OPT:ICF%s", windowsGui ? " /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup" : "");
-        else if (windowsGui) fcBufStr(&args, " /link");
+        /* the libraries go to the linker, after /link (cl itself would take them for inputs to compile) */
+        if (libs->count > 0 || (smallMsvc && !sharedLibrary) || windowsGui) fcBufStr(&args, " /link");
+        for (i = 0; i < libs->count; i++) fcBufFmt(&args, " %s", (const char*)libs->items[i]);
+        if (smallMsvc && !sharedLibrary) fcBufStr(&args, " /OPT:REF /OPT:ICF");
         if (windowsGui) fcBufStr(&args, " /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup");   /* no console window; the program still starts at main */
     } else {
         bool tcc = streq0(kind, "tcc");
