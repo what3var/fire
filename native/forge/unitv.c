@@ -289,7 +289,7 @@ static const FcU* fcUParseWith(FcCtx* c, const char* symbol) {
         if (fcPrefix(first, &factor) && (prefixable = fcCustomFind(c, rest)) != NULL && prefixable->prefixed && strcmp(prefixable->symbol, rest) == 0
             && fcPrefixAllowed(first, prefixable->symbol)) {
             fcUnitSetUnitless(&u);
-            memcpy(u.dimSym, prefixable->unit.dimSym, sizeof u.dimSym);
+            memcpy((void*)u.dimSym, (const void*)prefixable->unit.dimSym, sizeof u.dimSym);   /* (casts: MSVC warns C4090 for an array of const char*) */
             memcpy(u.dimExp, prefixable->unit.dimExp, sizeof u.dimExp);
             u.dimCount = prefixable->unit.dimCount;
             u.scale = factor * prefixable->unit.scale;

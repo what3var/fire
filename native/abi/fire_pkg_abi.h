@@ -120,24 +120,30 @@ typedef struct fire_host {
     void (*hold)(int32_t delta);
 } fire_host;
 
-/* The entry points of a package library. */
-int fire_pkg_abi_version(void);                    /* FIRE_PKG_ABI_VERSION */
-int fire_pkg_function_count(void);
-const char* fire_pkg_function_name(int index);     /* the name that fire code calls, e.g. "__sk_read" */
-int fire_pkg_function_arity(int index);
+/* The entry points of a package library. A library (FIRE_LIBRARY, the wrapper forge generates) declares them as it defines them: exported from its DLL
+ * (MSVC refuses a definition with __declspec(dllexport) after a declaration without it - C2375). */
+#if defined(_WIN32) && defined(FIRE_LIBRARY)
+#define FIRE_PKG_ENTRY __declspec(dllexport)
+#else
+#define FIRE_PKG_ENTRY
+#endif
+FIRE_PKG_ENTRY int fire_pkg_abi_version(void);                    /* FIRE_PKG_ABI_VERSION */
+FIRE_PKG_ENTRY int fire_pkg_function_count(void);
+FIRE_PKG_ENTRY const char* fire_pkg_function_name(int index);     /* the name that fire code calls, e.g. "__sk_read" */
+FIRE_PKG_ENTRY int fire_pkg_function_arity(int index);
 /* Optional: the host of the VM tells the library what it decides (see fire_host); the structure stays valid as long as the library is loaded. */
-void fire_pkg_set_host(const fire_host* host);
+FIRE_PKG_ENTRY void fire_pkg_set_host(const fire_host* host);
 /* Optional: a program has ended, the library stays loaded for the next one: forget what the program left behind (open streams, ...). */
-void fire_pkg_reset(void);
+FIRE_PKG_ENTRY void fire_pkg_reset(void);
 /* Optional: what the library asked for with fire_host.request_service (its host services), on the VM's thread at a safe point. */
-void fire_pkg_service(void);
+FIRE_PKG_ENTRY void fire_pkg_service(void);
 /* Optional: a turn of a wait of the VM on the calling thread (Sleep, await, the end of the program): the library serves what this thread has of it meanwhile
  * (the windows it pumps read the system's events). */
-void fire_pkg_idle(void);
+FIRE_PKG_ENTRY void fire_pkg_idle(void);
 /* Calls function `index`. Returns 0, then `*result` is the result; 1, then `error` holds a message (zero terminated, at most errorSize bytes) and the program stops with it;
  * or 2, then the native throws an exception of the program: `error` holds the name of the exception class, a line feed and the message (the VM constructs the class with the message).
  * Memory behind `*result` (text, array, buffer) belongs to the library and stays valid until the next call from the same thread: the caller copies it. */
-int fire_pkg_call(int index, const fire_val* args, int argc, fire_val* result, char* error, int errorSize);
+FIRE_PKG_ENTRY int fire_pkg_call(int index, const fire_val* args, int argc, fire_val* result, char* error, int errorSize);
 
 #ifdef __cplusplus
 }

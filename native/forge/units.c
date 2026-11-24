@@ -252,7 +252,7 @@ static void fcUnitParseWith(FcCtx* c, const char* symbol, FcUnit* out) {
         if (fcPrefix(first, &factor) && (prefixable = fcCustomFind(c, rest)) != NULL && prefixable->prefixed && strcmp(prefixable->symbol, rest) == 0
             && fcPrefixAllowed(first, prefixable->symbol)) {
             fcUnitSetUnitless(out);
-            memcpy(out->dimSym, prefixable->unit.dimSym, sizeof out->dimSym);
+            memcpy((void*)out->dimSym, (const void*)prefixable->unit.dimSym, sizeof out->dimSym);   /* (casts: MSVC warns C4090 for an array of const char*) */
             memcpy(out->dimExp, prefixable->unit.dimExp, sizeof out->dimExp);
             out->dimCount = prefixable->unit.dimCount;
             out->scale = factor * prefixable->unit.scale;

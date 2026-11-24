@@ -3346,7 +3346,7 @@ static void fcUnitParseWith(FcCtx* c, const char* symbol, FcUnit* out) {
         if (fcPrefix(first, &factor) && (prefixable = fcCustomFind(c, rest)) != NULL && prefixable->prefixed && strcmp(prefixable->symbol, rest) == 0
             && fcPrefixAllowed(first, prefixable->symbol)) {
             fcUnitSetUnitless(out);
-            memcpy(out->dimSym, prefixable->unit.dimSym, sizeof out->dimSym);
+            memcpy((void*)out->dimSym, (const void*)prefixable->unit.dimSym, sizeof out->dimSym);   /* (casts: MSVC warns C4090 for an array of const char*) */
             memcpy(out->dimExp, prefixable->unit.dimExp, sizeof out->dimExp);
             out->dimCount = prefixable->unit.dimCount;
             out->scale = factor * prefixable->unit.scale;
@@ -3658,7 +3658,7 @@ static const FcU* fcUParseWith(FcCtx* c, const char* symbol) {
         if (fcPrefix(first, &factor) && (prefixable = fcCustomFind(c, rest)) != NULL && prefixable->prefixed && strcmp(prefixable->symbol, rest) == 0
             && fcPrefixAllowed(first, prefixable->symbol)) {
             fcUnitSetUnitless(&u);
-            memcpy(u.dimSym, prefixable->unit.dimSym, sizeof u.dimSym);
+            memcpy((void*)u.dimSym, (const void*)prefixable->unit.dimSym, sizeof u.dimSym);   /* (casts: MSVC warns C4090 for an array of const char*) */
             memcpy(u.dimExp, prefixable->unit.dimExp, sizeof u.dimExp);
             u.dimCount = prefixable->unit.dimCount;
             u.scale = factor * prefixable->unit.scale;
@@ -47736,6 +47736,12 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
             flag = fcStartsWith(lib, "framework:") ? fcFmt(c, "-framework %s", lib + 10) : streq0(kind, "msvc") ? fcFmt(c, "%s.lib", lib) : fcFmt(c, "-l%s", lib);
             if (!fcListHasStr(libs, flag)) fcListAdd(c, libs, (void*)flag);
         }
+    }
+    /* msvc: cl links only what it is told (an IDE project adds the Win32 libraries itself) - the libraries MinGW's gcc always links, so a package that works
+     * with MinGW also links with cl (advapi32: the registry and CryptoAPI of tls and windows, shell32, user32, kernel32) */
+    if (!compileOnly && streq0(kind, "msvc")) {
+        static const char* const msvcDefaults[] = { "advapi32.lib", "shell32.lib", "user32.lib", "kernel32.lib" };
+        for (i = 0; i < (int)(sizeof msvcDefaults / sizeof msvcDefaults[0]); i++) if (!fcListHasStr(libs, msvcDefaults[i])) fcListAdd(c, libs, (void*)msvcDefaults[i]);
     }
     /* a debug build (`#define FIRE_DEBUG 1` at the top of the program): no optimization, debug information, not stripped */
     debugBuild = (!sharedLibrary || streq0(nbFileName(linkSource), "fire_plugin.c")) && nbFileExists(linkSource) && nbLinesWith(c, linkSource, "#define FIRE_DEBUG 1", 60)->count > 0;

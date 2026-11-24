@@ -653,6 +653,12 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
             if (!fcListHasStr(libs, flag)) fcListAdd(c, libs, (void*)flag);
         }
     }
+    /* msvc: cl links only what it is told (an IDE project adds the Win32 libraries itself) - the libraries MinGW's gcc always links, so a package that works
+     * with MinGW also links with cl (advapi32: the registry and CryptoAPI of tls and windows, shell32, user32, kernel32) */
+    if (!compileOnly && streq0(kind, "msvc")) {
+        static const char* const msvcDefaults[] = { "advapi32.lib", "shell32.lib", "user32.lib", "kernel32.lib" };
+        for (i = 0; i < (int)(sizeof msvcDefaults / sizeof msvcDefaults[0]); i++) if (!fcListHasStr(libs, msvcDefaults[i])) fcListAdd(c, libs, (void*)msvcDefaults[i]);
+    }
     /* a debug build (`#define FIRE_DEBUG 1` at the top of the program): no optimization, debug information, not stripped */
     debugBuild = (!sharedLibrary || streq0(nbFileName(linkSource), "fire_plugin.c")) && nbFileExists(linkSource) && nbLinesWith(c, linkSource, "#define FIRE_DEBUG 1", 60)->count > 0;
     if (t->includeDirs) for (i = 0; i < t->includeDirs->count; i++) fcListAdd(c, includes, t->includeDirs->items[i]);
