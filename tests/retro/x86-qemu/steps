@@ -1,0 +1,6 @@
+title: x86 unter QEMU ohne DOS: der Stub des Protected Mode (eine 32-Bit-Routine, Speicher ueber 1 MB) und der des Long Mode (EFER: LME und LMA, ein 64-Bit-Register) und zurueck
+# (the long mode needs a 64-bit processor, which DOSBox-X has not: the two stubs of the package x86 booted without DOS, packages/x86/native/tools/test_boot.asm)
+needs: nasm qemu-system-x86_64
+timeout 300
+sh $CASE/run.sh $CASE/../../../packages/x86/native/tools $OUT
+expect-text "000F4257 12345678 00000005 00000500 00000001 OK\n"

@@ -1,0 +1,12 @@
+console True 80x25
+at 5,1
+cell 72 attr 30 box 201
+avail True
+a Character
+Up Up
+F5 F5
+Ctrl+Right Right
+Escape Escape
+Enter Enter
+Ctrl+a Character
+Backspace Backspace

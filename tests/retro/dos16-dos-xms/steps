@@ -1,0 +1,7 @@
+title: dos16: dos (Interrupts mit Registern, Speicher, Vektoren, Puffer in DS:SI) und xms (Block von 200 KB, 70001 Bytes hin und zurueck, ungerade Laenge)
+needs: watcom dosbox-x
+timeout 1800
+forge build -t dos16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/dosbox.sh $OUT OUT.TXT
+expect prog.expected

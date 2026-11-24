@@ -1,0 +1,28 @@
+#import "console"
+#import "io"
+#import "filesystem"
+inline c int Cell(int col, int row) { unsigned short __far* v = (unsigned short FIRE_DOS_FAR*)FIRE_DOS_LOW(0xB800, 0); return (FireInt)v[row * 80 + col]; }
+inline c Push(int code) { union REGS r; r.h.ah = 5; r.FIRE_DOS_W.cx = (unsigned short)code; fire_dos_int(0x16, &r); }
+var log = ""
+Console.Clear()
+log = log + "console " + Console.IsConsole() + " " + Console.Width() + "x" + Console.Height() + "\n"
+Console.SetColor(ConsoleColor.Yellow, ConsoleColor.DarkBlue)
+Console.WriteAt(2, 1, "Hi╔")
+Console.ResetColor()
+log = log + "at " + Console.Column() + "," + Console.Row() + "\n"
+var c = Cell(2, 1)
+log = log + "cell " + (c & 255) + " attr " + (c >> 8) + " box " + (Cell(4, 1) & 255) + "\n"
+Push(0x1E61)
+Push(0x48E0)
+Push(0x3F00)
+Push(0x7400)
+Push(0x011B)
+Push(0x1C0D)
+Push(0x1E01)
+Push(0x0E08)
+log = log + "avail " + Console.KeyAvailable() + "\n"
+for (var i = 0; i < 8; i++) {
+    var k = Console.ReadKey()
+    log = log + k.ToString() + " " + k.Key + "\n"
+}
+IO.File.WriteAllText("C:\\RES.TXT", log)

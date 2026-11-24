@@ -1,0 +1,25 @@
+#import "devices"
+#import "machine"
+var list = DeviceManager.Devices()
+var names = ""
+for (var i = 0; i < list.Count; i++) { names = names + list[i].Identifier() + " " }
+print(names)
+var com = DeviceManager.Get("serial:COM1")
+print("connect " + com.Connect())
+print("write " + com.WriteString("Hallo COM1"))
+Machine.Port.Out8(0x3FC, 0x1B)
+var got = ""
+for (var k = 0; k < 3; k++) {
+    var one = new byte[1]
+    one[0] = 65 + k
+    com.Write(one)
+    var tries = 0
+    while (!com.HasData() && tries < 500) { tries = tries + 1 }
+    got = got + com.ReadString()
+}
+print("loopback " + got)
+Machine.Port.Out8(0x3FC, 0x0B)
+com.Disconnect()
+var lpt = DeviceManager.Get("serial:LPT1")
+print("lpt " + lpt.Connect() + " " + lpt.WriteString("Drucker"))
+lpt.Disconnect()

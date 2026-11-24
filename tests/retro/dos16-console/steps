@@ -1,0 +1,7 @@
+title: dos16: Konsole ueber das BIOS (Farben als Attribut, Codepage 437, Cursor) und Tasten aus dem Tastaturpuffer (Pfeil, F5, Strg+Pfeil, Esc, Enter, Strg+A, Backspace)
+needs: watcom dosbox-x
+timeout 1800
+forge build -t dos16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/dosbox.sh $OUT RES.TXT
+expect prog.expected

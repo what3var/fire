@@ -1,0 +1,16 @@
+#import "machine"
+print("cpu " + Machine.Cpu.Level() + " " + Machine.Cpu.Vendor())
+print("com1 " + Machine.Memory.Peek16(0x400))
+Machine.Memory.Poke16(0xB8000 + 158, 0x4E41)
+print("screen " + Machine.Memory.Peek16(0xB8000 + 158) + " " + Machine.Memory.Read(0xB8000 + 158, 2)[0])
+print("pci " + Machine.Pci.Present(0, 0, 0) + " " + ((Machine.Pci.Read32(0, 0, 0, 0) & 65535) != 65535))
+var c = Machine.Cmos.Clock()
+print("year ok " + (c[0] >= 2020) + " month ok " + (c[1] >= 1 && c[1] <= 12))
+var irq = new Machine.Irq(0, true)
+print("irq0 " + (irq.Wait(1000) > 0))
+irq.Close()
+try { new Machine.Irq(16) } catch (ArgumentException e) { print("arg: " + e.message) }
+try { Machine.Memory.Peek8(0x200000) } catch (Machine.MachineException e) { print("far: " + e.message) }
+Machine.Speaker.Tone(440)
+Machine.Speaker.Off()
+print("done")

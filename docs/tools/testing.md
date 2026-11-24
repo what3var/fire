@@ -251,7 +251,7 @@ that differs (`--list`: every case), then the counts per group and engine; the e
 builds the VM of its own sources (`forge-c build-vm`). On 23.11.2026: 1173 of 1173 cases right, the same verdicts as `tests/run-cases-vm.sh` with forge-c.
 
 **More lines about a case, for `conformance`:** `//# needs: <need>...` - what the machine must have, else the case is not run and the list says why:
-`linux`, `windows`, `macos`, `posix` (the system), `mingw` (x86_64-w64-mingw32-gcc and -g++), `wine`, `asan`/`tsan` (gcc builds and runs a program with
+`linux`, `windows`, `macos`, `posix` (the system), `mingw` (x86_64-w64-mingw32-gcc and -g++), `wine`, `watcom` (Open Watcom, where a build finds it), `asan`/`tsan` (gcc builds and runs a program with
 the sanitizer), `env:NAME` (a variable is set - a database server of the machine: `FIRE_TEST_MYSQL`, `FIRE_TEST_SQLSERVER`, `FIRE_TEST_POSTGRES`), `file:PATH`,
 any other word a program on the PATH. `//# windows: <why>` - the output differs on Windows by the nature of the system (`--wine` counts the case apart when
 it differs); `//# windows: not run - <why>`: it cannot end there (it waits for `/bin/sh`), `--wine` leaves it out. The files a case reads with
@@ -330,6 +330,31 @@ interface) and its shared libraries (another interface: exit code 70), the fallb
 VM process under ASan), `Tls.Engine` on OpenSSL and mbedTLS. `tests/wine`: the command line of `fire.exe` (Unicode arguments and paths, two programs, the
 variant of 32-bit ints, the input), packed programs (with their DLLs in the cache of the user), forge-c.exe (MinGW) under Wine (bytecode byte for byte the one
 of Linux, dump, run, build, test), the linkages, `Library.Load`, the plugins and `Tls.Engine` (SChannel) for Windows.
+
+**The retro targets** (`tests/retro`): the programs for `dos16`, `dos32`, `win16`, `bios16` and `bios16-dos`, built with Open Watcom and run where they belong -
+DOS in DOSBox-X, Windows 3.x under Wine (its 32-bit part) in Xvfb, a PC without an operating system booted from its floppy in QEMU (the output over COM1, the end
+through `isa-debug-exit`), the long mode under FreeDOS in QEMU. The small scripts in `tests/retro/tools` start them (`dosbox.sh`, `win16.sh`, `qemu-bios.sh`,
+`freedos.sh`) and print what the program wrote; the case compares it with its `prog.expected`. `needs: watcom` is Open Watcom where a build finds it (the
+PATH, `WATCOM`, `Toolchain/watcom` next to forge, `/opt/watcom`). **`tools/setup-retro.sh`** installs and sets up all of it on Ubuntu 24.04 or Debian
+(packages, the snapshot of Open Watcom v2 into `/opt/watcom`, the prefix of Wine in `~/.cache/fire/retro-wine`; `--check` only reports, `--freedos` also loads
+the image of FreeDOS 1.4 - the two cases under FreeDOS run when `FIRE_FREEDOS_IMAGE` names it):
+
+```
+tools/setup-retro.sh --forge ~/fire-forge    once (as root or with sudo): the tools, and forge-c of this checkout with native/, Source/ and Packages/ beside it
+~/fire-forge/forge-c conformance retro -j 4  the whole suite (about 5 minutes with 4 jobs: every case is a build with Open Watcom)
+~/fire-forge/forge-c conformance retro/dos16-console      one case
+```
+
+A forge-c without its distribution around it (`cc native/forge/forge.c`) does not find the standard packages: `FIRE_PACKAGES` is the *store* they are installed
+into (from `Source/` next to forge-c, `forge-c install-standard`), not the folder `packages/` of the repository - `--forge` lays that out.
+
+The cases: the program of objects, strings, units, exceptions, `word` and a fire thread on each target (the widths of the target: `word` has 16 bits on dos16,
+win16 and bios16); DOS paths, arrays and buffers over 64 KB, scene3d, `machine`, `dos` and `xms`, `x86` (the protected mode; the long mode under FreeDOS and
+the stubs booted without DOS), the serial and the parallel port (into files of DOSBox-X), graphics (checksums of the framebuffers, PNG), `windows` in Mode 13h
+and VESA, `#intwidth 16`, the console through the BIOS with keys from its keyboard buffer, `--stats` with the map of Open Watcom; on dos32 the same through
+DPMI; on win16 the huge model, scene3d, a window over GDI read back with `GetPixel`, the clipboard and `ui`; on bios16 the boot sector (byte for byte the one
+nasm makes of `fire_bios16_boot.asm`), the timer of the BIOS that switches threads, and the mini-DOS that reads files from the floppy (which `fsck.fat` and
+`mtype` read as well).
 
 **Cases that master adds.** As long as master holds these cases as text in `Program.cs`, `tests/tools/merge-master.sh` merges it: the cases master added
 or changed go into the files (`tests/tools/cases.py`: a new case gets a number between its neighbours, a changed one loses its expected output, a case

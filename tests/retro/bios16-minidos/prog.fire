@@ -1,0 +1,20 @@
+#import "io"
+#import "filesystem"
+#import "dos"
+print("exists " + IO.File.Exists("README.TXT") + " " + IO.File.Exists("A:\\DATA\\ZAHLEN.TXT") + " " + IO.File.Exists("nope.txt"))
+print(IO.File.ReadAllText("readme.txt"))
+var lines = IO.File.ReadAllLines("data/zahlen.txt")
+print("lines " + lines.Count + " " + lines[999])
+var names = IO.Directory.GetFiles("A:\\")
+foreach (n in names) { print(n) }
+print("dirs " + IO.Directory.GetDirectories("\\").Count)
+IO.Directory.SetCurrentDirectory("DATA")
+print("cwd " + IO.Directory.GetCurrentDirectory() + " " + IO.File.Exists("ZAHLEN.TXT"))
+IO.Directory.SetCurrentDirectory("..")
+try { IO.File.WriteAllText("x.txt", "a") } catch (e) { print("write: " + e.message) }
+var v = Dos.Version()
+print("dos " + v[0] + "." + v[1])
+var seg = Dos.Alloc(100)
+print("alloc " + (seg > 0) + " " + (Dos.LargestFree() > 1000))
+Dos.Free(seg)
+try { Dos.Alloc(65000) } catch (e) { print("too big") }

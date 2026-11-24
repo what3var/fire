@@ -1,0 +1,11 @@
+title: dos16: serieller und paralleler Port als Geraete (COM1/LPT1 aus dem BIOS, gesendet, ueber den Interrupt des UART empfangen)
+needs: watcom dosbox-x
+timeout 1800
+forge build -t dos16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/dosbox.sh $OUT OUT.TXT -set "serial1=file file:$OUT/SER.TXT" -set "parallel1=file file:$OUT/PAR.TXT"
+expect prog.expected
+sh cat $OUT/SER.TXT
+expect-text "Hallo COM1"
+sh cat $OUT/PAR.TXT
+expect-text "Drucker"

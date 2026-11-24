@@ -1,0 +1,16 @@
+#import "dos"
+#import "xms"
+#import "x86"
+var v = Dos.Version()
+print("dos " + (v[0] >= 5))
+var r = Dos.Interrupt(0x1A, new DosRegisters(0))
+print("ticks " + (r.cx * 65536 + r.dx > 0))
+var seg = Dos.Alloc(256)
+print("alloc " + (seg > 0))
+Dos.Free(seg)
+print("vector " + (Dos.GetVector(0x21) != 0))
+var name = new byte[64]
+try { Dos.SegmentOf(name) } catch (DosException e) { print("high: " + (e.message.IndexOf("first megabyte") > 0)) }
+print("xms " + Xms.Available())
+print("x86 " + X86.Mode() + " " + X86.CanSwitch())
+print("done")

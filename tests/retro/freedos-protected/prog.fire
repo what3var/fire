@@ -1,0 +1,29 @@
+#import "x86"
+print(X86.Mode() + " " + X86.CanSwitch() + " a20 " + X86.EnableA20())
+// mov [eax], ebx / mov edx, [eax] / add edx, ecx / mov eax, edx / mov ecx, 12345678h / ret
+byte code[] = new byte[14]
+var bytes = [137, 24, 139, 16, 1, 202, 137, 208, 185, 120, 86, 52, 18, 195]
+for (var i = 0; i < 14; i++) { code[i] = bytes[i] }
+var r = new X86Registers(1179648)
+r.ebx = 1000000
+r.ecx = 23
+X86.RunProtected(code, r)
+print("eax " + r.eax + " ecx " + r.ecx)
+byte data[] = new byte[70000]
+for (var i = 0; i < data.length; i++) { data[i] = i % 251 }
+X86.WriteLinear(2097152 + 3, data)
+var back = X86.ReadLinear(2097152 + 3, 70000)
+var same = true
+for (var i = 0; i < back.length; i += 13) { if (back[i] != data[i]) { same = false } }
+print("above 1 MB " + same + " " + back[69999] + " " + data[69999])
+// the routine fills a buffer of the program: mov ecx, 8 / mov al, 'A' / rep stosb (edi = the buffer) / ret
+byte fill[] = new byte[8]
+byte code2[] = new byte[10]
+var bytes2 = [185, 8, 0, 0, 0, 176, 65, 243, 170, 195]
+for (var i = 0; i < 10; i++) { code2[i] = bytes2[i] }
+var r2 = new X86Registers()
+r2.edi = X86.LinearOf(fill)
+X86.RunProtected(code2, r2)
+print("filled " + fill[0] + " " + fill[7])
+try { X86.LinearOf(fill, 99) } catch (ArgumentException e) { print("outside") }
+print("done")

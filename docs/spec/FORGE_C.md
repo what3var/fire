@@ -1213,7 +1213,7 @@ kein Inno Setup, kein Compiler unter Windows. (Wine startet hier nur ohne `TMPDI
 | die native Seite von "nativ == VM" (Sanitizer, Warnungen als Fehler, Resume/Shards), die Prüfungen des erzeugten C, ThreadSanitizer, FreeRTOS, ESP32, tcc, Fenster/Xvfb/Wayland, Wine | die Läufe sind `conformance --engine native`; **geschlossen** (23.11.2026): `--sanitize address` (ASan, UBSan, LeakSanitizer), `--sanitize thread` (die Fälle `Threads:`), `--werror`, tcc (`--toolchain tcc`), die Muster im erzeugten C (`.cgen-contains`, die vier Prüfungen des Generators als `native/4710`-`4740`), Wine (`--wine`, der Korpus in fire.exe). **Offen:** FreeRTOS, ESP32, Fenster/Xvfb/Wayland, Teilen, Weglassen mit der Größe des ui-Programms, `word` in der Breite des Ziels |
 | die rund 12 Fälle aus `Program.cs`, deren Quelle zur Laufzeit entsteht (libc-`extern`, ohne IPv6, MySQL/SQL Server/Postgres, `Data/Model`, Ressourcen, Schriften, Scene3D, AI) | **geschlossen** (23.11.2026): `native/4750`-`4830` mit `//# needs:` (libc und IPv6 `linux`, die Server `env:FIRE_TEST_MYSQL` ..., die Dateien in `tests/cases/native/resources/`), MCP als `4800`. **Offen:** Scene3D und AI (ihre Modelle erzeugte C#-Code) |
 | `DiagnosticTests`, `TypeTests`, `SyntaxTests`, `ProgramFileTests`, `TablesTests`, `TestingTests` | entfernt - die Aufnahmen (`.diagnostics`, `.expected`) laufen mit `conformance`; die Absicht in C# (welcher Code, welche Zeile) als `//# expect:` ist offen |
-| `LinkageTests`, `DebuggerPluginTests`, `BiosTests` (QEMU), `CVmWindowsTests`, `CVmSanitized`, `NativeDebugTests` | **geschlossen** (23.11.2026): die Suiten `tests/linkage` und `tests/wine` (Projekte mit `steps` und `.expected`, auch die VM mit ASan zweimal in einem Prozess), Debuggen über Module in der Gruppe `debugger`. **Offen:** BIOS/QEMU und DOS (keine Werkzeuge hier), die Anzeige des Hosts und der Geräte-Host unter Wine, Teile von `NativeDebugTests` (unten) |
+| `LinkageTests`, `DebuggerPluginTests`, `BiosTests` (QEMU), `CVmWindowsTests`, `CVmSanitized`, `NativeDebugTests` | **geschlossen** (23.11.2026): die Suiten `tests/linkage` und `tests/wine` (Projekte mit `steps` und `.expected`, auch die VM mit ASan zweimal in einem Prozess), Debuggen über Module in der Gruppe `debugger`. BIOS/QEMU und DOS: die Suite `tests/retro` (24.11.2026, unten). **Offen:** die Anzeige des Hosts und der Geräte-Host unter Wine, Teile von `NativeDebugTests` (unten) |
 | `PublishTests`, `RegistryTests` (C#-ember), `Scene3DTests`, `AiTests` | entfernt (prüften das C#-forge bzw. den C#-ember) |
 | `ServeTests`, `CompletionTests` | bleiben, über das Protokoll; die Diagnosen gegen das, was der Fall sagen muss (der eigene Prozess zum Vergleichen ist weg) |
 | `ProjectTests`, `StartProjectTests`, `BlockModelTests`, `MeshModelTests`, `CircuitEditorTests`, `ExplorerTests` | bleiben; was in C# übersetzte, packte, installierte, geht über forge (`bytecode`, `build`) und ember (`forge`, `install`, `remove`); die Phasen des C#-Linkers beim Bauen der Natives, `--global-jobs` im Prozess, `ExtractAssemblyInfo`, die Overlays der Natives eines Projekts im C#-Store sind entfallen |
@@ -1279,8 +1279,7 @@ Beim Portieren gefunden:
 
 **Nicht wiederhergestellt, und warum:**
 
-* BIOS unter QEMU und DOS mit Open Watcom/DOSBox: kein `qemu-system-i386`, kein `dosbox`/`dosbox-x`, kein Open Watcom auf dieser Maschine
-  (`toolchain-setup watcom` lädt ihn, aber die Läufe brauchen dazu QEMU bzw. DOSBox) - übersprungen.
+* (BIOS unter QEMU und DOS mit Open Watcom/DOSBox: seit dem 24.11.2026 wieder da - die Suite `tests/retro`, unten.)
 * Scene3D und AI: ihre Modelle (glTF, Block- und Netzmodell, GGUF) erzeugte C#-Code der Prüfungen; die Erzeuger der GGUF-Dateien gingen mit `AiTests`.
   MCP (ein reines Skript) ist `native/4800`.
 * Die Sonderläufe nach Titel, die keine Muster und keine Builds mit anderen Schaltern sind: FreeRTOS (Simulator), ESP32 (QEMU), die Fenster unter
@@ -1292,6 +1291,22 @@ Beim Portieren gefunden:
 * Aus `NativeDebugTests`: die Threads unter dem Debugger, der Transport über stdio mit Rahmen, gdb an `#line`, der Agent unter Windows, `expand`/`set` gepackter
   Felder.
 
+
+### Die Retro-Ziele wieder geprüft (24.11.2026)
+
+Was `BiosTests.cs` und der Teil dos16/dos32/win16 von `Program.cs` (vor c14e1bbd) prüften, ist die Suite **`tests/retro`**: 38 Fälle, je ein Ordner mit
+`prog.fire`, `prog.expected` und `steps` - gebaut mit Open Watcom, gestartet von `tests/retro/tools/` (`dosbox.sh`: DOSBox-X; `win16.sh`: Wine mit seinem
+32-Bit-Teil in Xvfb, ohne `TMPDIR`; `qemu-bios.sh`: QEMU von der Diskette, COM1 und `isa-debug-exit`; `freedos.sh`: FreeDOS 1.4 in QEMU). `needs: watcom` findet
+Open Watcom wie ein Bau (`nbWatcomLocate`). `tools/setup-retro.sh` richtet die Maschine ein (Pakete, der Snapshot von Open Watcom v2 nach `/opt/watcom`, der
+Prefix von Wine; `--forge <ordner>`: forge-c dieses Checkouts mit `native/`, `Source/` und den Standardpaketen daneben; `--check`: nur der Bericht).
+
+| Lauf | Fälle | richtig | falsch | nicht gelaufen |
+| --- | --- | --- | --- | --- |
+| `conformance retro -j 4` (Linux, Open Watcom 2.0 Snapshot, DOSBox-X 2024.03.01, QEMU 8.2, Wine 9.0; 4 Minuten) | 38 | 36 | 0 | 2 (FreeDOS: kein Abbild hier) |
+
+Beim Portieren gefunden: keine Fehler des Compilers oder der Laufzeit. Zwei Erwartungen der C#-Prüfungen waren veraltet bzw. falsch gelesen:
+`" " + 5cm + 3mm` ist von links nach rechts `"5cm3mm"` (die VM sagt dasselbe; die alte Erwartung `5.3cm` war die frühere Regel), und die Zeile
+`"x".Length + " " + smile + " " + (smile!int)` unter `#intwidth 16` gibt ein NUL-Zeichen und `0` aus, wie die alte Prüfung erwartete - dort stand das NUL als echtes Zeichen im C#-Quelltext (das Herausziehen hatte es zuerst zu einem Leerzeichen gemacht).
 ## Nachziehen
 
 **Seit M3 (23.11.2026) gibt es die C#-Quellen nicht mehr** (`src/fire.Compiler`, `src/fire.Native`, `src/fire`, `src/fire.Package.Manager`, `src/fire.Ember`

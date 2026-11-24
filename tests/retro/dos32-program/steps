@@ -1,0 +1,7 @@
+title: dos32: mit Open Watcom 386 und DOS/32A gebaut, in DOSBox-X gelaufen - wie die VM mit den Breiten von dos32 (Objekte, Strings, Einheiten, Ausnahmen, word 32 Bit, ein fire-Thread)
+needs: watcom dosbox-x
+timeout 1800
+forge build -t dos32 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/dosbox.sh $OUT OUT.TXT
+expect prog.expected

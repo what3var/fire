@@ -1,0 +1,9 @@
+title: bios16: der Boot-Sektor der Diskette ist die Ausgabe von nasm fuer fire_bios16_boot.asm (512 Bytes, endet mit 55 AA), das Programm bootet
+needs: watcom qemu-system-i386 nasm
+timeout 1800
+forge build -t bios16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh nasm -f bin $CASE/../../../native/platform/bios16/fire_bios16_boot.asm -o $OUT/boot.bin && cmp -n 512 $OUT/boot.bin $OUT/PROG.img && od -A n -t x1 -j 510 -N 2 $OUT/boot.bin
+expect-text " 55 aa\n"
+sh $CASE/../tools/qemu-bios.sh $OUT/PROG.img
+expect prog.expected

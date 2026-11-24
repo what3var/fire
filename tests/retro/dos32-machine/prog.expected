@@ -1,0 +1,8 @@
+cpu 586 GenuineIntel
+com1 1016
+screen 20033 65
+pci True True
+year ok True month ok True
+irq0 True
+arg: An IRQ is 0 to 15, not 16.
+done

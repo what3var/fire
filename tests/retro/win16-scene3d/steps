@@ -1,0 +1,7 @@
+title: win16: scene3d - 160 x 120 Pixel, die Puffer der Engine ueber 64 KB (wie in der VM)
+needs: watcom wine xvfb-run
+timeout 1800
+forge build -t win16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/win16.sh $OUT
+expect prog.expected

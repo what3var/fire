@@ -1,0 +1,9 @@
+#import "x86"
+print(X86.Mode() + " " + X86.CanSwitch() + " long " + X86.CanLongMode())
+// mov ecx, C0000080h / rdmsr / mov ebx, eax / mov r8, 100000005h / mov rax, r8 / shr rax, 32 / mov edx, eax / mov eax, r8d / ret
+var bytes = [185, 128, 0, 0, 192, 15, 50, 137, 195, 73, 184, 5, 0, 0, 0, 1, 0, 0, 0, 76, 137, 192, 72, 193, 232, 32, 137, 194, 68, 137, 192, 195]
+byte code[] = new byte[bytes.length]
+for (var i = 0; i < bytes.length; i++) { code[i] = bytes[i] }
+var r = X86.RunLong(code, new X86Registers(7))
+print("eax " + r.eax + " edx " + r.edx + " efer " + r.ebx)
+print("done")

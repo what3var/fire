@@ -1,0 +1,11 @@
+dos True
+ticks True
+alloc True largest True
+free: True
+vector True
+cwd carry False
+xms True 3 free True
+block 200 same True last 172 172
+outside
+too big
+done

@@ -1,0 +1,7 @@
+title: dos16: scene3d - eine Szene mit Box, Boden und Licht gerendert (wie in der VM)
+needs: watcom dosbox-x
+timeout 1800
+forge build -t dos16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/dosbox.sh $OUT OUT.TXT
+expect prog.expected

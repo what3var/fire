@@ -1,0 +1,20 @@
+class Animal { string name
+    construct(string n) { this.name = n }
+    string Speak() { return this.name + " says hi" } }
+var a = new Animal("Rex")
+print(a.Speak())
+int big = 100000
+print(big * 3 + " " + (7.5 / 2) + " " + 5cm + 3mm)
+var list = [3, 1, 2]
+var sum = 0
+foreach (x in list) { sum += x }
+print(sum + " " + list.length)
+try { throw new Exception("boom") } catch (e) { print("caught " + e.message) }
+word w = 65535
+print(w + 1)
+var done = 0
+fire { var t = 0
+  for (var i = 0; i < 2000; i++) { t = t + i }
+  sync global { done = t } }
+while (done == 0) { sync globals }
+print("thread " + done)

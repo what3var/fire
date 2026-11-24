@@ -1,0 +1,12 @@
+#import "graphics"
+#import "windows"
+var fb = new Framebuffer(10, 6)
+var w = new Window(fb, "Clip")
+print("set " + Clipboard.SetText("Grüße\nzwei"))
+print("has " + Clipboard.HasText + " [" + Clipboard.GetText() + "]")
+var pic = new Framebuffer(10, 6)
+new Renderer(pic).ClearTo(255)
+print("image " + Clipboard.SetImage(pic) + " " + Clipboard.HasImage)
+var back = Clipboard.GetImage()
+print("back " + back.Width() + "x" + back.Height())
+w.Close()

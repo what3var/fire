@@ -1,0 +1,13 @@
+title: --stats: dos16 - Code nach Herkunft aus der Watcom-Map, Typisierung (C-Schnittstelle einer defined-int-Methode), Speicher zum Laden
+needs: watcom
+timeout 1800
+forge build -t dos16 --stats prog.fire -o $OUT/PROG.EXE
+contains "Statistics (dos16)"
+sh cat $OUT/PROG.EXE.stats.txt
+contains "fire: program"
+contains "runtime"
+contains "C library"
+contains ", loaded "
+contains "C interface 1/"
+sh cat $OUT/PROG.EXE.stats.json
+contains "\"Calc.Twice\""

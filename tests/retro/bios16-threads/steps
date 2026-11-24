@@ -1,0 +1,11 @@
+title: bios16: ein Thread neben dem Hauptprogramm (Zeitscheiben ueber INT 1Ch), Sleep, int von 32 Bit
+needs: watcom qemu-system-i386
+timeout 1800
+forge build -t bios16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/qemu-bios.sh $OUT/PROG.img
+count "start" =1
+count "thread -1474936480" =1
+count "main 300000" =1
+count "ende" =1
+count "QEMU" =0

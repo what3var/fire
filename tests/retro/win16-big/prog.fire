@@ -1,0 +1,7 @@
+var big = new byte[3000000]
+big[2999999] = 7
+int many[] = new int[40000]
+many[39999] = 42
+var c = copy big
+print("big " + big.length + " " + c[2999999] + " " + many[39999])
+print("args " + Environment.Args.length)

@@ -1,0 +1,8 @@
+real True a20 True
+eax 1000023 ecx 305419896
+above 1 MB True 221 221
+filled 65 65
+outside
+long False
+no long: This processor has no long mode (64 bit).
+done

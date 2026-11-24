@@ -1,0 +1,7 @@
+title: dos16: windows - Mode 13h (Indizes in den Videospeicher, Palette in die DAC-Register), Tasten des BIOS als KeyDown (a, Pfeil hoch, Esc)
+needs: watcom dosbox-x
+timeout 1800
+forge build -t dos16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/dosbox.sh $OUT OUT.TXT
+expect prog.expected

@@ -1,0 +1,18 @@
+title: bios16-dos: das Mini-DOS - Dateien von der Diskette (ueber mehrere Cluster, Unterordner, Muster, aktueller Ordner), Schreiben verweigert, Speicher und Version von DOS
+needs: watcom qemu-system-i386
+timeout 1800
+sh rm -rf $OUT/disk && cp -r $CASE/disk $OUT/disk
+forge build -t bios16-dos prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/qemu-bios.sh $OUT/PROG.img
+expect prog.expected
+# the floppy is FAT12 that the tools of Linux read: FIRE.EXE, README.TXT, the folder DATA
+when fsck.fat
+sh fsck.fat -n $OUT/PROG.img
+lacks "Auto-"
+end
+when mtype
+env MTOOLS_SKIP_CHECK=1
+sh mtype -i $OUT/PROG.img ::/README.TXT
+expect-text "Hallo vom Boot-Image"
+end

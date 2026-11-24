@@ -1,0 +1,11 @@
+title: dos32: serieller und paralleler Port (wie dos16; die IRQ des UART im Handler des Protected Mode)
+needs: watcom dosbox-x
+timeout 1800
+forge build -t dos32 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/dosbox.sh $OUT OUT.TXT -set "serial1=file file:$OUT/SER.TXT" -set "parallel1=file file:$OUT/PAR.TXT"
+expect prog.expected
+sh cat $OUT/SER.TXT
+expect-text "Hallo COM1"
+sh cat $OUT/PAR.TXT
+expect-text "Drucker"

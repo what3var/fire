@@ -1,0 +1,24 @@
+#import "graphics"
+#import "windows"
+inline c int Vga(int x, int y) { return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0xA000, (unsigned)(y * 320 + x)); }
+inline c int Dac(int index) { outp(0x3C7, index); { int r = inp(0x3C9), g = inp(0x3C9), b = inp(0x3C9); return (FireInt)(((long)r << 16) | (g << 8) | b); } }
+inline c Push(int code) { union REGS r; r.h.ah = 5; r.FIRE_DOS_W.cx = (unsigned short)code; fire_dos_int(0x16, &r); }
+var fb = new Framebuffer(320, 200, 1)
+fb.SetPaletteRgb(200, 255, 128, 0)
+var r = new Renderer(fb)
+r.ClearTo(1)
+r.FillRect(10, 20, 30, 40, new SolidBrush(200))
+var keys = ""
+var w = new Window(fb, "DOS")
+w.RegisterKeyDown((code, scan, mods, repeated) => { keys = keys + scan + "/" + code + " " })
+Push(0x1E61)
+Push(0x48E0)
+Push(0x011B)
+for (var i = 0; i < 3; i++) { w.Tick() }
+var at = Vga(15, 30)
+var bg = Vga(100, 100)
+var dac = Dac(200)
+w.Close()
+w.Tick()
+print("vga " + at + " " + bg + " dac " + dac)
+print("keys " + keys)

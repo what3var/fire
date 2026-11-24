@@ -1,0 +1,35 @@
+#import "graphics"
+#import "scene3d"
+// the pixels that are not the background, above and below the first 64 KB of the picture (row 102 of 640 bytes)
+class H {
+    static string Count(Framebuffer f) {
+        var b = f.ReadBytes()
+        var top = 0
+        var low = 0
+        for (var i = 0; i < b.length; i += 4) {
+            if (b[i] != 24 || b[i + 1] != 42 || b[i + 2] != 61) { if (i < 65536) { top++ } else { low++ } }
+        }
+        return top + " " + low
+    }
+}
+var frame = new Framebuffer(64, 48)
+var scene = new Scene()
+var box = new Object(Template.Box, 0m, 0.5m, 0m, 1m, 1m, 1m)
+box.RotationY = 30deg
+scene.Add(box, "crate")
+var floor = new Object(Template.Plane, 0m, 0m, 0m, 6m, 0m, 6m)
+floor.Texture = Texture.Checker(32, 4)
+scene.Add(floor, "floor")
+scene.Add(Light.Directional(-0.4, -1.0, -0.6))
+var cam = new Camera(frame)
+cam.Y = 1.5m
+cam.Z = 3m
+cam.RotationX = -25deg
+scene.Add(cam)
+cam.Render()
+print("drawn " + H.Count(frame))
+var px = frame.ReadBytes()
+print("corner " + px[0] + "," + px[1] + "," + px[2] + "," + px[3])
+scene.Remove(box)
+cam.Render()
+print("floor " + H.Count(frame))

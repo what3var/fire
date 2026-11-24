@@ -1,0 +1,7 @@
+title: FreeDOS unter QEMU: x86 - der Protected Mode wie in DOSBox-X (mit HIMEMX)
+needs: watcom qemu-system-x86_64 mcopy mtype env:FIRE_FREEDOS_IMAGE
+timeout 1800
+forge build -t dos16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/freedos.sh $OUT
+expect prog.expected

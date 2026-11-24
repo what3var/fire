@@ -1,0 +1,10 @@
+#import "time"
+print("start")
+fire { var t = 0
+  for (var i = 0; i < 200000; i++) { t = t + i }
+  print("thread " + t) }
+var n = 0
+for (var k = 0; k < 300000; k++) { n = n + 1 }
+print("main " + n)
+Sleep(300ms)
+print("ende")

@@ -1,0 +1,10 @@
+\
+Hallo DOS
+True True
+C:\FIRE\X.TXT
+C:\FIRE\A.TXT C:\FIRE\SUB b.dat
+C:\FIRE\SUB\HELLO.TXT
+9
+C:\FIRE
+error: Could not find a part of the path 'C:\NOPE\X.TXT'.
+False

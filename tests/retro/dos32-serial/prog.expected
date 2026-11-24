@@ -1,0 +1,5 @@
+serial:COM1 serial:COM2 serial:LPT1 
+connect True
+write True
+loopback ABC
+lpt True True

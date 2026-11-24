@@ -1,0 +1,7 @@
+title: dos32: windows - Mode 13h und die Tasten des BIOS (wie dos16)
+needs: watcom dosbox-x
+timeout 1800
+forge build -t dos32 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/dosbox.sh $OUT OUT.TXT
+expect prog.expected

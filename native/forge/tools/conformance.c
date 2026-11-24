@@ -624,9 +624,23 @@ static bool cfProbe(const char* cache, const char* flags, int* state) {
  *   mingw                             x86_64-w64-mingw32-gcc and -g++ (the toolchain of Windows on Linux)
  *   wine                              wine (with mingw: programs for Windows run here)
  *   asan, tsan                        gcc builds and runs a program with AddressSanitizer / ThreadSanitizer
+ *   watcom                            Open Watcom (owcc), found as a build finds it: the PATH, WATCOM, the folder Toolchain/watcom, /opt/watcom (C:\WATCOM)
  *   env:NAME                          the environment variable NAME is set (not empty) - a server of the machine, a folder
  *   file:PATH                         the file or folder exists
  *   <program>                         any other word: a program on the PATH (gcc, tcc, clang, Xvfb, qemu-system-i386, ...) */
+/* Open Watcom where a build looks for it (nbWatcomLocate: the toolchain watcom of the build) */
+static bool cfHasWatcom(void) {
+    FcCtx ctx;
+    NbToolchain t;
+    bool found;
+    fcCtxInit(&ctx);
+    memset(&t, 0, sizeof t);
+    t.kind = "watcom";
+    t.compiler = "owcc";
+    found = nbWatcomLocate(&ctx, &t) != NULL;
+    fcCtxFree(&ctx);
+    return found;
+}
 static bool cfUnmet(CfRunner* R, const char* needs, FcBuf* why) {
     const char* p = needs;
     while (p && *p) {
@@ -651,6 +665,7 @@ static bool cfUnmet(CfRunner* R, const char* needs, FcBuf* why) {
         else if (streq0(word, "linux") || streq0(word, "posix")) met = true;
 #endif
         else if (streq0(word, "mingw")) met = cfHasProgram("x86_64-w64-mingw32-gcc") && cfHasProgram("x86_64-w64-mingw32-g++");
+        else if (streq0(word, "watcom")) met = cfHasWatcom();
         else if (streq0(word, "asan")) met = cfProbe(R->cache, "-fsanitize=address,undefined", &cfProbeAsan);
         else if (streq0(word, "tsan")) met = cfProbe(R->cache, "-fsanitize=thread", &cfProbeTsan);
         else if (strncmp(word, "env:", 4) == 0) { const char* v = getenv(word + 4); met = v && *v; }
@@ -661,7 +676,8 @@ static bool cfUnmet(CfRunner* R, const char* needs, FcBuf* why) {
             else if (strncmp(word, "file:", 5) == 0) fcBufFmt(why, "needs %s (not there)", word + 5);
             else if (streq0(word, "asan") || streq0(word, "tsan")) fcBufFmt(why, "needs %s (gcc cannot build or run a program with it here)", word);
             else if (streq0(word, "linux") || streq0(word, "windows") || streq0(word, "macos") || streq0(word, "posix")) fcBufFmt(why, "needs %s (not this system)", word);
-            else fcBufFmt(why, "needs %s (not on this machine)", streq0(word, "mingw") ? "MinGW (x86_64-w64-mingw32-gcc, -g++)" : word);
+            else fcBufFmt(why, "needs %s (not on this machine)", streq0(word, "mingw") ? "MinGW (x86_64-w64-mingw32-gcc, -g++)"
+                : streq0(word, "watcom") ? "Open Watcom (owcc; tools/setup-retro.sh, or forge toolchain-setup watcom)" : word);
             return true;
         }
     }

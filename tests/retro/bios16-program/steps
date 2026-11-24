@@ -1,0 +1,7 @@
+title: bios16: mit Open Watcom gebaut, von der Diskette in QEMU gebootet - wie die VM mit den Breiten von bios16 (Objekte, Einheiten, Ausnahmen, word, ein fire-Thread)
+needs: watcom qemu-system-i386
+timeout 1800
+forge build -t bios16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/qemu-bios.sh $OUT/PROG.img
+expect prog.expected

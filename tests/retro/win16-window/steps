@@ -1,0 +1,7 @@
+title: win16: windows - ein Fenster ueber GDI (Palette-Framebuffer gestreckt, mit GetPixel zurueckgelesen), Tasten aus WM_KEYDOWN (Scancode wie unter Win32)
+needs: watcom wine xvfb-run
+timeout 1800
+forge build -t win16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/win16.sh $OUT
+expect prog.expected

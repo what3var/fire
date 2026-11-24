@@ -1,0 +1,18 @@
+#import "io"
+#import "filesystem"
+print(IO.Path.DirectorySeparatorChar)
+IO.Directory.CreateDirectory("c:\\fire\\sub")
+IO.File.WriteAllText("C:\\Fire\\Sub\\hello.txt", "Hallo DOS")
+print(IO.File.ReadAllText("c:/fire/sub/HELLO.TXT"))
+print(IO.File.Exists("C:\\FIRE\\SUB\\HELLO.TXT") + " " + IO.Directory.Exists("c:\\fire"))
+print(IO.Path.GetFullPath("c:\\fire\\sub\\..\\x.txt"))
+print(IO.Path.Combine("C:\\FIRE", "A.TXT") + " " + IO.Path.GetDirectoryName("C:\\FIRE\\SUB\\HELLO.TXT") + " " + IO.Path.GetFileName("c:\\fire\\b.dat"))
+foreach (f in IO.Directory.GetFiles("c:\\fire\\sub")) { print(f) }
+IO.File.Copy("C:\\FIRE\\SUB\\HELLO.TXT", "C:\\FIRE\\COPY.TXT")
+print(IO.File.Size("c:\\fire\\copy.txt"))
+IO.Directory.SetCurrentDirectory("C:\\FIRE")
+print(IO.Directory.GetCurrentDirectory())
+try { IO.File.ReadAllText("C:\\NOPE\\X.TXT") } catch (e) { print("error: " + e.message) }
+IO.Directory.SetCurrentDirectory("C:\\")
+IO.Directory.Delete("C:\\FIRE", true)
+print(IO.Directory.Exists("C:\\FIRE"))

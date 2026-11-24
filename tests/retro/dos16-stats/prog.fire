@@ -1,0 +1,4 @@
+class Calc {
+    static defined int Twice(defined int x) { return x * 2 }
+}
+print(Calc.Twice(21))

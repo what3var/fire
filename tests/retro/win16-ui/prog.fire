@@ -1,0 +1,15 @@
+#import "graphics"
+#import "windows"
+#import "ui"
+#import "dialogs"
+var fb = new Framebuffer(240, 120)
+var win = new Window(fb, "UI16")
+var ui = new UI.Root(fb, win)
+var panel = new UI.Panel(8, 8, 220, 100)
+ui.Add(panel)
+panel.Add(new UI.Label("Hello Windows 3.x", 6, 6))
+panel.Add(new UI.Button("OK", 6, 30, 80, 26))
+ui.Tick()
+var rd = new Renderer(fb)
+print("ui " + (rd.GetPixel(20, 50) != rd.GetPixel(200, 90)) + " " + (Dialogs.DialogResult.OK != Dialogs.DialogResult.Cancel))
+win.Close()

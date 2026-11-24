@@ -1,0 +1,30 @@
+#import "io"
+#import "filesystem"
+class Big {
+    static Bytes() {
+        var buf = new byte[100000]
+        for (var i = 0; i < 100000; i++) { buf[i] = i % 251 }
+        var c = copy buf
+        var t = 0
+        for (var i = 0; i < 100000; i += 997) { t = t + c[i] }
+        print(c.length + " " + c[99999] + " " + c[65536] + " " + t)
+        IO.File.WriteAllBytes("C:\\BIG.DAT", c)
+        var back = IO.File.ReadAllBytes("C:\\BIG.DAT")
+        print(back.length + " " + back[99999] + " " + back[65536] + " " + back[70001])
+    }
+    static Ints() {
+        int big[] = new int[30000]
+        big[29999] = 42
+        var bc = copy big
+        print(bc[29999] + " " + bc.length + " " + bc[17000])
+    }
+    static Values() {
+        var plain = new any[9000]
+        plain[8999] = "end"
+        var pc = copy plain
+        print(pc[8999])
+    }
+}
+Big.Bytes()
+Big.Ints()
+Big.Values()

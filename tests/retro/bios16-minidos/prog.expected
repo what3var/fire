@@ -1,0 +1,11 @@
+exists True True False
+Hallo vom Boot-Image
+lines 1000 Zahl 1000
+A:\FIRE.EXE
+A:\README.TXT
+dirs 1
+cwd A:\DATA True
+write: Access to the path 'A:\X.TXT' is denied.
+dos 5.0
+alloc True True
+too big

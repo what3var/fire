@@ -1,0 +1,30 @@
+#import "dos"
+#import "xms"
+var v = Dos.Version()
+print("dos " + (v[0] >= 5))
+var r = Dos.Interrupt(0x1A, new DosRegisters(0))
+print("ticks " + (r.cx * 65536 + r.dx > 0))
+var seg = Dos.Alloc(256)
+print("alloc " + (seg > 0) + " largest " + (Dos.LargestFree() > 1000))
+Dos.Free(seg)
+try { Dos.Free(1) } catch (DosException e) { print("free: " + (e.message.Length > 0)) }
+print("vector " + (Dos.GetVector(0x21) != 0))
+var name = new byte[64]
+var rr = new DosRegisters(0x4700)
+rr.ds = Dos.SegmentOf(name)
+rr.si = Dos.OffsetOf(name)
+Dos.Call(rr)
+print("cwd carry " + rr.Carry)
+print("xms " + Xms.Available() + " " + Xms.Version()[0] + " free " + (Xms.FreeKb() > 1000))
+var b = new XmsBlock(200)
+var data = new byte[70001]
+for (var i = 0; i < data.length; i++) { data[i] = i % 253 }
+b.Write(100001, data)
+var back = b.Read(100001, 70001)
+var same = true
+for (var i = 0; i < back.length; i += 7) { if (back[i] != data[i]) { same = false } }
+print("block " + b.Kb + " same " + same + " last " + back[70000] + " " + data[70000])
+try { b.Read(204000, 1000) } catch (ArgumentException e) { print("outside") }
+b.Close()
+try { new XmsBlock(9999999) } catch (ArgumentException e) { print("too big") }
+print("done")

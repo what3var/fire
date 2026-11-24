@@ -1,0 +1,7 @@
+title: win16: grosse Arrays (3 MB, int[40000]) im Huge Model von Windows, die Argumente (WinMain)
+needs: watcom wine xvfb-run
+timeout 1800
+forge build -t win16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/win16.sh $OUT
+expect prog.expected

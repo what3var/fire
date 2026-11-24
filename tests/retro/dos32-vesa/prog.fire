@@ -1,0 +1,23 @@
+#import "graphics"
+#import "windows"
+inline c int Vga(int x, int y) { return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0xA000, (unsigned)(y * 320 + x)); }
+inline c int VesaMode() { union REGS r; r.FIRE_DOS_W.ax = 0x4F03; fire_dos_int(0x10, &r); return r.FIRE_DOS_W.ax == 0x004F ? (FireInt)(r.FIRE_DOS_W.bx & 0x3FFF) : -1; }
+inline c int VesaPixel(int x, int y) { union REGS r; long at = (long)y * 640 + x; r.FIRE_DOS_W.ax = 0x4F05; r.FIRE_DOS_W.bx = 0; r.FIRE_DOS_W.dx = (unsigned)(at >> 16); fire_dos_int(0x10, &r); return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0xA000, (unsigned)(at & 0xFFFF)); }
+var fb = new Framebuffer(160, 100)
+var r = new Renderer(fb)
+r.ClearTo(0xFF000000)
+r.FillRect(0, 0, 80, 50, new SolidBrush(0xFF0000FF))
+var w = new Window(fb, "RGBA")
+w.Tick()
+print("rgba " + Vga(10, 10) + " " + Vga(300, 150))
+w.Close()
+w.Tick()
+var big = new Framebuffer(400, 300, 1)
+var rb = new Renderer(big)
+rb.ClearTo(3)
+rb.FillRect(200, 150, 200, 150, new SolidBrush(9))
+var w2 = new Window(big, "VESA")
+w2.Tick()
+print("vesa " + VesaMode() + " " + VesaPixel(10, 10) + " " + VesaPixel(600, 400))
+w2.Close()
+w2.Tick()

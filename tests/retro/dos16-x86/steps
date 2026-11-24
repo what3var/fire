@@ -1,0 +1,7 @@
+title: dos16: x86 - eine Routine im 32-Bit-Protected-Mode (Register hin und zurueck, Speicher ueber 1 MB, ein Puffer des Programms) und zurueck im Real Mode
+needs: watcom dosbox-x
+timeout 1800
+forge build -t dos16 prog.fire -o $OUT/PROG.EXE
+timeout 300
+sh $CASE/../tools/dosbox.sh $OUT OUT.TXT
+expect prog.expected
