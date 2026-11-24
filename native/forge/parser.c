@@ -1443,7 +1443,7 @@ static FcTypeRef* ParseTypeRefCore(FcParser* p, bool allowArray) {
             if (!Check(p, TT_Gt)) LA(p, targetTypes, ParseTypeAnnotationName(p));
             Expect(p, TT_Gt, S(p, "Expected '>' after the type of 'lambda %s<...>'", selectorKind));
             sig = (FcLambdaSignature*)fcAlloc(p->ctx, sizeof *sig);
-            sig->paramTypeNames = targetTypes; sig->isSelector = true; sig->selectorKind = selectorKind;
+            sig->paramTypeNames = targetTypes; sig->isSelector = true; sig->selectorKind = selectorKind; sig->namespaces = namespaces;
             t = newTypeRef(p, "lambda", FC_NULL_INT, 0);
             t->lambdaSignature = sig;
             t->namespaces = namespaces;
@@ -1584,20 +1584,29 @@ static void SkipOptionalNestedTypeArgs(FcParser* p);
 
 static FcLambdaSignature* ParseLambdaSignature(FcParser* p, const char* returnTypeName) {
     FcList* paramTypes = L(p);
+    FcList* paramRefs = L(p);
     bool expression = Check(p, TT_Identifier) && streq(Peek(p)->lexeme, "expression") && PeekAt(p, 1)->type == TT_Lt;
     FcLambdaSignature* sig;
     if (expression) Advance(p);
     if (Match(p, TT_Lt)) {
         if (!Check(p, TT_Gt)) {
             do {
-                LA(p, paramTypes, ParseTypeAnnotationName(p));
-                SkipOptionalNestedTypeArgs(p);
+                /* the whole type (an array, a width, type arguments, a lambda type with its own signature), and its name as before ('lambda',
+                 * 'byte', 'List' of `List<int>`) - 'defined' stays no part of a signature */
+                FcTypeRef* type = ParseTypeRefCore(p, true);
+                const char* name = type->lambdaSignature ? "lambda" : streq(type->baseName, "int") && type->bitWidth == 8 && type->isUnsigned ? "byte" : type->baseName;
+                int k;
+                if (!type->lambdaSignature && !(type->bitWidth == 8 && type->isUnsigned) && type->bitWidth != FC_NULL_INT) name = S(p, "%s[%d]", name, type->bitWidth);
+                for (k = 0; k < type->arrayRank; k++) name = S(p, "%s[]", name);
+                LA(p, paramTypes, name);
+                LA(p, paramRefs, type);
             } while (Match(p, TT_Comma));
         }
         Expect(p, TT_Gt, "Expected '>' after the lambda parameter types");
     }
     sig = (FcLambdaSignature*)fcAlloc(p->ctx, sizeof *sig);
     sig->returnTypeName = returnTypeName; sig->paramTypeNames = paramTypes; sig->selectorKind = "member"; sig->isExpression = expression;
+    sig->paramTypes = paramRefs; sig->namespaces = CurrentNamespaces(p);
     return sig;
 }
 

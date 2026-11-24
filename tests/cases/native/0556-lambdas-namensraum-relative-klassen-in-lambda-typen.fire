@@ -1,0 +1,61 @@
+#using Shapes
+namespace Shapes {
+    class Circle {
+        float r = 1.5
+    }
+}
+namespace Geo {
+    class Point {
+        int x = 1
+        construct(int x) { this.x = x }
+    }
+    class Rock {
+        int weight = 3
+    }
+    enum Side { Left, Right }
+    class Holder {
+        string lambda<Point> name = p => "p" + p.x
+        string lambda<Point> nameTyped = (Point p) => "p" + p.x
+        Point lambda<int> make = n => new Point(n)
+        Point lambda<int> makeTyped = (int n) => new Point(n)
+        string lambda<Side> side = s => "" + s
+        string lambda<Side> sideTyped = (Geo.Side s) => "" + s   // (the enum with its full name: a relative enum name of a declaration is not checked at run time yet)
+        string lambda<Circle> circle = c => "c" + c.r
+        string lambda<Circle> circleTyped = (Circle c) => "c" + c.r
+        static string Apply(string lambda<Point> f, any x) { return f(x) }
+        static string lambda<Point> Make() { return p => "m" + p.x }
+        static string lambda<Point> MakeTyped() { return (Point p) => "m" + p.x }
+        undefined Run(any rock, any point, any one) {
+            try { print(name(point)) } catch (ArgumentException e) { print("name " + e.message) }
+            try { print(name(rock)) } catch (ArgumentException e) { print("name " + e.message) }
+            try { print(nameTyped(rock)) } catch (ArgumentException e) { print("nameTyped " + e.message) }
+            print(make(4).x + " " + makeTyped(5).x)
+            try { print(side(one)) } catch (ArgumentException e) { print("side " + e.message) }
+            try { print(sideTyped(one)) } catch (ArgumentException e) { print("sideTyped " + e.message) }
+            try { print(circle(rock)) } catch (ArgumentException e) { print("circle " + e.message) }
+            try { print(circleTyped(rock)) } catch (ArgumentException e) { print("circleTyped " + e.message) }
+            // a local, a parameter, a return value, a list of lambdas
+            string lambda<Point> local = p => "l" + p.x
+            try { print(local(rock)) } catch (ArgumentException e) { print("local " + e.message) }
+            try { print(Apply(p => "a" + p.x, rock)) } catch (ArgumentException e) { print("apply " + e.message) }
+            try { print(Apply((Point p) => "a" + p.x, rock)) } catch (ArgumentException e) { print("applyTyped " + e.message) }
+            try { print(Make()(rock)) } catch (ArgumentException e) { print("make " + e.message) }
+            try { print(MakeTyped()(rock)) } catch (ArgumentException e) { print("makeTyped " + e.message) }
+            var fs = new List<string lambda<Point>>()
+            fs.Add(p => "f" + p.x)
+            fs.Add((Point p) => "f" + p.x)
+            try { print(fs[0](rock)) } catch (ArgumentException e) { print("fs0 " + e.message) }
+            try { print(fs[1](rock)) } catch (ArgumentException e) { print("fs1 " + e.message) }
+            // a type argument: lambda<List<Point>>
+            undefined lambda<List<Point>> each = l => print(l.Count)
+            undefined lambda<List<Point>> eachTyped = (List<Point> l) => print(l.Count)
+            var rocks = new List<Rock>()
+            any anyRocks = rocks
+            try { each(anyRocks) } catch (ArgumentException e) { print("each " + e.message) }
+            try { eachTyped(anyRocks) } catch (ArgumentException e) { print("eachTyped " + e.message) }
+            each(new List<Point>())
+        }
+    }
+}
+new Geo.Holder().Run(new Geo.Rock(), new Geo.Point(7), 1)
+//# name: Lambdas: Klassennamen relativ zum Namensraum (der eigene, #using) in Lambda-Typen - Feld, Lokale, Parameter, Rueckgabe, Liste, Typargument; Pruefung wie mit dem Typ

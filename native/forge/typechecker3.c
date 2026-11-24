@@ -566,15 +566,41 @@ static const FcST* InferLambda(FcTC* t, FcLambdaExpr* lam, const FcST* expected)
     t->inLambda = previous; t->inBoundLambda = previousBound; t->thisType = previousThis;
     return r;
 }
+/* ContextTypeParam: the name of the open type parameter `type` stands for when that name means it at the lambda's place too - a type parameter of
+ * the method the lambda is written in ("$k@") or of its class ("$k@Box"), not shadowed, and the lambda not bound to another object with 'on' (whose
+ * type arguments are not the ones of `this`). `(T x)` written there is checked against the type argument the object or the call got (GuardLocalType
+ * with the type parameter); a T of some other class or method is not T here and stays open (NULL). */
+static const char* ContextTypeParam(FcTC* t, const FcST* type) {
+    const char* tp = type->typeParam;
+    const char* at;
+    const char* name = NULL;
+    FcList* params;
+    int k;
+    if (tp == NULL || tp[0] != '$' || (at = strchr(tp, '@')) == NULL || t->inBoundLambda) return NULL;
+    k = atoi(tp + 1);
+    if (at[1] == 0) params = t->bodyTypeParams;
+    else params = t->cls && streq0(at + 1, t->cls->name) ? t->cls->typeParams : NULL;
+    if (params && k >= 0 && k < params->count) name = ((FcTypeParam*)params->items[k])->name;
+    return name && streq0(TypeParamRef(t, name), tp) ? name : NULL;
+}
+/* ContextTypeArg: a type argument of the class a parameter takes from its target (`lambda<List<int>>`), as it would be written; NULL when it cannot be */
+static FcTypeRef* ContextTypeArg(FcTC* t, const FcST* type);
 /* ContextParamType: the declaration an untyped parameter of a lambda gets from the lambda type of its target (`int lambda<string> g = s => ...`),
- * written as the type `(string s)` would be - the compiler gives it the same entry: the conversion of a number or a string, the check of a class or an
- * enum, the unit. NULL: nothing to check (any, a type parameter, an array, a generic class, a width the type does not keep, a lambda: a signature keeps
- * only the name of a lambda type in it, `lambda<lambda<int>>` says 'lambda') - the parameter stays as it is. A number without a unit is unitless, as
- * `(int x)` is, unless it was declared ': any' (`Box<int : any>`). */
+ * written as the type `(string s)` would be - the compiler gives it the same entry: the conversion of a number or a string (with its width: `int[16]`,
+ * `int[8]`, `byte`, `float[32]`), the check of a class (with its type arguments: `List<int>`), an enum, an array (`int[]`: arrayRank, which the
+ * compiler makes the ranks of `(int a[])`), the number of parameters of a lambda (`lambda<lambda<int>>`: `(lambda<int> g)`), the unit, a type
+ * parameter of the place (ContextTypeParam). NULL: nothing to check (any, a T that is not the T of the place, a selector) - the parameter stays as it
+ * is. A number without a unit is unitless, as `(int x)` is, unless it was declared ': any' (`Box<int : any>`). */
 static FcTypeRef* ContextParamType(FcTC* t, const FcST* type) {
     FcTypeRef* r;
     const char* name;
+    int ranks = 0;
     if (type == NULL) return NULL;
+    while (type->kind == STK_Array) {
+        if (type->element == NULL) return NULL;
+        type = type->element;
+        ranks++;
+    }
     switch (type->kind) {
         case STK_Int: name = "int"; break;
         case STK_Float: name = "float"; break;
@@ -583,13 +609,36 @@ static FcTypeRef* ContextParamType(FcTC* t, const FcST* type) {
         case STK_Char: name = "char"; break;
         case STK_String: name = "string"; break;
         case STK_Enum: name = type->cls; break;
-        case STK_Class: name = type->args == NULL ? type->cls : NULL; break;
+        case STK_Class: name = type->cls; break;
+        case STK_Lambda: name = type->lambdaShape && type->paramCount >= 0 && ranks == 0 ? "lambda" : NULL; break;
+        case STK_Dynamic: name = ContextTypeParam(t, type); break;
         default: name = NULL; break;
     }
     if (name == NULL) return NULL;
     r = fcTcTypeRef(t, name, FC_NULL_INT);
+    r->arrayRank = ranks;
+    if (type->kind == STK_Lambda) {
+        FcLambdaSignature* signature = (FcLambdaSignature*)fcAlloc(TC_, sizeof *signature);
+        int i;
+        signature->paramTypeNames = fcListNew(TC_);
+        signature->selectorKind = "member";
+        for (i = 0; i < type->paramCount; i++) fcListAdd(TC_, signature->paramTypeNames, (void*)"any");
+        r->lambdaSignature = signature;
+        return r;
+    }
+    if (type->kind == STK_Class && type->args != NULL) {
+        int i;
+        r->typeArgs = fcListNew(TC_);
+        for (i = 0; i < type->args->count; i++) {
+            FcTypeRef* arg = ContextTypeArg(t, (const FcST*)type->args->items[i]);
+            if (arg == NULL) return NULL;
+            fcListAdd(TC_, r->typeArgs, arg);
+        }
+        r->typeArgCount = r->typeArgs->count;
+    }
     if (type->kind == STK_Int && type->raw) { r->bitWidth = 8; r->isUnsigned = true; }
     else if (type->kind == STK_Int && (type->wide == 32 || type->wide == 64)) r->bitWidth = type->wide;
+    else if (type->kind == STK_Int && (type->bits == 8 || type->bits == 16)) r->bitWidth = type->bits;
     else if (type->kind == STK_Float && (type->bits == 8 || type->bits == 16 || type->bits == 32)) r->bitWidth = type->bits;
     if ((type->kind == STK_Int || type->kind == STK_Float) && !type->raw && type->unit != NULL && !fcUIsUnitless(type->unit)) {
         const char* text = DemandTextOf(t, type->unit);
@@ -598,6 +647,12 @@ static FcTypeRef* ContextParamType(FcTC* t, const FcST* type) {
     } else if ((type->kind == STK_Int || type->kind == STK_Float) && !type->raw && type->unit == NULL && type->anyUnit) r->unit = "any";
     r->nonNull = type->nul == NUL_Defined && (type->kind == STK_Int || type->kind == STK_Float || type->kind == STK_Bool || type->kind == STK_Word || type->kind == STK_Char);
     return r;
+}
+static FcTypeRef* ContextTypeArg(FcTC* t, const FcST* type) {
+    /* 'any' (or a type the checker does not know) is the type argument that names no type; an array, a lambda: what the run time does not check either */
+    if (type->kind == STK_Dynamic && type->typeParam == NULL) return fcTcTypeRef(t, "any", FC_NULL_INT);
+    if (type->kind == STK_Array || type->kind == STK_Lambda || type->kind == STK_Undefined || type->kind == STK_Object) return NULL;
+    return ContextParamType(t, type);
 }
 static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expected) {
     bool toTarget = t->lambdaToTarget;
@@ -973,6 +1028,49 @@ static void fcPutMethodTypeArgs(FcTC* t, FcExpr* c, FcList* typeParams, FcDict* 
     fcDictPut(t->rr->methodTypeArgs, c, texts);
 }
 
+/* OverloadLambdaTarget: the type a lambda written as argument `index` of an overloaded call (a method or a constructor) takes from its parameter
+ * (12-lambdas.md) - only when exactly one of the candidates can take a lambda there at all, with a lambda type: whichever overload the run time
+ * picks (Overloads.Score: a lambda matches 'k:lambda', 'any' or no type, a type parameter) is then that one, so its parameter is the lambda's
+ * typed target. NULL (the lambda stays untyped, as before): a second candidate could take it too ('any', no type, an open T, an unknown type,
+ * another lambda type, an expression tree), or none has a lambda type there. The other parameter types (int, float, bool, char, string, word,
+ * an enum, an array, a class or an interface) take no lambda. */
+static const FcST* OverloadLambdaTarget(FcTC* t, FcList* candidates, int index) {
+    const FcST* found = NULL;
+    int k;
+    for (k = 0; k < candidates->count; k++) {
+        FcCand* cand = (FcCand*)candidates->items[k];
+        FcMethodDecl* m = cand->method;
+        FcLambdaParam* p;
+        const FcST* declared;
+        if (index >= m->params->count) continue;
+        p = (FcLambdaParam*)m->params->items[index];
+        if (p->byRef || p->type == NULL || fcTrIsInferred(p->type) || p->type->pointerDepth > 0) return NULL;
+        if (cand->map && fcDictHas(cand->map, p->type->baseName)) return NULL;
+        if (m->typeParams && fcHasTypeParamNamed(m->typeParams, p->type->baseName)) return NULL;
+        declared = Declared(t, p->type, p->arrayRanks->count, NULL);
+        if (declared == NULL || stIsDynamic(declared)) return NULL;
+        if (declared->kind == STK_Class && streq0(declared->cls, "LambdaExpression")) return NULL;
+        if (declared->kind != STK_Lambda) continue;
+        if (found != NULL || (p->type->lambdaSignature && (p->type->lambdaSignature->isSelector || p->type->lambdaSignature->isExpression))) return NULL;
+        {
+            FcDict* map = cand->map;
+            if (m->typeParams && m->typeParams->count > 0) {
+                FcDict* open = fcDictNew(TC_, FC_KEY_STR);
+                int q;
+                for (q = 0; q < m->typeParams->count; q++) fcSetAdd(open, ((FcTypeParam*)m->typeParams->items[q])->name);
+                map = WithOpen(t, map ? map : fcDictNew(TC_, FC_KEY_STR), open);
+            }
+            found = Declared(t, p->type, p->arrayRanks->count, map);
+        }
+    }
+    return found;
+}
+static const FcST* InferOverloadArg(FcTC* t, FcList* candidates, FcList* argNames, FcExpr* arg, int index) {
+    const FcST* target;
+    if (arg->kind != EK_LambdaExpr || argNames != NULL || (target = OverloadLambdaTarget(t, candidates, index)) == NULL) return Infer(t, arg);
+    return InferExpected(t, arg, target);
+}
+
 static const FcST* InferOverloadedCall(FcTC* t, FcCallExpr* c, FcList* candidates, const char* receiverClass, bool virtualCall) {
     FcList* args = fcListNew(TC_);
     FcCand* picked;
@@ -980,7 +1078,7 @@ static const FcST* InferOverloadedCall(FcTC* t, FcCallExpr* c, FcList* candidate
     FcDict* map;
     const char* hint;
     int i;
-    for (i = 0; i < c->args->count; i++) fcListAdd(TC_, args, (void*)Infer(t, (FcExpr*)c->args->items[i]));
+    for (i = 0; i < c->args->count; i++) fcListAdd(TC_, args, (void*)InferOverloadArg(t, candidates, c->argNames, (FcExpr*)c->args->items[i], i));
     if (!(picked = PickOverload(t, candidates, args))) return ST_DYNAMIC;
     method = picked->method;
     map = picked->map;
@@ -1270,7 +1368,7 @@ static const FcST* InferNewCore(FcTC* t, FcNewExpr* n) {
             FcMethodDecl* md = FC_NEW(TC_, FcMethodDecl, .h = {SK_MethodDecl, kc->h.source, kc->h.line}, .returnType = NULL, .name = "#new", .params = kc->params, .body = kc->body);
             fcListAdd(TC_, asMethods, fcCand(t, md, map));
         }
-        for (i = 0; i < n->args->count; i++) fcListAdd(TC_, ctorArgs, (void*)Infer(t, (FcExpr*)n->args->items[i]));
+        for (i = 0; i < n->args->count; i++) fcListAdd(TC_, ctorArgs, (void*)InferOverloadArg(t, asMethods, NULL, (FcExpr*)n->args->items[i], i));
         if ((picked = PickOverload(t, asMethods, ctorArgs)) != NULL) {
             FcConstructorDecl* chosen = NULL;
             for (i = 0; i < asMethods->count; i++) if (((FcCand*)asMethods->items[i])->method == picked->method) { chosen = (FcConstructorDecl*)ordered->items[i]; break; }

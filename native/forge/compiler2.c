@@ -576,7 +576,21 @@ static void CompileLambda(FcComp* cm, FcLambdaExpr* lambda) {
                 FcTypeRef* contextType;
                 if (p->type != NULL || (contextType = (FcTypeRef*)fcDictGet(contextTypes, p)) == NULL) continue;
                 if (typedParams == lambda->params) { int k; typedParams = fcListNew(c); for (k = 0; k < lambda->params->count; k++) fcListAdd(c, typedParams, lambda->params->items[k]); }
-                { FcLambdaParam* typed = (FcLambdaParam*)fcAlloc(c, sizeof *typed); *typed = *p; typed->type = contextType; typedParams->items[i] = typed; }
+                {
+                    FcLambdaParam* typed = (FcLambdaParam*)fcAlloc(c, sizeof *typed);
+                    *typed = *p;
+                    typed->type = contextType;
+                    /* an array (`lambda<int[]>`) is the parameter `(int a[])`: the ranks after the name */
+                    if (contextType->arrayRank > 0) {
+                        int k;
+                        FcTypeRef* element = fcTrCopy(c, contextType);
+                        element->arrayRank = 0;
+                        typed->type = element;
+                        typed->arrayRanks = fcListNew(c);
+                        for (k = 0; k < contextType->arrayRank; k++) fcListAdd(c, typed->arrayRanks, NULL);
+                    }
+                    typedParams->items[i] = typed;
+                }
             }
         }
         EmitLambdaParamChecks(cm, inner, typedParams);

@@ -590,6 +590,8 @@ static const FcST* FromName(FcTC* t, const char* name, FcDict* map) {
     if ((tp = TypeParamRef(t, name)) != NULL) { FcST* r = stCopy(TC_, ST_DYNAMIC); r->typeParam = tp; return r; }
     return ST_DYNAMIC;
 }
+static const FcST* SignatureName(FcTC* t, const char* name, const FcLambdaSignature* signature, FcDict* map);
+static const FcST* SignatureParam(FcTC* t, const FcTypeRef* ref, FcDict* map);
 static const FcST* DeclaredLambda(FcTC* t, const FcLambdaSignature* signature, FcDict* map) {
     FcList* ps;
     int i;
@@ -598,7 +600,7 @@ static const FcST* DeclaredLambda(FcTC* t, const FcLambdaSignature* signature, F
     if (signature->isSelector) {
         if (signature->paramTypeNames->count == 1) {
             ps = fcListNew(TC_);
-            fcListAdd(TC_, ps, (void*)FromName(t, (const char*)signature->paramTypeNames->items[0], map));
+            fcListAdd(TC_, ps, (void*)SignatureName(t, (const char*)signature->paramTypeNames->items[0], signature, map));
             return stLambdaOf(TC_, 1, NULL, ps);
         }
         return stLambdaOf(TC_, -1, NULL, NULL);
@@ -606,12 +608,48 @@ static const FcST* DeclaredLambda(FcTC* t, const FcLambdaSignature* signature, F
     ps = fcListNew(TC_);
     for (i = 0; i < signature->paramTypeNames->count; i++) {
         const char* name = (const char*)signature->paramTypeNames->items[i];
-        const FcST* param = FromName(t, name, map);
-        /* `lambda<byte>`: a byte, as the parameter `(byte b)` is (raw, unitless) - not any int */
-        if (streq0(name, "byte") && !(map && fcDictHas(map, name))) { FcST* r = stCopy(TC_, param); r->unit = FC_UNITLESS; r->unitIsDimension = false; r->raw = true; param = r; }
+        const FcTypeRef* ref = signature->paramTypes && i < signature->paramTypes->count ? (const FcTypeRef*)signature->paramTypes->items[i] : NULL;
+        const FcST* param;
+        if (ref != NULL) param = SignatureParam(t, ref, map);
+        else {
+            param = SignatureName(t, name, signature, map);
+            /* `lambda<byte>`: a byte, as the parameter `(byte b)` is (raw, unitless) - not any int */
+            if (streq0(name, "byte") && !(map && fcDictHas(map, name))) { FcST* r = stCopy(TC_, param); r->unit = FC_UNITLESS; r->unitIsDimension = false; r->raw = true; param = r; }
+        }
         fcListAdd(TC_, ps, (void*)param);
     }
-    return stLambdaOf(TC_, signature->paramTypeNames->count, signature->returnTypeName ? FromName(t, signature->returnTypeName, map) : NULL, ps);
+    {
+        FcST* r = stCopy(TC_, stLambdaOf(TC_, signature->paramTypeNames->count, signature->returnTypeName ? SignatureName(t, signature->returnTypeName, signature, map) : NULL, ps));
+        r->lambdaShape = true;
+        return r;
+    }
+}
+/* SignatureName: a name in a lambda type (`Inner lambda<Inner>`), resolved where the type stands - its namespace and the #usings, as Declared does for
+ * every other type there; a type parameter in scope, a type argument (map), a primitive as FromName */
+static const FcST* SignatureName(FcTC* t, const char* name, const FcLambdaSignature* signature, FcDict* map) {
+    const FcST* result = FromName(t, name, map);
+    if (result->kind == STK_Dynamic && !result->declaredAny && result->typeParam == NULL && signature->namespaces && signature->namespaces->count > 0) {
+        FcTypeRef ref;
+        const char* resolved;
+        memset(&ref, 0, sizeof ref);
+        ref.baseName = name; ref.bitWidth = FC_NULL_INT; ref.namespaces = signature->namespaces;
+        resolved = NameOf(t, &ref);
+        if (!streq0(resolved, name) && tcKnown(t, resolved)) result = stClassOf(TC_, resolved, NULL);
+    }
+    return result;
+}
+/* SignatureParam: a parameter type of a lambda type as written - Declared, as the parameter `(int x[])`, `(List<int> l)`, `(int[16] x)`,
+ * `(int lambda<string> f)` is - except that a number without a unit written stays without a known unit, as `lambda<int>` always was */
+static const FcST* SignatureParam(FcTC* t, const FcTypeRef* ref, FcDict* map) {
+    /* (the element of an array as a type of its own, so that it keeps its width: `lambda<int[16][]>` is `(int[16] a[])`) */
+    FcTypeRef element = *ref;
+    const FcST* result;
+    int k;
+    element.arrayRank = 0;
+    if ((result = Declared(t, &element, 0, map)) == NULL) return ST_DYNAMIC;
+    if (stIsNumber(result) && !result->raw && ref->unit == NULL && !(map && fcDictHas(map, ref->baseName))) result = stWithUnit(TC_, result, NULL, false);
+    for (k = 0; k < ref->arrayRank; k++) result = stArrayOf(TC_, result);
+    return result;
 }
 
 static bool IsRawType(const FcTypeRef* type) {

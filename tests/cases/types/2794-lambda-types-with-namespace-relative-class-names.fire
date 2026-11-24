@@ -1,0 +1,31 @@
+#using Shapes
+namespace Shapes {
+    class Circle { float r = 1.5 }
+}
+namespace Geo {
+    class Point {
+        int x = 1
+    }
+    class Rock {
+        int weight = 3
+    }
+    class Holder {
+        string lambda<Point> name = p => "p" + p.y
+        string lambda<Point> nameTyped = (Point p) => "p" + p.y
+        string lambda<Point> wrong = (Rock r) => "r" + r.weight
+        string lambda<Circle> circle = c => "c" + c.radius
+        Point lambda<int> make = n => new Point()
+        static string Apply(string lambda<Point> f) { return f(new Point()) }
+        undefined Unused() {
+            print(make(4).y)
+            print(Apply(p => "a" + p.z))
+            var fs = new List<string lambda<Point>>()
+            fs.Add(p => "f" + p.w)
+            undefined lambda<List<Point>> each = l => print(l[0].v)
+        }
+        undefined Run() { print(make(4).x + " " + Apply(p => "a" + p.x)) }
+    }
+}
+new Geo.Holder().Run()
+//# modes: Release
+//# name: types: a lambda type inside a namespace names its classes as every other type there (the own namespace, #using) - the members of 'p' are checked, a parameter of another type is reported, the result type is known

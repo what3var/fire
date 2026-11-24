@@ -874,6 +874,15 @@ Was der Härtetest an der Sprache und den Packages gefunden hat (nichts davon ge
   Rückgabe, Zuweisung, `List<int lambda<string>>`, Typargument), wird jetzt wie `(string s)` übersetzt - mit derselben Umwandlung bzw. Prüfung beim
   Eintritt (string, int/float, byte, bool, char, Klasse, Interface, Enum, Einheit des Typarguments), in VM und nativ; vorher fehlte sie (`g(12345)`
   warf statt `5`). TC037 stimmt damit auch für diese Lambdas (Fälle native/0555, types/2793).
+  Dazu (24.11.2026): die Namen eines Lambda-Typs werden aufgelöst wie jeder Typ an der Stelle (Namensraum, `#using`: `lambda<Inner>`,
+  `Inner lambda<int>` in `namespace Geo` - vorher `any`, ohne Warnung und ohne Prüfung); die Signatur behält den ganzen Typ jedes Parameters
+  (`lambda<int[]>`, `lambda<List<int>>`, `lambda<int[16]>`, `lambda<lambda<int>>` mit seiner Parameterzahl - vorher hieß das nur `lambda`, `n1(x => x * 5)`
+  ging also nur durch, weil die Zahl fehlte). Typisiert wie mit dem Typ werden jetzt auch Arrays, generische Klassen, Breiten 8/16 aus dem Typargument
+  (`Box<int[16]>`), ein Lambda-Typ (die Zahl der Parameter), das `T` der Stelle (`class Box<T>`, `Run<T>`; nicht ein `T` von anderswo und nicht mit `on`)
+  und ein Aufruf mit Überladungen, wenn genau eine Überladung an der Stelle ein Lambda nehmen kann (sonst bleibt er ohne Typ). Nicht: `await on`,
+  `fire on`, `fire global` - ihre Parameter sind die Argumente selbst, es gibt keinen Typ zu schreiben (Fälle native/0556, 0557, types/2794, 2795).
+  Offen: ein Enum mit relativem Namen (`Side` in `namespace Geo`) wird bei einer Deklaration zur Laufzeit nicht geprüft (`Geo.Side` schon) - der
+  Lambda-Parameter ohne Typ nimmt den vollen Namen und wird geprüft.
 * Lambdas fangen Kopien: das ist die dokumentierte Regel (12-lambdas.md); dazu jetzt die Redewendung für eine Sortierung nach einer Liste
   (`func (int a, int b) on orders => this[a] - this[b]`, keine Kopie) und was die Kopie kostet.
 * `json`: `JsonNode` (strikt, oder mit `JsonReadOptions(true)` Kommentare und Komma am Ende, auch für `Json.Parse`/`Json.Deserialize`), Schreiben

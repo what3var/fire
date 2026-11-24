@@ -1,0 +1,25 @@
+class Point {
+    int x = 1
+}
+class Over {
+    static int Apply(int lambda<Point> f) { return f(new Point()) }
+    static int Apply(int n) { return n }
+    static int Loose(int lambda<Point> f) { return f(new Point()) }
+    static int Loose(any n) { return 0 }
+}
+// a lambda type in a signature keeps its parameters: 'g' takes one int
+int lambda<lambda<int>> n1 = g => g(3)
+int lambda<lambda<int>> n2 = g => g()
+int lambda<lambda<int>> n3 = (lambda<int, int> g) => g(1, 2)
+print(n1(x => x * 5))
+// the element of an array, the type argument of a class
+undefined lambda<Point[]> p1 = a => print(a[0].y)
+undefined lambda<Point[]> p2 = (Point a[]) => print(a[0].y)
+undefined lambda<List<Point>> l1 = l => print(l[0].z)
+undefined lambda<List<Point>> l2 = (List<Point> l) => print(l[0].z)
+// an overload: the only one that takes a lambda gives its type - not when 'any' could take it too
+try { print(Over.Apply(p => p.w)) } catch (MissingMemberException e) { print("w") }
+print(Over.Apply(p => p.x))
+print(Over.Loose(p => p.x))
+//# modes: Release
+//# name: types: a lambda's parameter without a type takes a lambda type of the signature with its parameters, an array, a generic class, and the type of the one overload that takes a lambda there
