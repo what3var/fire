@@ -1238,13 +1238,13 @@ Was M3 mit dem C#-forge aus `fire.Testing` nahm, ist größtenteils wieder da - 
 | Lauf | Fälle | richtig | falsch | nicht gelaufen |
 | --- | --- | --- | --- | --- |
 | `conformance linkage` (die Linkages, Plugins, `Library.Load`, TLS) | 18 | 18 | 0 | 0 |
-| `conformance wine` (fire.exe, gepackt, forge-c.exe, Linkages, Plugins, `Library.Load`, SChannel) | 8 | 8 | 0 | 0 |
-| `conformance native --wine` (der Korpus in fire.exe) | @WINE@ |
+| `conformance wine` (fire.exe, gepackt, forge-c.exe, Linkages, Plugins, `Library.Load`, SChannel) | 7 | 7 | 0 | 0 |
+| `conformance native --wine` (der Korpus in fire.exe) | 533 | 523 | 0 | 6 (dazu 4 anders unter Windows: 2160, 2630, 3380, 3470) |
 | `conformance native --sanitize address` | @ASAN@ |
-| `conformance native --sanitize thread` (die Fälle `Threads:`) | @TSAN@ |
-| `conformance native --werror` | @WERROR@ |
-| `conformance native --engine native --toolchain tcc --filter "Threads:"` | @TCC@ |
-| `conformance` (alle Gruppen in der VM, mit den neuen Fällen) | @VM@ |
+| `conformance native --sanitize thread` (die Fälle `Threads:`) | 80 | 80 | 0 | 0 |
+| `conformance native --werror` | 533 | 530 | 0 | 3 (die Server) |
+| `conformance native --engine native --toolchain tcc --filter "Threads:"` | 81 | 81 | 0 | 0 |
+| `conformance` (alle Gruppen in der VM, mit den neuen Fällen) | 1196 | 1193 | 0 | 3 (die Server) |
 | `fire.Testing` Gruppe `debugger` | 60 | 60 | 0 | 0 |
 
 Beim Portieren gefunden:
