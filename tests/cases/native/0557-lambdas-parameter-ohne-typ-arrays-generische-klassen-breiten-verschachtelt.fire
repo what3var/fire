@@ -90,6 +90,19 @@ try { l1(textList) } catch (ArgumentException e) { print("l1 " + e.message) }
 try { l2(textList) } catch (ArgumentException e) { print("l2 " + e.message) }
 try { l1(text) } catch (ArgumentException e) { print("l1 " + e.message) }
 try { l2(text) } catch (ArgumentException e) { print("l2 " + e.message) }
+any wideInts = [70000, 5]
+undefined lambda<int[16][]> v1 = a => print(a[0])
+undefined lambda<int[16][]> v2 = (int[16] a[]) => print(a[0])
+v1(wideInts)
+v2(wideInts)
+any nested = [[1, 2], [3]]
+any nestedTexts = [["x"]]
+undefined lambda<int[][]> m1 = a => print(a[1][0])
+undefined lambda<int[][]> m2 = (int a[][]) => print(a[1][0])
+m1(nested)
+m2(nested)
+try { m1(nestedTexts) } catch (ArgumentException e) { print("m1 " + e.message) }
+try { m2(nestedTexts) } catch (ArgumentException e) { print("m2 " + e.message) }
 // 3. widths: written in the signature, and from a type argument
 undefined lambda<int[16]> w1 = x => print(x)
 undefined lambda<int[16]> w2 = (int[16] x) => print(x)

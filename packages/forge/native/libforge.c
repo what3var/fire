@@ -12912,9 +12912,14 @@ static const FcST* SignatureName(FcTC* t, const char* name, const FcLambdaSignat
 /* SignatureParam: a parameter type of a lambda type as written - Declared, as the parameter `(int x[])`, `(List<int> l)`, `(int[16] x)`,
  * `(int lambda<string> f)` is - except that a number without a unit written stays without a known unit, as `lambda<int>` always was */
 static const FcST* SignatureParam(FcTC* t, const FcTypeRef* ref, FcDict* map) {
-    const FcST* result = Declared(t, ref, 0, map);
-    if (result == NULL) return ST_DYNAMIC;
-    if (stIsNumber(result) && !result->raw && ref->unit == NULL && ref->arrayRank == 0 && !(map && fcDictHas(map, ref->baseName))) result = stWithUnit(TC_, result, NULL, false);
+    /* (the element of an array as a type of its own, so that it keeps its width: `lambda<int[16][]>` is `(int[16] a[])`) */
+    FcTypeRef element = *ref;
+    const FcST* result;
+    int k;
+    element.arrayRank = 0;
+    if ((result = Declared(t, &element, 0, map)) == NULL) return ST_DYNAMIC;
+    if (stIsNumber(result) && !result->raw && ref->unit == NULL && !(map && fcDictHas(map, ref->baseName))) result = stWithUnit(TC_, result, NULL, false);
+    for (k = 0; k < ref->arrayRank; k++) result = stArrayOf(TC_, result);
     return result;
 }
 

@@ -28,6 +28,12 @@ l1 Parameter 'l' is a List, not String.
 l2 Parameter 'l' is a List, not String.
 4464
 4464
+3
+3
+m1 An element of an array of int must be an int (or undefined), not String.
+m2 An element of an array of int must be an int (or undefined), not String.
+4464
+4464
 4464
 4464
 112
