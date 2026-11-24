@@ -1,0 +1,123 @@
+class Point {
+    int x = 1
+}
+class Rock {
+    int weight = 3
+}
+class Box<T> {
+    undefined lambda<T> f
+    undefined lambda<T> fTyped
+    construct() {
+        f = x => print("f " + x)
+        fTyped = (T x) => print("f " + x)
+    }
+    undefined One(undefined lambda<T> g, any x) { g(x) }
+    undefined Each(undefined lambda<T[]> g, any x) { g(x) }
+    undefined Local(any x) {
+        undefined lambda<T> h = v => print("h " + v)
+        undefined lambda<T> hTyped = (T v) => print("h " + v)
+        try { h(x) } catch (ArgumentException e) { print("h " + e.message) }
+        try { hTyped(x) } catch (ArgumentException e) { print("hTyped " + e.message) }
+    }
+}
+class Gen {
+    static undefined Run<T>(T seed, any x) {
+        undefined lambda<T> k = v => print("k " + v)
+        undefined lambda<T> kTyped = (T v) => print("k " + v)
+        try { k(x) } catch (ArgumentException e) { print("k " + e.message) }
+        try { kTyped(x) } catch (ArgumentException e) { print("kTyped " + e.message) }
+    }
+}
+class Over {
+    static string Apply(string lambda<int> f, any x) { return f(x) }
+    static string Apply(int n, any x) { return "n" + n }
+    static string Loose(string lambda<int> f, any x) { return f(x) }
+    static string Loose(any n, any x) { return "any" }
+    construct(string lambda<int> f, any x) { print(f(x)) }
+    construct(string s, any x) { print(s) }
+}
+any ints = [1, 2, 3]
+any texts = ["a", "b"]
+any text = "abc"
+any points = [new Point(), new Point()]
+any rocks = [new Rock()]
+any big = 70000
+any third = 1.0 / 3.0
+any fl = 2.5
+any one = 1
+// 1. a lambda type in a signature: the number of its parameters
+int lambda<lambda<int>> n1 = g => g(3)
+int lambda<lambda<int>> n2 = (lambda<int> g) => g(3)
+print(n1(x => x * 5) + " " + n2(x => x * 5))
+any none = () => 7
+try { print(n1(none)) } catch (ArgumentException e) { print("n1 " + e.message) }
+try { print(n2(none)) } catch (ArgumentException e) { print("n2 " + e.message) }
+string lambda<int lambda<string>> r1 = g => "" + g("four")
+string lambda<int lambda<string>> r2 = (int lambda<string> g) => "" + g("four")
+print(r1(s => s.length) + " " + r2(s => s.length))
+undefined lambda<lambda> z1 = g => print(g())
+undefined lambda<lambda> z2 = (lambda g) => print(g())
+z1(() => 8)
+z2(() => 8)
+try { z1(x => 8) } catch (ArgumentException e) { print("z1 " + e.message) }
+try { z2(x => 8) } catch (ArgumentException e) { print("z2 " + e.message) }
+// 2. arrays and generic classes
+undefined lambda<int[]> a1 = a => print(a.length)
+undefined lambda<int[]> a2 = (int a[]) => print(a.length)
+a1(ints)
+a2(ints)
+try { a1(texts) } catch (ArgumentException e) { print("a1 " + e.message) }
+try { a2(texts) } catch (ArgumentException e) { print("a2 " + e.message) }
+try { a1(text) } catch (ArgumentException e) { print("a1 " + e.message) }
+try { a2(text) } catch (ArgumentException e) { print("a2 " + e.message) }
+undefined lambda<Point[]> p1 = a => print(a[0].x)
+undefined lambda<Point[]> p2 = (Point a[]) => print(a[0].x)
+p1(points)
+p2(points)
+try { p1(rocks) } catch (ArgumentException e) { print("p1 " + e.message) }
+try { p2(rocks) } catch (ArgumentException e) { print("p2 " + e.message) }
+new Box<int>().Each(a => print(a.length), ints)
+new Box<int>().Each((int a[]) => print(a.length), ints)
+try { new Box<int>().Each(a => print(a.length), texts) } catch (ArgumentException e) { print("each " + e.message) }
+try { new Box<int>().Each((int a[]) => print(a.length), texts) } catch (ArgumentException e) { print("each " + e.message) }
+any intList = new List<int>()
+any textList = new List<string>()
+undefined lambda<List<int>> l1 = l => print(l.Count)
+undefined lambda<List<int>> l2 = (List<int> l) => print(l.Count)
+l1(intList)
+l2(intList)
+try { l1(textList) } catch (ArgumentException e) { print("l1 " + e.message) }
+try { l2(textList) } catch (ArgumentException e) { print("l2 " + e.message) }
+try { l1(text) } catch (ArgumentException e) { print("l1 " + e.message) }
+try { l2(text) } catch (ArgumentException e) { print("l2 " + e.message) }
+// 3. widths: written in the signature, and from a type argument
+undefined lambda<int[16]> w1 = x => print(x)
+undefined lambda<int[16]> w2 = (int[16] x) => print(x)
+w1(big)
+w2(big)
+new Box<int[16]>().One(x => print(x), big)
+new Box<int[16]>().One((int[16] x) => print(x), big)
+new Box<int[8]>().One(x => print(x), big)
+new Box<int[8]>().One((int[8] x) => print(x), big)
+new Box<byte>().One(x => print(x), big)
+new Box<byte>().One((byte x) => print(x), big)
+new Box<float[16]>().One(x => print(x), third)
+new Box<float[16]>().One((float[16] x) => print(x), third)
+// 4. a type parameter of the place: the type argument the object or the call got
+var b = new Box<int>()
+try { b.f(text) } catch (ArgumentException e) { print("f " + e.message) }
+try { b.fTyped(text) } catch (ArgumentException e) { print("fTyped " + e.message) }
+b.f(4)
+b.Local(text)
+Gen.Run(5, fl)
+// 5. overloads: only one takes a lambda there - its type; 'any' can take one too - untyped
+try { print(Over.Apply(n => "x" + (n + 1), fl)) } catch (ArgumentException e) { print("apply " + e.message) }
+try { print(Over.Apply((int n) => "x" + (n + 1), fl)) } catch (ArgumentException e) { print("apply " + e.message) }
+print(Over.Apply(n => "x" + (n + 1), one) + " " + Over.Apply((int n) => "x" + (n + 1), one))
+try { print(Over.Apply(n => "x" + (n + 1), text)) } catch (ArgumentException e) { print("apply " + e.message) }
+try { print(Over.Apply((int n) => "x" + (n + 1), text)) } catch (ArgumentException e) { print("apply " + e.message) }
+print(Over.Loose(n => "x" + n, fl))
+print(Over.Loose((any n) => "x" + n, fl))
+try { new Over(n => "c" + (n + 1), text) } catch (ArgumentException e) { print("new " + e.message) }
+try { new Over((int n) => "c" + (n + 1), text) } catch (ArgumentException e) { print("new " + e.message) }
+//# name: Lambdas: Parameter ohne Typ nehmen den Typ des Ziels auch fuer Lambda-Typen in der Signatur, Arrays, generische Klassen, Breiten, das T der Stelle und die eine passende Ueberladung - wie mit dem Typ

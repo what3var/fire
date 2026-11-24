@@ -1,0 +1,54 @@
+15 15
+n1 The lambda has 0 parameter(s), its declaration says 1.
+n2 The lambda has 0 parameter(s), its declaration says 1.
+4 4
+8
+8
+z1 The lambda has 1 parameter(s), its declaration says 0.
+z2 The lambda has 1 parameter(s), its declaration says 0.
+3
+3
+a1 An element of an array of int must be an int (or undefined), not String.
+a2 An element of an array of int must be an int (or undefined), not String.
+a1 An array of int is declared here, not String.
+a2 An array of int is declared here, not String.
+1
+1
+p1 An element of an array of Point must be a Point (or undefined), not Rock.
+p2 An element of an array of Point must be a Point (or undefined), not Rock.
+3
+3
+each An element of an array of int must be an int (or undefined), not String.
+each An element of an array of int must be an int (or undefined), not String.
+0
+0
+l1 Parameter 'l' is a List<int>, not List<string>.
+l2 Parameter 'l' is a List<int>, not List<string>.
+l1 Parameter 'l' is a List, not String.
+l2 Parameter 'l' is a List, not String.
+4464
+4464
+4464
+4464
+112
+112
+112
+112
+0.333251953125
+0.333251953125
+f Parameter 'x' is a T (int), not String.
+fTyped Parameter 'x' is a T (int), not String.
+f 4
+h Parameter 'v' is a T (int), not String.
+hTyped Parameter 'v' is a T (int), not String.
+k Parameter 'v' is a T (int), not Float.
+kTyped Parameter 'v' is a T (int), not Float.
+apply Parameter 'n' is an int, not Float.
+apply Parameter 'n' is an int, not Float.
+x2 x2
+apply Parameter 'n' is an int, not String.
+apply Parameter 'n' is an int, not String.
+x2.5
+x2.5
+new Parameter 'n' is an int, not String.
+new Parameter 'n' is an int, not String.
