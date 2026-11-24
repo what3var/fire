@@ -57,7 +57,8 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   native code - an exception it throws propagates -, otherwise `<object Name>`; a byte buffer its bytes as characters). `undefined` stays undefined
   (`defined string`: the `ArgumentException`). A value the type checker knows to be a string is not checked (no instruction); a parameter that every
   call of the program gives a string is not checked either (derived like `defined`, 8.10b). Strict mode reports a value that is certainly no string
-  as the warning `TC034`. DECISIONS D14.
+  as the warning `TC034`; a number, a char or a bool passed to a `string` parameter (an argument, an indexer, an operator, a setter, a typed lambda, a
+  default value) is the warning `TC037` in both modes. DECISIONS D14.
 - **Every value but `undefined` has `ToString()`**, and every object (a class without one gives `<object Name>`); it is the text of `"" + x`, except
   for a byte buffer (`ToString()` decodes it, `"" + buffer` is `<buffer n bytes>`).
 - A **local variable** declared with int/float/bool, a class, an interface or a type parameter holds the same: a value the type checker cannot

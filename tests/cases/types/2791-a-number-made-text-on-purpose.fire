@@ -1,0 +1,37 @@
+enum Color { Red, Blue }
+class Row {
+    string name = ""
+    construct() { }
+    string Find(string key) { return "<" + key + ">" }
+    any operator[](string key) { return "name " + key }
+    any operator[](int index) { return "position " + index }
+    string Any(any value) { return "" + value }
+}
+var r = new Row()
+int n = 5
+any a = 6
+// concatenation, interpolation, print and the explicit forms: no warning
+print(r.Find("" + n))
+print(r.Find(n.ToString()))
+print(r.Find("n = " + n))
+print(r.Find($"n = {n}"))
+print(n)
+print("" + 1.5 + true + 'c')
+// the static type is any or not known: no warning
+print(r.Find(a))
+var list = new List<any>()
+list.Add(7)
+print(r.Find(list[0]))
+// a parameter that is no string, an overload for the number, a string, an enum
+print(r.Any(8))
+print(r[0])
+print(r["id"])
+print(r.Find(Color.Blue))
+// storage: a variable, a field, an element - the conversion of the declaration, not a call (TC034 in strict mode)
+string s = 9
+r.name = 10
+string texts[] = new string[1]
+texts[0] = 11
+print(s + r.name + texts[0])
+//# modes: Release
+//# name: types: TC037 is not reported for concatenation, interpolation, print, '"" + x', 'x.ToString()', an argument of type any or unknown, a parameter that is no string or an overload that takes the number, an enum, nor for storage (a variable, a field, an element)

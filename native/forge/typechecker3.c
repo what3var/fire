@@ -71,6 +71,7 @@ static const FcST* InferMember(FcTC* t, FcMemberExpr* m, FcMemberUse use) {
         return stWithNull(TC_, stWithUnit(TC_, ST_INT, FC_UNITLESS, false), NUL_Defined);
     }
     if (stIsDynamic(target) && (staticClass = StaticClassRef(t, m->target)) != NULL) { target = stClassOf(TC_, staticClass, NULL); isStatic = true; }
+    t->memberReceiver = target;
     CheckAccess(t, target, m->name, use, 0, m->h.line, isStatic, false);
     CheckInterfaceAccessor(t, target, m->name, use, m->h.line);
     if (use == MU_Write && !isStatic) { CheckRecordWrite(t, target, m->name, m->target, m->h.line); CheckReadonlyWrite(t, target, m->name, m->target, m->h.line); }
@@ -832,6 +833,12 @@ static const char* StaticClassRef(FcTC* t, FcExpr* target) {
 static const FcST* CallLambda(FcTC* t, const FcST* lambda, FcList* args, FcCallExpr* c, const char* name) {
     if (lambda->paramCount >= 0 && args->count != lambda->paramCount)
         Report(t, TC_ArgumentCode, TF(t, "'%s' (%s) takes %d argument(s), not %d", name, S_(t, lambda), lambda->paramCount, args->count), c->h.line);
+    else if (lambda->params && c->argNames == NULL) {
+        int i;
+        for (i = 0; i < args->count && i < lambda->params->count; i++)
+            CheckNumberAsText(t, (const FcST*)args->items[i], (const FcST*)lambda->params->items[i],
+                name ? TF(t, "parameter %d of the lambda '%s'", i + 1, name) : TF(t, "parameter %d of the lambda", i + 1), ((FcExpr*)c->args->items[i])->line);
+    }
     return lambda->ret && lambda->ret->kind != STK_Undefined ? lambda->ret : ST_DYNAMIC;
 }
 static bool IsLocal(FcTC* t, const char* name) {

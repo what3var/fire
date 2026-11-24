@@ -1,0 +1,3 @@
+warning TC034: A value of type 'int' goes into 's', which is a 'string': it becomes its text (ToString()) - write '.ToString()' or '"" + ...' where that is meant (line 6)
+warning TC037: A number ('int') is passed as text to parameter 'key' of 'Of', which is a 'string' - write '"" + x' (or 'x.ToString()') if the text is meant (line 8)
+warning TC034: A value of type 'Color' goes into parameter 'key' of 'Of', which is a 'string': it becomes its text (ToString()) - write '.ToString()' or '"" + ...' where that is meant (line 9)

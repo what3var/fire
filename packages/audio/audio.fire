@@ -206,8 +206,8 @@ namespace Audio {
         defined int channels
         defined int volume
 
-        // `device`: a name ("default", "pulse", "alsa", "sim", ...) or a number - the GPIO pin of a PWM speaker on an ESP32; `rate` in Hz; `channels` 1 (mono) or 2 (stereo).
-        construct(string device = "default", defined int rate = 44100, defined int channels = 1) {
+        // `device`: a name ("default", "pulse", "alsa", "sim", ...) or a number - the GPIO pin of a PWM speaker on an ESP32 (any: a number is meant, it becomes "pwm:<pin>"); `rate` in Hz; `channels` 1 (mono) or 2 (stereo).
+        construct(any device = "default", defined int rate = 44100, defined int channels = 1) {
             this.handle = -1
             this.closed = false
             this.rate = rate

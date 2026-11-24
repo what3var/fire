@@ -1,0 +1,12 @@
+#strict
+class Names {
+    static string Of(string key) { return "<" + key + ">" }
+}
+enum Color { Red, Blue }
+string s = 5
+print(s)
+print(Names.Of(6))
+print(Names.Of(Color.Red))
+print(Names.Of("" + 7))
+//# modes: Release
+//# name: types: TC037 in strict mode - still a warning, and in place of TC034 for an argument; TC034 stays for storage and for what is no number, char or bool

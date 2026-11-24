@@ -865,6 +865,11 @@ Was der Härtetest an der Sprache und den Packages gefunden hat (nichts davon ge
   wenn die Deklaration von M entscheidet, dass der Aufrufer den Wert besitzt (jedes `return` gibt einen neuen Wert oder einen eigenen Lokalen, den M
   nicht weggibt; keine Überschreibung gibt anderes zurück - [13-ownership.md](language/13-ownership.md)). `packages/devices` meldete TC036 für
   `this.pending = fresh`/`joined`/`rest` (`Append`, `CutThrough`: neue Puffer ohne `take` im Feld) - seit dem 24.11.2026 `take` (keine TC036 mehr).
+* Typprüfer (24.11.2026): die Warnung **TC037**, wenn eine Zahl (mit oder ohne Einheit), ein `char` oder ein `bool` an einen Parameter vom Typ
+  `string` geht (Methode, Konstruktor, Operator, Indexer, Setter einer Property, typisiertes Lambda, Typargument `string`, benanntes Argument,
+  Default-Wert) und dort still zu Text wird - in lax und strict, immer eine Warnung; nicht für Verkettung, Interpolation, `print`, `"" + x`,
+  `x.ToString()`, `any` und Speicher (Variable, Feld, Element: weiter `TC034` in strict). Anlass: `row[0]` am früheren `operator[](string name)` von
+  `Data.Row` fragte nach der Spalte `"0"` (docs/language/02-types.md).
 * Lambdas fangen Kopien: das ist die dokumentierte Regel (12-lambdas.md); dazu jetzt die Redewendung für eine Sortierung nach einer Liste
   (`func (int a, int b) on orders => this[a] - this[b]`, keine Kopie) und was die Kopie kostet.
 * `json`: `JsonNode` (strikt, oder mit `JsonReadOptions(true)` Kommentare und Komma am Ende, auch für `Json.Parse`/`Json.Deserialize`), Schreiben
