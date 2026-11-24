@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.Build.NoTargets/3.7.56">
+  <!--
+    ember and the distribution folder spark needs next to it - the second project of fire.sln (after src/forge-c, before spark): bin/dist/ gets
+      `forge-c package-dist`   forge (this forge-c), fire and its five width variants, native/ (tables, runtime, platform, abi, vm, base), Source/ (the standard
+                               packages), Prebuilt/ (their libraries for this machine), libforge and libfirevm (docs/spec/FORGE_C.md, Phase D 6)
+      `forge build`            ember (tools/ember/ember.fireproj, a fire program) as ember[.exe]
+    Only when forge-c, native/, packages/ or tools/ember changed (the stamp bin/dist/.stamp). spark and the tests copy the folder into their output
+    (src/ForgeDist.targets). The VM and Prebuilt/ are compiled by the forge of the folder with the C compiler it finds (on Windows also MSVC through vswhere).
+
+    Properties: PrebuildStandard=false (no Prebuilt/: the VM builds the libraries of a package when it first loads it), BuildEmber=false (no ember),
+    BuildForgeDist=false (nothing at all).
+  -->
+  <Import Project="..\FireNative.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+    <_DistMode Condition="'$(PrebuildStandard)' == 'false'">noprebuilt</_DistMode>
+    <_DistMode Condition="'$(PrebuildStandard)' != 'false'">prebuilt</_DistMode>
+    <_DistMode Condition="'$(BuildEmber)' == 'false'">$(_DistMode)-noember</_DistMode>
+    <_DistStamp>$(FireDistDir).stamp-$(_DistMode)</_DistStamp>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\forge-c\forge-c.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" Private="false" />
+    <!-- what package-dist copies or builds from, and ember -->
+    <_DistInput Include="$(FireRepo)/native/tables/**;$(FireRepo)/native/runtime/**;$(FireRepo)/native/abi/**;$(FireRepo)/native/platform/**;$(FireRepo)/native/vm/**;$(FireRepo)/native/base/**" />
+    <_DistInput Include="$(FireRepo)/packages/**" Exclude="$(FireRepo)/packages/**/bin/**;$(FireRepo)/packages/**/obj/**" />
+    <_DistInput Include="$(FireRepo)/tools/ember/**" Exclude="$(FireRepo)/tools/ember/bin/**;$(FireRepo)/tools/ember/obj/**" />
+    <None Include="$(FireRepo)/tools/ember/*.fire;$(FireRepo)/tools/ember/ember.fireproj" Link="ember/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <Target Name="BuildFireDist" AfterTargets="Build" Inputs="$(ForgeCExe);@(_DistInput);$(MSBuildThisFileFullPath)" Outputs="$(_DistStamp)"
+          Condition="'$(DesignTimeBuild)' != 'true' And '$(BuildForgeDist)' != 'false'">
+    <Error Condition="!Exists('$(ForgeCExe)')" Text="forge-c was not built ($(ForgeCExe)): build src/forge-c first (fire.sln does)." />
+    <PropertyGroup>
+      <_DistArgs Condition="'$(PrebuildStandard)' == 'false'">--no-prebuilt</_DistArgs>
+      <!-- (the forge-c of the repository reads its tables and native/; the standard packages it installs on the way go into obj/, not into the user's store) -->
+      <_DistEnv>FIRE_TABLES=$(FireRepo)/native/tables;FIRE_NATIVE_ROOT=$(FireRepo)/native;FIRE_PACKAGES=$(MSBuildProjectDirectory)/obj/Packages</_DistEnv>
+    </PropertyGroup>
+    <Message Importance="high" Text="ember: forge-c package-dist $(FireDistDir) $(_DistArgs)" />
+    <Delete Files="$(FireDistDir).stamp;$(_DistStamp)" />
+    <RemoveDir Condition="'$(PrebuildStandard)' == 'false'" Directories="$(FireDistDir)Prebuilt" />
+    <Exec Command="&quot;$(ForgeCExe)&quot; package-dist &quot;$(FireDistDir).&quot; $(_DistArgs)" EnvironmentVariables="$(_DistEnv)" StandardOutputImportance="low" />
+    <Message Importance="high" Condition="'$(BuildEmber)' != 'false'" Text="ember: forge build tools/ember/ember.fireproj -o $(FireDistDir)ember$(FireExeSuffix)" />
+    <Exec Condition="'$(BuildEmber)' != 'false'" Command="&quot;$(FireDistDir)forge$(FireExeSuffix)&quot; build &quot;$(FireRepo)/tools/ember/ember.fireproj&quot; -o &quot;$(FireDistDir)ember$(FireExeSuffix)&quot;"
+          EnvironmentVariables="FIRE_PACKAGES=$(MSBuildProjectDirectory)/obj/Packages" StandardOutputImportance="low" />
+    <!-- .stamp: what spark's up-to-date check in Visual Studio looks at; .stamp-<mode>: the output of this target -->
+    <Touch Files="$(FireDistDir).stamp;$(_DistStamp)" AlwaysCreate="true" />
+    <Message Importance="high" Text="ember -&gt; $(FireDistDir)" />
+  </Target>
+
+  <!-- the folder for spark and the tests -->
+  <Target Name="GetFireDistDir" Returns="$(FireDistDir)" />
+
+  <Target Name="CleanFireDist" AfterTargets="Clean">
+    <RemoveDir Directories="$(FireDistDir);$(MSBuildProjectDirectory)/obj/Packages" />
+  </Target>
+</Project>

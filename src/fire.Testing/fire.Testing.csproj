@@ -46,8 +46,8 @@
     <ProjectReference Include="..\fire.Git\fire.Git.csproj" />
   </ItemGroup>
 
-  <!-- forge, the VM, native/ and Source/ (the standard libraries) next to the program (`forge package-dist`, src/ForgeDist.targets): the tests install the packages into a store
-       of their own; their C++ is built when it is used (no Prebuilt/) -->
-  <PropertyGroup><PrebuildStandard>false</PrebuildStandard></PropertyGroup>
+  <!-- forge, the VM, native/ and Source/ (the standard libraries) next to the program (src/ember: `forge package-dist`, copied by src/ForgeDist.targets): the tests install
+       the packages into a store of their own; their C++ is built when it is used (Prebuilt/ is not copied) -->
+  <PropertyGroup><FireDistPrebuilt>false</FireDistPrebuilt></PropertyGroup>
   <Import Project="..\ForgeDist.targets" />
 </Project>

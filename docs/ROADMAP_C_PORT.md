@@ -772,8 +772,20 @@ einer Standardbibliothek, [FORGE_SERVE.md](spec/FORGE_SERVE.md#dokumente-und-kon
 `unported: PackageException` ohne die Zeile des `#include` - jetzt die `PackageException` des C# mit Datei und Zeile je `#include`, `gen/packages.c`,
 ebenso die beiden anderen `PackageException`s dort.) Die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
 `conformance`, die Fälle mit Servern, die Linkages und Debug-Protokolle als Daten); `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
-fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows mit `ForgeDist.targets` (gcc von w64devkit) und der Installer sind nicht geprüft; spark ohne forge (kein
+fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows (jetzt `fire.sln` mit `src/forge-c` und `src/ember`, unten) und der Installer sind nicht geprüft; spark ohne forge (kein
 C-Compiler) hat keine Sprachdienste mehr.
+
+**Der Bau mit Visual Studio** (24.11.2026, [BUILDING.md](BUILDING.md)): `fire.sln` baut in dieser Reihenfolge `src/forge-c` (forge-c aus `native/forge/forge.c`
+mit dem C-Compiler der Maschine - unter Windows MSVC über `vswhere` und `vcvars64.bat`, sonst gcc/clang auf dem `PATH`, sonst w64devkit/MSYS2; ohne Compiler
+bricht der Bau mit einer Meldung ab, was zu installieren ist, statt still ein spark ohne forge zu bauen), `src/ember` (`forge-c package-dist` und ember nach
+`src/ember/bin/dist/`) und spark/`fire.Testing`, die den Ordner neben sich kopieren (`ForgeDist.targets`; Publish wie bisher in den Veröffentlichungsordner).
+Beide Schritte laufen nur, wenn sich ihre Eingaben geändert haben; `BuildForgeDist=false` baut nur den C#-Teil. forge-c findet MSVC jetzt auch selbst (ohne
+Developer Prompt: `vswhere`, dann die Umgebung von `vcvars64.bat`), `cl` bekommt `/utf-8`, `pthread`/`dl`/`m` werden mit msvc nicht gelinkt, die VM unter
+Windows linkt `ws2_32` (fehlte auch mit MinGW). Unter Linux geprüft: die Reihenfolge, der zweite Bau ohne forge-c und Distribution, die Meldung ohne Compiler,
+`BuildForgeDist=false`, Publish; forge-c mit gcc und MinGW (Warnungen wie vorher), mit MinGW unter Wine `bytecode` (byte-gleich) und `run`. **Der Weg über MSVC
+ist nur statisch geprüft** - hier gibt es kein MSVC und kein Windows: clang als MSVC 19.40 gegen die Header des Windows SDK über forge-c, die VM (alle Varianten,
+libfirevm), libforge, den Wrapper der Paketbibliotheken und die für `windows` erzeugten Programme (52 Fälle von `native`, ein Programm je Standardpaket); nicht
+geprüft sind ein echtes `cl` und `link`, `vswhere`/`vcvars64.bat`, der Bau in Visual Studio und der Installer.
 
 Danach: der **.NET-Wrapper** über `fire_embed.h` (NuGet-Paket mit P/Invoke, ersetzt `RuntimeSession` für Einbetter) und ABI v2 der Paket-Natives.
 

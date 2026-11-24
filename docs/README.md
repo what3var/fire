@@ -51,6 +51,7 @@ The [language reference](language/README.md) - one page per topic, with examples
 * [spark, the editor](tools/spark.md) · [spark as an MCP server](tools/spark-mcp.md)
 * [Projects and solutions](tools/projects.md) (`.fireproj`, `.firesln`)
 * [forge on the command line](tools/forge.md)
+* [Building fire](BUILDING.md) (`fire.sln`: forge-c, forge and the VM, ember, spark; Visual Studio on Windows)
 * [Testing](tools/testing.md) (`[Test]`, `forge test`, the Test Explorer)
 * [Error codes and warnings](tools/errors.md)
 * spark: [templates](tools/templates.md), [git](tools/git.md), [notes](tools/notes.md)

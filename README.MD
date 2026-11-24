@@ -27,6 +27,8 @@ You should study the other documentation available if youre interested in detail
 
 Or just download it, compile it and have a look.
 
+[Building fire](docs/BUILDING.md) - `fire.sln` in Visual Studio (or `dotnet build fire.sln`): forge-c, then forge, the VM and ember, then spark
+
 [The documentation](docs/README.md) - the language, the libraries (UI, graphics, networking, audio, circuits, devices), packages, libraries and targets
 
 [First Steps](https://github.com/what3var/fire/blob/master/src/fire.Editor/Help/First%20Steps.md)
