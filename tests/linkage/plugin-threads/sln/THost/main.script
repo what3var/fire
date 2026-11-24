@@ -1,0 +1,39 @@
+#import "TApi"
+#import "reflection"
+#import "time"
+string path = Environment.Get("FIRE_TEST_PLUGIN")
+string slow = Environment.Get("FIRE_TEST_PLUGIN2")
+// (loaded in a fire thread: its static fields are the main program's - the end of the thread does not take what their initialisers made along)
+var one = new Channel<string>()
+fire with one {
+    var lib = Library.Load(path)
+    TApi.IBox b = Reflect.New("TKit.Store", [])
+    b.Note("t1")
+    one.Send("t1: " + lib.Classes().Length + " " + b.Show())
+}
+print(one.Receive())
+Sleep(200ms)
+TApi.IBox m = Reflect.New("TKit.Store", [])
+m.Note("main")
+print("main: " + m.Show())
+var two = new Channel<string>()
+fire with two {
+    TApi.IBox c = Reflect.New("TKit.Store", [])
+    c.Note("t2")
+    two.Send("t2: " + c.Show() + " " + c.Keep())
+}
+print(two.Receive())
+print("main: " + m.Show() + " " + m.Keep())
+// (loaded by a thread and by the main program at the same time: the main program waits for the initialisers the thread runs)
+var three = new Channel<string>()
+fire with three {
+    Library.Load(slow)
+    TApi.IBox s = Reflect.New("TKit2.Slow", [])
+    three.Send("t3: " + s.Show())
+}
+Sleep(60ms)
+Library.Load(slow)
+TApi.IBox s = Reflect.New("TKit2.Slow", [])
+print("main: " + s.Show())
+print(three.Receive())
+print("end")

@@ -1,0 +1,5 @@
+available True
+handshake True True
+answer echo 10002 hello engine
+closed 2
+untrusted 15

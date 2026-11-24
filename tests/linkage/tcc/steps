@@ -1,0 +1,18 @@
+title: TinyCC: linkage static (Bibliotheken mit tcc -ar), das CLI-Programm (Threads: FIRE_ONCE einmal im Programm, nicht je Modul); shared gibt es dort nicht - gebaut wird static, das Protokoll sagt es
+needs: tcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/static $OUT/shared $OUT/cli
+forge bytecode small.fire -o $OUT/small.fbc
+vm $OUT/small.fbc
+expect small.expected
+forge build small.fire --engine native --toolchain tcc --linkage static -o $OUT/static/small
+lacks "not possible"
+run $OUT/static/small
+expect small.expected
+forge build small.fire --engine native --toolchain tcc --linkage shared -o $OUT/shared/small
+contains "only available"
+run $OUT/shared/small
+expect small.expected
+forge build ../cli/cli.fire --engine native --toolchain tcc --linkage static -o $OUT/cli/cli
+run $OUT/cli/cli
+expect ../cli/cli.expected

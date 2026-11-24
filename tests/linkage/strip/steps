@@ -1,0 +1,15 @@
+title: Stripping mit static: das Programm laesst weg wie mit source (klare Fehler), eine Library behaelt ihre Schnittstelle (List.IndexOf per Laufzeitname)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/s2 $OUT/s3
+forge bytecode strip.fire -o $OUT/strip.fbc
+vm $OUT/strip.fbc
+expect-text "wuff\nwag\nghost 2\nlib 1\n"
+forge build strip.fire --engine native --toolchain gcc --linkage static --stripping 2 -o $OUT/s2/strip
+lacks "not possible"
+run $OUT/s2/strip
+expect strip-2.expected
+forge build strip.fire --engine native --toolchain gcc --linkage static --stripping 3 -o $OUT/s3/strip
+lacks "not possible"
+run $OUT/s3/strip
+expect strip-3.expected

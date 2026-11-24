@@ -1,0 +1,6 @@
+# the call through the interface: its own dispatcher over the implementing classes (Program.cs, "Interface-Aufrufe")
+= icall_IShape_Area_1(s*, s*);
+@static Value icall_IShape_Area_1(Value self, Value a0)
+!accessDenied
+!caller
+=2 return f

@@ -540,9 +540,17 @@ static Value fire_proc_Read(Value handle, Value which, Value buffer, Value offse
         DWORD got = 0, e;
         char why[160];
         if (h == NULL) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "That output of the process is not redirected."));
-        if (ReadFile(h, b->data + offset.i, (DWORD)count.i, &got, NULL)) return Int(got > 0 ? (int64_t)got : FIRE_PROC_WOULD_BLOCK);
-        e = GetLastError();
-        if (e == ERROR_NO_DATA) return Int(FIRE_PROC_WOULD_BLOCK);
+        if (ReadFile(h, b->data + offset.i, (DWORD)count.i, &got, NULL)) {
+            if (got > 0) return Int((int64_t)got);
+            e = ERROR_NO_DATA;
+        } else e = GetLastError();
+        if (e == ERROR_NO_DATA) {
+            /* nothing there now: when the process has ended and its pipe is empty, that is the end - a write end still open somewhere else (a handle a
+             * grandchild inherited, a pipe Wine keeps) must not keep Process.Run reading for ever */
+            DWORD avail = 0;
+            if (fire_proc_poll(p) && (!PeekNamedPipe(h, NULL, 0, NULL, &avail, NULL) || avail == 0)) return Int(0);
+            return Int(FIRE_PROC_WOULD_BLOCK);
+        }
         if (e == ERROR_BROKEN_PIPE || e == ERROR_HANDLE_EOF) return Int(0);
         fire_proc_errorText(why, sizeof why);
         return Int(fire_proc_fail2(FIRE_PROC_OTHER, "Could not read from the process: ", why, ""));

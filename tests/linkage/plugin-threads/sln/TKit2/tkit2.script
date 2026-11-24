@@ -1,0 +1,14 @@
+#import "TApi"
+#import "time"
+namespace TKit2 {
+    class Slow : TApi.IBox {
+        static int a = TKit2.Slow.Make(1)
+        static List<int> items = TKit2.Slow.Fill()
+        construct() { }
+        static int Make(int x) { Sleep(150ms); return x * 10 }
+        static List<int> Fill() { Sleep(100ms); var l = new List<int>(); l.Add(4); return l }
+        string Show() { return "" + TKit2.Slow.a + " " + TKit2.Slow.items.Count }
+        undefined Note(string s) { }
+        string Keep() { return "" }
+    }
+}

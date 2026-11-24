@@ -1,0 +1,1 @@
+{ "name": "TKit2", "references": [ { "project": "../TApi/TApi.fireproj" } ], "settings": { "linkage": "plugin" } }

@@ -1,0 +1,6 @@
+{"$type":"Store","items":[{"name":"item0","count":0},{"name":"item1","count":3},{"name":"item2","count":6},{"name":"item3","count":9},{"name":"item4","count":12}]}
+5 item4
+big 3
+91b7065c5a608b9dc20df7accba7a621711eabcf53870cc2fd875f01d1481c3a
+deflate True 163
+bad: Expected a name in quotes (line 1, column 2).

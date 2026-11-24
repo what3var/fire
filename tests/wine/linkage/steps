@@ -1,0 +1,52 @@
+title: Linkage fuer Windows (MinGW) unter Wine: static (x86_64-w64-mingw32-ar); shared - die Runtime und jede Library eine DLL neben dem Programm, Threads (thread-lokaler Zustand ueber fire_tl), Reflection, JSON, ein zweites Programm baut keine DLL, eine DLL mit einer anderen Schnittstelle ist ein lesbarer Fehler (Exitcode 70); fire with in einer Bibliothek und Net.Channel; Module ohne GIL
+# (LinkageTests: RunIn "MinGW", WindowsShared, ModuleChannelEnds, ModuleThreads "MinGW shared (DLLs)")
+needs: wine mingw
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/static $OUT/shared1 $OUT/shared2 $OUT/sharedA $OUT/sharedB $OUT/relay $OUT/net $OUT/threads && cp -r ../../linkage/project/sln $OUT/sln && cp -r ../../linkage/channels/sln $OUT/relay-sln
+forge build ../../linkage/tcc/small.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage static -o $OUT/static/small.exe
+wine $OUT/static/small.exe
+expect ../../linkage/tcc/small.expected
+cd $OUT/sln
+forge build All.firesln -p App --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/shared1/app.exe
+lacks "only available"
+sh ls $OUT/shared1/libfire_rt_*.dll $OUT/shared1/libfire_mLib_*.dll $OUT/shared1/libfire_mcore_*.dll
+wine $OUT/shared1/app.exe
+expect-text "42 5 v1\n"
+cd
+forge build threads.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/sharedA/a.exe
+wine $OUT/sharedA/a.exe
+expect-text "caught in thread {\"\$type\":\"Box\",\"n\":41} 2\n"
+sh sed 's/41/42/' threads.fire > $OUT/threadsB.fire
+forge build $OUT/threadsB.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/sharedB/b.exe
+count ": built in " =0
+wine $OUT/sharedB/b.exe
+expect-text "caught in thread {\"\$type\":\"Box\",\"n\":42} 2\n"
+# another layout of Lib (a field more): its DLL in place of the one the first program was built with
+cd $OUT/sln
+sh sed -i 's/^        int n = 0$/        int n = 0\n        int extra = 1/' Lib/lib.script && grep -q extra Lib/lib.script
+forge build All.firesln -p App --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/shared2/app.exe
+sh old=$(ls $OUT/shared1/libfire_mLib_*.dll) && new=$(ls $OUT/shared2/libfire_mLib_*.dll) && test "$(basename $old)" != "$(basename $new)" && cp $new $old
+wine=70 $OUT/shared1/app.exe
+contains "does not fit this program"
+contains "'Lib'"
+# fire with in a library (own ends of the program's channels) and Net.Channel (native/3840), DLLs without the GIL
+cd $OUT/relay-sln
+forge build All.firesln -p App --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/relay/relay.exe
+wine $OUT/relay/relay.exe
+expect-text "relayed 12\n"
+cd
+forge build ../../linkage/channels/net.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/net/net.exe
+wine $OUT/net/net.exe
+expect-text "net 15\nclosed\n"
+# modules without the GIL - one system thread per fire thread, the state of a thread in the runtime's DLL
+forge build ../../linkage/threads/natives.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/threads/natives.exe
+wine $OUT/threads/natives.exe
+expect-text "thread ran while the main program was in natives: True\nsum 138000, bumps 2000\n"
+forge build ../../linkage/threads/sleepers.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/threads/sleepers.exe
+wine $OUT/threads/sleepers.exe
+expect-text "done 400\n"
+under 10
+forge build ../../linkage/threads/writer.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage shared -o $OUT/threads/writer.exe
+wine $OUT/threads/writer.exe
+expect-text "writes 300000 True\n"
+under 5

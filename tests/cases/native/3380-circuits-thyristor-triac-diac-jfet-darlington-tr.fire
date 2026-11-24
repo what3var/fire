@@ -300,4 +300,5 @@ for (int k = 0; k < 20000; k++) {
     if (high && ve1 < 3.0) { high = false; fires1++ }
 }
 print("ujt oscillator at 1 us fires " + fires1 + " times in 20 ms, steps done again: " + (uo.PlanInfo(9) > 0))
+//# windows: the circuit simulation over 20 ms: the functions of msvcrt's libm (exp, pow) round other than glibc's - 27 instead of 28 firings of the UJT
 //# name: Circuits: Thyristor, Triac, Diac, JFET, Darlington, Triode, Varaktor, gesteuerte Quellen, Stromkonverter, OTA, Optokoppler, UJT

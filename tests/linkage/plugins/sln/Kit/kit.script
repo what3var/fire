@@ -1,0 +1,49 @@
+#import "Api"
+// (class extends of a class of a library and of base types: methods, a property with a body, a static method - the objects are the program's)
+class extends Api.Device {
+    string Tag() { return "tag " + this.id + " " + this.Speed() }
+    string Label { get { return "L" + this.id } }
+    static string Kind() { return "devices" }
+}
+class extends string { string Shout() { return this.ToUpper() + "!" } }
+class extends int { bool Big() { return this > 100 } }
+class extends List { int Twice() { return this.Count * 2 } }
+namespace Kit {
+    class Probe {
+        construct() { }
+        string Look(Api.Device d) { var l = new List<int>(); l.Add(1); return d.Tag() + " " + "hi".Shout() + " " + l.Twice() + " " + d.Label + " " + Api.Device.Kind() + " " + 500.Big() }
+    }
+    enum Mode { Slow, Fast }
+    class MyDriver : Api.IDriver {
+        static int made = 0
+        static List<string> log = new List<string>()
+        Kit.Mode mode = Kit.Mode.Fast
+        construct() { Kit.MyDriver.made = Kit.MyDriver.made + 1; Kit.MyDriver.log.Add("made") }
+        string Name() { return "my driver " + Kit.MyDriver.made + " " + mode + " " + Kit.MyDriver.log.Count }
+        int Run(int x) {
+            if (x < 0) { throw new Api.DriverError("negative", x) }
+            try { if (x == 0) { throw new Kit.KitError("zero") } } catch (Kit.KitError e) { return -100 }
+            return x * 2
+        }
+    }
+    class FastDevice : Api.Device {
+        construct(string id) : base(id) { }
+        override string Describe() { return "fast " + this.id }
+        override int Speed() { return 9 }
+    }
+    class KitError : Exception {
+        construct(string m) : base(m) { }
+    }
+    class Tuner : Api.ITuned {
+        string Title { get { return "tuner" } }
+        int Level { get; set; }
+    }
+    class Settings {
+        string title = "kit"
+        int level = 3
+        List<int> marks = new List<int>()
+        Api.Device dev = undefined
+        construct() { marks.Add(1); marks.Add(2); dev = new Kit.FastDevice("j0") }
+        string Show() { return title + " " + level + " " + marks.Count + " " + marks[1] + " " + dev.Describe() + " " + dev.Speed() }
+    }
+}

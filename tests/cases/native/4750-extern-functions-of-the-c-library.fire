@@ -1,0 +1,28 @@
+#extern "libc.so.6"
+extern int abs(int n)
+extern int atoi(string s)
+extern int strlen(string s)
+extern string getenv(string name)
+extern int toupper(int c)
+extern float atof(string s)
+extern int sscanf(string text, string format, int* out)
+extern int labs(int n)
+print(abs(-5))
+word w = 7
+print(abs(w) + " " + labs(18446744073709551615!word))
+print(atoi("1234") + 1)
+print(strlen("hello"))
+print(strlen("äö"))
+print(getenv("FIRE_SURELY_UNSET_VARIABLE") == undefined)
+print(toupper(97))
+print(atof("2.5") * 2)
+unsafe {
+    var n = 0
+    var matched = sscanf("42", "%ld", &n)
+    print(matched)
+    print(n)
+}
+//# note: the C library of Linux by its name (other systems name it differently) - a case of Program.cs whose source was made only on Linux
+//# needs: linux
+//# windows: not run - the library is libc.so.6, a name of Linux
+//# name: extern: Funktionen der C-Bibliothek (Zahlen, Zeichenketten, Zeiger auf Variablen)

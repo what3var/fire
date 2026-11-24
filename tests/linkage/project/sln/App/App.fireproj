@@ -1,0 +1,1 @@
+{ "name": "App", "references": [ { "project": "../Lib2/Lib2.fireproj" }, { "project": "../Lib/Lib.fireproj" } ], "settings": { "linkage": "static" } }

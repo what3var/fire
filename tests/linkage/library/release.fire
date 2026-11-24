@@ -1,0 +1,49 @@
+var lib = Library.Load(Environment.Get("FIRE_TEST_CLIB"))
+var make = lib.Get("obj_new", "void*(int)", release: "obj_free")
+var get = lib.Get("obj_get", "int(void*)")
+var sum = lib.Get("obj_sum", "int(void*, int, void*)")
+var live = lib.Get("live_count", "int[32]()")
+class Holder { NativeHandle h }
+{
+    var a = make(5)
+    var b = make(30)
+    print(get(a) + " " + sum(a, 7, b) + " " + live() + " " + (a is of NativeHandle) + " " + (a.Address != 0))
+}
+print("block " + live())
+var h = make(7)
+print(get(h) + " " + live())
+delete h
+print("delete " + live())
+try { print(get(h)) } catch (DestroyedException e) { print("use: " + e.message) }
+try { print(h.Address) } catch (DestroyedException e) { print("address: " + e.message) }
+try { delete h; print("delete again: " + live()) } catch (DestroyedException e) { print("delete again: " + e.message) }
+try { print(h is of NativeHandle) } catch (DestroyedException e) { print("is of: " + e.message) }
+var one = make(3)
+try { var two = copy one } catch (ArgumentException e) { print("copy: " + e.message) }
+try { var two = flat one } catch (ArgumentException e) { print("flat: " + e.message) }
+{
+    var hb = new Holder()
+    hb.h = make(4)
+    try { var hc = copy hb } catch (ArgumentException e) { print("deep: " + e.message) }
+    var hf = flat hb
+    print("flat shares " + (hf.h == hb.h) + " " + live())
+}
+delete one
+print("no copies " + live())
+{
+    var box = new Holder()
+    box.h = make(9)
+    print("holder " + get(box.h) + " " + live())
+}
+print("holder gone " + live())
+var dup = lib.Get("text_dup", "string(string)", release: "obj_free")
+print(dup("copied") + " " + live())
+print(lib.Get("text_none", "string()", release: "obj_free")() == undefined)
+print(lib.Get("obj_none", "void*()", release: "obj_free")() == undefined)
+var raw = lib.Get("obj_new", "void*(int)")(1)
+print((raw is of int) + " " + live())
+lib.Get("obj_free", "void(void*)")(raw)
+try { lib.Get("obj_new", "void*(int)", release: "nope") } catch (LibraryException e) { print("rel: " + e.message.Replace(lib.Path, "LIB")) }
+try { lib.Get("add", "int(int, int)", release: "obj_free") } catch (LibraryException e) { print("kind: " + e.message) }
+var g = make(11)
+print("end " + live())

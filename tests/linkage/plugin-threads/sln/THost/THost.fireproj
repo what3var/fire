@@ -1,0 +1,1 @@
+{ "name": "THost", "references": [ { "project": "../TApi/TApi.fireproj" } ], "settings": { "linkage": "shared" } }

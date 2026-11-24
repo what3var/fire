@@ -1,0 +1,36 @@
+#import "compression"
+class Table {
+    int v[] = new int[16]
+    construct() { for (var i = 0; i < 16; i++) { this.v[i] = 0 } }
+    int Bump(int i) { this.v[i] = this.v[i] + 1; return this.v[i] }
+}
+class Shared {
+    static Table tab = new Table()
+    static string name = "shared"
+}
+var done = new Channel<int>()
+var go = new Channel<int>()
+fire with done, go {
+    go.Receive()
+    var s = 0
+    for (var i = 0; i < 2000; i++) { s = s + Shared.tab.Bump(i % 16) + Shared.name.length }
+    done.Send(s)
+}
+class Frames {
+    static int Run(any done, any go) {
+        var data = new byte[100000]
+        for (var i = 0; i < data.length; i++) { data[i] = (i * 7 + i / 13) % 251 }
+        go.Send(1)
+        var rounds = 0
+        while (done.Count == 0 && rounds < 4000) {
+            var packed = Compression.Deflate.Compress(data)
+            rounds++
+        }
+        return rounds
+    }
+}
+var rounds = Frames.Run(done, go)
+var sum = 0
+for (var i = 0; i < 16; i++) { sum += Shared.tab.v[i] }
+print("thread ran while the main program was in natives: " + (rounds < 4000))
+print("sum " + done.Receive() + ", bumps " + sum)

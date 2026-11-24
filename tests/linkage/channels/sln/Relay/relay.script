@@ -1,0 +1,11 @@
+namespace Relay {
+    class R {
+        static undefined Start(any input, any output, any go) {
+            fire with input, output, go {
+                go.Receive()
+                foreach (x in input) { output.Send(x * 2) }
+                output.Close()
+            }
+        }
+    }
+}

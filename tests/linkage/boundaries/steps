@@ -1,0 +1,30 @@
+title: Module: Werte ueber die Grenzen der Module - Arrays einer Klasse, die eine Bibliothek macht (static, shared, FIRE_MODULES=1), JSON einer Bibliothek in eine Klasse des Programms, eine Probe auf einer geerbten Klasse; TinyCC mit static
+# (LinkageTests.ModuleBoundaries: die Eintraege von g_arrClasses gehoeren fuer jedes Modul dem Programm; data's QueryList: die Klasse wurde weggelassen;
+#  TinyCC: jedes Modul hatte einen eigenen Zustand je Thread - FIRE_ONCE)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/static $OUT/shared $OUT/modules $OUT/json $OUT/tcc
+forge bytecode arrays.fire -o $OUT/arrays.fbc
+vm $OUT/arrays.fbc
+expect arrays.expected
+forge build arrays.fire --engine native --toolchain gcc --linkage static -o $OUT/static/arrays
+run $OUT/static/arrays
+expect arrays.expected
+forge build arrays.fire --engine native --toolchain gcc --linkage shared -o $OUT/shared/arrays
+run $OUT/shared/arrays
+expect arrays.expected
+env FIRE_MODULES=1
+forge build arrays.fire --engine native --toolchain gcc -o $OUT/modules/arrays
+unenv FIRE_MODULES
+run $OUT/modules/arrays
+expect arrays.expected
+# a library of the solution reads JSON into a class of the program it gets by name: the program keeps the class (nothing else makes it)
+sh cp -r $CASE/sln $OUT/sln
+cd $OUT/sln
+forge bytecode All.firesln -p App -o $OUT/json/app.fbc
+vm $OUT/json/app.fbc
+expect-text "7\nchanged n 0 -> 5\n"
+forge build All.firesln -p App --engine native --toolchain gcc -o $OUT/json/app
+run $OUT/json/app
+expect-text "7\nchanged n 0 -> 5\n"
+cd

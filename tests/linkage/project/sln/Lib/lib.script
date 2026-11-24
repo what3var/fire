@@ -1,0 +1,11 @@
+namespace Lib {
+    class Counter {
+        int n = 0
+        construct() { }
+        Add(int k) {
+            this.n = this.n + k
+        }
+        int Get() { return this.n }
+        static string Version() { return "v1" }
+    }
+}

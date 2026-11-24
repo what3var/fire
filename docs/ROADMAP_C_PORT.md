@@ -770,8 +770,8 @@ gelaufen), der Package Manager (Liste, Suche, Installieren aus einem lokalen `Pa
 in `Packages.firesln` zeigte die Analyse `Unknown identifier '__GRPH...'`; jetzt liest der Server sie aus `projectFile` wie `build`, mit den Brücken
 einer Standardbibliothek, [FORGE_SERVE.md](spec/FORGE_SERVE.md#dokumente-und-kontext) -; die Meldung einer falschen Bau-Reihenfolge der Natives war
 `unported: PackageException` ohne die Zeile des `#include` - jetzt die `PackageException` des C# mit Datei und Zeile je `#include`, `gen/packages.c`,
-ebenso die beiden anderen `PackageException`s dort.) Die Lücken der Tests in [FORGE_C.md](spec/FORGE_C.md#phase-d-schritt-6-conformance-und-die-distribution-ohne-net) (Sanitizer und Sonderläufe in
-`conformance`, die Fälle mit Servern, die Linkages und Debug-Protokolle als Daten); `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
+ebenso die beiden anderen `PackageException`s dort.) Von den Lücken der Tests (unten, M3 Schritt 6) die Sonderläufe FreeRTOS, ESP32 und
+Fenster, Scene3D und AI, BIOS/QEMU und DOS; `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
 fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows (jetzt `fire.sln` mit `src/forge-c` und `src/ember`, unten) und der Installer sind nicht geprüft; spark ohne forge (kein
 C-Compiler) hat keine Sprachdienste mehr.
 
@@ -786,6 +786,18 @@ Windows linkt `ws2_32` (fehlte auch mit MinGW). Unter Linux geprüft: die Reihen
 ist nur statisch geprüft** - hier gibt es kein MSVC und kein Windows: clang als MSVC 19.40 gegen die Header des Windows SDK über forge-c, die VM (alle Varianten,
 libfirevm), libforge, den Wrapper der Paketbibliotheken und die für `windows` erzeugten Programme (52 Fälle von `native`, ein Programm je Standardpaket); nicht
 geprüft sind ein echtes `cl` und `link`, `vswhere`/`vcvars64.bat`, der Bau in Visual Studio und der Installer.
+
+#### M3 Schritt 6: die Lücken der Tests geschlossen (23.11.2026)
+
+Was mit dem C#-forge aus `fire.Testing` ging, ist größtenteils wieder da, als Daten ([FORGE_C.md](spec/FORGE_C.md#die-lücken-von-firetesting-geschlossen-23112026-nach-m3),
+[testing.md](tools/testing.md#the-tests-of-fire-itself)): `forge conformance` hat `//# needs:` (ein Fall läuft nur, wo die Maschine hat, was er braucht, sonst
+mit dem Grund), `.cgen-contains` (Muster im erzeugten C), `--sanitize address|thread`, `--werror`, `--wine` (der Korpus in fire.exe unter Wine, mit den Bibliotheken
+der Pakete für Windows aus MinGW) und die Suiten `tests/linkage` (die Linkages static/shared/plugin, Module ohne GIL, Plugins mit ihren Hashes, eigenem Scope,
+Threads und Reflection, `Library.Load`, `Tls.Engine`) und `tests/wine` (die Befehlszeile von fire.exe, gepackte Programme, forge-c.exe unter Wine, die Linkages
+und Plugins für Windows) - ein Ordner je Fall mit seinen Quellen und einer Datei `steps`. Die Fälle, deren Quelle das Testprogramm zur Laufzeit machte, sind
+`native/4750`-`4830`; das Debuggen über Module (Plugin nativ und in `fire`, statische Bibliothek, `profile`, `pause`) prüft die Gruppe `debugger` von
+`fire.Testing`. Offen: FreeRTOS, ESP32, die Fenster, Scene3D, AI, BIOS/QEMU und DOS (hier ohne QEMU, DOSBox und Open Watcom), die Anzeige des Hosts und der
+Geräte-Host unter Wine.
 
 Danach: der **.NET-Wrapper** über `fire_embed.h` (NuGet-Paket mit P/Invoke, ersetzt `RuntimeSession` für Einbetter) und ABI v2 der Paket-Natives.
 

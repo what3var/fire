@@ -1,0 +1,58 @@
+#import "json"
+#import "linq"
+#import "reflection"
+class Pt {
+    int x
+    int y
+    construct(int x, int y) { this.x = x; this.y = y }
+    int CompareTo(Pt o) { return this.x - o.x }
+    string ToString() { return "(" + x + "," + y + ")" }
+    Pt operator+(Pt o) { return new Pt(x + o.x, y + o.y) }
+    int Sum { get { return x + y } }
+}
+class MyError : ArgumentException {
+    int code
+    construct(string m, int c) : base(m) { code = c }
+}
+class Bag<T> : List<T> {
+    string label = "bag"
+    construct() : base() { }
+    int Twice() { return Count * 2 }
+}
+var pts = new List<Pt>()
+pts.Add(new Pt(3, 1)); pts.Add(new Pt(1, 5)); pts.Add(new Pt(2, 2))
+pts = pts.OrderBy((Pt p) => p.x).ToList()
+print(pts[0].ToString() + " " + pts[2])
+print("sum " + (pts[0] + pts[1]))
+var big = pts.Where(p => p.Sum > 3).Select(p => p.x).ToList()
+print("big " + big.Count + " " + big[0])
+print("get " + Reflect.Get(pts[0], "y") + " " + Reflect.Get(pts[1], "Sum"))
+Reflect.Set(pts[0], "y", 42)
+print("set " + pts[0].y)
+print("call " + Reflect.Call(pts[1], "CompareTo", [pts[2]]))
+var b = new Bag<int>()
+b.Add(4); b.Add(5)
+print("bag " + b.Count + " " + b.Twice() + " " + b.label + " " + (b is of List) + " " + (b is of IEnumerable))
+var any = b
+var total = 0
+foreach (var v in any) { total += v }
+print("total " + total)
+try { throw new MyError("bad", 7) } catch (ArgumentException e) { print("caught " + e.message) }
+try { b.Add(Untyped.Text()) } catch (Exception e) { print("type " + e.message) }
+var o = pts[1]
+var holder = new List()
+holder.Add(o)
+var d = holder[0]
+print("dyn " + d.x + " " + d.Sum)
+try { d.Nope() } catch (Exception e) { print("miss " + e.message) }
+try { d.CompareTo() } catch (Exception e) { print("arity " + e.message) }
+print(Json.Serialize(pts[2]))
+print(Type.Of(pts[0]).Name)
+var np = Reflect.New("Pt", [7, 8])
+print("new " + np)
+var h = Reflect.Probe(np, "x", "changed", (any ob, any n, any ov, any nv) => print("probe " + n + " " + ov + "->" + nv))
+np.x = 9
+Reflect.Set(np, "x", 10)
+class Untyped {
+    static any Text() { return "x" }
+}

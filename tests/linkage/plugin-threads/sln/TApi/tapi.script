@@ -1,0 +1,7 @@
+namespace TApi {
+    interface IBox {
+        string Show()
+        undefined Note(string s)
+        string Keep()
+    }
+}

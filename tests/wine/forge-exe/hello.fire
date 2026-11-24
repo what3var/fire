@@ -1,0 +1,9 @@
+#import "json"
+class Point {
+    int x
+    int y
+    construct(int x, int y) { this.x = x; this.y = y }
+}
+var p = new Point(3, 4)
+print(Json.Serialize(p))
+print("sum " + (p.x + p.y) + " " + "päh".ToUpper())

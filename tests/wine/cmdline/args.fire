@@ -1,0 +1,4 @@
+print("args " + Environment.Args.length)
+for (var i = 0; i < Environment.Args.length; i = i + 1) { print("[" + Environment.Args[i] + "] " + Environment.Args[i].length) }
+print("päh 日本 😀")
+terminate(3)

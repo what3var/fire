@@ -1,0 +1,1 @@
+{ "name": "Lib2", "type": "library", "references": [ { "project": "../Lib/Lib.fireproj" } ] }

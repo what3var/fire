@@ -1,0 +1,37 @@
+#import "Api"
+prefixed unit Volt: V
+unit Inch: in { coerce m => 0.0254 }
+unit Kelvin: K
+unit Celsius: C { coerce K => value + 273.15 }
+unit Binary: bn
+{
+    coerce to mW => 2 ^ value
+    coerce from mW => Math.Log(value) / Math.Log(2)
+}
+namespace Meter {
+    class Gauge : Api.IGauge {
+        construct() { }
+        string Report() {
+            float t = 20.0C
+            return (5V + 300mV) + " " + (1.0m:in) + " " + (10in + 2.54cm) + " " + t:K + " " + (30.0dBm:W) + " " + (3.0bn:mW) + " " + (3pears * 2m) + " " + (2km + 5m) + " " + "7in".ToFloat() + " " + "2kV".ToFloat() + " " + "5bn".ToFloat():mW
+        }
+        any Convert(any x) { return x:in }
+        any Measure() { return 4.0bn }
+        any Level() { return 30.0dBm }
+        any Pears() { return 3.0pears / 1kV }
+        string Native(int x) {
+            var thrown = ""
+            int before = __mt_calls()
+            try { __mt_check(-1) } catch (ArgumentException e) { thrown = e.message }
+            return __mt_twice(x) + " " + __mt_label(x) + " " + __mt_twice(1) + " " + (__mt_calls() - before) + " " + __mt_check(5) + " " + thrown
+        }
+    }
+    class Reading {
+        float level : pears = 3.0pears
+        float span : km = 2.5km
+        float heat : C = 20.0C
+        any loose = 4.0bn
+        construct() { }
+        string Show() { return level + " " + span + " " + heat + " " + heat:K + " " + loose }
+    }
+}

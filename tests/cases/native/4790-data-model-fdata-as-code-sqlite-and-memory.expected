@@ -1,0 +1,30 @@
+== sqlite::memory:
+CREATE TABLE "customers" ("id" INTEGER PRIMARY KEY, "full_name" VARCHAR(100) NOT NULL, "email" VARCHAR(200), "level" TEXT, "born" TEXT, "address" TEXT, "version" INTEGER);
+CREATE UNIQUE INDEX "ix_customers_email" ON "customers" ("email");
+CREATE TABLE "purchases" ("id" INTEGER PRIMARY KEY, "total" REAL NOT NULL, "note" TEXT, "customer_id" INTEGER);
+CREATE TABLE IF NOT EXISTS "purchase_category" ("purchaseId" INTEGER NOT NULL, "categoryId" TEXT NOT NULL);
+CREATE INDEX "ix_purchase_category_purchaseId" ON "purchase_category" ("purchaseId");
+CREATE INDEX "ix_purchases_customer_id" ON "purchases" ("customer_id");
+CREATE TABLE "categories" ("code" VARCHAR(20) PRIMARY KEY, "label" TEXT, "picture" BLOB);
+CREATE INDEX "ix_purchase_category_categoryId" ON "purchase_category" ("categoryId");
+
+saved 4
+Ada High London W1 purchases 1 version 1
+raw Ada 1
+books 1 by 1 via 1
+model 3 customers Shop.Category
+== memory:
+CREATE TABLE "customers" ("id" INTEGER PRIMARY KEY, "full_name" VARCHAR(100) NOT NULL, "email" VARCHAR(200), "level" TEXT, "born" TEXT, "address" TEXT, "version" INTEGER);
+CREATE UNIQUE INDEX "ix_customers_email" ON "customers" ("email");
+CREATE TABLE "purchases" ("id" INTEGER PRIMARY KEY, "total" REAL NOT NULL, "note" TEXT, "customer_id" INTEGER);
+CREATE TABLE IF NOT EXISTS "purchase_category" ("purchaseId" INTEGER NOT NULL, "categoryId" TEXT NOT NULL);
+CREATE INDEX "ix_purchase_category_purchaseId" ON "purchase_category" ("purchaseId");
+CREATE INDEX "ix_purchases_customer_id" ON "purchases" ("customer_id");
+CREATE TABLE "categories" ("code" VARCHAR(20) PRIMARY KEY, "label" TEXT, "picture" BLOB);
+CREATE INDEX "ix_purchase_category_categoryId" ON "purchase_category" ("categoryId");
+
+saved 4
+Ada High London W1 purchases 1 version 1
+raw Ada 1
+books 1 by 1 via 1
+model 3 customers Shop.Category

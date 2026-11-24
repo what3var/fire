@@ -45,4 +45,5 @@ print(IO.Path.GetFullPath("/a/b/../c/./d//e") )
 print(IO.Path.GetFullPath("x/../y") == IO.Path.Combine(IO.Directory.GetCurrentDirectory(), "y"))
 print(IO.Path.GetTempPath().length > 1)
 print("done")
+//# windows: Path.Combine joins with \ on Windows (a\b)
 //# name: IO: MemoryStream, UTF-8, Pfade

@@ -1,0 +1,11 @@
+int counter = 0
+int n = 300000
+var done = new Channel<int>()
+fire with done {
+    for (int i = 0; i < n; i++) { counter = counter + 1 }
+    done.Send(1)
+}
+int spins = 0
+while (counter < n) { spins++ }
+done.Receive()
+print("writes " + counter + " " + (spins > 0))

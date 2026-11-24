@@ -1,0 +1,3 @@
+#import "Api"
+class extends Api.Device { string Tag() { return "other" } }
+namespace Kit2 { class Other { construct() { } } }

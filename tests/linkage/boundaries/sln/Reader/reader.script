@@ -1,0 +1,10 @@
+#import "json"
+namespace Reader {
+    class R {
+        static any Read(string text, string cls) { return Json.Deserialize(text, cls) }
+    }
+    class Box {
+        int n = 0
+        Set(int k) { this.n = k }
+    }
+}

@@ -1,0 +1,27 @@
+title: forge-c.exe (MinGW) unter Wine: tokens, bytecode byte-gleich mit forge-c unter Linux, dump gleich, run (in fire.exe), build mit der VM (FIRE_VM_EXE), test
+# (the smoke checks of forge-c.exe of FORGE_C.md: forge-c.exe reads the tables, the packages and the natives of this checkout as Windows paths)
+needs: wine mingw
+timeout 900
+sh $MINGW -O2 -w $FIRE_NATIVE_ROOT/forge/forge.c -o $OUT/forge-c.exe -lws2_32
+winenv FIRE_TABLES=win:$FIRE_TABLES
+winenv FIRE_PACKAGES=win:$FIRE_PACKAGES
+winenv FIRE_NATIVE_ROOT=win:$FIRE_NATIVE_ROOT
+winenv FIRE_VM_EXE=win:$WINFIRE
+timeout 300
+wine $OUT/forge-c.exe tokens hello.fire
+contains "Identifier"
+# the program file: byte for byte the one of forge-c on Linux (both in the folder of the case, the file named relatively)
+wine $OUT/forge-c.exe bytecode hello.fire -o win:$OUT/win.fbc
+forge bytecode hello.fire -o $OUT/linux.fbc
+sh cmp $OUT/win.fbc $OUT/linux.fbc
+wine $OUT/forge-c.exe dump hello.fire
+save dump
+forge dump hello.fire
+same dump
+wine $OUT/forge-c.exe run hello.fire
+expect hello.expected
+wine $OUT/forge-c.exe build hello.fire -o win:$OUT/hello.exe
+wine $OUT/hello.exe
+expect hello.expected
+wine $OUT/forge-c.exe test calc.fire
+contains "4 tests: 4 passed, 0 failed, 0 errors"

@@ -1,0 +1,63 @@
+#import "Api"
+#import "reflection"
+unit Foot: ft { coerce m => 0.3048 }
+class Mine : Api.Device {
+    construct() : base("mine") { }
+}
+class Quick : Api.Device {
+    construct() : base("quick") { }
+    override int Speed() { return 3 }
+}
+any lib = undefined
+try { lib = Library.Load(Environment.Get("FIRE_TEST_PLUGIN")) } catch (LibraryException e) { print("load: " + e.message); terminate(3) }
+var names = lib.Classes()
+var listed = ""
+foreach (var n in names) { listed = listed + " " + n }
+print("classes" + listed + " " + lib.IsPlugin)
+Api.IDriver d = Reflect.New("Kit.MyDriver", [])
+print(d.Name())
+print(d.Run(21) + " " + d.Run(0))
+try { d.Run(-3) } catch (Api.DriverError e) { print("driver error " + e.message + " " + e.code) }
+print(d is of Api.IDriver)
+any again = Reflect.New("Kit.MyDriver", [])
+print(again.Name())
+Api.Device dev = Reflect.New("Kit.FastDevice", ["x1"])
+var devices = new List<Api.Device>()
+devices.Add(new Mine())
+devices.Add(dev)
+foreach (var one in devices) { print(one.Describe() + " " + one.Speed() + " " + (one is of Api.Device)) }
+print(Reflect.Get(dev, "id") + " " + Reflect.Call(d, "Run", [5]) + " " + Type.Of(dev).Name)
+print("again " + Library.Load(Environment.Get("FIRE_TEST_PLUGIN")).Classes().Length)
+try { Reflect.New("Kit.Nope", []) } catch (ReflectionException e) { print("nope: " + e.message) }
+// (Kit does not import reflection: its classes still carry their metadata - fields by name, Type.Of(x).Fields())
+any kitSettings = Reflect.New("Kit.Settings", [])
+Reflect.Set(kitSettings, "level", 7)
+var kitFields = ""
+foreach (var kf in Type.Of(kitSettings).Fields()) { kitFields = kitFields + " " + kf.Name + ":" + kf.TypeName }
+print(Reflect.Get(kitSettings, "level") + " " + Reflect.Get(kitSettings, "title") + kitFields + " " + Type.Of(kitSettings).Find("Show").Kind)
+Api.ITuned tuned = Reflect.New("Kit.Tuner", [])
+tuned.Level = 4
+tuned.Level = tuned.Level + 1
+Api.INamed named = tuned
+print(named.Title + " " + tuned.Level + " " + (named is of Api.ITuned) + " " + (tuned is of Api.INamed))
+// (what Kit's class extends adds to Api.Device, string, int, List: on objects of the program - a subclass that overrides Speed - and of the plugin)
+any probe = Reflect.New("Kit.Probe", [])
+print(probe.Look(new Quick()) + " | " + probe.Look(dev))
+any qd = new Quick()
+any sx = "abc"
+any nx = 7
+print(qd.Tag() + " " + Reflect.Call(new Api.Device("r"), "Tag", []) + " " + qd.Label + " " + sx.Shout() + " " + nx.Big())
+any up = Environment.Get("FIRE_TEST_UNITS")
+if (up != undefined) {
+    Library.Load(up)
+    Api.IGauge g = Reflect.New("Meter.Gauge", [])
+    print(g.Report())
+    print(g.Convert(1.0m) + " " + g.Convert(254mm) + " " + g.Convert(3.0ft) + " " + g.Convert(2.0km):m)
+    any m = Reflect.Call(g, "Measure", [])
+    print(m + " " + m:mW + " " + (m * 2) + " " + (m * 1s) + " " + Reflect.Call(g, "Level", []):W + " " + (Reflect.Call(g, "Level", []) == 30.0dBm))
+    any c = Reflect.Call(g, "Pears", [])
+    print(Reflect.Call(g, "Native", [21]))
+    print(c + " " + (c * 4apples) + " " + (c * 1m / 1s) + " " + (4apples * 1s) + " " + "3mm".ToFloat() + " " + "2ft".ToFloat() + " " + (1.0ft + 1.0m) + " " + (m * c))
+}
+any dupPlugin = Environment.Get("FIRE_TEST_DUP")
+if (dupPlugin != undefined) { try { Library.Load(dupPlugin) } catch (LibraryException e) { print("dup: " + e.message) } }

@@ -1,0 +1,18 @@
+#import "TApi"
+namespace TKit {
+    class Item {
+        string name
+        construct(string name) { this.name = name }
+        destruct() { print("item " + name + " destroyed") }
+    }
+    class Store : TApi.IBox {
+        static TKit.Item first = new TKit.Item("first")
+        static List<string> log = new List<string>()
+        static List<TKit.Item> items = new List<TKit.Item>()
+        static string label = "kit" + 7
+        construct() { }
+        string Show() { return TKit.Store.first.name + " " + TKit.Store.label + " " + TKit.Store.log.Count }
+        undefined Note(string s) { TKit.Store.log.Add(s) }
+        string Keep() { TKit.Store.items.Add(new TKit.Item("kept")); return "kept " + TKit.Store.items.Count }
+    }
+}

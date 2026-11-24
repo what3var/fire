@@ -1,0 +1,55 @@
+title: Projekt mit zwei Bibliotheken (eine Klasse des Programms erbt von einer der Bibliothek) - static: der Code einer Bibliothek aendert sich, nur sie wird neu gebaut; ihre Schnittstelle aendert sich, auch die Bibliothek, die sie braucht; shared: die Bibliotheken neben dem Programm, zwei Programme teilen sie, eine Bibliothek mit einer anderen Schnittstelle ist ein lesbarer Fehler (Exitcode 70)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/app1 $OUT/app2 $OUT/app3 $OUT/shared1 $OUT/shared2 $OUT/sharedA $OUT/sharedB && cp -r $CASE/sln $OUT/sln
+cd $OUT/sln
+forge bytecode All.firesln -p App -o $OUT/app.fbc
+vm $OUT/app.fbc
+expect-text "42 5 v1\n"
+# (die Einstellung linkage des Projekts: static)
+forge build All.firesln -p App --engine native --toolchain gcc -o $OUT/app1/app
+contains "module Lib: built in"
+contains "module Lib2: built in"
+lacks "not possible"
+run $OUT/app1/app
+expect-text "42 5 v1\n"
+# der Code einer Bibliothek aendert sich - nur sie wird neu gebaut (Lib2 und core aus dem Cache)
+sh sed -i 's/"v1"/"v2"/' Lib/lib.script
+forge build All.firesln -p App --engine native --toolchain gcc -o $OUT/app2/app
+count ": built in " =1
+contains "module Lib: built in"
+contains "module Lib2: from the cache"
+contains "module core: from the cache"
+run $OUT/app2/app
+expect-text "42 5 v2\n"
+# die Schnittstelle einer Bibliothek aendert sich - auch die Bibliothek, die sie braucht, wird neu gebaut
+sh sed -i 's/^        int Get() { return this.n }$/        int Get() { return this.n }\n        int Twice() { return this.n * 2 }/' Lib/lib.script && grep -q Twice Lib/lib.script
+forge build All.firesln -p App --engine native --toolchain gcc -o $OUT/app3/app
+contains "module Lib: built in"
+contains "module Lib2: built in"
+run $OUT/app3/app
+expect-text "42 5 v2\n"
+# shared: die Bibliotheken des Projekts als Shared Libraries neben dem Programm
+forge build All.firesln -p App --engine native --toolchain gcc --linkage shared -o $OUT/shared1/app
+lacks "only available"
+sh ls $OUT/shared1/libfire_mLib_* $OUT/shared1/libfire_mcore_*
+run $OUT/shared1/app
+expect-text "42 5 v2\n"
+# zwei Programme teilen sich die Bibliotheken (das zweite baut keine)
+cd
+forge build smallA.fire --engine native --toolchain gcc --linkage shared -o $OUT/sharedA/a
+run $OUT/sharedA/a
+expect-text "{\"\$type\":\"Q\",\"x\":4}\n"
+forge build smallB.fire --engine native --toolchain gcc --linkage shared -o $OUT/sharedB/b
+count ": built in " =0
+contains "module pkg:json: from the cache"
+run $OUT/sharedB/b
+expect-text "{\"\$type\":\"R\",\"t\":\"r\"}!\n"
+# eine andere Gestalt von Lib (ein Feld mehr): ihre Bibliothek an die Stelle der, mit der das erste Programm gebaut wurde - ein lesbarer Fehler beim Start
+cd $OUT/sln
+sh sed -i 's/^        int n = 0$/        int n = 0\n        int extra = 1/' Lib/lib.script && grep -q extra Lib/lib.script
+forge build All.firesln -p App --engine native --toolchain gcc --linkage shared -o $OUT/shared2/app
+sh old=$(ls $OUT/shared1/libfire_mLib_*) && new=$(ls $OUT/shared2/libfire_mLib_*) && test "$(basename $old)" != "$(basename $new)" && cp $new $old
+run=70 $OUT/shared1/app
+contains "does not fit this program"
+contains "'Lib'"

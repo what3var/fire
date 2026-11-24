@@ -33,17 +33,23 @@ typedef struct CfCase {
     char* diagnostics; size_t diagnosticsLen; bool hasDiagnostics;
     char* error;             /* `.error`, without the line feeds at its end (NULL: none) */
     char* unhandled;         /* `.unhandled`, the same */
+    const char* needs;       /* `//# needs: ...`: what the machine must have (cfUnmet; NULL: nothing) */
+    const char* windows;     /* `//# windows: <why>`: the output differs on Windows by the nature of the system (--wine counts it apart) */
+    char* cgen;              /* `.cgen-contains`: patterns the generated C must (and with ! must not) contain (NULL: none) */
+    char* steps;             /* a case of a suite (tests/<suite>/<case>/steps, conformance-steps.c): its steps (NULL: a case of tests/cases) */
 } CfCase;
 
-typedef enum CfEngine { CF_VM, CF_NATIVE } CfEngine;
+typedef enum CfEngine { CF_VM, CF_NATIVE, CF_CGEN, CF_STEPS } CfEngine;
 typedef enum CfState { CF_PENDING, CF_OK, CF_FAIL, CF_SKIP } CfState;
 typedef struct CfJob {
     CfCase* kase;
     CfEngine engine;
     CfState state;
     bool second;             /* right at the second try, alone */
+    bool other;              /* --wine: wrong, and `//# windows:` says why (counted apart) */
     FcBuf bad;               /* the modes that are wrong (as run-cases.sh lists them) */
     FcBuf detail;            /* where it is wrong first */
+    FcBuf why;               /* not run: why (a need the machine does not meet) */
 } CfJob;
 
 typedef struct CfRunner {
@@ -51,6 +57,18 @@ typedef struct CfRunner {
     const char* fire;        /* the VM */
     const char* cache;       /* the program files and native programs */
     const char* toolchain;   /* --toolchain of the native builds (NULL: the one forge chooses) */
+    const char* config;      /* --sanitize, --werror, --wine: the fire.native.json of the native builds (its toolchain "conformance"), NULL: none */
+    const char* sanitize;    /* --sanitize address|thread (NULL: none) */
+    bool werror;             /* --werror: the generated C with -Wall -Wextra -Werror */
+    const char* casesRoot;   /* tests/cases (the suites are its siblings: tests/<suite>) */
+    /* --wine: the VM for Windows (fire.exe, built with MinGW) under Wine */
+    const char* wine;        /* the program wine (NULL: not --wine) */
+    const char* winePrefix;  /* WINEPREFIX of the run (its own, in the cache) */
+    const char* winFire;     /* fire.exe */
+    const char* winLibs;     /* the libraries of the packages for Windows (FIRE_PKG_PATH of fire.exe) */
+    const char* mingw;       /* x86_64-w64-mingw32-gcc */
+    bool wineBooted;
+    pthread_mutex_t wineLock;
     bool keepCache, keep;
     int vmTimeout, compileTimeout, buildTimeout, runTimeout;
     long long selfTime;
@@ -143,10 +161,45 @@ typedef struct CfRun { int code; bool timedOut; FcBuf out, err; } CfRun;
 static pthread_mutex_t cfForkLock = PTHREAD_MUTEX_INITIALIZER;
 static void cfCloexec(int fd) { fcntl(fd, F_SETFD, FD_CLOEXEC); }
 static long long cfNowMs(void) { struct timeval tv; gettimeofday(&tv, NULL); return (long long)tv.tv_sec * 1000 + tv.tv_usec / 1000; }
+#else
+static long long cfNowMs(void) { return (long long)GetTickCount64(); }
 #endif
-/* Runs exe with argv (argv[0] is the program) in cwd, stdin empty, with the output and the errors captured; after timeout seconds it is killed with its
- * process group (code 124, as `timeout` ends). */
-static void cfSpawn(const char* exe, char* const* argv, const char* cwd, int timeout, CfRun* r) {
+/* the environment of a child: this process's, with `env` applied (NAME=VALUE sets, -NAME removes; NULL-terminated, NULL: none) - malloc'd, NULL-terminated */
+#ifndef _WIN32
+static char** cfChildEnvironment(char* const* env) {
+    size_t n = 0, e = 0, i, k;
+    char** r;
+    while (environ[n]) n++;
+    while (env && env[e]) e++;
+    r = (char**)calloc(n + e + 1, sizeof(char*));
+    if (!r) fbOutOfMemory();
+    for (i = 0, k = 0; i < n; i++) {
+        size_t x;
+        bool replaced = false;
+        for (x = 0; x < e; x++) {
+            const char* name = env[x][0] == '-' ? env[x] + 1 : env[x];
+            size_t nl = strcspn(name, "=");
+            if (strncmp(environ[i], name, nl) == 0 && environ[i][nl] == '=') replaced = true;
+        }
+        if (!replaced) r[k++] = environ[i];
+    }
+    for (i = 0; i < e; i++) {
+        /* (a later entry for the same name wins) */
+        size_t x, nl = strcspn(env[i][0] == '-' ? env[i] + 1 : env[i], "=");
+        bool later = false;
+        for (x = i + 1; x < e; x++) {
+            const char* other = env[x][0] == '-' ? env[x] + 1 : env[x];
+            if (strncmp(other, env[i][0] == '-' ? env[i] + 1 : env[i], nl) == 0 && (other[nl] == '=' || other[nl] == 0)) later = true;
+        }
+        if (!later && env[i][0] != '-') r[k++] = env[i];
+    }
+    r[k] = NULL;
+    return r;
+}
+#endif
+/* Runs exe with argv (argv[0] is the program) in cwd, stdin empty (or `input`), the environment of this process with `env` applied (cfChildEnvironment), with
+ * the output and the errors captured; after timeout seconds it is killed with its process group (code 124, as `timeout` ends). */
+static void cfSpawnEx(const char* exe, char* const* argv, const char* cwd, int timeout, char* const* env, const char* input, CfRun* r) {
     cfBufInit(&r->out);
     cfBufInit(&r->err);
     r->code = -1;
@@ -157,47 +210,62 @@ static void cfSpawn(const char* exe, char* const* argv, const char* cwd, int tim
         int i;
         cfBufInit(&args);
         for (i = 1; argv[i]; i++) { if (i > 1) fcBufChar(&args, ' '); fwQuoteArg(&args, argv[i]); }
-        (void)timeout;   /* (no timeout on Windows yet) */
-        r->code = fwRun(exe, args.p, cwd, NULL, &r->out, &r->err);
+        (void)timeout; (void)input;   /* (no timeout and no input on Windows yet) */
+        r->code = fwRun(exe, args.p, cwd, (const char* const*)env, &r->out, &r->err);
         if (r->code == -1) fcBufFmt(&r->err, "could not run %s\n", exe);
         fcBufFree(&args);
     }
 #else
     {
-        int outPipe[2], errPipe[2], status = 0, live = 2, devnull;
+        int outPipe[2], errPipe[2], inPipe[2] = { -1, -1 }, status = 0, live = 2, devnull;
         pid_t pid;
         long long deadline = cfNowMs() + (long long)timeout * 1000;
         struct pollfd fds[2];
         char buf[16384];
+        char** envp = env ? cfChildEnvironment(env) : NULL;
         /* (the pipes of one job must not leak into the processes of another: close-on-exec, made and forked under one lock) */
         pthread_mutex_lock(&cfForkLock);
-        if (pipe(outPipe) != 0) { pthread_mutex_unlock(&cfForkLock); fcBufStr(&r->err, "pipe failed\n"); return; }
-        if (pipe(errPipe) != 0) { close(outPipe[0]); close(outPipe[1]); pthread_mutex_unlock(&cfForkLock); fcBufStr(&r->err, "pipe failed\n"); return; }
+        if (pipe(outPipe) != 0) { pthread_mutex_unlock(&cfForkLock); free(envp); fcBufStr(&r->err, "pipe failed\n"); return; }
+        if (pipe(errPipe) != 0) { close(outPipe[0]); close(outPipe[1]); pthread_mutex_unlock(&cfForkLock); free(envp); fcBufStr(&r->err, "pipe failed\n"); return; }
         cfCloexec(outPipe[0]); cfCloexec(outPipe[1]); cfCloexec(errPipe[0]); cfCloexec(errPipe[1]);
+        if (input && pipe(inPipe) == 0) { cfCloexec(inPipe[0]); cfCloexec(inPipe[1]); }
         devnull = open("/dev/null", O_RDONLY);
         if (devnull >= 0) cfCloexec(devnull);
         pid = fork();
         if (pid == 0) {
             setpgid(0, 0);
-            if (devnull >= 0) dup2(devnull, 0);
+            if (inPipe[0] >= 0) dup2(inPipe[0], 0);
+            else if (devnull >= 0) dup2(devnull, 0);
             dup2(outPipe[1], 1);
             dup2(errPipe[1], 2);
             if (cwd && chdir(cwd) != 0) _exit(127);
-            execv(exe, argv);
+            if (envp) execve(exe, argv, envp); else execv(exe, argv);
             _exit(127);
         }
         pthread_mutex_unlock(&cfForkLock);
+        free(envp);
         if (devnull >= 0) close(devnull);
         close(outPipe[1]); close(errPipe[1]);
+        if (inPipe[0] >= 0) {
+            /* (a small input: written at once, then the end of the input) */
+            size_t at = 0, n = strlen(input);
+            close(inPipe[0]);
+            signal(SIGPIPE, SIG_IGN);
+            while (pid > 0 && at < n) { ssize_t w = write(inPipe[1], input + at, n - at); if (w <= 0) break; at += (size_t)w; }
+            close(inPipe[1]);
+        }
         if (pid < 0) { close(outPipe[0]); close(errPipe[0]); fcBufStr(&r->err, "fork failed\n"); return; }
         fds[0].fd = outPipe[0]; fds[0].events = POLLIN;
         fds[1].fd = errPipe[0]; fds[1].events = POLLIN;
+        bool reaped = false;
         while (live > 0) {
             int k, wait = (int)(deadline - cfNowMs());
             if (wait <= 0) {
+                if (reaped) break;   /* (the program ended; a process it left - a wineserver - still holds the pipes) */
                 if (!r->timedOut) { r->timedOut = true; kill(-pid, SIGKILL); kill(pid, SIGKILL); deadline = cfNowMs() + 2000; continue; }
                 break;   /* (a process outside the group still holds the pipes: stop reading) */
             }
+            if (!reaped && waitpid(pid, &status, WNOHANG) == pid) { reaped = true; if (deadline > cfNowMs() + 3000) deadline = cfNowMs() + 3000; }
             if (poll(fds, 2, wait > 500 ? 500 : wait) < 0) { if (errno == EINTR) continue; break; }
             for (k = 0; k < 2; k++) {
                 ssize_t got;
@@ -209,13 +277,14 @@ static void cfSpawn(const char* exe, char* const* argv, const char* cwd, int tim
         }
         if (fds[0].fd >= 0) close(fds[0].fd);
         if (fds[1].fd >= 0) close(fds[1].fd);
-        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) { }
+        if (!reaped) while (waitpid(pid, &status, 0) < 0 && errno == EINTR) { }
         if (r->timedOut) r->code = 124;
         else if (WIFEXITED(status)) r->code = WEXITSTATUS(status);
         else if (WIFSIGNALED(status)) r->code = 128 + WTERMSIG(status);
     }
 #endif
 }
+static void cfSpawn(const char* exe, char* const* argv, const char* cwd, int timeout, CfRun* r) { cfSpawnEx(exe, argv, cwd, timeout, NULL, NULL, r); }
 static void cfRunFree(CfRun* r) { fcBufFree(&r->out); fcBufFree(&r->err); }
 
 /* ---- the cases (TestCases.Load) ---- */
@@ -275,6 +344,8 @@ static CfCase* cfLoadCase(const char* group, const char* dir, const char* name) 
         else if (strcmp(line, "//# output: varies") == 0) k->varies = true;
         else if (strncmp(line, "//# skip: forge run", 19) == 0) k->skip = true;
         else if (strncmp(line, "//# types: ", 11) == 0) k->types = cfDup(line + 11);
+        else if (strncmp(line, "//# needs: ", 11) == 0) k->needs = cfDup(line + 11);
+        else if (strncmp(line, "//# windows: ", 13) == 0) k->windows = cfDup(line + 13);
         else if (strncmp(line, "//# modes: ", 11) == 0) {
             char* p = line + 11;
             while (*p && k->modeCount < 4) {
@@ -301,6 +372,7 @@ static CfCase* cfLoadCase(const char* group, const char* dir, const char* name) 
     path = cfSibling(dir, k->id, ".diagnostics"); k->diagnostics = cfReadText(path, &k->diagnosticsLen); k->hasDiagnostics = k->diagnostics != NULL; free(path);
     path = cfSibling(dir, k->id, ".error"); k->error = cfTrimmed(cfReadText(path, NULL)); free(path);
     path = cfSibling(dir, k->id, ".unhandled"); k->unhandled = cfTrimmed(cfReadText(path, NULL)); free(path);
+    path = cfSibling(dir, k->id, ".cgen-contains"); k->cgen = cfReadText(path, NULL); free(path);
     return k;
 }
 /* --filter: texts separated by '|', any of them in the title or the name of the case, case does not matter (FIRE_TESTS_FILTER) */
@@ -322,6 +394,69 @@ static bool cfSelected(const CfCase* k, const char* filter) {
         if (n > 0 && (cfContainsI(k->title, p, n) || cfContainsI(k->id, p, n))) return true;
         if (!e) return false;
         p = e + 1;
+    }
+}
+
+/* ---- Windows under Wine (--wine; conformance-steps.c builds fire.exe and the libraries) ---- */
+/* a path of this machine as Wine sees it (the drive Z: is /) */
+static char* cfWinPath(const char* path) {
+    char* r = cfPrintf("Z:%s", path);
+    char* q;
+    for (q = r; *q; q++) if (*q == '/') *q = '\\';
+    return r;
+}
+/* the environment of a program under Wine: the prefix of the run, no debug channels, no winedbg, TMPDIR removed (Wine 9 of Ubuntu frees getenv("TMPDIR") and
+ * aborts with "free(): invalid pointer"), the libraries of the packages for Windows; `extra` (NULL-terminated) after it. malloc'd, the texts too. */
+static char** cfWineEnv(CfRunner* R, char* const* extra) {
+    size_t n = 0, i;
+    char** env;
+    while (extra && extra[n]) n++;
+    env = (char**)calloc(n + 10, sizeof(char*));
+    if (!env) fbOutOfMemory();
+    i = 0;
+    env[i++] = cfPrintf("WINEPREFIX=%s", R->winePrefix);
+    env[i++] = cfDup("WINEDEBUG=-all");
+    env[i++] = cfDup("WINEDLLOVERRIDES=mscoree,mshtml=;winedbg.exe=d");
+    env[i++] = cfDup("-TMPDIR");
+    env[i++] = cfDup("LANG=C.UTF-8");
+    if (R->winLibs) { char* w = cfWinPath(R->winLibs); env[i++] = cfPrintf("FIRE_PKG_PATH=%s", w); free(w); }
+    for (n = 0; extra && extra[n]; n++) env[i++] = cfDup(extra[n]);
+    env[i] = NULL;
+    return env;
+}
+static void cfFreeEnv(char** env) { size_t i; for (i = 0; env && env[i]; i++) free(env[i]); free(env); }
+/* \r\n -> \n (the C runtime of Windows writes text mode) */
+static void cfUnCr(FcBuf* b) {
+    size_t i, o = 0;
+    for (i = 0; i < b->len; i++) if (!(b->p[i] == '\r' && i + 1 < b->len && b->p[i + 1] == '\n')) b->p[o++] = b->p[i];
+    b->len = o;
+    b->p[o] = 0;
+}
+/* a program for Windows under Wine: argv[0] the program (a path of this machine), the rest its arguments */
+static void cfSpawnWine(CfRunner* R, char* const* argv, const char* cwd, int timeout, char* const* extraEnv, const char* input, CfRun* r) {
+    char** env = cfWineEnv(R, extraEnv);
+    char* wargv[64];
+    int a = 0, i;
+    wargv[a++] = (char*)R->wine;
+    for (i = 0; argv[i] && a < 63; i++) wargv[a++] = argv[i];
+    wargv[a] = NULL;
+    cfSpawnEx(R->wine, wargv, cwd, timeout, env, input, r);
+    cfFreeEnv(env);
+    cfUnCr(&r->out);
+    cfUnCr(&r->err);
+}
+/* the VM with a program file: `fire x.fbc`, or under Wine `fire.exe Z:\...\x.fbc` */
+static void cfRunVm(CfRunner* R, const char* fbc, const char* cwd, CfRun* run) {
+    if (R->wine) {
+        char* w = cfWinPath(fbc);
+        char* argv[3];
+        argv[0] = (char*)R->winFire; argv[1] = w; argv[2] = NULL;
+        cfSpawnWine(R, argv, cwd, R->vmTimeout, NULL, NULL, run);
+        free(w);
+    } else {
+        char* argv[3];
+        argv[0] = (char*)R->fire; argv[1] = (char*)fbc; argv[2] = NULL;
+        cfSpawn(R->fire, argv, cwd, R->vmTimeout, run);
     }
 }
 
@@ -369,9 +504,7 @@ static void cfVmCase(CfRunner* R, CfJob* j) {
         ccode = codeText ? atoi(codeText) : 1;
         free(codeText);
         if (ccode == 0 && nbFileExists(fbc)) {
-            char* argv[3];
-            argv[0] = (char*)R->fire; argv[1] = fbc; argv[2] = NULL;
-            cfSpawn(R->fire, argv, k->dir, R->vmTimeout, &run);
+            cfRunVm(R, fbc, k->dir, &run);
             code = run.code;
         } else {
             cfBufInit(&run.out); cfBufInit(&run.err);
@@ -438,20 +571,266 @@ static void cfVmCase(CfRunner* R, CfJob* j) {
     free(name);
 }
 
+/* ---- what a case needs of the machine (`//# needs: ...`, `needs:` of a suite's steps) ---- */
+/* a program on the PATH */
+static bool cfHasProgram(const char* name) {
+#ifdef _WIN32
+    char* p = fwResolveExe(name);
+#else
+    char* p = nbResolveExe(name);
+    if (p && access(p, X_OK) != 0) { free(p); p = NULL; }
+#endif
+    if (!p) return false;
+    free(p);
+    return true;
+}
+/* gcc builds and runs a program with the flags (a sanitizer: the compiler has it and the kernel lets it run); asked once per flags */
+static pthread_mutex_t cfProbeLock = PTHREAD_MUTEX_INITIALIZER;
+static int cfProbeAsan = -1, cfProbeTsan = -1;
+static bool cfProbe(const char* cache, const char* flags, int* state) {
+    bool ok;
+    pthread_mutex_lock(&cfProbeLock);
+    if (*state < 0) {
+#ifdef _WIN32
+        (void)cache; (void)flags;
+        *state = 0;
+#else
+        char* dir = cfPrintf("%s/probe-%d", cache, (int)(state == &cfProbeAsan));
+        char* src = cfPrintf("%s/probe.c", dir);
+        char* exe = cfPrintf("%s/probe", dir);
+        char* cmd;
+        FILE* f;
+        CfRun run;
+        char* argv[4];
+        mkdir(dir, 0755);
+        if ((f = fopen(src, "wb")) != NULL) {
+            fputs("#include <pthread.h>\nstatic int n;\nstatic void* run(void* a) { (void)a; n++; return 0; }\nint main(void) { pthread_t t; pthread_create(&t, 0, run, 0); pthread_join(t, 0); return n - 1; }\n", f);
+            fclose(f);
+        }
+        cmd = cfPrintf("gcc -pthread %s '%s' -o '%s' >/dev/null 2>&1 && '%s' >/dev/null 2>&1", flags, src, exe, exe);
+        argv[0] = "/bin/sh"; argv[1] = "-c"; argv[2] = cmd; argv[3] = NULL;
+        cfSpawn("/bin/sh", argv, dir, 120, &run);
+        *state = run.code == 0 ? 1 : 0;
+        cfRunFree(&run);
+        free(cmd); free(src); free(exe); free(dir);
+#endif
+    }
+    ok = *state == 1;
+    pthread_mutex_unlock(&cfProbeLock);
+    return ok;
+}
+/* Unmet: the first need of `needs` (words separated by spaces) this machine does not meet, written to why; false: all are met.
+ *   linux, windows, macos, posix      the system forge-c runs on
+ *   mingw                             x86_64-w64-mingw32-gcc and -g++ (the toolchain of Windows on Linux)
+ *   wine                              wine (with mingw: programs for Windows run here)
+ *   asan, tsan                        gcc builds and runs a program with AddressSanitizer / ThreadSanitizer
+ *   env:NAME                          the environment variable NAME is set (not empty) - a server of the machine, a folder
+ *   file:PATH                         the file or folder exists
+ *   <program>                         any other word: a program on the PATH (gcc, tcc, clang, Xvfb, qemu-system-i386, ...) */
+static bool cfUnmet(CfRunner* R, const char* needs, FcBuf* why) {
+    const char* p = needs;
+    while (p && *p) {
+        char word[512];
+        size_t n;
+        bool met;
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+        n = strcspn(p, " \t,");
+        if (n == 0) break;
+        if (n >= sizeof word) n = sizeof word - 1;
+        memcpy(word, p, n);
+        word[n] = 0;
+        p += n;
+#if defined(_WIN32)
+        if (streq0(word, "linux") || streq0(word, "macos") || streq0(word, "posix")) met = false;
+        else if (streq0(word, "windows")) met = true;
+#elif defined(__APPLE__)
+        if (streq0(word, "linux") || streq0(word, "windows")) met = false;
+        else if (streq0(word, "macos") || streq0(word, "posix")) met = true;
+#else
+        if (streq0(word, "macos") || streq0(word, "windows")) met = false;
+        else if (streq0(word, "linux") || streq0(word, "posix")) met = true;
+#endif
+        else if (streq0(word, "mingw")) met = cfHasProgram("x86_64-w64-mingw32-gcc") && cfHasProgram("x86_64-w64-mingw32-g++");
+        else if (streq0(word, "asan")) met = cfProbe(R->cache, "-fsanitize=address,undefined", &cfProbeAsan);
+        else if (streq0(word, "tsan")) met = cfProbe(R->cache, "-fsanitize=thread", &cfProbeTsan);
+        else if (strncmp(word, "env:", 4) == 0) { const char* v = getenv(word + 4); met = v && *v; }
+        else if (strncmp(word, "file:", 5) == 0) { struct stat st; met = stat(word + 5, &st) == 0; }
+        else met = cfHasProgram(word);
+        if (!met) {
+            if (strncmp(word, "env:", 4) == 0) fcBufFmt(why, "needs %s (not set)", word + 4);
+            else if (strncmp(word, "file:", 5) == 0) fcBufFmt(why, "needs %s (not there)", word + 5);
+            else if (streq0(word, "asan") || streq0(word, "tsan")) fcBufFmt(why, "needs %s (gcc cannot build or run a program with it here)", word);
+            else if (streq0(word, "linux") || streq0(word, "windows") || streq0(word, "macos") || streq0(word, "posix")) fcBufFmt(why, "needs %s (not this system)", word);
+            else fcBufFmt(why, "needs %s (not on this machine)", streq0(word, "mingw") ? "MinGW (x86_64-w64-mingw32-gcc, -g++)" : word);
+            return true;
+        }
+    }
+    return false;
+}
+
+/* ---- the generated C of a case (`.cgen-contains`, the checks of the generator in Program.cs): what `forge-c native` writes for the case, one rule a line -
+ *   <pattern>        the C contains it (`*` is any text within a line; `\b` at the start: the match starts a word)
+ *   !<pattern>       the C does not contain it
+ *   =<n> <pattern>   the C contains it exactly n times
+ *   @<pattern>       the rules that follow look at the definition that starts there only (a line that is a declaration - it ends with ';' - is passed
+ *                    over), up to the end of that function (the next line `}`); `@` alone: at the whole C again
+ *   /<text>          the rules that follow leave out the lines that contain the text (the rare paths a function keeps, a `Value m_ = divide(...)`)
+ *   # ...            a comment ---- */
+/* the pattern matches exactly at a (* within the line); *me: where the match ends */
+static bool cfMatchAt(const char* a, const char* end, const char* pat, size_t pn, const char** me) {
+    size_t i = 0;
+    while (i < pn) {
+        if (pat[i] == '*') {
+            const char* rest = pat + i + 1;
+            size_t rn = pn - i - 1;
+            const char* s;
+            if (rn == 0) { while (a < end && *a != '\n') a++; *me = a; return true; }
+            for (s = a;; s++) {
+                if (cfMatchAt(s, end, rest, rn, me)) return true;
+                if (s >= end || *s == '\n') return false;
+            }
+        }
+        if (a >= end || *a != pat[i]) return false;
+        a++; i++;
+    }
+    *me = a;
+    return true;
+}
+static bool cfWordChar(char ch) { return isalnum((unsigned char)ch) || ch == '_'; }
+/* the first match of the pattern in [text, end); NULL: none */
+static const char* cfGlob(const char* text, const char* end, const char* pat, size_t pn, const char** matchEnd) {
+    const char* t;
+    const char* me;
+    bool word = pn > 2 && pat[0] == '\\' && pat[1] == 'b';
+    if (word) { pat += 2; pn -= 2; }
+    if (pn == 0) return NULL;
+    for (t = text; t < end; t++) {
+        if (!(*t == pat[0] || pat[0] == '*')) continue;
+        if (word && t > text && cfWordChar(t[-1])) continue;
+        if (cfMatchAt(t, end, pat, pn, &me)) { if (matchEnd) *matchEnd = me; return t; }
+    }
+    return NULL;
+}
+static void cfCgenCase(CfRunner* R, CfJob* j) {
+    CfCase* k = j->kase;
+    char* name = cfPrintf("%s.fire", k->id);
+    char* out = cfPrintf("%s/cgen/%s.c", R->cache, k->id);
+    char* argv[8];
+    CfRun run;
+    char* text;
+    size_t len = 0;
+    FcBuf view;              /* what the rules look at: the C, or a part of it (@), without some lines (/) */
+    bool part = false;
+    const char* p = k->cgen;
+    int line = 0;
+    argv[0] = (char*)R->self; argv[1] = "native"; argv[2] = name; argv[3] = "-o"; argv[4] = out; argv[5] = NULL;
+    remove(out);
+    cfSpawn(R->self, argv, k->dir, R->compileTimeout, &run);
+    text = run.code == 0 ? cfReadText(out, &len) : NULL;
+    if (!text) {
+        cfAddBad(j, "cgen", "");
+        fcBufFmt(&j->detail, "    forge-c native ended with %d:\n", run.code);
+        cfNote(&j->detail, run.err.p, run.err.len);
+        cfRunFree(&run); free(name); free(out);
+        return;
+    }
+    cfRunFree(&run);
+    cfBufInit(&view);
+    fcBufPut(&view, text, len);
+    while (*p) {
+        size_t n = strcspn(p, "\n");
+        const char* q = p;
+        size_t qn = n;
+        line++;
+        if (qn > 0 && q[qn - 1] == '\r') qn--;
+        p += n + (p[n] == '\n');
+        if (qn == 0 || q[0] == '#') continue;
+        if (q[0] == '@') {
+            const char* at;
+            const char* e2 = NULL;
+            view.len = 0; view.p[0] = 0;
+            if (qn == 1) { fcBufPut(&view, text, len); part = false; continue; }
+            for (at = cfGlob(text, text + len, q + 1, qn - 1, &e2); at; at = cfGlob(e2, text + len, q + 1, qn - 1, &e2)) {
+                const char* eol = e2;
+                while (eol < text + len && *eol != '\n') eol++;
+                while (eol > e2 && (eol[-1] == ' ' || eol[-1] == '\r')) eol--;
+                if (!(eol > at && eol[-1] == ';')) break;
+            }
+            part = true;
+            if (!at) {
+                cfAddBad(j, "cgen", "");
+                if (!j->detail.len) fcBufFmt(&j->detail, "    .cgen-contains, line %d: the generated C has no definition '%.*s'\n", line, (int)(qn - 1), q + 1);
+                continue;
+            }
+            {
+                const char* to = strstr(e2, "\n}\n");
+                to = to ? to + 3 : text + len;
+                fcBufPut(&view, at, (size_t)(to - at));
+            }
+            continue;
+        }
+        if (q[0] == '/' && qn > 1) {
+            /* the lines that contain the text are left out */
+            FcBuf kept;
+            const char* t = view.p;
+            char* drop = cfPrintf("%.*s", (int)(qn - 1), q + 1);
+            cfBufInit(&kept);
+            while (*t) {
+                size_t ln = strcspn(t, "\n");
+                char* one = cfPrintf("%.*s", (int)ln, t);
+                if (!strstr(one, drop)) { fcBufStr(&kept, one); fcBufChar(&kept, '\n'); }
+                free(one);
+                t += ln + (t[ln] == '\n');
+            }
+            fcBufFree(&view);
+            view = kept;
+            free(drop);
+            continue;
+        }
+        {
+            bool negated = q[0] == '!', counted = q[0] == '=' && qn > 2 && isdigit((unsigned char)q[1]);
+            const char* pat = negated ? q + 1 : q;
+            size_t pn;
+            int want = 0, have = 0;
+            const char* at;
+            const char* e2;
+            bool good;
+            if (counted) { want = atoi(q + 1); pat = q + 1; while (pat < q + qn && isdigit((unsigned char)*pat)) pat++; while (pat < q + qn && *pat == ' ') pat++; }
+            pn = (size_t)(q + qn - pat);
+            for (at = cfGlob(view.p, view.p + view.len, pat, pn, &e2); at; at = cfGlob(e2 > at ? e2 : at + 1, view.p + view.len, pat, pn, &e2)) { have++; if (!counted) break; }
+            good = counted ? have == want : negated ? have == 0 : have > 0;
+            if (!good) {
+                cfAddBad(j, "cgen", "");
+                if (!j->detail.len) {
+                    if (counted) fcBufFmt(&j->detail, "    .cgen-contains, line %d: the generated C has '%.*s' %d times, not %d\n", line, (int)pn, pat, have, want);
+                    else fcBufFmt(&j->detail, "    .cgen-contains, line %d: the generated C %s '%.*s'\n", line, negated ? "contains" : "lacks", (int)pn, pat);
+                    if (part) cfNote(&j->detail, view.p, view.len > 1500 ? 1500 : view.len);
+                }
+            }
+        }
+    }
+    fcBufFree(&view);
+    if (!R->keep) remove(out);
+    free(text); free(name); free(out);
+}
+
 /* ---- native (Program.cs: the cases "native == VM" - built in release, run, NatVerdict against the expected output of the case) ---- */
 static bool cfStderrHas(const char* err, const char* text) { return strstr(err, text) != NULL; }
 static void cfNativeCase(CfRunner* R, CfJob* j) {
     CfCase* k = j->kase;
     char* name = cfPrintf("%s.fire", k->id);
-    char* exe = cfPrintf("%s/native-bin/%s%s", R->cache, k->id, NV_EXTENSION);
-    char* argv[14];
+    char* exe = cfPrintf("%s/native-bin/%s%s", R->cache, k->id, R->wine ? ".exe" : NV_EXTENSION);
+    char* argv[20];
     CfRun build, run;
     FcBuf expected, actual;
     int a = 0;
     argv[a++] = (char*)R->self; argv[a++] = "build"; argv[a++] = name; argv[a++] = "--engine"; argv[a++] = "native"; argv[a++] = "-m"; argv[a++] = "release";
     argv[a++] = "-o"; argv[a++] = exe;
     if (k->types) { argv[a++] = "--types"; argv[a++] = (char*)k->types; }
-    if (R->toolchain) { argv[a++] = "--toolchain"; argv[a++] = (char*)R->toolchain; }
+    /* (--sanitize, --werror, --wine: the toolchain "conformance" of the run's fire.native.json; else --toolchain) */
+    if (R->config) { argv[a++] = "--config"; argv[a++] = (char*)R->config; argv[a++] = "--toolchain"; argv[a++] = "conformance"; }
+    else if (R->toolchain) { argv[a++] = "--toolchain"; argv[a++] = (char*)R->toolchain; }
+    if (R->wine) { argv[a++] = "-t"; argv[a++] = "windows"; }
     argv[a] = NULL;
     remove(exe);
     cfSpawn(R->self, argv, k->dir, R->buildTimeout, &build);
@@ -473,7 +852,34 @@ static void cfNativeCase(CfRunner* R, CfJob* j) {
     }
     cfRunFree(&build);
     argv[0] = exe; argv[1] = NULL;
-    cfSpawn(exe, argv, k->dir, R->runTimeout, &run);
+    if (R->wine) cfSpawnWine(R, argv, k->dir, R->runTimeout, NULL, NULL, &run);
+    else if (R->sanitize) {
+        /* (LeakSanitizer at the end; a report of UBSan with its stack; ThreadSanitizer goes on after a race, to report them all) */
+        static char* const sanitizerEnv[] = { "ASAN_OPTIONS=detect_leaks=1:abort_on_error=0", "UBSAN_OPTIONS=print_stacktrace=1", "TSAN_OPTIONS=halt_on_error=0 report_signal_unsafe=0", NULL };
+        cfSpawnEx(exe, argv, k->dir, R->runTimeout * 3, sanitizerEnv, NULL, &run);
+    } else cfSpawn(exe, argv, k->dir, R->runTimeout, &run);
+    if (R->sanitize) {
+        /* a report of a sanitizer is wrong in any case (its first lines); ThreadSanitizer: only that (the output of a program under it is not compared) */
+        static const char* const markers[] = { "WARNING: ThreadSanitizer", "ERROR: AddressSanitizer", "ERROR: LeakSanitizer", "runtime error: ", NULL };
+        int m;
+        const char* at = NULL;
+        for (m = 0; markers[m]; m++) { const char* f = strstr(run.err.p, markers[m]); if (f && (!at || f < at)) at = f; }
+        if (at) {
+            size_t n = strlen(at);
+            while (at > run.err.p && at[-1] != '\n') at--;
+            n = strlen(at);
+            cfAddBad(j, streq0(R->sanitize, "thread") ? "tsan" : "asan", "");
+            fcBufFmt(&j->detail, "    the sanitizer reported:\n");
+            cfNote(&j->detail, at, n > 4000 ? 4000 : n);
+        }
+        if (streq0(R->sanitize, "thread")) {
+            if (run.timedOut) { cfAddBad(j, "tsan", "(timeout)"); fcBufFmt(&j->detail, "    the native program did not end (%d s)\n", R->runTimeout * 3); }
+            cfRunFree(&run);
+            if (!R->keep) remove(exe);
+            free(name); free(exe);
+            return;
+        }
+    }
     cfBufInit(&expected);
     cfBufInit(&actual);
     if (k->varies) {
@@ -531,12 +937,23 @@ static void cfNativeCase(CfRunner* R, CfJob* j) {
     free(name); free(exe);
 }
 
+static void cfStepsCase(CfRunner* R, CfJob* j);   /* (conformance-steps.c) */
 static void cfRunJob(CfRunner* R, CfJob* j) {
     j->bad.len = 0; j->bad.p[0] = 0;
     j->detail.len = 0; j->detail.p[0] = 0;
+    j->why.len = 0; j->why.p[0] = 0;
+    j->other = false;
     if (j->kase->skip || (j->engine == CF_VM && j->kase->varies)) { j->state = CF_SKIP; return; }
-    if (j->engine == CF_VM) cfVmCase(R, j); else cfNativeCase(R, j);
+    if (j->kase->needs && cfUnmet(R, j->kase->needs, &j->why)) { j->state = CF_SKIP; return; }
+    /* (--wine: `//# windows: not run - <why>` - a case that cannot end on Windows is left out there) */
+    if (R->wine && j->kase->windows && strncmp(j->kase->windows, "not run - ", 10) == 0) { fcBufFmt(&j->why, "not on Windows: %s", j->kase->windows + 10); j->state = CF_SKIP; return; }
+    if (j->engine == CF_VM) cfVmCase(R, j);
+    else if (j->engine == CF_NATIVE) cfNativeCase(R, j);
+    else if (j->engine == CF_CGEN) cfCgenCase(R, j);
+    else cfStepsCase(R, j);
     j->state = j->bad.len ? CF_FAIL : CF_OK;
+    /* (--wine: a case whose output differs on Windows by the nature of the system says so - counted apart, not wrong) */
+    if (j->state == CF_FAIL && R->wine && j->kase->windows) j->other = true;
 }
 static void* cfWorker(void* arg) {
     CfRunner* R = (CfRunner*)arg;
@@ -645,19 +1062,31 @@ static const char* cfFindCases(FcCtx* c, const char* given) {
     return nbDirExists(d) ? d : NULL;
 }
 
+#include "conformance-steps.c"   /* the suites (tests/<suite>/<case>/steps) and the VM for Windows */
+
 static const char* const cfUsage =
-    "usage: forge-c conformance [<group>|<group>/<case>...] [--filter <text>] [-j <jobs>] [--engine vm|native|all] [--fire <fire>] [--cases <dir>]\n"
-    "                           [--toolchain <name>] [--cache <dir>] [--list] [--no-retry] [--keep]\n"
+    "usage: forge-c conformance [<group>|<group>/<case>|<suite>|<suite>/<case>...] [--filter <text>] [-j <jobs>] [--engine vm|native|all] [--fire <fire>]\n"
+    "                           [--cases <dir>] [--toolchain <name>] [--sanitize address|thread] [--werror] [--wine] [--cache <dir>] [--list] [--no-retry] [--keep]\n"
     "Runs the cases of tests/cases (docs/tools/testing.md): every case is compiled by this forge-c and run in the VM in C, its output compared with\n"
     "<case>.expected (.diagnostics, .error, .unhandled); --engine native builds the cases of the group native as native programs with the C compiler\n"
     "of this machine and runs them (all: both). The groups are the folders of tests/cases (default: all); <group>/<case>: the cases whose name starts so.\n"
+    "A case with <case>.cgen-contains also has the C forge generates for it checked against the patterns there; `//# needs: ...` names what the machine\n"
+    "must have (else the case is not run, with the reason).\n"
+    "The suites are the folders next to tests/cases whose cases are folders with a file `steps` (tests/linkage, tests/wine, ...): projects, linkages, plugins,\n"
+    "Windows under Wine - run only when named.\n"
     "--filter  only the cases whose title or name contains the text (several separated by |, case does not matter)\n"
     "-j        jobs at a time (default: half the cores, at most 4)\n"
-    "--fire    the VM (its variants fire-i32, fire-f32, ... next to it; default: built from the sources of this forge-c into the user's cache)\n"
+    "--fire    the VM (its variants fire-i32, fire-f32, ... next to it; default: built from the sources of this forge-c into the user's cache);\n"
+    "          with --wine: fire.exe (default: built with MinGW from the sources of this forge-c)\n"
     "--toolchain  the compiler of the native builds (gcc, clang, tcc, msvc, or one of fire.native.json; default: the one forge chooses)\n"
+    "--sanitize address  the native builds with AddressSanitizer, UBSan and LeakSanitizer (gcc): a report is wrong; thread: the cases \"Threads:\" with\n"
+    "          ThreadSanitizer, a data race is wrong (their output is not compared)\n"
+    "--werror  the native builds with gcc -Wall -Wextra -Werror (a warning in the generated C or the runtime is wrong)\n"
+    "--wine    the VM for Windows (fire.exe, MinGW) under Wine, with the libraries of the packages built for Windows; --engine native: programs for Windows\n"
+    "          (MinGW) under Wine. A case with `//# windows: <why>` whose output differs there is counted apart. WINEPREFIX: a prefix of the run's own.\n"
     "--cache   keeps the program files between runs (written again when the case or forge-c is newer); default: a temporary folder\n"
     "--list    every case with its verdict (default: only those that are not right)\n"
-    "--no-retry  a case that is wrong is not run again alone; --keep: the native programs stay in the cache\n"
+    "--no-retry  a case that is wrong is not run again alone; --keep: the native programs stay in the cache (and the folders of the suites' cases)\n"
     "Exit code: 0 when every case that ran is right, 1 when one is wrong, 2 on a wrong command line or when the VM cannot be built.\n";
 
 static int cfCmpJob(const void* a, const void* b) {
@@ -666,6 +1095,47 @@ static int cfCmpJob(const void* a, const void* b) {
     int r = strcmp(x->kase->group, y->kase->group);
     if (r == 0) r = strcmp(x->kase->id, y->kase->id);
     return r ? r : (int)x->engine - (int)y->engine;
+}
+static CfJob* cfNewJob(CfCase* k, CfEngine engine) {
+    CfJob* j = (CfJob*)calloc(1, sizeof *j);
+    if (!j) fbOutOfMemory();
+    j->kase = k;
+    j->engine = engine;
+    cfBufInit(&j->bad);
+    cfBufInit(&j->detail);
+    cfBufInit(&j->why);
+    return j;
+}
+/* a suite: a folder next to tests/cases whose cases are folders with a file `steps` */
+static bool cfIsSuite(FcCtx* c, const char* casesRoot, const char* name) {
+    const char* dir = nbCombine(c, fcDirectoryName(c, casesRoot), name);
+    char** cases;
+    int n = 0, i;
+    bool any = false;
+    if (streq0(name, "cases") || !nbDirExists(dir)) return false;
+    cases = cfList(dir, NULL, &n);
+    for (i = 0; i < n; i++) { if (nbFileExists(nbCombine(c, nbCombine(c, dir, cases[i]), "steps"))) any = true; free(cases[i]); }
+    free(cases);
+    return any;
+}
+/* the fire.native.json of the native builds of --sanitize, --werror and --wine: the toolchain "conformance" */
+static const char* cfWriteConfig(FcCtx* c, CfRunner* R) {
+    FcBuf b;
+    const char* path = nbCombine(c, R->cache, "fire.native.conformance.json");
+    const char* args;
+    cfBufInit(&b);
+    if (R->wine) args = "\"-O2\"";
+    else if (R->sanitize && streq0(R->sanitize, "thread")) args = "\"-fsanitize=thread\", \"-g\"";
+    else if (R->sanitize) args = "\"-fsanitize=address,undefined\", \"-fno-sanitize-recover=undefined\", \"-fno-omit-frame-pointer\", \"-g\"";
+    else args = "";
+    fcBufStr(&b, "{ \"toolchains\": { \"conformance\": { \"kind\": \"gcc\", ");
+    if (R->wine) fcBufStr(&b, "\"compiler\": \"x86_64-w64-mingw32-g++\", \"cCompiler\": \"x86_64-w64-mingw32-gcc\", ");
+    else fcBufStr(&b, "\"compiler\": \"g++\", \"cCompiler\": \"gcc\", ");
+    fcBufFmt(&b, "\"std\": \"c++17\", \"cStd\": \"c11\", \"optimization\": \"%s\", \"strip\": false, \"args\": [%s%s%s], \"libs\": [%s] } } }\n",
+        R->sanitize ? "-O1" : "-O2", args, R->werror && *args ? ", " : "", R->werror ? "\"-Wall\", \"-Wextra\", \"-Werror\"" : "", R->sanitize ? args : "");
+    nbWriteText(c, path, b.p);
+    fcBufFree(&b);
+    return path;
 }
 
 static int cfConformanceMain(int argc, char** argv, const char* prelude, const char* storeRoot) {
@@ -677,8 +1147,8 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
     const char* fireArg = NULL;
     const char* cacheArg = NULL;
     const char* casesRoot;
-    bool list = false, retry = true, vm = true, native = false;
-    int threads, i, g, groupCount = 0, ok = 0, fail = 0, skip = 0, cores;
+    bool list = false, retry = true, vm = true, native = false, wine = false;
+    int threads, i, g, groupCount = 0, ok = 0, fail = 0, skip = 0, other = 0, cores;
     char** groups;
     FcList* wanted;
     FcList* jobs;
@@ -698,6 +1168,12 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
         else if (streq0(a, "--cases") && i + 1 < argc) casesArg = argv[++i];
         else if (streq0(a, "--cache") && i + 1 < argc) cacheArg = argv[++i];
         else if (streq0(a, "--toolchain") && i + 1 < argc) R.toolchain = argv[++i];
+        else if (streq0(a, "--sanitize") && i + 1 < argc) {
+            R.sanitize = argv[++i];
+            if (!streq0(R.sanitize, "address") && !streq0(R.sanitize, "thread")) { fprintf(stderr, "'%s' is no sanitizer (address, thread).\n%s", R.sanitize, cfUsage); fcCtxFree(c); return 2; }
+        }
+        else if (streq0(a, "--werror")) R.werror = true;
+        else if (streq0(a, "--wine")) wine = true;
         else if (streq0(a, "--engine") && i + 1 < argc) {
             const char* e = argv[++i];
             if (fcAsciiIEq(e, "vm")) { vm = true; native = false; }
@@ -712,9 +1188,15 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
         else if (a[0] == '-') { fprintf(stderr, "Unknown option '%s'.\n%s", a, cfUsage); fcCtxFree(c); return 2; }
         else fcListAdd(c, wanted, (void*)a);
     }
+    if ((R.sanitize || R.werror) && wine) { fprintf(stderr, "--sanitize and --werror are for the native builds of this machine, not with --wine.\n"); fcCtxFree(c); return 2; }
+    /* (a sanitizer or -Werror is a native build: --engine native) */
+    if (R.sanitize || R.werror) { vm = false; native = true; }
     if (!nbFileExists(prelude)) { fprintf(stderr, "The tables of forge-c (%s) are not there: FIRE_TABLES names their folder (native/tables).\n", prelude); fcCtxFree(c); return 2; }
     casesRoot = cfFindCases(c, casesArg);
     if (!casesRoot || !nbDirExists(casesRoot)) { fprintf(stderr, "No folder tests/cases was found (--cases <dir>, FIRE_CASES).\n"); fcCtxFree(c); return 2; }
+    R.casesRoot = casesRoot;
+    cfStoreRoot = storeRoot;
+    pthread_mutex_init(&R.wineLock, NULL);
     /* this forge-c, as the processes of the cases start it */
 #ifdef _WIN32
     R.self = fwSelfPath(selfBuf, sizeof selfBuf);
@@ -733,12 +1215,19 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
     R.compileTimeout = 120;
     R.buildTimeout = 1200;
     R.runTimeout = 120;
+    /* (a program under Wine: its start costs a second or two, a busy machine more - the timeout of the test program, 120 s) */
+    if (wine && R.vmTimeout < 120) R.vmTimeout = 120;
     /* the processes of the cases run in the folders of the cases: the tables, the store and the native root of this forge-c as full paths */
     setenv("FIRE_TABLES", fcDirectoryName(c, fcFullPath(c, ".", prelude)), 1);
     setenv("FIRE_PACKAGES", fcFullPath(c, ".", storeRoot), 1);
     setenv("FIRE_NATIVE_ROOT", fcFullPath(c, ".", nbNativeRoot), 1);
     /* the look of the desktop stays out (FIRE_SYSTEM_THEME=off, as the test program and the scripts); the libraries of the packages' natives next to forge-c */
     setenv("FIRE_SYSTEM_THEME", "off", 1);
+    /* the fonts of "the system" are the ones of the cases (tests/cases/native/resources/fonts: FireSans.ttf, as the test program had them), not the machine's */
+    if (!getenv("FIRE_FONT_DIRS") || !*getenv("FIRE_FONT_DIRS")) {
+        const char* fonts = nbCombine(c, casesRoot, "native/resources/fonts");
+        if (nbDirExists(fonts)) setenv("FIRE_FONT_DIRS", fonts, 1);
+    }
     {
         const char* old = getenv("FIRE_PKG_PATH");
 #ifdef _WIN32
@@ -751,13 +1240,15 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
         if (storeParent && !streq0(storeParent, nbBaseDirectory)) path = fcFmt(c, "%s%s%s", path, sep, storeParent);
         setenv("FIRE_PKG_PATH", path, 1);
     }
-    /* the VM */
-    if (fireArg) R.fire = fcFullPath(c, ".", fireArg);
+    /* the VM (of this machine: the suites and the program files of --wine are made with it, too) */
+    if (fireArg && !wine) R.fire = fcFullPath(c, ".", fireArg);
     else if (getenv("FIRE_VM_EXE") && *getenv("FIRE_VM_EXE")) R.fire = fcFullPath(c, ".", getenv("FIRE_VM_EXE"));
-    else if (vm || native) R.fire = cfLocateVm(c, R.self, storeRoot);
+    else R.fire = cfLocateVm(c, R.self, storeRoot);
     if (!R.fire || !nbFileExists(R.fire)) { fprintf(stderr, "The VM in C is not there%s%s.\n", R.fire ? ": " : "", R.fire ? R.fire : ""); fcCtxFree(c); return 2; }
+    if (wine && fireArg) R.winFire = fcFullPath(c, ".", fireArg);
+    if (wine && getenv("WINEPREFIX") && *getenv("WINEPREFIX")) R.winePrefix = fcFullPath(c, ".", getenv("WINEPREFIX"));
     /* native: a C compiler on this machine */
-    if (native) {
+    if (native && !wine) {
         static const char* const compilers[5] = { "cc", "gcc", "clang", "tcc", "cl" };
         bool any = false;
         int k;
@@ -774,6 +1265,7 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
     if (R.cache[strlen(R.cache) - 1] == '/') R.cache = fcStrN(c, R.cache, strlen(R.cache) - 1);
     nbMkdirs(c, R.cache);
     if (native) nbMkdirs(c, nbCombine(c, R.cache, "native-bin"));
+    nbMkdirs(c, nbCombine(c, R.cache, "cgen"));
     /* the standard packages installed once, before the processes of the cases look at them */
     {
         char* iargv[3];
@@ -781,7 +1273,23 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
         iargv[0] = (char*)R.self; iargv[1] = "install-standard"; iargv[2] = NULL;
         cfSpawn(R.self, iargv, NULL, 1800, &inst);
         cfRunFree(&inst);
+        /* (and the libraries of their natives for the VM, where they are not there yet - Prebuilt/ next to forge-c, or built once now: a package installed
+         * again has none, and `forge bytecode` does not build them) */
+        if (vm) {
+            char* pargv[4];
+            pargv[0] = (char*)R.self; pargv[1] = "pkglib"; pargv[2] = "--all"; pargv[3] = NULL;
+            cfSpawn(R.self, pargv, NULL, 3600, &inst);
+            cfRunFree(&inst);
+        }
     }
+    /* --wine: the prefix, fire.exe, the libraries for Windows - before the cases */
+    if (wine) {
+        FcBuf why;
+        cfBufInit(&why);
+        if (!cfWineSetup(&R, threads, &why)) { fprintf(stderr, "[conformance] --wine: %s\n", why.p); fcBufFree(&why); if (!R.keepCache) nbDeleteTree(c, R.cache); fcCtxFree(c); return 2; }
+        fcBufFree(&why);
+    }
+    if (R.sanitize || R.werror || wine) R.config = cfWriteConfig(c, &R);
     /* the cases */
     groups = cfList(casesRoot, NULL, &groupCount);
     jobs = fcListNew(c);
@@ -809,20 +1317,58 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
                 else if (strncmp(w, group, gl) == 0 && w[gl] == '/' && strncmp(files[f], w + gl + 1, strlen(w + gl + 1)) == 0) take = true;
             }
             if (!take || !(k = cfLoadCase(group, dir, files[f])) || !cfSelected(k, filter)) continue;
-            if (vm) { CfJob* j = (CfJob*)calloc(1, sizeof *j); if (!j) fbOutOfMemory(); j->kase = k; j->engine = CF_VM; cfBufInit(&j->bad); cfBufInit(&j->detail); fcListAdd(c, jobs, j); }
-            if (native && streq0(group, "native")) { CfJob* j = (CfJob*)calloc(1, sizeof *j); if (!j) fbOutOfMemory(); j->kase = k; j->engine = CF_NATIVE; cfBufInit(&j->bad); cfBufInit(&j->detail); fcListAdd(c, jobs, j); }
+            /* (ThreadSanitizer: the cases of threads - "Threads:", "[NoCopy] Threads:" - only) */
+            if (R.sanitize && streq0(R.sanitize, "thread") && !(strncmp(k->title, "Threads:", 8) == 0 || strncmp(k->title, "[NoCopy] Threads:", 17) == 0)) continue;
+            if (vm) fcListAdd(c, jobs, cfNewJob(k, CF_VM));
+            if (native && streq0(group, "native")) fcListAdd(c, jobs, cfNewJob(k, CF_NATIVE));
+            if (k->cgen && !R.sanitize && !R.werror && !wine) fcListAdd(c, jobs, cfNewJob(k, CF_CGEN));
         }
         for (f = 0; f < n; f++) free(files[f]);
         free(files);
     }
     for (g = 0; g < groupCount; g++) free(groups[g]);
     free(groups);
+    /* the suites that are named (tests/<suite>, next to tests/cases) */
+    for (i = 0; i < wanted->count; i++) {
+        const char* w = (const char*)wanted->items[i];
+        char* slash = strchr(w, '/');
+        const char* suite = slash ? fcStrN(c, w, (size_t)(slash - w)) : w;
+        const char* suiteDir = nbCombine(c, fcDirectoryName(c, casesRoot), suite);
+        char** names;
+        int n = 0, f, earlier;
+        bool seen = false;
+        if (nbDirExists(nbCombine(c, casesRoot, suite)) || !cfIsSuite(c, casesRoot, suite)) continue;
+        for (earlier = 0; earlier < i; earlier++) if (streq0((const char*)wanted->items[earlier], suite)) seen = true;
+        if (seen && !slash) continue;
+        nbMkdirs(c, nbCombine(c, R.cache, suite));
+        names = cfList(suiteDir, NULL, &n);
+        for (f = 0; f < n; f++) {
+            CfCase* k;
+            bool dup = false;
+            int x;
+            if (slash && strncmp(names[f], slash + 1, strlen(slash + 1)) != 0) continue;
+            for (x = 0; x < jobs->count; x++) { CfJob* o = (CfJob*)jobs->items[x]; if (o->engine == CF_STEPS && streq0(o->kase->group, suite) && streq0(o->kase->id, names[f])) dup = true; }
+            if (dup || !(k = cfLoadSuiteCase(fcStr(c, suite), suiteDir, names[f])) || !cfSelected(k, filter)) continue;
+            fcListAdd(c, jobs, cfNewJob(k, CF_STEPS));
+        }
+        for (f = 0; f < n; f++) free(names[f]);
+        free(names);
+    }
     for (i = 0; i < wanted->count; i++) {
         const char* w = (const char*)wanted->items[i];
         char* slash = strchr(w, '/');
         const char* group = slash ? fcStrN(c, w, (size_t)(slash - w)) : w;
-        if (!nbDirExists(nbCombine(c, casesRoot, group))) { fprintf(stderr, "There is no group '%s' in %s.\n", group, casesRoot); if (!R.keepCache) nbDeleteTree(c, R.cache); fcCtxFree(c); return 2; }
+        if (!nbDirExists(nbCombine(c, casesRoot, group)) && !cfIsSuite(c, casesRoot, group)) {
+            fprintf(stderr, "There is no group '%s' in %s (and no suite %s next to it).\n", group, casesRoot, nbCombine(c, fcDirectoryName(c, casesRoot), group));
+            if (!R.keepCache) nbDeleteTree(c, R.cache);
+            fcCtxFree(c);
+            return 2;
+        }
     }
+    if (R.sanitize) printf("(the native builds with %s)\n", streq0(R.sanitize, "thread") ? "ThreadSanitizer - the cases of threads only" : "AddressSanitizer, UBSan and LeakSanitizer");
+    if (R.werror) printf("(the native builds with -Wall -Wextra -Werror)\n");
+    if (wine) printf("(Windows under Wine: %s, the prefix %s)\n", R.winFire, R.winePrefix);
+    fflush(stdout);
     R.jobs = (CfJob**)jobs->items;
     R.jobCount = jobs->count;
     pthread_mutex_init(&R.lock, NULL);
@@ -831,7 +1377,7 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
     if (retry) {
         for (i = 0; i < R.jobCount; i++) {
             CfJob* j = R.jobs[i];
-            if (j->state != CF_FAIL) continue;
+            if (j->state != CF_FAIL || j->other) continue;
             cfRunJob(&R, j);
             if (j->state == CF_OK) j->second = true;
         }
@@ -839,33 +1385,42 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
     if (R.jobCount > 1) qsort(R.jobs, (size_t)R.jobCount, sizeof(CfJob*), cfCmpJob);
     for (i = 0; i < R.jobCount; i++) {
         CfJob* j = R.jobs[i];
-        const char* tag = j->engine == CF_NATIVE ? " [native]" : "";
-        if (j->state == CF_OK) { ok++; if (list || j->second) printf("OK   %s/%s%s%s\n", j->kase->group, j->kase->id, tag, j->second ? " (alone, at the second try)" : ""); }
-        else if (j->state == CF_SKIP) { skip++; printf("SKIP %s/%s%s\n", j->kase->group, j->kase->id, tag); }
+        const char* tag = j->engine == CF_NATIVE ? (R.sanitize ? (streq0(R.sanitize, "thread") ? " [tsan]" : " [asan]") : R.werror ? " [werror]" : " [native]")
+            : j->engine == CF_CGEN ? " [cgen]" : "";
+        if (j->state == CF_OK) { ok++; if (list || j->second || j->why.len) printf("OK   %s/%s%s%s%s%s\n", j->kase->group, j->kase->id, tag, j->second ? " (alone, at the second try)" : "", j->why.len ? " " : "", j->why.p); }
+        else if (j->state == CF_SKIP) { skip++; printf("SKIP %s/%s%s%s%s\n", j->kase->group, j->kase->id, tag, j->why.len ? ": " : "", j->why.p); }
+        else if (j->other) { other++; printf("WIN  %s/%s%s: other on Windows - %s\n", j->kase->group, j->kase->id, tag, j->kase->windows); if (list) fputs(j->detail.p, stdout); }
         else { fail++; printf("FAIL %s/%s%s:%s\n", j->kase->group, j->kase->id, tag, j->bad.p); fputs(j->detail.p, stdout); }
     }
     /* the counts per group (and engine), then all */
     for (i = 0; i < R.jobCount;) {
-        int k = i, o = 0, f = 0, s = 0;
+        int k = i, o = 0, f = 0, s = 0, w = 0;
         while (k < R.jobCount && streq0(R.jobs[k]->kase->group, R.jobs[i]->kase->group)) k++;
         {
             int e;
-            for (e = 0; e < 2; e++) {
+            for (e = 0; e < 4; e++) {
                 int m, any = 0;
-                o = f = s = 0;
+                const char* label;
+                o = f = s = w = 0;
                 for (m = i; m < k; m++) {
                     if ((int)R.jobs[m]->engine != e) continue;
                     any++;
-                    if (R.jobs[m]->state == CF_OK) o++; else if (R.jobs[m]->state == CF_FAIL) f++; else s++;
+                    if (R.jobs[m]->state == CF_OK) o++; else if (R.jobs[m]->state == CF_SKIP) s++; else if (R.jobs[m]->other) w++; else f++;
                 }
-                if (any) printf("%-16s %4d right, %4d wrong, %3d not run\n", e == CF_NATIVE ? fcFmt(c, "%s [native]", R.jobs[i]->kase->group) : R.jobs[i]->kase->group, o, f, s);
+                if (!any) continue;
+                label = e == CF_NATIVE ? fcFmt(c, "%s [native]", R.jobs[i]->kase->group) : e == CF_CGEN ? fcFmt(c, "%s [cgen]", R.jobs[i]->kase->group) : R.jobs[i]->kase->group;
+                if (wine) printf("%-16s %4d right, %4d wrong, %3d other on Windows, %3d not run\n", label, o, f, w, s);
+                else printf("%-16s %4d right, %4d wrong, %3d not run\n", label, o, f, s);
             }
         }
         i = k;
     }
-    printf("%d right, %d wrong, %d not run\n", ok, fail, skip);
+    if (wine) printf("%d right, %d wrong, %d other on Windows, %d not run\n", ok, fail, other, skip);
+    else printf("%d right, %d wrong, %d not run\n", ok, fail, skip);
     fflush(stdout);
+    cfWineEnd(&R);
     if (!R.keepCache) nbDeleteTree(c, R.cache);
     fcCtxFree(c);
     return fail == 0 ? 0 : 1;
 }
+

@@ -1,0 +1,1 @@
+{ "name": "All", "projects": ["Relay/Relay.fireproj", "App/App.fireproj"], "startup": "App" }

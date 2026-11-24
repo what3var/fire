@@ -1,0 +1,24 @@
+#import "json"
+#import "linq"
+#import "hash"
+#import "compression"
+class Item {
+    string name
+    int count
+    construct(string name, int count) { this.name = name; this.count = count }
+}
+class Store {
+    List<Item> items = new List<Item>()
+    construct() { }
+}
+var s = new Store()
+for (var i = 0; i < 5; i++) { s.items.Add(new Item("item" + i, i * 3)) }
+string text = Json.Serialize(s)
+print("other " + text.Length)
+var back = Json.Deserialize<Store>(text)
+print(back.items.Count + " " + back.items[4].name)
+print("big " + back.items.Where(x => x.count > 5).ToList().Count)
+print(Hash.Sha256.HexOf(text))
+var packed = Compression.Deflate.Compress(text)
+print("deflate " + (packed.Length < text.Length) + " " + Compression.Deflate.DecompressText(packed).Length)
+try { Json.Deserialize<Store>("{") } catch (JsonException e) { print("bad: " + e.message) }

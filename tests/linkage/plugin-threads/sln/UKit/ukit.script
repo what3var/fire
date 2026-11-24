@@ -1,0 +1,24 @@
+#import "TApi"
+namespace UKit {
+    class Item {
+        string name
+        construct(string name) { this.name = name }
+        destruct() { print("item " + name + " destroyed") }
+    }
+    class Store : TApi.IBox {
+        static UKit.Item first = new UKit.Item("u-first")
+        static List<int> marks = new List<int>()
+        static UKit.Item later = undefined
+        static UKit.Item made = undefined
+        static UKit.Item madeT = undefined
+        static string Label { get; set; } = "label"
+        construct() { }
+        string Make { set { UKit.Store.made = new UKit.Item(value) } }
+        string MakeT { set { UKit.Store.madeT = new UKit.Item(value) } }
+        string Made() { return (UKit.Store.made == undefined ? "-" : UKit.Store.made.name) + " " + (UKit.Store.madeT == undefined ? "-" : UKit.Store.madeT.name) }
+        string Show() { return (UKit.Store.first == undefined ? "undefined" : UKit.Store.first.name) + " " + (UKit.Store.marks == undefined ? "-" : "" + UKit.Store.marks.Count) }
+        undefined Note(string s) { UKit.Store.later = new UKit.Item(s); UKit.Store.marks.Add(1) }
+        string Keep() { return UKit.Store.later == undefined ? "no later" : UKit.Store.later.name }
+        UKit.Item First() { return UKit.Store.first }
+    }
+}

@@ -1,0 +1,4 @@
+wuff
+call: Member 'Dog.Wag' was left out of the build (stripping 3). Add [Keep] to 'Dog.Wag' or use stripping <= 1.
+new: Class 'Ghost' was left out of the build (stripping 3). Add [Keep] to 'Ghost' or use stripping <= 2.
+lib 1

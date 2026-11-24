@@ -1,0 +1,25 @@
+server fire-test 0.1 2025-11-25 Tools for tests. True
+tool add: Adds two numbers {"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"]}
+tool fail: Always fails {"type":"object","properties":{}}
+tool boom: Throws {"type":"object","properties":{}}
+add 5
+add2 42
+fail True it failed
+boom True boom!
+nope -32602 MCP: There is no tool 'nope'.
+res file:///notes.txt notes text/plain
+read Buy milk.
+noread -32002
+prompt greet name
+get Say hello to Ann
+note notifications/resources/updated {"uri":"file:///notes.txt"}
+note notifications/tools/list_changed {}
+note notifications/message {"level":"info","data":"hello"}
+raw {"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"The
+raw2 {"jsonrpc":"2.0","id":"x7","error":{"code":-32601,"message":"There is no method 'nothing'."}}
+raw3 {"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"A m
+raw4 []
+raw5 {"jsonrpc":"2.0","id":9,"result":{"protocolVersion":"2025-11-25","capa
+events 2 {"a":1} {"b":
+2}
+hex 26 255

@@ -1,0 +1,9 @@
+#import "Api"
+namespace Kit {
+    class Fast : Api.Counter {
+        defined int extra = 1
+        string tag = "fast"
+        Boost() { this.hits = this.hits + 10; this.extra = this.extra * 3; this.dist = this.dist + 1m }
+        string Extra() { this.Boost(); return this.tag + " " + this.extra + " " + this.hits }
+    }
+}

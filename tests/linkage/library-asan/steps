@@ -1,0 +1,9 @@
+title: Library release: nativ unter AddressSanitizer (LeakSanitizer am Ende) - kein Leck, keine doppelte Freigabe; malloc/free der Bibliothek werden mit abgefangen
+needs: gcc asan
+sh mkdir -p $OUT/asan && gcc -shared -fPIC -o $OUT/libt.so ../library/t.c && echo '{ "toolchains": { "asan": { "kind": "gcc", "compiler": "g++", "cCompiler": "gcc", "std": "c++17", "cStd": "c11", "optimization": "-O1 -g", "strip": false, "args": ["-fsanitize=address,undefined"], "libs": ["-fsanitize=address,undefined"] } } }' > $OUT/asan.json
+env FIRE_TEST_CLIB=$OUT/libt.so
+env ASAN_OPTIONS=detect_leaks=1
+forge build ../library/release.fire --engine native --config $OUT/asan.json --toolchain asan -o $OUT/asan/release
+run $OUT/asan/release
+expect ../library/release.expected
+lacks "Sanitizer"

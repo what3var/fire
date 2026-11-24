@@ -1,0 +1,15 @@
+var text = new Resource("resources/hello.txt")
+print(text.Name().EndsWith("hello.txt"))
+print(text.Length())
+print(text.Text().Length)
+print(text.Text().Substring(0, 5))
+var again = new Resource("resources/hello.txt")
+print(again.id == text.id)
+var bin = new Resource("resources/data.bin")
+var bytes = bin.Bytes()
+print(bytes.length)
+print(bytes[3])
+// new Resource("resources/missing.bin")   <- in a comment: not embedded
+print("new Resource(\"resources/missing.bin\")".Length > 0)
+//# note: the files are tests/cases/native/resources/ (Program.cs wrote them into a temporary folder of the run)
+//# name: Ressourcen: new Resource("pfad") ist eingebettet

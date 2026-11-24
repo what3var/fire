@@ -1,0 +1,24 @@
+title: Plugin: ruft ein Native in C einer Library, das weder das Programm noch die Library ruft (fire_cn_ des Programms) - nativ und in der VM; ein Native, das das Programm nicht hat, ist eine lesbare LibraryException
+# (LinkageTests.PluginNativesC; Windows: tests/wine/plugins)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/host $OUT/plug $OUT/newer && cp -r $CASE/sln $OUT/sln
+cd $OUT/sln
+forge build C.firesln -p CHost --engine native --toolchain gcc -o $OUT/host/host
+forge build C.firesln -p CPlug --engine native --toolchain gcc --host $OUT/host/host -o $OUT/plug/cplug
+env FIRE_TEST_PLUGIN=$OUT/plug/cplug.so
+run $OUT/host/host
+expect-text "2\n40\n"
+# (the library of the natives of the project CApi for the VM: built by bytecode with --report json, as spark runs a program - into CApi/obj/native/<rid>)
+forge bytecode C.firesln -p CHost -o $OUT/host.fbc --report json
+env FIRE_PKG_PATH=$OUT/sln/CApi/obj/native/linux-x64:$FIRE_PKG_PATH
+env FIRE_TEST_PLUGIN=$OUT/plug/cplug.fireplugin
+vm $OUT/host.fbc
+expect-text "2\n40\n"
+# the package gets a native the program (built before) does not have
+sh echo 'static inline Value capi_hundred(Value x) { return Int(x.i * 100); }' >> CApi/native/capi.h && sed -i 's/__capi_ten(x)/__capi_hundred(x)/' CPlug/cplug.script
+forge build C.firesln -p CPlug --engine native --toolchain gcc --host $OUT/host/host -o $OUT/newer/cplug
+env FIRE_TEST_PLUGIN=$OUT/newer/cplug.so
+run=3 $OUT/host/host
+contains "load: The plugin library '"
+contains "cannot be loaded: it calls the native function 'capi_hundred' in C, which this program does not export to plugins"

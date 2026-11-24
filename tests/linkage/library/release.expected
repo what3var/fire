@@ -1,0 +1,22 @@
+5 42 2 True True
+block 0
+7 1
+delete 0
+use: Access to a destroyed object.
+address: Access to a destroyed object.
+delete again: 0
+is of: Access to a destroyed object.
+copy: 'NativeHandle' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.
+flat: 'NativeHandle' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.
+deep: 'NativeHandle' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead.
+flat shares True 2
+no copies 0
+holder 9 1
+holder gone 0
+copied 0
+True
+True
+True 1
+rel: The library 'LIB' has no function 'nope' (release:).
+kind: release: frees what a function returns - the signature 'int(int, int)' returns no pointer and no string.
+end 1

@@ -13,6 +13,7 @@ static partial class DebuggerTests
     {
         SessionRun();
         NativeRun();
+        ModuleRun();
     }
 
     private static int _failures;

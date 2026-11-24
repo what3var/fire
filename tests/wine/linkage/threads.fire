@@ -1,0 +1,17 @@
+#import "json"
+#import "reflection"
+class Box { int n = 0 }
+var counter = 0
+var results = new List<string>()
+fire {
+    try { throw new ArgumentException("in thread") } catch (ArgumentException e) { sync global { results.Add("caught " + e.message) } }
+    sync global { counter = counter + 1 }
+}
+fire {
+    var b = new Box()
+    Reflect.Set(b, "n", 41)
+    sync global { results.Add(Json.Serialize(b)); counter = counter + 1 }
+}
+while (counter < 2) { sync globals }
+if (results[0].StartsWith("{")) { var t = results[0]; results[0] = results[1]; results[1] = t }
+print(results[0] + " " + results[1] + " " + counter)

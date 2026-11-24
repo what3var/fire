@@ -1,0 +1,13 @@
+title: Library.Load/Get unter Windows (MinGW, LoadLibrary) unter Wine wie nativ; release: die Freigabe der DLL wie in der VM
+# (LinkageTests.LibraryLoad, the part for Windows)
+needs: wine mingw
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh $MINGW -shared -o $OUT/t.dll ../../linkage/library/t.c
+forge build ../../linkage/library/use.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage static -o $OUT/use.exe
+forge build ../../linkage/library/release.fire --engine native -t windows --config $CASE/../mingw.json --toolchain mingw --linkage static -o $OUT/release.exe
+cd $OUT
+env FIRE_TEST_CLIB=t.dll
+wine $OUT/use.exe
+expect ../../linkage/library/use-native.expected
+wine $OUT/release.exe
+expect ../../linkage/library/release.expected

@@ -1,0 +1,4 @@
+print("hello " + Environment.Args.length)
+for (var i = 0; i < Environment.Args.length; i = i + 1) { print(Environment.Args[i]) }
+if (Environment.Args.length > 0 && Environment.Args[0] == "throw") { throw new ArgumentException("thrown") }
+terminate(6)

@@ -1,0 +1,17 @@
+loaded: u-first 0 no later
+static: 'Label' is a static property - Reflect.Set only sets members of objects.
+static: 'Label' is a static property - Reflect.Get only reads members of objects.
+thread: from-thread | 'Label' is a static property - Reflect.Set only sets members of objects.
+after the thread: from-thread u-first 1 u-made t-made
+item u-first destroyed
+item u-made destroyed
+item from-thread destroyed
+item t-made destroyed
+unloaded: undefined - no later - -
+held: Access to a destroyed object.
+again: undefined -
+reloaded: u-first 0 u-first
+c: The library '<clib>' is no fire plugin: only a fire plugin can be unloaded.
+end
+program guard destroyed
+item u-first destroyed

@@ -1,0 +1,7 @@
+#import "CApi"
+namespace CPlug {
+    class P {
+        construct() { }
+        int Ten(int x) { return __capi_ten(x) }
+    }
+}

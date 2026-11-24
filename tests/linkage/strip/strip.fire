@@ -1,0 +1,17 @@
+#import "reflection"
+class Dog {
+    string Bark() { return "wuff" }
+    string Wag() { return "wag" }
+}
+class Ghost {
+    int b
+    construct() { this.b = 2 }
+}
+class N { static string Of(string a, string b) { return a + b } }
+var d = new Dog()
+print(Reflect.Call(d, "Bark", []))
+try { print(Reflect.Call(d, N.Of("Wa", "g"), [])) } catch (ReflectionException e) { print("call: " + e.message) }
+try { any g = Reflect.New(N.Of("Gho", "st"), []); print("ghost " + g.b) } catch (ReflectionException e) { print("new: " + e.message) }
+var l = new List()
+l.Add(1); l.Add(2)
+print("lib " + Reflect.Call(l, N.Of("Index", "Of"), [2]))

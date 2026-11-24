@@ -1,0 +1,41 @@
+title: Linkage: das CLI-Programm (json, linq, hash, compression) mit source, static (der zweite Bau aus dem Cache, ein anderes Programm teilt die Bibliotheken) und shared wie die VM
+# (was LinkageTests.RunIn pruefte: jedes Modul eine Bibliothek im Cache des Benutzers - hier einem eigenen, FIRE_NATIVE_CACHE)
+needs: gcc
+env FIRE_NATIVE_CACHE=$OUT/cache
+sh mkdir -p $OUT/source $OUT/static1 $OUT/static2 $OUT/other $OUT/shared
+forge bytecode cli.fire -o $OUT/cli.fbc
+vm $OUT/cli.fbc
+expect cli.expected
+forge build cli.fire --engine native --toolchain gcc -o $OUT/source/cli
+run $OUT/source/cli
+expect cli.expected
+# static: jedes Modul eine Bibliothek (core, json, linq, hash, compression, ...)
+forge build cli.fire --engine native --toolchain gcc --linkage static -o $OUT/static1/cli
+count ": built in " >=5
+contains "module core: built in"
+contains "module pkg:json: built in"
+lacks "not possible"
+run $OUT/static1/cli
+expect cli.expected
+# jede Bibliothek hat ihre Schnittstelle: Formatversion, ABI-Hash (64 Zeichen), Schluessel
+sh test $(find $OUT/cache -name '*.fireiface' | wc -l) -ge 5 && for f in $(find $OUT/cache -name '*.fireiface'); do grep -Eq '^\{"Format":[0-9]+,"Module":"[^"]+","Key":"[0-9a-f]{40}","Abi":"[0-9a-f]{64}"' $f || { echo "bad interface $f"; exit 1; }; done
+# der zweite Bau nimmt jede Bibliothek aus dem Cache
+forge build cli.fire --engine native --toolchain gcc --linkage static -o $OUT/static2/cli
+count ": built in " =0
+count ": new (" =0
+count ": from the cache (" >=5
+run $OUT/static2/cli
+expect cli.expected
+# ein anderes Programm mit denselben Packages nimmt alle Bibliotheken aus dem Cache (der Text eines Moduls haengt nicht vom Programm ab)
+forge build other.fire --engine native --toolchain gcc --linkage static -o $OUT/other/other
+count ": new (" =0
+contains "module core: from the cache"
+contains "module pkg:json: from the cache"
+run $OUT/other/other
+expect other.expected
+# shared: die Bibliotheken als Shared Libraries neben dem Programm
+forge build cli.fire --engine native --toolchain gcc --linkage shared -o $OUT/shared/cli
+lacks "only available"
+sh ls $OUT/shared/libfire_mcore_* $OUT/shared/libfire_mjson_*
+run $OUT/shared/cli
+expect cli.expected

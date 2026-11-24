@@ -1,0 +1,44 @@
+#import "TApi"
+#import "reflection"
+#import "time"
+string path = Environment.Get("FIRE_TEST_PLUGIN3")
+string clib = Environment.Get("FIRE_TEST_CLIB")
+class Guard {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("program " + n + " destroyed") }
+}
+var guard = new Guard("guard")
+var lib = Library.Load(path)
+any st = Reflect.New("UKit.Store", [])
+print("loaded: " + st.Show() + " " + st.Keep())
+any held = st.First()
+// (the plugin's code reached by reflection - Reflect.Set of a property whose setter stores into a static field: the fresh object joins the plugin's
+// scope too; a static property is no member of an object - Reflect does not use static members, in every engine)
+Reflect.Set(st, "Make", "u-made")
+try { Reflect.Set(st, "Label", "x") } catch (ReflectionException e) { print("static: " + e.message) }
+try { print(Reflect.Get(st, "Label")) } catch (ReflectionException e) { print("static: " + e.message) }
+// (a static field set in a fire thread to a fresh object: it joins the plugin's scope - the end of the thread does not take it along; also by reflection)
+var ch = new Channel<string>()
+fire with ch {
+    any t = Reflect.New("UKit.Store", [])
+    t.Note("from-thread")
+    Reflect.Set(t, "MakeT", "t-made")
+    string why = ""
+    try { Reflect.Set(t, "Label", "y") } catch (ReflectionException e) { why = e.message }
+    ch.Send("thread: " + t.Keep() + " | " + why)
+}
+print(ch.Receive())
+Sleep(150ms)
+print("after the thread: " + st.Keep() + " " + st.Show() + " " + st.Made())
+// (lib.Unload(): the plugin's scope goes - its destructors run -, its static fields are undefined; what the program held of it is destroyed; its code stays)
+lib.Unload()
+print("unloaded: " + st.Show() + " " + st.Keep() + " " + st.Made())
+try { print(held.name) } catch (DestroyedException e) { print("held: " + e.message) }
+lib.Unload()
+print("again: " + st.Show())
+// (loaded again: its static initialisers run again, into a new scope)
+Library.Load(path)
+print("reloaded: " + st.Show() + " " + st.First().name)
+try { Library.Load(clib).Unload() } catch (LibraryException e) { print("c: " + e.message.Replace(clib, "<clib>")) }
+print("end")

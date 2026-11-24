@@ -1,0 +1,14 @@
+#import "Reader"
+#import "reflection"
+record Pt {
+    int x
+    int y
+}
+Pt p = Reader.R.Read("{\"x\": 3, \"y\": 4}", "Pt")
+print(p.x + p.y)
+// (a class of the program extends one of the library, which writes its field: a probe hears only a change - the old value comes from the runtime's tables)
+class MyBox : Reader.Box { }
+var b = new MyBox()
+Reflect.ProbeAll(b, "changed", (any o, any n, any a, any c) => print("changed " + n + " " + a + " -> " + c))
+b.Set(0)
+b.Set(5)

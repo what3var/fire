@@ -1,0 +1,5 @@
+# Word.Bits (a readonly static field with a constant initializer) is that constant in the C: no read of a Value, the computation stays in C numbers
+@static FireInt f*_c(void)
+(FireInt)64LL
+!SF(
+!shiftLeft(

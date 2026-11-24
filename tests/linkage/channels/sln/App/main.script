@@ -1,0 +1,15 @@
+#import "Relay"
+var results = new Channel<int>()
+var go = new Channel<int>()
+if (true) {
+    var src = new Channel<int>()
+    Relay.R.Start(src, results, go)
+    src.Send(1)
+    src.Send(2)
+    src.Send(3)
+    src.Close()
+}
+go.Send(1)
+int sum = 0
+foreach (x in results) { sum = sum + x }
+print("relayed " + sum)

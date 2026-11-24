@@ -1,0 +1,29 @@
+prefixed unit Watt: W
+unit DecibelMilliwatt: dBm
+{
+    coerce to mW => 10 ^ (value / 10)
+    coerce from mW => 10 * Math.Log10(value)
+}
+namespace Api {
+    interface IGauge {
+        string Report()
+        any Convert(any x)
+    }
+    interface IDriver {
+        string Name()
+        int Run(int x)
+    }
+    // (a property in an interface, an interface that extends another: implemented by a class of the plugin, used by the program)
+    interface INamed { string Title { get; } }
+    interface ITuned : Api.INamed { int Level { get; set; } }
+    class Device {
+        string id
+        construct(string id) { this.id = id }
+        string Describe() { return "device " + id }
+        int Speed() { return 1 }
+    }
+    class DriverError : Exception {
+        int code
+        construct(string m, int code) : base(m) { this.code = code }
+    }
+}
