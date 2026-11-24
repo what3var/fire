@@ -618,7 +618,11 @@ static const FcST* DeclaredLambda(FcTC* t, const FcLambdaSignature* signature, F
         }
         fcListAdd(TC_, ps, (void*)param);
     }
-    return stLambdaOf(TC_, signature->paramTypeNames->count, signature->returnTypeName ? SignatureName(t, signature->returnTypeName, signature, map) : NULL, ps);
+    {
+        FcST* r = stCopy(TC_, stLambdaOf(TC_, signature->paramTypeNames->count, signature->returnTypeName ? SignatureName(t, signature->returnTypeName, signature, map) : NULL, ps));
+        r->lambdaShape = true;
+        return r;
+    }
 }
 /* SignatureName: a name in a lambda type (`Inner lambda<Inner>`), resolved where the type stands - its namespace and the #usings, as Declared does for
  * every other type there; a type parameter in scope, a type argument (map), a primitive as FromName */
