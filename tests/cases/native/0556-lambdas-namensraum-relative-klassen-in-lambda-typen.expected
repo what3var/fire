@@ -1,0 +1,18 @@
+p7
+name Parameter 'p' is a Geo.Point, not Geo.Rock.
+nameTyped Parameter 'p' is a Geo.Point, not Geo.Rock.
+4 5
+side Parameter 's' is a Geo.Side, not Int.
+sideTyped Parameter 's' is a Geo.Side, not Int.
+circle Parameter 'c' is a Shapes.Circle, not Geo.Rock.
+circleTyped Parameter 'c' is a Shapes.Circle, not Geo.Rock.
+local Parameter 'p' is a Geo.Point, not Geo.Rock.
+apply Parameter 'p' is a Geo.Point, not Geo.Rock.
+applyTyped Parameter 'p' is a Geo.Point, not Geo.Rock.
+make Parameter 'p' is a Geo.Point, not Geo.Rock.
+makeTyped Parameter 'p' is a Geo.Point, not Geo.Rock.
+fs0 Parameter 'p' is a Geo.Point, not Geo.Rock.
+fs1 Parameter 'p' is a Geo.Point, not Geo.Rock.
+each Parameter 'l' is a List<Geo.Point>, not List<Geo.Rock>.
+eachTyped Parameter 'l' is a List<Geo.Point>, not List<Geo.Rock>.
+0

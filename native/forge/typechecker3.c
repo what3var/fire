@@ -1028,6 +1028,49 @@ static void fcPutMethodTypeArgs(FcTC* t, FcExpr* c, FcList* typeParams, FcDict* 
     fcDictPut(t->rr->methodTypeArgs, c, texts);
 }
 
+/* OverloadLambdaTarget: the type a lambda written as argument `index` of an overloaded call (a method or a constructor) takes from its parameter
+ * (12-lambdas.md) - only when exactly one of the candidates can take a lambda there at all, with a lambda type: whichever overload the run time
+ * picks (Overloads.Score: a lambda matches 'k:lambda', 'any' or no type, a type parameter) is then that one, so its parameter is the lambda's
+ * typed target. NULL (the lambda stays untyped, as before): a second candidate could take it too ('any', no type, an open T, an unknown type,
+ * another lambda type, an expression tree), or none has a lambda type there. The other parameter types (int, float, bool, char, string, word,
+ * an enum, an array, a class or an interface) take no lambda. */
+static const FcST* OverloadLambdaTarget(FcTC* t, FcList* candidates, int index) {
+    const FcST* found = NULL;
+    int k;
+    for (k = 0; k < candidates->count; k++) {
+        FcCand* cand = (FcCand*)candidates->items[k];
+        FcMethodDecl* m = cand->method;
+        FcLambdaParam* p;
+        const FcST* declared;
+        if (index >= m->params->count) continue;
+        p = (FcLambdaParam*)m->params->items[index];
+        if (p->byRef || p->type == NULL || fcTrIsInferred(p->type) || p->type->pointerDepth > 0) return NULL;
+        if (cand->map && fcDictHas(cand->map, p->type->baseName)) return NULL;
+        if (m->typeParams && fcHasTypeParamNamed(m->typeParams, p->type->baseName)) return NULL;
+        declared = Declared(t, p->type, p->arrayRanks->count, NULL);
+        if (declared == NULL || stIsDynamic(declared)) return NULL;
+        if (declared->kind == STK_Class && streq0(declared->cls, "LambdaExpression")) return NULL;
+        if (declared->kind != STK_Lambda) continue;
+        if (found != NULL || (p->type->lambdaSignature && (p->type->lambdaSignature->isSelector || p->type->lambdaSignature->isExpression))) return NULL;
+        {
+            FcDict* map = cand->map;
+            if (m->typeParams && m->typeParams->count > 0) {
+                FcDict* open = fcDictNew(TC_, FC_KEY_STR);
+                int q;
+                for (q = 0; q < m->typeParams->count; q++) fcSetAdd(open, ((FcTypeParam*)m->typeParams->items[q])->name);
+                map = WithOpen(t, map ? map : fcDictNew(TC_, FC_KEY_STR), open);
+            }
+            found = Declared(t, p->type, p->arrayRanks->count, map);
+        }
+    }
+    return found;
+}
+static const FcST* InferOverloadArg(FcTC* t, FcList* candidates, FcList* argNames, FcExpr* arg, int index) {
+    const FcST* target;
+    if (arg->kind != EK_LambdaExpr || argNames != NULL || (target = OverloadLambdaTarget(t, candidates, index)) == NULL) return Infer(t, arg);
+    return InferExpected(t, arg, target);
+}
+
 static const FcST* InferOverloadedCall(FcTC* t, FcCallExpr* c, FcList* candidates, const char* receiverClass, bool virtualCall) {
     FcList* args = fcListNew(TC_);
     FcCand* picked;
@@ -1035,7 +1078,7 @@ static const FcST* InferOverloadedCall(FcTC* t, FcCallExpr* c, FcList* candidate
     FcDict* map;
     const char* hint;
     int i;
-    for (i = 0; i < c->args->count; i++) fcListAdd(TC_, args, (void*)Infer(t, (FcExpr*)c->args->items[i]));
+    for (i = 0; i < c->args->count; i++) fcListAdd(TC_, args, (void*)InferOverloadArg(t, candidates, c->argNames, (FcExpr*)c->args->items[i], i));
     if (!(picked = PickOverload(t, candidates, args))) return ST_DYNAMIC;
     method = picked->method;
     map = picked->map;
@@ -1325,7 +1368,7 @@ static const FcST* InferNewCore(FcTC* t, FcNewExpr* n) {
             FcMethodDecl* md = FC_NEW(TC_, FcMethodDecl, .h = {SK_MethodDecl, kc->h.source, kc->h.line}, .returnType = NULL, .name = "#new", .params = kc->params, .body = kc->body);
             fcListAdd(TC_, asMethods, fcCand(t, md, map));
         }
-        for (i = 0; i < n->args->count; i++) fcListAdd(TC_, ctorArgs, (void*)Infer(t, (FcExpr*)n->args->items[i]));
+        for (i = 0; i < n->args->count; i++) fcListAdd(TC_, ctorArgs, (void*)InferOverloadArg(t, asMethods, NULL, (FcExpr*)n->args->items[i], i));
         if ((picked = PickOverload(t, asMethods, ctorArgs)) != NULL) {
             FcConstructorDecl* chosen = NULL;
             for (i = 0; i < asMethods->count; i++) if (((FcCand*)asMethods->items[i])->method == picked->method) { chosen = (FcConstructorDecl*)ordered->items[i]; break; }
