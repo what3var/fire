@@ -6,7 +6,8 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
 **spark has no compiler** (milestone M3 of [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md)): forge (`native/forge`, a C program) compiles, builds and tests, and
 answers the editor's questions (`forge serve`: completion, live errors, hover, signature, definition, the tests of a file - [FORGE_SERVE.md](../spec/FORGE_SERVE.md));
 programs run in `fire` (`native/vm`); the Package Manager runs `ember` (`tools/ember`). They are next to spark - the build and the publish of spark put the
-folder of `forge package-dist` there (forge, fire, `native/`, `Source/`, `Prebuilt/`) and ember (`src/ForgeDist.targets`); `FIRE_FORGE` names another forge,
+folder of `forge package-dist` there (forge, fire, `native/`, `Source/`, `Prebuilt/`) and ember (`src/ForgeDist.targets`; the solution builds forge-c and that folder
+before spark - [Building on Windows with Visual Studio](../BUILDING.md#building-on-windows-with-visual-studio)); `FIRE_FORGE` names another forge,
 and without one spark builds forge-c from `native/forge` of the repository it runs in. What spark keeps in C# without a compiler is `src/fire.Tooling`: the
 way to these programs, the data of their reports, the debugger's client, the child processes of the previews, the models of the editors, the lexer of the
 syntax colours.

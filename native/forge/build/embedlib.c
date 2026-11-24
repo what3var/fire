@@ -103,6 +103,9 @@ static bool neBuildOne(FcCtx* c, int which, const char* folder, const char* key,
 #ifndef __APPLE__
         fcBufStr(&sb, "// fire-link: dl\n");
 #endif
+#ifdef _WIN32
+        fcBufStr(&sb, "// fire-link: ws2_32\n");   /* (Winsock, as for `fire`) */
+#endif
         fcBufStr(&sb, "#define FIRE_VM_LIBRARY 1\n#include \"vm/fire.c\"\n");
         main = nbCombine(c, work, "fire_vm_lib.c");
     }

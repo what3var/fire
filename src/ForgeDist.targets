@@ -1,51 +1,39 @@
 <Project>
   <!--
-    forge and the VM next to spark (docs/ROADMAP_C_PORT.md, M3): forge and `fire` are C programs (native/forge, native/vm) - no .NET. After the build of spark (and of the
-    tests) forge-c is compiled with the C compiler of this machine (once per change of its sources: obj/forge-c/), then `forge package-dist <output>` puts the folder
-    spark finds them in next to it: forge, fire and its variants, native/ (tables, runtime, platform, abi, vm, base), Source/ (the standard packages) and Prebuilt/ (their
-    libraries for this machine). ember (tools/ember, a fire program) is built by that forge into the same folder. A publish does the same into the publish folder -
-    what setup.iss packs.
+    forge and the VM next to spark (docs/ROADMAP_C_PORT.md, M3; docs/BUILDING.md): forge and `fire` are C programs (native/forge, native/vm) - no .NET. The solution builds
+    them before spark: src/forge-c (forge-c from native/forge/forge.c with the C compiler of this machine - MSVC, gcc or clang), then src/ember (`forge-c package-dist`
+    into src/ember/bin/dist/: forge, fire and its variants, native/, Source/, Prebuilt/, libforge/libfirevm - and ember, built by that forge). This file makes
+    spark (and the tests) depend on src/ember and copies the folder into the output folder after a build, into the publish folder after a publish - what setup.iss
+    packs. A missing C compiler fails the build of src/forge-c with a message that says what to install.
 
-    Properties: FireCC (the C compiler; default cc, on Windows gcc), BuildForgeDist=false (leave it all out: spark then builds forge-c from the sources of the
-    repository when it first needs it, src/fire.Tooling/Forge.cs), PrebuildStandard=false (no Prebuilt/: the VM builds the libraries of a package when it first loads it),
-    BuildEmber=false (no ember). A machine without a C compiler still builds spark (the steps only warn).
-    Imported by fire.Editor and fire.Testing.
+    Properties: BuildForgeDist=false (leave it all out: spark then builds forge-c from the sources of the repository when it first needs it,
+    src/fire.Tooling/Forge.cs), PrebuildStandard=false and BuildEmber=false (src/ember), PublishForge=false (a publish of spark alone - forge, the VM and ember from a
+    folder made with native/forge/package-dist.sh: setup.iss /DForgeDist), FireDistPrebuilt=false (Prebuilt/ not copied: the tests build the C++ of a package when it
+    is used). Imported by fire.Editor and fire.Testing.
   -->
-  <PropertyGroup>
-    <FireCC Condition="'$(FireCC)' == '' And '$(OS)' == 'Windows_NT'">gcc</FireCC>
-    <FireCC Condition="'$(FireCC)' == ''">cc</FireCC>
-    <_FireRepo>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</_FireRepo>
-    <_FireExe Condition="'$(OS)' == 'Windows_NT'">.exe</_FireExe>
-    <_FireCLibs Condition="'$(OS)' == 'Windows_NT'">-static</_FireCLibs>
-    <_FireCLibs Condition="'$(OS)' != 'Windows_NT'">-lm -lpthread</_FireCLibs>
-    <_ForgeC>$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)forge-c/forge-c$(_FireExe)</_ForgeC>
-  </PropertyGroup>
+  <Import Project="FireNative.props" />
 
-  <ItemGroup>
-    <_ForgeCSource Include="$(_FireRepo)/native/forge/**/*.c;$(_FireRepo)/native/forge/**/*.h;$(_FireRepo)/native/forge/**/*.inc;$(_FireRepo)/native/tables/*;$(_FireRepo)/native/base/*.h" />
+  <ItemGroup Condition="'$(BuildForgeDist)' != 'false'">
+    <!-- (only the order: nothing of src/ember is an assembly; the folder does not depend on the framework, the runtime or the publish of spark) -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)ember\ember.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" Private="false"
+                      GlobalPropertiesToRemove="TargetFramework;RuntimeIdentifier;SelfContained;PublishSingleFile;PublishDir;PublishProtocol;_IsPublishing;PublishReadyToRun;PublishTrimmed" />
+    <!-- Visual Studio's up-to-date check: a new folder makes spark copy it -->
+    <UpToDateCheckInput Include="$(FireDistDir).stamp" />
   </ItemGroup>
 
-  <!-- forge-c, compiled when one of its sources changed -->
-  <Target Name="BuildForgeC" Inputs="@(_ForgeCSource)" Outputs="$(_ForgeC)" Condition="'$(DesignTimeBuild)' != 'true' And '$(BuildForgeDist)' != 'false'">
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(_ForgeC)'))" />
-    <Exec Command="&quot;$(FireCC)&quot; -O2 &quot;$(_FireRepo)/native/forge/forge.c&quot; -o &quot;$(_ForgeC)&quot; $(_FireCLibs)" ContinueOnError="true" StandardOutputImportance="low" />
+  <Target Name="_FireDistFiles">
+    <ItemGroup>
+      <_FireDistFile Include="$(FireDistDir)**" Exclude="$(FireDistDir).stamp*" />
+      <_FireDistFile Remove="$(FireDistDir)Prebuilt/**" Condition="'$(FireDistPrebuilt)' == 'false'" />
+    </ItemGroup>
+    <Error Condition="'@(_FireDistFile)' == ''" Text="The folder of forge, the VM and ember ($(FireDistDir)) is empty: build src/ember first (fire.sln does), or build without it: -p:BuildForgeDist=false." />
   </Target>
 
-  <!-- `forge package-dist <folder>` and ember into the folder -->
-  <Target Name="_ForgeDistInto" Condition="'$(DesignTimeBuild)' != 'true' And '$(BuildForgeDist)' != 'false' And Exists('$(_ForgeC)')">
-    <PropertyGroup>
-      <_DistArgs Condition="'$(PrebuildStandard)' == 'false'">--no-prebuilt</_DistArgs>
-      <_DistEnv>FIRE_TABLES=$(_FireRepo)/native/tables;FIRE_NATIVE_ROOT=$(_FireRepo)/native;FIRE_PACKAGES=$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)forge-c/Packages</_DistEnv>
-    </PropertyGroup>
-    <Exec Command="&quot;$(_ForgeC)&quot; package-dist &quot;$(_ForgeDistFolder).&quot; $(_DistArgs)" EnvironmentVariables="$(_DistEnv)" ContinueOnError="true" StandardOutputImportance="low" />
-    <Exec Condition="'$(BuildEmber)' != 'false' And Exists('$(_ForgeDistFolder)forge$(_FireExe)')" Command="&quot;$(_ForgeDistFolder)forge$(_FireExe)&quot; build &quot;$(_FireRepo)/tools/ember/ember.fireproj&quot; -o &quot;$(_ForgeDistFolder)ember$(_FireExe)&quot;" ContinueOnError="true" StandardOutputImportance="low" />
+  <Target Name="ForgeDistAfterBuild" AfterTargets="Build" DependsOnTargets="_FireDistFiles" Condition="'$(DesignTimeBuild)' != 'true' And '$(BuildForgeDist)' != 'false'">
+    <Copy SourceFiles="@(_FireDistFile)" DestinationFiles="@(_FireDistFile->'$(TargetDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="ForgeDistAfterBuild" AfterTargets="Build" DependsOnTargets="BuildForgeC" Condition="'$(DesignTimeBuild)' != 'true' And '$(BuildForgeDist)' != 'false'">
-    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="_ForgeDistInto" Properties="_ForgeDistFolder=$(TargetDir);Configuration=$(Configuration);TargetFramework=$(TargetFramework);RuntimeIdentifier=$(RuntimeIdentifier)" />
-  </Target>
-
-  <Target Name="ForgeDistAfterPublish" AfterTargets="Publish" DependsOnTargets="BuildForgeC" Condition="'$(DesignTimeBuild)' != 'true' And '$(BuildForgeDist)' != 'false' And '$(PublishForge)' != 'false'">
-    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="_ForgeDistInto" Properties="_ForgeDistFolder=$([System.IO.Path]::GetFullPath('$(PublishDir)'));Configuration=$(Configuration);TargetFramework=$(TargetFramework);RuntimeIdentifier=$(RuntimeIdentifier)" />
+  <Target Name="ForgeDistAfterPublish" AfterTargets="Publish" DependsOnTargets="_FireDistFiles" Condition="'$(DesignTimeBuild)' != 'true' And '$(BuildForgeDist)' != 'false' And '$(PublishForge)' != 'false'">
+    <Copy SourceFiles="@(_FireDistFile)" DestinationFiles="@(_FireDistFile->'$([System.IO.Path]::GetFullPath('$(PublishDir)'))%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 </Project>

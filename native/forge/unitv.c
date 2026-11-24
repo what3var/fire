@@ -88,14 +88,14 @@ static FcTerms* fcTermsOfText(FcCtx* c, const char* text) {
         } else if (i < n && u.p[i] == '^') {
             int numberStart = ++i;
             bool neg = false, any = false;
-            long v = 0;
+            long long v = 0;   /* (not long: 32 bits on Windows) */
             if (i < n && u.p[i] == '-') i++;
             while (i < n && u.p[i] >= '0' && u.p[i] <= '9') i++;
             /* int.TryParse with a leading sign */
             {
                 int k = numberStart;
                 if (k < i && (u.p[k] == '-' || u.p[k] == '+')) { neg = u.p[k] == '-'; k++; }
-                for (; k < i; k++) { v = v * 10 + (u.p[k] - '0'); any = true; if (v > 2147483648L) { fcU16Free(&u); return NULL; } }
+                for (; k < i; k++) { v = v * 10 + (u.p[k] - '0'); any = true; if (v > 2147483648LL) { fcU16Free(&u); return NULL; } }
             }
             if (!any) { fcU16Free(&u); return NULL; }
             power = (int)(neg ? -v : v);

@@ -644,7 +644,12 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
         FcList* wanted = nbLinesWith(c, linkSource, "// fire-link: ", -1);
         for (i = 0; i < wanted->count; i++) {
             const char* lib = fgTrim(c, (const char*)wanted->items[i]);
-            const char* flag = fcStartsWith(lib, "framework:") ? fcFmt(c, "-framework %s", lib + 10) : streq0(kind, "msvc") ? fcFmt(c, "%s.lib", lib) : fcFmt(c, "-l%s", lib);
+            const char* flag;
+            /* msvc: the C library has the maths, and the runtime takes threads and libraries from Win32 - no pthread.lib, dl.lib, m.lib */
+            if (streq0(kind, "msvc") && (streq0(lib, "pthread") || streq0(lib, "dl") || streq0(lib, "m"))) continue;
+            /* MinGW has no libdl (LoadLibrary is in kernel32) */
+            if (streq0(target->platform, "windows") && streq0(lib, "dl")) continue;
+            flag = fcStartsWith(lib, "framework:") ? fcFmt(c, "-framework %s", lib + 10) : streq0(kind, "msvc") ? fcFmt(c, "%s.lib", lib) : fcFmt(c, "-l%s", lib);
             if (!fcListHasStr(libs, flag)) fcListAdd(c, libs, (void*)flag);
         }
     }
