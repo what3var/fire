@@ -74467,6 +74467,14 @@ static int cfConformanceMain(int argc, char** argv, const char* prelude, const c
         iargv[0] = (char*)R.self; iargv[1] = "install-standard"; iargv[2] = NULL;
         cfSpawn(R.self, iargv, NULL, 1800, &inst);
         cfRunFree(&inst);
+        /* (and the libraries of their natives for the VM, where they are not there yet - Prebuilt/ next to forge-c, or built once now: a package installed
+         * again has none, and `forge bytecode` does not build them) */
+        if (vm) {
+            char* pargv[4];
+            pargv[0] = (char*)R.self; pargv[1] = "pkglib"; pargv[2] = "--all"; pargv[3] = NULL;
+            cfSpawn(R.self, pargv, NULL, 3600, &inst);
+            cfRunFree(&inst);
+        }
     }
     /* --wine: the prefix, fire.exe, the libraries for Windows - before the cases */
     if (wine) {
