@@ -1,0 +1,7 @@
+#import "data"
+#import "data.sqlite"
+var db = new Data.Connection("sqlite::memory:")
+db.Execute("create table p (name text, age int)")
+db.Execute("insert into p values (?, ?)", ["Ada", 36])
+foreach (row in db.Query("select name, age from p")) { print(row[0] + " " + row[1] + " " + row["name"] + " " + row["AGE"]) }
+//# name: Data.Row: der Indexer nimmt den Namen einer Spalte (ohne Gross/klein) oder ihre Position, wie Get

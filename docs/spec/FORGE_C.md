@@ -1270,7 +1270,7 @@ Beim Portieren gefunden:
   Ende, wenn der Prozess geendet hat und seine Pipe leer ist (vorher meldete es "noch nichts" für immer, wenn ein anderes Ende der Pipe offen blieb).
 * Die Fälle mit Datenbankservern indizierten Zeilen mit `row[0]`: der Indexer von `Data.Row` nimmt einen `string`, die Zahl kommt als Text an - die Spalte
   `"0"` (`The row has no column '0'`), in der VM wie nativ. Die Fälle nehmen jetzt `row.Get(0)`; gegen MariaDB 10.11 (mit TLS) läuft `native/4810` nativ wie
-  in der VM. Ob ein Indexer mit `string` eine Zahl annehmen soll, ist eine Frage der Sprache, nicht geändert.
+  in der VM. Seit dem 24.11.2026 nimmt der Indexer `any` wie `Get` (`row[0]` ist die erste Spalte, `native/4840`); eine Zahl an einem Parameter `string` bekommt eine Warnung (Punkt 2, offen).
 * Der Rückfall auf linkage source (`tests/linkage/fallback`) greift nur, wenn die Bibliothek von `core` schon im Cache liegt (die Prüfung der Schnittstelle,
   wie in C#); mit einem leeren Cache wird `core` für das Programm gebaut, und das ist auch richtig.
 * `forge bytecode` baut die Bibliothek der Natives eines Projekts nur mit `--report json` (wie spark es aufruft): ohne findet die VM sie nicht.

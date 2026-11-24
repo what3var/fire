@@ -205,7 +205,7 @@ namespace Data {
             int at = this.At(column)
             return this.values[at]
         }
-        any operator[](string name) { return this.Get(name) }
+        any operator[](any column) { return this.Get(column) }   // by name (string) or position (int), as Get
 
         bool IsNull(any column) { return this.Get(column) == undefined }
         int Int(any column) {

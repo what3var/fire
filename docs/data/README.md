@@ -59,7 +59,7 @@ of values is an `ArgumentException`.
 
 ### Rows
 
-A `Data.Row` has its values by the name of the column (`row["name"]`, the case of the letters does not count) or by position (`row.Get(0)`), and
+A `Data.Row` has its values by the name of the column (`row["name"]`, the case of the letters does not count) or by position (`row[0]`, `row.Get(0)`), and
 converts: `Int`, `Float`, `Text`, `Bool`, `Bytes`, `IsNull`; `Count`, `Name(i)`, `Names()`, `Has(name)`. A value comes as SQLite has it: an INTEGER is an
 `int`, a REAL a `float`, TEXT a `string`, a BLOB a `byte[]`, NULL `undefined`.
 
