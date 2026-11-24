@@ -48,7 +48,8 @@ static NbToolchain* nbBuiltIn(FcCtx* c, const char* name) {
     switch (i) {
         case 0: t->kind = "gcc"; t->compiler = "g++"; t->std = "c++17"; t->optimization = "-O2"; t->args = nbStrings(c, 2, "-Wall", "-Wextra"); break;
         case 1: t->kind = "clang"; t->compiler = "clang++"; t->std = "c++17"; t->optimization = "-O2"; t->args = nbStrings(c, 2, "-Wall", "-Wextra"); break;
-        case 2: t->kind = "msvc"; t->compiler = "cl"; t->std = "c++17"; t->optimization = "/O2"; t->args = nbStrings(c, 2, "/nologo", "/EHsc"); break;
+        /* /utf-8: the sources and the strings of a program are UTF-8 (without it cl reads them in the code page of the machine) */
+        case 2: t->kind = "msvc"; t->compiler = "cl"; t->std = "c++17"; t->optimization = "/O2"; t->args = nbStrings(c, 3, "/nologo", "/EHsc", "/utf-8"); break;
         /* Emscripten (emsdk): C++ to WebAssembly - exceptions on, ASYNCIFY for `Sleep` and the window loop, the .wasm inside the page */
         case 3: t->kind = "emscripten"; t->compiler = "em++"; t->std = "c++17"; t->cstd = "gnu11"; t->optimization = "-O2";
             t->args = nbStrings(c, 7, "-Wall", "-Wextra", "-fexceptions", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0"); break;
@@ -345,12 +346,80 @@ static FcList* nbWatcomPreCommands(FcCtx* c, const NbToolchain* t, const FgTarge
 }
 
 /* ---- ToolchainDetector ---- */
+#ifdef _WIN32
+/* MSVC outside a developer prompt: cl.exe is not on the PATH, and INCLUDE, LIB and LIBPATH are not set, so a cl found by its path could not compile either. vswhere
+ * (in the folder of the Visual Studio Installer) names the newest Visual Studio with the C++ tools for x64; its vcvars64.bat sets the environment of a developer
+ * prompt, and this process takes it over (`set` after the batch file: PATH, INCLUDE, LIB, LIBPATH, VCToolsInstallDir, ...), so that the compilers forge runs
+ * inherit it (fwRun starts them with this process's environment). Once per process; nothing changes when there is no Visual Studio with the C++ tools. */
+static bool nbMsvcEnvironmentTried = false;
+static void nbMsvcEnvironment(FcCtx* c) {
+    const char* programs = getenv("ProgramFiles(x86)");
+    const char* comspec = getenv("ComSpec");
+    const char* vswhere;
+    const char* vcvars;
+    char* install;
+    char* p;
+    FcBuf out = {0}, err = {0};
+    size_t n;
+    if (nbMsvcEnvironmentTried) return;
+    nbMsvcEnvironmentTried = true;
+    vswhere = fcFmt(c, "%s/Microsoft Visual Studio/Installer/vswhere.exe", programs && *programs ? fwSlashes((char*)fcStr(c, programs)) : "C:/Program Files (x86)");
+    if (!nbFileExists(vswhere)) return;
+    fcBufStr(&out, "");
+    fcBufStr(&err, "");
+    if (fwRun(vswhere, "-nologo -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath", NULL, NULL, &out, &err) != 0) {
+        fcBufFree(&out);
+        fcBufFree(&err);
+        return;
+    }
+    install = (char*)fcStrN(c, out.p, out.len);
+    fcBufFree(&out);
+    fcBufFree(&err);
+    if ((p = strpbrk(install, "\r\n")) != NULL) *p = 0;   /* (the first line: -latest names one) */
+    n = strlen(install);
+    while (n > 0 && (install[n - 1] == ' ' || install[n - 1] == '\\' || install[n - 1] == '/')) install[--n] = 0;
+    if (n == 0) return;
+    vcvars = fcFmt(c, "%s\\VC\\Auxiliary\\Build\\vcvars64.bat", install);
+    if (!nbFileExists(vcvars)) return;
+    fcBufStr(&out, "");
+    fcBufStr(&err, "");
+    /* cmd /s /c "<line>": the outer quotes go, the line keeps the quotes around the path of the batch file */
+    if (fwRun(comspec && *comspec ? comspec : "cmd.exe", fcFmt(c, "/d /s /c \"\"%s\" >nul 2>&1 && set\"", vcvars), NULL, NULL, &out, &err) == 0) {
+        const char* line = out.p;
+        while (line && *line) {
+            const char* end = strchr(line, '\n');
+            size_t len = end ? (size_t)(end - line) : strlen(line);
+            const char* eq = (const char*)memchr(line, '=', len);
+            if (len > 0 && line[len - 1] == '\r') len--;
+            /* (NAME=VALUE; the names that start with '=' are the drives' folders of cmd) */
+            if (eq && eq > line && (size_t)(eq - line) < len) {
+                const char* name = fcStrN(c, line, (size_t)(eq - line));
+                const char* value = fcStrN(c, eq + 1, len - (size_t)(eq - line) - 1);
+                const char* had = getenv(name);
+                if (!had || strcmp(had, value) != 0) _putenv_s(name, value);
+            }
+            line = end ? end + 1 : NULL;
+        }
+    }
+    fcBufFree(&out);
+    fcBufFree(&err);
+}
+#endif
 /* The full path of the compiler of the toolchain on this machine, or NULL (for `files` there is nothing to find). */
 static const char* nbFind(FcCtx* c, const NbToolchain* t) {
     const char* k = nbKind(t);
+    const char* found;
     if (streq0(k, "files") || streq0(k, "custom")) return NULL;
     if (nbIsWatcom(k)) return nbWatcomLocate(c, t);
-    return nbFindProgram(c, nbEffectiveCompiler(t));
+    found = nbFindProgram(c, nbEffectiveCompiler(t));
+#ifdef _WIN32
+    /* msvc without a developer prompt (no cl on the PATH, or no INCLUDE for it): the environment of the newest Visual Studio with the C++ tools, then again */
+    if (streq0(k, "msvc") && (!found || !getenv("INCLUDE")) && !nbMsvcEnvironmentTried) {
+        nbMsvcEnvironment(c);
+        found = nbFindProgram(c, nbEffectiveCompiler(t));
+    }
+#endif
+    return found;
 }
 /* The full path of the C compiler of the toolchain, or NULL. */
 static const char* nbFindC(FcCtx* c, const NbToolchain* t) {

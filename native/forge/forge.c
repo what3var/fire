@@ -1,7 +1,8 @@
 /* native/forge/forge.c - the program forge-c: one file that includes the whole frontend in C (docs/spec/FORGE_C.md).
  *
  *   cc -O2 native/forge/forge.c -o forge-c -lm      (gcc, clang; -Wall -Wextra without warnings; libm: Math.Pow of a unit conversion)
- *   x86_64-w64-mingw32-gcc -O2 native/forge/forge.c -o forge-c.exe -static   (Windows as the host: win32.h; MSVC: cl /O2 native\forge\forge.c)
+ *   x86_64-w64-mingw32-gcc -O2 native/forge/forge.c -o forge-c.exe -static   (Windows as the host: win32.h)
+ *   cl /nologo /O2 /std:c11 /utf-8 native\forge\forge.c /Fe:forge-c.exe     (MSVC - src/forge-c of fire.sln finds it with vswhere; docs/BUILDING.md)
  *
  *   forge-c tokens <file.fire>                      the tokens of the preprocessed source (and the diagnostics)
  *   forge-c ast <file.fire>                         the syntax tree (and the diagnostics)

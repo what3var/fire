@@ -13,7 +13,8 @@
 /* native/forge/forge.c - the program forge-c: one file that includes the whole frontend in C (docs/spec/FORGE_C.md).
  *
  *   cc -O2 native/forge/forge.c -o forge-c -lm      (gcc, clang; -Wall -Wextra without warnings; libm: Math.Pow of a unit conversion)
- *   x86_64-w64-mingw32-gcc -O2 native/forge/forge.c -o forge-c.exe -static   (Windows as the host: win32.h; MSVC: cl /O2 native\forge\forge.c)
+ *   x86_64-w64-mingw32-gcc -O2 native/forge/forge.c -o forge-c.exe -static   (Windows as the host: win32.h)
+ *   cl /nologo /O2 /std:c11 /utf-8 native\forge\forge.c /Fe:forge-c.exe     (MSVC - src/forge-c of fire.sln finds it with vswhere; docs/BUILDING.md)
  *
  *   forge-c tokens <file.fire>                      the tokens of the preprocessed source (and the diagnostics)
  *   forge-c ast <file.fire>                         the syntax tree (and the diagnostics)
@@ -3456,14 +3457,14 @@ static FcTerms* fcTermsOfText(FcCtx* c, const char* text) {
         } else if (i < n && u.p[i] == '^') {
             int numberStart = ++i;
             bool neg = false, any = false;
-            long v = 0;
+            long long v = 0;   /* (not long: 32 bits on Windows) */
             if (i < n && u.p[i] == '-') i++;
             while (i < n && u.p[i] >= '0' && u.p[i] <= '9') i++;
             /* int.TryParse with a leading sign */
             {
                 int k = numberStart;
                 if (k < i && (u.p[k] == '-' || u.p[k] == '+')) { neg = u.p[k] == '-'; k++; }
-                for (; k < i; k++) { v = v * 10 + (u.p[k] - '0'); any = true; if (v > 2147483648L) { fcU16Free(&u); return NULL; } }
+                for (; k < i; k++) { v = v * 10 + (u.p[k] - '0'); any = true; if (v > 2147483648LL) { fcU16Free(&u); return NULL; } }
             }
             if (!any) { fcU16Free(&u); return NULL; }
             power = (int)(neg ? -v : v);
@@ -46094,7 +46095,8 @@ static NbToolchain* nbBuiltIn(FcCtx* c, const char* name) {
     switch (i) {
         case 0: t->kind = "gcc"; t->compiler = "g++"; t->std = "c++17"; t->optimization = "-O2"; t->args = nbStrings(c, 2, "-Wall", "-Wextra"); break;
         case 1: t->kind = "clang"; t->compiler = "clang++"; t->std = "c++17"; t->optimization = "-O2"; t->args = nbStrings(c, 2, "-Wall", "-Wextra"); break;
-        case 2: t->kind = "msvc"; t->compiler = "cl"; t->std = "c++17"; t->optimization = "/O2"; t->args = nbStrings(c, 2, "/nologo", "/EHsc"); break;
+        /* /utf-8: the sources and the strings of a program are UTF-8 (without it cl reads them in the code page of the machine) */
+        case 2: t->kind = "msvc"; t->compiler = "cl"; t->std = "c++17"; t->optimization = "/O2"; t->args = nbStrings(c, 3, "/nologo", "/EHsc", "/utf-8"); break;
         /* Emscripten (emsdk): C++ to WebAssembly - exceptions on, ASYNCIFY for `Sleep` and the window loop, the .wasm inside the page */
         case 3: t->kind = "emscripten"; t->compiler = "em++"; t->std = "c++17"; t->cstd = "gnu11"; t->optimization = "-O2";
             t->args = nbStrings(c, 7, "-Wall", "-Wextra", "-fexceptions", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0"); break;
@@ -46391,12 +46393,80 @@ static FcList* nbWatcomPreCommands(FcCtx* c, const NbToolchain* t, const FgTarge
 }
 
 /* ---- ToolchainDetector ---- */
+#ifdef _WIN32
+/* MSVC outside a developer prompt: cl.exe is not on the PATH, and INCLUDE, LIB and LIBPATH are not set, so a cl found by its path could not compile either. vswhere
+ * (in the folder of the Visual Studio Installer) names the newest Visual Studio with the C++ tools for x64; its vcvars64.bat sets the environment of a developer
+ * prompt, and this process takes it over (`set` after the batch file: PATH, INCLUDE, LIB, LIBPATH, VCToolsInstallDir, ...), so that the compilers forge runs
+ * inherit it (fwRun starts them with this process's environment). Once per process; nothing changes when there is no Visual Studio with the C++ tools. */
+static bool nbMsvcEnvironmentTried = false;
+static void nbMsvcEnvironment(FcCtx* c) {
+    const char* programs = getenv("ProgramFiles(x86)");
+    const char* comspec = getenv("ComSpec");
+    const char* vswhere;
+    const char* vcvars;
+    char* install;
+    char* p;
+    FcBuf out = {0}, err = {0};
+    size_t n;
+    if (nbMsvcEnvironmentTried) return;
+    nbMsvcEnvironmentTried = true;
+    vswhere = fcFmt(c, "%s/Microsoft Visual Studio/Installer/vswhere.exe", programs && *programs ? fwSlashes((char*)fcStr(c, programs)) : "C:/Program Files (x86)");
+    if (!nbFileExists(vswhere)) return;
+    fcBufStr(&out, "");
+    fcBufStr(&err, "");
+    if (fwRun(vswhere, "-nologo -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath", NULL, NULL, &out, &err) != 0) {
+        fcBufFree(&out);
+        fcBufFree(&err);
+        return;
+    }
+    install = (char*)fcStrN(c, out.p, out.len);
+    fcBufFree(&out);
+    fcBufFree(&err);
+    if ((p = strpbrk(install, "\r\n")) != NULL) *p = 0;   /* (the first line: -latest names one) */
+    n = strlen(install);
+    while (n > 0 && (install[n - 1] == ' ' || install[n - 1] == '\\' || install[n - 1] == '/')) install[--n] = 0;
+    if (n == 0) return;
+    vcvars = fcFmt(c, "%s\\VC\\Auxiliary\\Build\\vcvars64.bat", install);
+    if (!nbFileExists(vcvars)) return;
+    fcBufStr(&out, "");
+    fcBufStr(&err, "");
+    /* cmd /s /c "<line>": the outer quotes go, the line keeps the quotes around the path of the batch file */
+    if (fwRun(comspec && *comspec ? comspec : "cmd.exe", fcFmt(c, "/d /s /c \"\"%s\" >nul 2>&1 && set\"", vcvars), NULL, NULL, &out, &err) == 0) {
+        const char* line = out.p;
+        while (line && *line) {
+            const char* end = strchr(line, '\n');
+            size_t len = end ? (size_t)(end - line) : strlen(line);
+            const char* eq = (const char*)memchr(line, '=', len);
+            if (len > 0 && line[len - 1] == '\r') len--;
+            /* (NAME=VALUE; the names that start with '=' are the drives' folders of cmd) */
+            if (eq && eq > line && (size_t)(eq - line) < len) {
+                const char* name = fcStrN(c, line, (size_t)(eq - line));
+                const char* value = fcStrN(c, eq + 1, len - (size_t)(eq - line) - 1);
+                const char* had = getenv(name);
+                if (!had || strcmp(had, value) != 0) _putenv_s(name, value);
+            }
+            line = end ? end + 1 : NULL;
+        }
+    }
+    fcBufFree(&out);
+    fcBufFree(&err);
+}
+#endif
 /* The full path of the compiler of the toolchain on this machine, or NULL (for `files` there is nothing to find). */
 static const char* nbFind(FcCtx* c, const NbToolchain* t) {
     const char* k = nbKind(t);
+    const char* found;
     if (streq0(k, "files") || streq0(k, "custom")) return NULL;
     if (nbIsWatcom(k)) return nbWatcomLocate(c, t);
-    return nbFindProgram(c, nbEffectiveCompiler(t));
+    found = nbFindProgram(c, nbEffectiveCompiler(t));
+#ifdef _WIN32
+    /* msvc without a developer prompt (no cl on the PATH, or no INCLUDE for it): the environment of the newest Visual Studio with the C++ tools, then again */
+    if (streq0(k, "msvc") && (!found || !getenv("INCLUDE")) && !nbMsvcEnvironmentTried) {
+        nbMsvcEnvironment(c);
+        found = nbFindProgram(c, nbEffectiveCompiler(t));
+    }
+#endif
+    return found;
 }
 /* The full path of the C compiler of the toolchain, or NULL. */
 static const char* nbFindC(FcCtx* c, const NbToolchain* t) {
@@ -47475,7 +47545,12 @@ static NbCommand* nbCompilerCommand(FcCtx* c, const NbToolchain* t, const FgTarg
         FcList* wanted = nbLinesWith(c, linkSource, "// fire-link: ", -1);
         for (i = 0; i < wanted->count; i++) {
             const char* lib = fgTrim(c, (const char*)wanted->items[i]);
-            const char* flag = fcStartsWith(lib, "framework:") ? fcFmt(c, "-framework %s", lib + 10) : streq0(kind, "msvc") ? fcFmt(c, "%s.lib", lib) : fcFmt(c, "-l%s", lib);
+            const char* flag;
+            /* msvc: the C library has the maths, and the runtime takes threads and libraries from Win32 - no pthread.lib, dl.lib, m.lib */
+            if (streq0(kind, "msvc") && (streq0(lib, "pthread") || streq0(lib, "dl") || streq0(lib, "m"))) continue;
+            /* MinGW has no libdl (LoadLibrary is in kernel32) */
+            if (streq0(target->platform, "windows") && streq0(lib, "dl")) continue;
+            flag = fcStartsWith(lib, "framework:") ? fcFmt(c, "-framework %s", lib + 10) : streq0(kind, "msvc") ? fcFmt(c, "%s.lib", lib) : fcFmt(c, "-l%s", lib);
             if (!fcListHasStr(libs, flag)) fcListAdd(c, libs, (void*)flag);
         }
     }
@@ -51444,6 +51519,9 @@ static const char* nvWriteSources(FcCtx* c, const char* folder, int intWidth, in
 #ifndef __APPLE__
     fcBufStr(&sb, "// fire-link: dl\n");
 #endif
+#ifdef _WIN32
+    fcBufStr(&sb, "// fire-link: ws2_32\n");   /* (the sockets of the device host and the debugger: Winsock) */
+#endif
     if (intWidth == 16) fcBufStr(&sb, "#define FIRE_INT16 1\n");
     else if (intWidth == 32) fcBufStr(&sb, "#define FIRE_INT32 1\n");
     if (floatWidth == 32) fcBufStr(&sb, "#define FIRE_FLOAT32 1\n");
@@ -52259,6 +52337,9 @@ static bool neBuildOne(FcCtx* c, int which, const char* folder, const char* key,
         fcBufStr(&sb, "/* libfirevm (native/vm/fire.c as a library, fire_embed.h), built by forge (build/embedlib.c). */\n// fire-link: pthread\n// fire-link: m\n");
 #ifndef __APPLE__
         fcBufStr(&sb, "// fire-link: dl\n");
+#endif
+#ifdef _WIN32
+        fcBufStr(&sb, "// fire-link: ws2_32\n");   /* (Winsock, as for `fire`) */
 #endif
         fcBufStr(&sb, "#define FIRE_VM_LIBRARY 1\n#include \"vm/fire.c\"\n");
         main = nbCombine(c, work, "fire_vm_lib.c");
