@@ -22,7 +22,7 @@
          are busy with other work), for 10-20 % more memory. -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
 
-	<PublishSingleFile>true</PublishSingleFile>
+	<PublishSingleFile>false</PublishSingleFile>
 	<SelfContained>true</SelfContained>
   </PropertyGroup>
 

@@ -1,6 +1,5 @@
 <Project>
 	<PropertyGroup Condition="'$(Configuration)'=='Release'">
-		<PublishSingleFile>true</PublishSingleFile>
 		<SelfContained>true</SelfContained>
 		<DebugSymbols>false</DebugSymbols>
 		<DebugType>none</DebugType>
