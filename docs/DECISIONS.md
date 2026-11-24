@@ -91,6 +91,10 @@ Entscheidung des Benutzers: **umwandeln, wie die Doku sagt.**
   Objekt), in eine `string`-Deklaration ist im **strict**-Modus die Warnung **`TC034`** (nie ein Fehler; lax nichts). Begründung: die Umwandlung
   ist Regel der Sprache und vorhandener Code gibt Zahlen in `string`-Parameter; TC001/TC002/TC003 wären im strict-Modus Fehler und würden ihn
   brechen. `string j = 5; j == 5` ist jetzt False.
+* **Nachtrag (24.11.2026, vom Benutzer beauftragt):** eine Zahl, ein `char` oder ein `bool` an einem **Parameter** `string` (Argument, Indexer,
+  Operator, Setter, typisiertes Lambda, Default-Wert) ist die Warnung **`TC037`**, in lax und strict (dort statt `TC034`). Ein Name oder Schlüssel
+  als Zahl ist dort meist ein Versehen (`row[0]` am früheren `operator[](string name)` von `Data.Row`). Zuweisungen an Variablen, Felder und Elemente
+  bleiben ohne Warnung in lax (die Deklaration `string` steht für die Umwandlung; strict: `TC034`). Die Umwandlung selbst bleibt.
 * Umgesetzt: DeclaredKind.StringKind / OfStore (die Art einer `string`-Deklaration, nie mit NonNullBit), VM.GuardDeclared, VM.DeclaredText,
   ArrayElem.IsStringText, DeclaredType.WantsString, Compiler.EmitLocalGuard, TypeChecker.GuardLocalValue/GuardValue/NoteCall (DerivedStrings),
   fire_rt.h guardStr/guardStrSlot, CppGenerator.GuardStmt/GuardKindCall/ClassGuard. Tests: TypeTests (VM Debug/Release, TC034), nativer Fall 1656.

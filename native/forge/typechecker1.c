@@ -37,6 +37,7 @@
 #define TC_TextConversionCode "TC034"
 #define TC_BlockTakeLocalCode "TC035"
 #define TC_StoredLocalCode "TC036"
+#define TC_NumberTextCode "TC037"
 #define TC_ReadonlyWriteCode "E4052"
 
 static bool fcBufferMethodsHas(const char* name) {
@@ -123,6 +124,7 @@ typedef struct FcTC {
     FcDict otherFieldNames, fieldBad, fieldNeeds;
     FcDict* tlProperties;         /* TC036: the names of the properties of the program */
     FcList* tlProgramTop;         /* TC036: the statements of the top level of the program being walked */
+    const FcST* memberReceiver;   /* TC037: the type of the target of the last member InferMember saw (its class for a static one) */
 } FcTC;
 static const FcKeptAt fcNoKept = { NULL, NULL, NULL };
 
@@ -156,7 +158,7 @@ static void Report(FcTC* t, const char* code, const char* message, int line) {
     if (t->source < t->reportFrom) return;
     warningAlways = streq0(code, TC_UnitLossCode) || streq0(code, TC_AssignInConditionCode) || streq0(code, TC_SwitchMissingCode) || streq0(code, TC_SetterClaimCode)
         || streq0(code, TC_LateVarTypeCode) || streq0(code, TC_TakeIntoCopyCode) || streq0(code, TC_StoredTemporaryCode) || streq0(code, TC_ArrayToBufferCode)
-        || streq0(code, TC_TextConversionCode) || streq0(code, TC_BlockTakeLocalCode) || streq0(code, TC_StoredLocalCode);
+        || streq0(code, TC_TextConversionCode) || streq0(code, TC_BlockTakeLocalCode) || streq0(code, TC_StoredLocalCode) || streq0(code, TC_NumberTextCode);
     d = fcDiagNew(TC_, line, message, Strict(t) && !warningAlways ? FC_SEV_ERROR : FC_SEV_WARNING, code, NULL, 0);
     fcListAdd(TC_, t->diagnostics, d);
 }
@@ -200,7 +202,32 @@ static bool CutsWide(FcTC* t, const FcST* value, const FcST* target) {
 static void CheckUnitAssignable(FcTC* t, const FcST* value, const FcST* target, int line, const char* what, FcExpr* valueExpr);
 static const char* DemandTextOf(FcTC* t, const FcU* unit);
 
+/* TC037: a number (int, float, word, with a unit or without), a char or a bool given to a parameter of type 'string' - of a method, a constructor,
+ * an operator, an indexer, the 'value' of a property's setter, a typed lambda, a default value. The run time makes it its text (DECISIONS D14); a
+ * name or a key passed as a number by mistake (`row[0]` for a 'string' indexer) is what it finds. Always a warning, in both modes. Nothing for
+ * 'any' or an unknown type; a string, an enum or an object, and storage (a variable, a field, an element, a return value) are TC034 in strict mode. */
+static const char* NumberTextKind(FcTC* t, const FcST* value) {
+    if (value == NULL || stIsDynamic(value)) return NULL;
+    switch (value->kind) {
+        case STK_Int: case STK_Float: case STK_Word: return TF(t, "number ('%s')", S_(t, value));
+        case STK_Char: return "char";
+        case STK_Bool: return "bool";
+        default: return NULL;
+    }
+}
+static bool CheckNumberAsText(FcTC* t, const FcST* value, const FcST* target, const char* what, int line) {
+    const char* kind;
+    if (target == NULL || stIsDynamic(target) || target->kind != STK_String || !(kind = NumberTextKind(t, value))) return false;
+    Report(t, TC_NumberTextCode, TF(t, "A %s is passed as text to %s, which is a 'string' - write '\"\" + x' (or 'x.ToString()') if the text is meant", kind, what), line);
+    return true;
+}
+
+static void CheckAssignableAt(FcTC* t, const FcST* value, const FcST* target, int line, const char* what, const char* code, FcExpr* valueExpr, const char* parameter);
 static void CheckAssignable(FcTC* t, const FcST* value, const FcST* target, int line, const char* what, const char* code, FcExpr* valueExpr) {
+    CheckAssignableAt(t, value, target, line, what, code, valueExpr, streq0(code, TC_ArgumentCode) ? what : NULL);
+}
+/* parameter: the value is an argument, and this names the parameter (TC037 in place of TC034); NULL: it is not */
+static void CheckAssignableAt(FcTC* t, const FcST* value, const FcST* target, int line, const char* what, const char* code, FcExpr* valueExpr, const char* parameter) {
     if (target->nul == NUL_Defined && value->nul == NUL_MayBeUndefined) {
         if (value->kind == STK_Undefined)
             Report(t, TC_UndefinedCode, TF(t, "undefined goes into %s, which is 'defined %s': that is an ArgumentException at run time", what, S_(t, target)), line);
@@ -213,7 +240,8 @@ static void CheckAssignable(FcTC* t, const FcST* value, const FcST* target, int 
     if (value->kind == STK_Undefined && target->nul == NUL_Defined) return;
     if (value->kind == STK_Class && streq0(value->cls, "LambdaExpression") && target->kind == STK_Lambda && valueExpr != NULL) { fcSetAdd(t->rr->treeToCompiled, valueExpr); return; }
     if (!Assignable(t, value, target)) { Report(t, code, TF(t, "Cannot assign a value of type '%s' to %s of type '%s'", S_(t, value), what, S_(t, target)), line); return; }
-    if (Strict(t) && target->kind == STK_String && !stIsDynamic(value) && value->kind != STK_String && value->kind != STK_Undefined)
+    if (parameter && CheckNumberAsText(t, value, target, parameter, line)) { /* TC037 says it */ }
+    else if (Strict(t) && target->kind == STK_String && !stIsDynamic(value) && value->kind != STK_String && value->kind != STK_Undefined)
         Report(t, TC_TextConversionCode, TF(t, "A value of type '%s' goes into %s, which is a 'string': it becomes its text (ToString()) - write '.ToString()' or '\"\" + ...' where that is meant", S_(t, value), what), line);
     if (CutsWide(t, value, target))
         Report(t, TC_WideIntCode, TF(t, "An int[%d] goes into %s, a plain int of %d bits in this program: it is cut - declare int[%d], or cut it on purpose (!int)", value->wide, what, t->programIntWidth, value->wide), line);
@@ -852,6 +880,29 @@ static const FcST* FindMember(FcTC* t, const FcST* receiver, const char* name) {
     return NULL;
 }
 static const FcST* FindMemberOf(FcTC* t, const char* className, const char* name) { return FindMember(t, stClassOf(TC_, className, NULL), name); }
+/* the member 'name' of receiver is a property, as FindMember finds it (TC037: an assignment to it calls its setter) */
+static bool IsPropertyMember(FcTC* t, const FcST* receiver, const char* name) {
+    FcList* ic;
+    FcList* chain;
+    int i, k;
+    if (receiver == NULL || receiver->kind != STK_Class) return false;
+    ic = InterfaceChain(t, receiver);
+    for (i = 0; i < ic->count; i++) {
+        FcInterfaceDecl* iface = (FcInterfaceDecl*)((FcChainEntry*)ic->items[i])->decl;
+        if (iface->properties)
+            for (k = 0; k < iface->properties->count; k++) if (streq0(((FcInterfacePropertySig*)iface->properties->items[k])->name, name)) return true;
+    }
+    chain = Chain(t, receiver);
+    for (i = 0; i < chain->count; i++) {
+        FcClassDecl* decl = (FcClassDecl*)((FcChainEntry*)chain->items[i])->decl;
+        for (k = 0; k < decl->members->count; k++) {
+            FcStmt* m = (FcStmt*)decl->members->items[k];
+            if (m->kind == SK_FieldDecl && streq0(((FcFieldDecl*)m)->name, name)) return false;
+            if (m->kind == SK_PropertyDecl && streq0(((FcPropertyDecl*)m)->name, name)) return true;
+        }
+    }
+    return false;
+}
 
 static bool Fits(FcList* parameters, int argc) {
     int required = 0, i;

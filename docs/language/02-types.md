@@ -231,6 +231,7 @@ The checker runs after every compile and in the editor while you type. Its findi
 | `TC032` | an array given to a `byte`/`word` parameter becomes a new buffer: what the method writes does not reach it |
 | `TC033` | an index or an array size that is certainly no int, `*x` of a value that is certainly no pointer (always an error) |
 | `TC034` | a value that is certainly no string goes into a `string` declaration: it becomes its text (strict mode only, always a warning) |
+| `TC037` | a number, a `char` or a `bool` is passed to a parameter of type `string` - a method, a constructor, an indexer, an operator, a setter, a lambda: it becomes its text (lax and strict mode, always a warning; see [`string` holds a text](#string-holds-a-text)) |
 
 In **lax** mode (the default) these are warnings; in **strict** mode they are errors - except where the table says "always". The full texts are in
 Errors and warnings (`docs/tools/errors.md`). Choose the mode with `#strict` or `#lax` at the top of a file, the project
@@ -330,8 +331,31 @@ string t = new P()       // "a P" - the object's own ToString() runs; what it th
 
 A value whose type the compiler knows to be a string costs nothing: no check is compiled. The conversion runs only for what may be something else
 (an `any`, a number, an object); a parameter that every call of the program gives a string is not checked at all. In **strict** mode a value that
-is certainly no string (`string j = 5`, a number for a `string` parameter) is the warning `TC034` - write `5.ToString()` or `"" + 5` where the text is
-meant; lax mode says nothing (the conversion is the rule of the language).
+is certainly no string (`string j = 5`, an enum value or an object for a `string` parameter) is the warning `TC034` - write `5.ToString()` or `"" + 5`
+where the text is meant; lax mode says nothing about it (the conversion is the rule of the language).
+
+**A number given to a `string` parameter** is the warning `TC037`, in lax and in strict mode: a number (with a unit or without), a `char` or a `bool`
+whose type the compiler knows, passed where a parameter is declared `string` - of a method, a constructor, an operator, an indexer (`operator[]`, the
+index and the value), the `value` of a property's setter (`row.Title = 5`), a typed lambda, a generic parameter whose type argument is `string`
+(`List<string>.Add(5)`), a named argument, and a number as the default value of a `string` parameter. It still becomes its text; the warning is there
+because a name or a key passed as a number is usually a mistake - `row[0]` for an indexer `operator[](string name)` asks for the column named `"0"`,
+not for the first one. Where the text is meant, say so: `"" + x` or `x.ToString()`.
+
+```fire
+class Row {
+    any operator[](string name) { return name }
+    string Find(string key) { return key }
+}
+var row = new Row()
+print(row[0])            // TC037: A number ('int') is passed as text to parameter 'name' of 'operator[]' of 'Row', which is a 'string' - ...
+print(row.Find(7))       // TC037
+print(row.Find("" + 7))  // no warning: the text is meant
+```
+
+Not reported: concatenation and interpolation (`"a" + 1`, `$"n = {n}"`), `print(x)`, `"" + x` and `x.ToString()`, an argument of type `any` or
+of a type the compiler does not know, a parameter that is not `string` (or an overload that takes the number), and storage - a variable, a field,
+an element, a return value (`string s = 5`, `row.name = 5`): there the `string` declaration itself says that the value becomes text, as described
+above, and strict mode reports it as `TC034`. A property's setter is a call, so `row.Title = 5` is `TC037`.
 
 ## Testing a type: `is of`
 

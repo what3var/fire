@@ -323,6 +323,9 @@ static class ServeTests
                 ("unbekannter Import", "#import \"nothing_like_this\"\nvar a = 1\n", d => d.Any(x => x.IsError && x.Line == 1)),
                 ("Fehler des Compilers", "class A { M() { break } }\n", d => E(d) >= 1),
                 ("Warnung des Codes", "warn 77: \"careful\"\nvar a = 1\n", d => E(d) == 0 && d.Any(x => x.IsWarning && x.Code == "W77")),
+                ("eine Zahl an einen string-Parameter (TC037, auch strikt eine Warnung)",
+                    "#strict\nclass Row {\n    any operator[](string name) { return name }\n}\nvar row = new Row()\nprint(row[0])\nprint(row[\"\" + 0])\n",
+                    d => E(d) == 0 && d.Count(x => x.Code == "TC037") == 1 && d.Any(x => x.IsWarning && x.Code == "TC037" && x.Line == 6 && x.Message.Contains("'name' of 'operator[]'"))),
             };
             int n = 0;
             foreach (var (title, source, expected) in cases)

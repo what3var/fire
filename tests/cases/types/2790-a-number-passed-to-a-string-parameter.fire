@@ -1,0 +1,41 @@
+class Row {
+    string name
+    string last = ""
+    string Title { get; set; }
+    construct(string name) { this.name = name }
+    string Find(string key, string other = "-") { return key + "/" + other }
+    any operator[](string key) { return "[" + key + "]" }
+    undefined operator[](string key, string value) { this.last = key + "=" + value }
+    Row operator+(string more) { return new Row(this.name + more) }
+    undefined Rename() { Title = 42 }
+    static string Twice(string s) { return s + s }
+}
+class Defaults {
+    static string Of(string a = 7, string b = true, string c = 'c', string d = 2.5m) { return a + " " + b + " " + c + " " + d }
+}
+var r = new Row(5)
+print(r.name)
+print(r.Find(1))
+print(r.Find(key: 2, other: 3.5))
+print(r[0])
+r[1] = 2
+print(r.last)
+r.Title = 3m
+print(r.Title)
+r.Rename()
+print(r.Title)
+print((r + 4).name)
+print(Row.Twice('x'))
+print(Row.Twice(false))
+var size = (string s) => s.Length
+print(size(100))
+print(Defaults.Of())
+var names = new List<string>()
+names.Add(9)
+names[0] = 10
+print(names[0])
+var ages = new Dictionary<string, int>()
+ages[11] = 1
+print(ages["11"])
+//# modes: Release
+//# name: types: TC037 - a number, a char or a bool passed to a parameter of type string (a method, a constructor, a named and a default argument, an indexer, an operator, a property's setter, a typed lambda, a generic parameter of type string) is a warning; it still becomes its text

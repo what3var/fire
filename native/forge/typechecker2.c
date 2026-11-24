@@ -545,6 +545,14 @@ static void CheckBody(FcTC* t, FcList* parameters, FcBlockStmt* body, const FcST
     for (i = 0; i < parameters->count; i++) {
         FcLambdaParam* p = (FcLambdaParam*)parameters->items[i];
         const FcST* declaredParam = DeclaredOrDynamic(t, p->type, p->arrayRanks->count, NULL);
+        if (p->defaultValue != NULL && !p->byRef && declaredParam->kind == STK_String) {
+            FcExpr* d = p->defaultValue;
+            const FcST* given = d->kind == EK_LiteralExpr && ((FcLiteralExpr*)d)->value.kind == VK_Bool ? ST_BOOL
+                : d->kind == EK_LiteralExpr && ((FcLiteralExpr*)d)->value.kind == VK_Char ? ST_CHAR : LiteralType(t, d);
+            const char* kind = NumberTextKind(t, given);
+            if (kind)   /* TC037: every call without this argument passes it as text */
+                Report(t, TC_NumberTextCode, TF(t, "A %s is the default value of parameter '%s', which is a 'string': it is passed as text - write a string (\"...\") if the text is meant", kind, p->name), d->line);
+        }
         if (p->defaultValue != NULL && stIsNumber(declaredParam) && !declaredParam->raw && p->arrayRanks->count == 0 && p->type && p->type->unit == NULL) {
             const FcST* lt = LiteralType(t, p->defaultValue);
             if (!(stIsNumber(lt) && lt->unit && fcUIsUnitless(lt->unit))) declaredParam = stWithUnit(TC_, declaredParam, NULL, false);
@@ -972,12 +980,25 @@ static void InferOperands(FcTC* t, FcBinaryExpr* b, const FcST** left, const FcS
         *right = anchor;
     }
 }
+/* the symbol of an operator a class may declare (ParseOperatorSymbol), NULL: none */
+static const char* OverloadableSymbol(FcBinaryOp op) {
+    switch (op) {
+        case BOP_Add: return "+"; case BOP_Sub: return "-"; case BOP_Mul: return "*"; case BOP_Div: return "/"; case BOP_Mod: return "%";
+        case BOP_Power: return "^"; case BOP_BitAnd: return "&"; case BOP_BitOr: return "|"; case BOP_BitXor: return "#";
+        case BOP_ShiftLeft: return "<<"; case BOP_ShiftRight: return ">>"; case BOP_ShiftRightLogical: return ">>>";
+        case BOP_Eq: return "=="; case BOP_NotEq: return "!="; case BOP_Lt: return "<"; case BOP_LtEq: return "<="; case BOP_Gt: return ">"; case BOP_GtEq: return ">=";
+        default: return NULL;
+    }
+}
+static void CheckOperatorText(FcTC* t, const FcST* receiver, const char* name, int argc, const FcST* index, int line);
 static const FcST* InferBinary(FcTC* t, FcBinaryExpr* b) {
     const FcST* left;
     const FcST* right;
     const FcST* type;
     const FcU* unit;
+    const char* symbol;
     InferOperands(t, b, &left, &right);
+    if (left->kind == STK_Class && left->cls && (symbol = OverloadableSymbol(b->op)) != NULL) CheckOperatorText(t, left, TF(t, "operator%s", symbol), 1, right, b->h.line);
     if (b->op == BOP_Coalesce) {
         /* `a ?? b`: the common type of both; defined when a is or b is */
         FcList* both = fcListNew(TC_);
@@ -1074,26 +1095,59 @@ static void CheckTakeIntoCopy(FcTC* t, const char* name, int line) {
 static bool fcIsTakeExpr(FcExpr* e) { return e->kind == EK_UnaryExpr && (((FcUnaryExpr*)e)->op == UOP_Take || ((FcUnaryExpr*)e)->op == UOP_TryTake); }
 static void CheckIndexKind(FcTC* t, const FcST* target, const FcST* index, int line);
 
+/* TC037 for the first parameter of an operator (operator+, GetIndex, SetIndex: the index of operator[]): when every one of that name that takes argc
+ * arguments takes a 'string' there */
+static void CheckOperatorText(FcTC* t, const FcST* receiver, const char* name, int argc, const FcST* index, int line) {
+    FcList* candidates;
+    const char* first = NULL;
+    int i;
+    if (!NumberTextKind(t, index)) return;
+    candidates = FindMethods(t, receiver, name, argc);
+    for (i = 0; i < candidates->count; i++) {
+        FcCand* cand = (FcCand*)candidates->items[i];
+        FcLambdaParam* p0 = cand->method->params->count > 0 ? (FcLambdaParam*)cand->method->params->items[0] : NULL;
+        const FcST* declared = p0 && !p0->byRef ? Declared(t, p0->type, p0->arrayRanks->count, cand->map) : NULL;
+        if (declared == NULL || stIsDynamic(declared) || declared->kind != STK_String) return;
+        if (!first) first = p0->name;
+    }
+    if (first) CheckNumberAsText(t, index, ST_STRING, TF(t, "parameter '%s' of 'operator%s' of '%s'", first, OperatorText(t, name), S_(t, receiver)), line);
+}
+
 static const FcST* InferAssign(FcTC* t, FcAssignExpr* a) {
     const FcST* target;
     const FcST* value;
     const char* what;
+    const char* parameter = NULL;   /* TC037: the value goes into a parameter (a property's setter, an indexer's) */
     int i;
     if (a->target->kind == EK_IdentifierExpr && fcIsTakeExpr(a->value)) CheckTakeIntoCopy(t, ((FcIdentifierExpr*)a->target)->name, a->h.line);
     switch (a->target->kind) {
-        case EK_IdentifierExpr: CheckImplicitThisAccess(t, (FcIdentifierExpr*)a->target, MU_Write); target = Lookup(t, ((FcIdentifierExpr*)a->target)->name); break;
-        case EK_MemberExpr: target = InferMember(t, (FcMemberExpr*)a->target, MU_Write); break;
+        case EK_IdentifierExpr: {
+            const char* name = ((FcIdentifierExpr*)a->target)->name;
+            bool scoped = false;
+            CheckImplicitThisAccess(t, (FcIdentifierExpr*)a->target, MU_Write);
+            target = Lookup(t, name);
+            for (i = 0; i < t->scopes->count && !scoped; i++) if (fcDictHas((FcDict*)t->scopes->items[i], name)) scoped = true;
+            if (!scoped && t->cls != NULL && IsPropertyMember(t, ThisClass(t), name)) parameter = TF(t, "the setter of the property '%s'", name);
+            break;
+        }
+        case EK_MemberExpr:
+            target = InferMember(t, (FcMemberExpr*)a->target, MU_Write);
+            if (IsPropertyMember(t, t->memberReceiver, ((FcMemberExpr*)a->target)->name)) parameter = TF(t, "the setter of the property '%s'", ((FcMemberExpr*)a->target)->name);
+            break;
         case EK_IndexExpr: {
             FcIndexExpr* ix = (FcIndexExpr*)a->target;
             const FcST* tt = Infer(t, ix->target);
+            const FcST* index = Infer(t, ix->index);
             FcMethodDecl* setter;
             FcDict* map;
-            CheckIndexKind(t, tt, Infer(t, ix->index), ix->h.line);
+            CheckIndexKind(t, tt, index, ix->h.line);
             NoteReceiverTypeArgs(t, (FcExpr*)ix, tt);
             if (tt->kind == STK_Array) target = tt->element;
             else if (tt->kind == STK_Class && (setter = FindMethod(t, tt, "SetIndex", 2, &map)) != NULL) {
                 FcLambdaParam* p1 = (FcLambdaParam*)setter->params->items[1];
                 target = DeclaredOrDynamic(t, p1->type, p1->arrayRanks->count, map);
+                CheckOperatorText(t, tt, "SetIndex", 2, index, ix->h.line);
+                if (!p1->byRef) parameter = TF(t, "parameter '%s' of 'operator[]' of '%s'", p1->name, S_(t, tt));
             } else target = ST_DYNAMIC;
             break;
         }
@@ -1106,7 +1160,7 @@ static const FcST* InferAssign(FcTC* t, FcAssignExpr* a) {
         NoteFieldWrite(t, a->target, a->target->kind == EK_MemberExpr ? ((FcMemberExpr*)a->target)->name : ((FcIdentifierExpr*)a->target)->name, a->value, value);
     what = a->target->kind == EK_IdentifierExpr ? TF(t, "'%s'", ((FcIdentifierExpr*)a->target)->name) : a->target->kind == EK_MemberExpr ? TF(t, "'%s'", ((FcMemberExpr*)a->target)->name)
         : a->target->kind == EK_IndexExpr ? "an element" : "the target";
-    CheckAssignable(t, value, target, a->h.line, what, TC_AssignCode, a->value);
+    CheckAssignableAt(t, value, target, a->h.line, what, TC_AssignCode, a->value, parameter);
     if (a->target->kind == EK_IdentifierExpr) {
         FcTypeRef* localType = LocalType(t, ((FcIdentifierExpr*)a->target)->name);
         if (localType) GuardLocalValue(t, a->value, value, target, localType, ((FcIdentifierExpr*)a->target)->name);
@@ -1143,10 +1197,12 @@ static void CheckSizeKind(FcTC* t, const FcST* size, const char* what, int line)
 }
 static const FcST* InferIndex(FcTC* t, FcIndexExpr* ix) {
     const FcST* target = Infer(t, ix->target);
+    const FcST* index = Infer(t, ix->index);
     FcMethodDecl* getter;
     FcDict* map;
-    CheckIndexKind(t, target, Infer(t, ix->index), ix->h.line);
+    CheckIndexKind(t, target, index, ix->h.line);
     NoteReceiverTypeArgs(t, (FcExpr*)ix, target);
+    if (target->kind == STK_Class) CheckOperatorText(t, target, "GetIndex", 1, index, ix->h.line);
     if (target->kind == STK_Array) return target->element;
     if (target->kind == STK_String) return ST_CHAR;
     if (target->kind == STK_Class && (getter = FindMethod(t, target, "GetIndex", 1, &map)) != NULL && getter->returnType) return DeclaredOrDynamic(t, getter->returnType, 0, map);
