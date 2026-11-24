@@ -26,7 +26,10 @@ typedef enum FcValueKind { VK_Bool, VK_Int, VK_Float, VK_Char, VK_String, VK_Und
 typedef struct FcValue { FcValueKind kind; int64_t i; double f; bool b; const char* s; const char* unit; const struct FcU* unitv; } FcValue;   /* unit: its text, NULL: unitless; unitv: Unit.Parse of the suffix (the type checker) */
 
 /* ---- TypeRef, LambdaSignature ---- */
-typedef struct FcLambdaSignature { const char* returnTypeName; FcList* paramTypeNames; bool isSelector; const char* selectorKind; bool isExpression; } FcLambdaSignature;
+/* paramTypes: the TypeRef of each parameter type as written (`lambda<int[], List<int>, lambda<int>>`; NULL: only the names - a selector, a program
+ * file); namespaces: where the signature stands, so that its names resolve as every other type there (CurrentNamespaces) */
+typedef struct FcLambdaSignature { const char* returnTypeName; FcList* paramTypeNames; bool isSelector; const char* selectorKind; bool isExpression;
+    FcList* paramTypes; FcList* namespaces; } FcLambdaSignature;
 typedef struct FcTypeRef {
     const char* baseName; int bitWidth; int pointerDepth; FcLambdaSignature* lambdaSignature; FcList* namespaces; const char* unit;
     int arrayRank; int typeArgCount; FcList* typeArgs; bool isUnsigned; bool nonNull;
