@@ -963,6 +963,7 @@ static FcList* fcTypeCheck(FcCtx* c, FcList* program, FcResolveResult* resolved,
     if (!resolved->treeToCompiled) resolved->treeToCompiled = fcDictNew(c, FC_KEY_PTR);
     if (!resolved->provenMembers) resolved->provenMembers = fcDictNew(c, FC_KEY_PTR);
     if (!resolved->bitsOf) resolved->bitsOf = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->contextParamTypes) resolved->contextParamTypes = fcDictNew(c, FC_KEY_PTR);
     resolved->fixedCoercions = fcDictNew(c, FC_KEY_PTR);   /* (a check before this one decided for itself) */
     for (i = 0; i < program->count; i++) {
         FcStmt* s = (FcStmt*)program->items[i];

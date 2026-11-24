@@ -1,0 +1,20 @@
+class Holder {
+    int lambda<string> size = s => s.length
+    static int Apply(int lambda<string> f) { return f(4321) }
+    static int lambda<string> Make() { return s => s.length }
+}
+int lambda<string> g = s => s.length
+int lambda<string> typed = (string s) => s.length
+print(g("abc"))
+print(g(12345))
+print(typed(12345))
+print(new Holder().size(678))
+print(Holder.Apply(s => s.length))
+print(Holder.Make()(99))
+var fs = new List<int lambda<string>>()
+fs.Add(s => s.length)
+print(fs[0](1.5))
+string lambda<string, int> both = (s, n) => s + "/" + n
+print(both(true, 3))
+//# modes: Release
+//# name: types: TC037 at a lambda whose parameter has no type of its own - it takes 'string' from its target (a variable, a field, a parameter, a return value, a list), and the number becomes its text at run time as with '(string s)'

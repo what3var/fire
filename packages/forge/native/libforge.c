@@ -9005,6 +9005,7 @@ typedef struct FcResolveResult {
     FcDict* receiverTypeArgs;      /* Expr* -> fc8 */
     FcDict* derivedDefined;        /* LambdaParam* */
     FcDict* derivedStrings;        /* LambdaParam* */
+    FcDict* contextParamTypes;     /* LambdaParam* -> FcTypeRef*: an untyped parameter of a lambda, typed by its target (TypeChecker.InferLambda) */
     FcDict* derivedReturns;        /* BlockStmt* */
     FcDict* derivedDefinedFields;  /* FieldDecl* */
     FcDict* classes;               /* name -> ClassDecl* */
@@ -9525,6 +9526,7 @@ static FcResolveResult* fcResolve(FcCtx* c, FcList* program, FcDict* nativeNames
     res->receiverTypeArgs = fcDictNew(c, FC_KEY_PTR);
     res->derivedDefined = fcDictNew(c, FC_KEY_PTR);
     res->derivedStrings = fcDictNew(c, FC_KEY_PTR);
+    res->contextParamTypes = fcDictNew(c, FC_KEY_PTR);
     res->derivedReturns = fcDictNew(c, FC_KEY_PTR);
     res->derivedDefinedFields = fcDictNew(c, FC_KEY_PTR);
     return res;
@@ -12109,6 +12111,7 @@ struct FcST {
     FcNull nul;
     int bits;
     bool eitherNumber;
+    bool anyUnit;       /* declared with ': any' (a type argument `int : any`): no unit is demanded - what a lambda's parameter typed by it gets (ContextParamType) */
 };
 #define ST_INIT(k) { (k), NULL, NULL, -1, NULL, NULL, NULL, NULL, false, NULL, false, false, 0, NUL_Unknown, 0, false }
 static const FcST fcSTDynamic = ST_INIT(STK_Dynamic);
@@ -12335,6 +12338,7 @@ typedef struct FcTC {
     FcClassDecl* cls;
     FcList* bodyTypeParams;
     bool inLambda, inBoundLambda;
+    bool lambdaToTarget;          /* the lambda InferLambda gets next goes to a typed target (InferExpected): its untyped parameters take their types from it */
     const FcST* thisType;
     const FcST* returnType;
     FcTypeRef* returnTypeRef;
@@ -12458,8 +12462,9 @@ static void CheckUnitAssignable(FcTC* t, const FcST* value, const FcST* target, 
 static const char* DemandTextOf(FcTC* t, const FcU* unit);
 
 /* TC037: a number (int, float, word, with a unit or without), a char or a bool given to a parameter of type 'string' - of a method, a constructor,
- * an operator, an indexer, the 'value' of a property's setter, a typed lambda, a default value. The run time makes it its text (DECISIONS D14); a
- * name or a key passed as a number by mistake (`row[0]` for a 'string' indexer) is what it finds. Always a warning, in both modes. Nothing for
+ * an operator, an indexer, the 'value' of a property's setter, a typed lambda, a default value. The run time makes it its text (DECISIONS D14) - at a
+ * lambda also for a parameter without a type of its own, which takes it from the lambda's target (ContextParamType); a name or a key passed as a
+ * number by mistake (`row[0]` for a 'string' indexer) is what it finds. Always a warning, in both modes. Nothing for
  * 'any' or an unknown type; a string, an enum or an object, and storage (a variable, a field, an element, a return value) are TC034 in strict mode. */
 static const char* NumberTextKind(FcTC* t, const FcST* value) {
     if (value == NULL || stIsDynamic(value)) return NULL;
@@ -12857,7 +12862,13 @@ static const FcST* DeclaredLambda(FcTC* t, const FcLambdaSignature* signature, F
         return stLambdaOf(TC_, -1, NULL, NULL);
     }
     ps = fcListNew(TC_);
-    for (i = 0; i < signature->paramTypeNames->count; i++) fcListAdd(TC_, ps, (void*)FromName(t, (const char*)signature->paramTypeNames->items[i], map));
+    for (i = 0; i < signature->paramTypeNames->count; i++) {
+        const char* name = (const char*)signature->paramTypeNames->items[i];
+        const FcST* param = FromName(t, name, map);
+        /* `lambda<byte>`: a byte, as the parameter `(byte b)` is (raw, unitless) - not any int */
+        if (streq0(name, "byte") && !(map && fcDictHas(map, name))) { FcST* r = stCopy(TC_, param); r->unit = FC_UNITLESS; r->unitIsDimension = false; r->raw = true; param = r; }
+        fcListAdd(TC_, ps, (void*)param);
+    }
     return stLambdaOf(TC_, signature->paramTypeNames->count, signature->returnTypeName ? FromName(t, signature->returnTypeName, map) : NULL, ps);
 }
 
@@ -12882,7 +12893,7 @@ static const FcST* Declared(FcTC* t, const FcTypeRef* type, int arrayRanks, FcDi
     ranks = arrayRanks + type->arrayRank;
     if (stIsNumber(result) && (ranks == 0 || type->unit != NULL) && !(substituted && type->unit == NULL)) {
         if (type->unit == NULL) result = stWithUnit(TC_, result, FC_UNITLESS, false);
-        else if (streq0(type->unit, "any")) { }
+        else if (streq0(type->unit, "any")) { FcST* r = stCopy(TC_, result); r->anyUnit = true; result = r; }
         else if (fcStartsWith(type->unit, "any ")) result = stWithUnit(TC_, result, fcUParse(TC_, type->unit + 4), true);
         else result = stWithUnit(TC_, result, fcUParse(TC_, type->unit), false);
     }
@@ -14158,7 +14169,7 @@ static void MarkFloatTarget(FcExpr* e) {
 static const FcST* InferExpected(FcTC* t, FcExpr* expr, const FcST* expected) {
     FcExpr* asking = expr;
     if (expected && expected->kind == STK_Float) MarkFloatTarget(expr);
-    if (expr->kind == EK_LambdaExpr) return InferLambda(t, (FcLambdaExpr*)expr, expected);
+    if (expr->kind == EK_LambdaExpr) { t->lambdaToTarget = true; return InferLambda(t, (FcLambdaExpr*)expr, expected); }
     while (asking->kind == EK_UnaryExpr && ((FcUnaryExpr*)asking)->op == UOP_Negate) asking = ((FcUnaryExpr*)asking)->operand;
     if (expected && (asking->kind == EK_UnitCoerceExpr || asking->kind == EK_TypeCoerceExpr)) {
         FcExpr* previousExpr = t->declaredFor;
@@ -15379,7 +15390,41 @@ static const FcST* InferLambda(FcTC* t, FcLambdaExpr* lam, const FcST* expected)
     t->inLambda = previous; t->inBoundLambda = previousBound; t->thisType = previousThis;
     return r;
 }
+/* ContextParamType: the declaration an untyped parameter of a lambda gets from the lambda type of its target (`int lambda<string> g = s => ...`),
+ * written as the type `(string s)` would be - the compiler gives it the same entry: the conversion of a number or a string, the check of a class or an
+ * enum, the unit. NULL: nothing to check (any, a type parameter, an array, a generic class, a width the type does not keep, a lambda: a signature keeps
+ * only the name of a lambda type in it, `lambda<lambda<int>>` says 'lambda') - the parameter stays as it is. A number without a unit is unitless, as
+ * `(int x)` is, unless it was declared ': any' (`Box<int : any>`). */
+static FcTypeRef* ContextParamType(FcTC* t, const FcST* type) {
+    FcTypeRef* r;
+    const char* name;
+    if (type == NULL) return NULL;
+    switch (type->kind) {
+        case STK_Int: name = "int"; break;
+        case STK_Float: name = "float"; break;
+        case STK_Word: name = "word"; break;
+        case STK_Bool: name = "bool"; break;
+        case STK_Char: name = "char"; break;
+        case STK_String: name = "string"; break;
+        case STK_Enum: name = type->cls; break;
+        case STK_Class: name = type->args == NULL ? type->cls : NULL; break;
+        default: name = NULL; break;
+    }
+    if (name == NULL) return NULL;
+    r = fcTcTypeRef(t, name, FC_NULL_INT);
+    if (type->kind == STK_Int && type->raw) { r->bitWidth = 8; r->isUnsigned = true; }
+    else if (type->kind == STK_Int && (type->wide == 32 || type->wide == 64)) r->bitWidth = type->wide;
+    else if (type->kind == STK_Float && (type->bits == 8 || type->bits == 16 || type->bits == 32)) r->bitWidth = type->bits;
+    if ((type->kind == STK_Int || type->kind == STK_Float) && !type->raw && type->unit != NULL && !fcUIsUnitless(type->unit)) {
+        const char* text = DemandTextOf(t, type->unit);
+        if (text == NULL) return NULL;
+        r->unit = type->unitIsDimension ? TF(t, "any %s", text) : text;
+    } else if ((type->kind == STK_Int || type->kind == STK_Float) && !type->raw && type->unit == NULL && type->anyUnit) r->unit = "any";
+    r->nonNull = type->nul == NUL_Defined && (type->kind == STK_Int || type->kind == STK_Float || type->kind == STK_Bool || type->kind == STK_Word || type->kind == STK_Char);
+    return r;
+}
 static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expected) {
+    bool toTarget = t->lambdaToTarget;
     FcList* context = expected && expected->kind == STK_Lambda && expected->params && expected->params->count == lam->params->count ? expected->params : NULL;
     const FcST* expectedReturn = expected && expected->kind == STK_Lambda && expected->ret && expected->ret->kind != STK_Undefined ? expected->ret : NULL;
     FcList* parameterTypes = fcListNew(TC_);
@@ -15395,6 +15440,7 @@ static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expec
     const FcST* returned;
     bool anyDefault = false;
     int i;
+    t->lambdaToTarget = false;
     for (i = 0; i < lam->params->count; i++) {
         FcLambdaParam* p = (FcLambdaParam*)lam->params->items[i];
         const FcST* declared = Declared(t, p->type, p->arrayRanks->count, NULL);
@@ -15402,11 +15448,20 @@ static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expec
             if (context && !Assignable(t, (const FcST*)context->items[i], declared))
                 Report(t, TC_ArgumentCode, TF(t, "Parameter '%s' of the lambda is of type '%s', but the lambda is called with '%s'", p->name, S_(t, declared), S_(t, (const FcST*)context->items[i])), lam->h.line);
             fcListAdd(TC_, parameterTypes, (void*)declared);
-        } else if (context) fcListAdd(TC_, parameterTypes, context->items[i]);
-        else {
+        } else if (context) {
+            FcTypeRef* contextType;
+            fcListAdd(TC_, parameterTypes, context->items[i]);
+            /* the type of the target is the parameter's declaration (12-lambdas.md): compiled like `(string s)`; a lambda without a typed target (the
+             * arguments of 'await on', of a post to the globals) keeps its parameters as they are */
+            if (p->type == NULL && !p->byRef && p->arrayRanks->count == 0) {
+                if (toTarget && (contextType = ContextParamType(t, (const FcST*)context->items[i])) != NULL) fcDictPut(t->rr->contextParamTypes, p, contextType);
+                else fcDictRemove(t->rr->contextParamTypes, p);
+            }
+        } else {
             if (!(expected && expected->kind == STK_Lambda))
                 Report(t, TC_UntypedCode, TF(t, "Parameter '%s' of the lambda has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed).", p->name), lam->h.line);
             fcListAdd(TC_, parameterTypes, (void*)ST_DYNAMIC);
+            if (p->type == NULL) fcDictRemove(t->rr->contextParamTypes, p);
         }
     }
     previousReturn = t->returnType;
@@ -15650,7 +15705,7 @@ static const FcST* CallLambda(FcTC* t, const FcST* lambda, FcList* args, FcCallE
         int i;
         for (i = 0; i < args->count && i < lambda->params->count; i++)
             CheckNumberAsText(t, (const FcST*)args->items[i], (const FcST*)lambda->params->items[i],
-                name ? TF(t, "parameter %d of the lambda '%s'", i + 1, name) : TF(t, "parameter %d of the lambda", i + 1), ((FcExpr*)c->args->items[i])->line);
+                name && !streq0(name, "the lambda") ? TF(t, "parameter %d of the lambda '%s'", i + 1, name) : TF(t, "parameter %d of the lambda", i + 1), ((FcExpr*)c->args->items[i])->line);
     }
     return lambda->ret && lambda->ret->kind != STK_Undefined ? lambda->ret : ST_DYNAMIC;
 }
@@ -17364,6 +17419,7 @@ static FcList* fcTypeCheck(FcCtx* c, FcList* program, FcResolveResult* resolved,
     if (!resolved->treeToCompiled) resolved->treeToCompiled = fcDictNew(c, FC_KEY_PTR);
     if (!resolved->provenMembers) resolved->provenMembers = fcDictNew(c, FC_KEY_PTR);
     if (!resolved->bitsOf) resolved->bitsOf = fcDictNew(c, FC_KEY_PTR);
+    if (!resolved->contextParamTypes) resolved->contextParamTypes = fcDictNew(c, FC_KEY_PTR);
     resolved->fixedCoercions = fcDictNew(c, FC_KEY_PTR);   /* (a check before this one decided for itself) */
     for (i = 0; i < program->count; i++) {
         FcStmt* s = (FcStmt*)program->items[i];
@@ -21735,7 +21791,20 @@ static void CompileLambda(FcComp* cm, FcLambdaExpr* lambda) {
     for (i = 0; i < lambda->params->count; i++) fcChunkMarkLocalName(c, inner->chunk, 0, i, ((FcLambdaParam*)lambda->params->items[i])->name);
     if (captureRef && captureRef->kind == RR_LambdaCaptures)
         for (i = 0; i < captureRef->variables->count; i++) fcChunkMarkLocalName(c, inner->chunk, 0, lambda->params->count + i, ((FcIdentifierExpr*)captureRef->variables->items[i])->name);
-    EmitLambdaParamChecks(cm, inner, lambda->params);
+    {   /* an untyped parameter typed by the target of the lambda (`int lambda<string> g = s => ...`) gets the entry of `(string s)` */
+        FcDict* contextTypes = cm->sh->rr->contextParamTypes;
+        FcList* typedParams = lambda->params;
+        if (contextTypes && fcDictCount(contextTypes) > 0) {
+            for (i = 0; i < lambda->params->count; i++) {
+                FcLambdaParam* p = (FcLambdaParam*)lambda->params->items[i];
+                FcTypeRef* contextType;
+                if (p->type != NULL || (contextType = (FcTypeRef*)fcDictGet(contextTypes, p)) == NULL) continue;
+                if (typedParams == lambda->params) { int k; typedParams = fcListNew(c); for (k = 0; k < lambda->params->count; k++) fcListAdd(c, typedParams, lambda->params->items[k]); }
+                { FcLambdaParam* typed = (FcLambdaParam*)fcAlloc(c, sizeof *typed); *typed = *p; typed->type = contextType; typedParams->items[i] = typed; }
+            }
+        }
+        EmitLambdaParamChecks(cm, inner, typedParams);
+    }
     for (i = 0; i < lambda->body->statements->count; i++) CompileStmt(inner, (FcStmt*)lambda->body->statements->items[i]);
     EmitLoadConst(inner, fcMakeUndefined(c));
     E_op(inner, OP_Return);
@@ -73302,9 +73371,23 @@ static bool cfProbe(const char* cache, const char* flags, int* state) {
  *   mingw                             x86_64-w64-mingw32-gcc and -g++ (the toolchain of Windows on Linux)
  *   wine                              wine (with mingw: programs for Windows run here)
  *   asan, tsan                        gcc builds and runs a program with AddressSanitizer / ThreadSanitizer
+ *   watcom                            Open Watcom (owcc), found as a build finds it: the PATH, WATCOM, the folder Toolchain/watcom, /opt/watcom (C:\WATCOM)
  *   env:NAME                          the environment variable NAME is set (not empty) - a server of the machine, a folder
  *   file:PATH                         the file or folder exists
  *   <program>                         any other word: a program on the PATH (gcc, tcc, clang, Xvfb, qemu-system-i386, ...) */
+/* Open Watcom where a build looks for it (nbWatcomLocate: the toolchain watcom of the build) */
+static bool cfHasWatcom(void) {
+    FcCtx ctx;
+    NbToolchain t;
+    bool found;
+    fcCtxInit(&ctx);
+    memset(&t, 0, sizeof t);
+    t.kind = "watcom";
+    t.compiler = "owcc";
+    found = nbWatcomLocate(&ctx, &t) != NULL;
+    fcCtxFree(&ctx);
+    return found;
+}
 static bool cfUnmet(CfRunner* R, const char* needs, FcBuf* why) {
     const char* p = needs;
     while (p && *p) {
@@ -73329,6 +73412,7 @@ static bool cfUnmet(CfRunner* R, const char* needs, FcBuf* why) {
         else if (streq0(word, "linux") || streq0(word, "posix")) met = true;
 #endif
         else if (streq0(word, "mingw")) met = cfHasProgram("x86_64-w64-mingw32-gcc") && cfHasProgram("x86_64-w64-mingw32-g++");
+        else if (streq0(word, "watcom")) met = cfHasWatcom();
         else if (streq0(word, "asan")) met = cfProbe(R->cache, "-fsanitize=address,undefined", &cfProbeAsan);
         else if (streq0(word, "tsan")) met = cfProbe(R->cache, "-fsanitize=thread", &cfProbeTsan);
         else if (strncmp(word, "env:", 4) == 0) { const char* v = getenv(word + 4); met = v && *v; }
@@ -73339,7 +73423,8 @@ static bool cfUnmet(CfRunner* R, const char* needs, FcBuf* why) {
             else if (strncmp(word, "file:", 5) == 0) fcBufFmt(why, "needs %s (not there)", word + 5);
             else if (streq0(word, "asan") || streq0(word, "tsan")) fcBufFmt(why, "needs %s (gcc cannot build or run a program with it here)", word);
             else if (streq0(word, "linux") || streq0(word, "windows") || streq0(word, "macos") || streq0(word, "posix")) fcBufFmt(why, "needs %s (not this system)", word);
-            else fcBufFmt(why, "needs %s (not on this machine)", streq0(word, "mingw") ? "MinGW (x86_64-w64-mingw32-gcc, -g++)" : word);
+            else fcBufFmt(why, "needs %s (not on this machine)", streq0(word, "mingw") ? "MinGW (x86_64-w64-mingw32-gcc, -g++)"
+                : streq0(word, "watcom") ? "Open Watcom (owcc; tools/setup-retro.sh, or forge toolchain-setup watcom)" : word);
             return true;
         }
     }

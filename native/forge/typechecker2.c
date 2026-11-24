@@ -586,7 +586,7 @@ static void MarkFloatTarget(FcExpr* e) {
 static const FcST* InferExpected(FcTC* t, FcExpr* expr, const FcST* expected) {
     FcExpr* asking = expr;
     if (expected && expected->kind == STK_Float) MarkFloatTarget(expr);
-    if (expr->kind == EK_LambdaExpr) return InferLambda(t, (FcLambdaExpr*)expr, expected);
+    if (expr->kind == EK_LambdaExpr) { t->lambdaToTarget = true; return InferLambda(t, (FcLambdaExpr*)expr, expected); }
     while (asking->kind == EK_UnaryExpr && ((FcUnaryExpr*)asking)->op == UOP_Negate) asking = ((FcUnaryExpr*)asking)->operand;
     if (expected && (asking->kind == EK_UnitCoerceExpr || asking->kind == EK_TypeCoerceExpr)) {
         FcExpr* previousExpr = t->declaredFor;

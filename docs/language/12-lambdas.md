@@ -51,6 +51,11 @@ print(new Runner().Apply(n => n * 3, 5))        // 15
 ```
 
 A lambda that goes to a typed parameter, field or variable takes its parameter types from there. The number of parameters is also checked at run time.
+A parameter typed this way is the same as one written with that type: `int lambda<string> g = s => s.length` is `(string s) => s.length`, so `g(12345)`
+makes the number its text (`5`), an `int` parameter takes no `float` and a class parameter no other object (`ArgumentException`), an `int` of the signature
+is unitless like `(int x)`, and a type argument brings its unit (`Box<float : cm>`). This holds for every target with a lambda type - a variable, a field, a parameter, a return value, an assignment,
+an element of `List<int lambda<string>>`, a type argument - but not for a lambda type inside a signature (`lambda<lambda<int>>` only says `lambda`) or
+a type parameter that is still open; there the parameter stays as it is.
 An optional callback is declared `any` (or `lambda` and checked for `undefined`).
 
 ## Captured values
