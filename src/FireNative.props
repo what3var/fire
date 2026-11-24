@@ -1,0 +1,16 @@
+<Project>
+  <!--
+    The paths the C part of the build shares (docs/BUILDING.md): forge-c (src/forge-c/forge-c.csproj), the distribution folder with forge, the VM, native/, Source/,
+    Prebuilt/ and ember (src/ember/ember.csproj), and what spark and the tests copy from it (src/ForgeDist.targets). The two folders do not depend on the
+    configuration: a Debug and a Release build of spark share them.
+
+    BuildForgeDist=false leaves the C part out: no forge-c, no ember, nothing copied - spark then builds forge-c from the sources of the repository when it first
+    needs it (src/fire.Tooling/Forge.cs).
+  -->
+  <PropertyGroup>
+    <FireRepo>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</FireRepo>
+    <FireExeSuffix Condition="'$(OS)' == 'Windows_NT'">.exe</FireExeSuffix>
+    <ForgeCExe>$(MSBuildThisFileDirectory)forge-c/bin/forge-c$(FireExeSuffix)</ForgeCExe>
+    <FireDistDir>$(MSBuildThisFileDirectory)ember/bin/dist/</FireDistDir>
+  </PropertyGroup>
+</Project>

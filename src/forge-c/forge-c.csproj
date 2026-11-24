@@ -1,0 +1,125 @@
+<Project Sdk="Microsoft.Build.NoTargets/3.7.56">
+  <!--
+    forge-c: native/forge/forge.c (a C program, one translation unit) compiled with the C compiler of this machine into bin/forge-c[.exe] - the first project of
+    fire.sln (then src/ember, then spark). Only when one of its sources changed. No .NET: the project has no assembly (Microsoft.Build.NoTargets).
+
+    The compiler (docs/BUILDING.md):
+      FireCC=<compiler>   this one (cl or clang-cl: the options of MSVC, else those of gcc)
+      Windows:            MSVC of a developer prompt (VCToolsInstallDir and INCLUDE set), else the newest Visual Studio with the C++ tools (vswhere; its
+                          vcvars64.bat before cl), else gcc or clang on the PATH, else w64devkit or MSYS2 at their usual places
+      elsewhere:          cc, gcc or clang on the PATH
+    Without one the build fails and says what to install. BuildForgeDist=false: nothing is built (only the C# part of the solution).
+  -->
+  <Import Project="..\FireNative.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- (Directory.Build.props: not for a project without an assembly) -->
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- Visual Studio does not know the C sources: MSBuild decides what is up to date (the Inputs and Outputs below) -->
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+    <_ForgeCObj>$(MSBuildProjectDirectory)/obj/forge-c/</_ForgeCObj>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- what forge.c includes: native/forge, the tables, native/base, native/abi, the deflater of the package compression -->
+    <ForgeCSource Include="$(FireRepo)/native/forge/**/*.c;$(FireRepo)/native/forge/**/*.h;$(FireRepo)/native/forge/**/*.inc" />
+    <ForgeCSource Include="$(FireRepo)/native/tables/*;$(FireRepo)/native/base/*.h;$(FireRepo)/native/abi/*.h;$(FireRepo)/packages/compression/native/*.h" />
+    <None Include="$(FireRepo)/native/forge/forge.c" Link="forge.c" />
+  </ItemGroup>
+
+  <Target Name="BuildForgeC" AfterTargets="Build" Inputs="@(ForgeCSource);$(MSBuildThisFileFullPath)" Outputs="$(ForgeCExe)"
+          Condition="'$(DesignTimeBuild)' != 'true' And '$(BuildForgeDist)' != 'false'">
+    <PropertyGroup>
+      <_CC>$(FireCC)</_CC>
+      <_CCName>$([System.IO.Path]::GetFileNameWithoutExtension('$(FireCC)').ToLowerInvariant())</_CCName>
+      <_CCKind Condition="'$(_CC)' != '' And ('$(_CCName)' == 'cl' Or '$(_CCName)' == 'clang-cl')">msvc</_CCKind>
+      <_CCKind Condition="'$(_CC)' != '' And '$(_CCKind)' == ''">gcc</_CCKind>
+      <_CCRooted Condition="'$(_CC)' != ''">$([System.IO.Path]::IsPathRooted('$(FireCC)'))</_CCRooted>
+    </PropertyGroup>
+
+    <!-- FireCC: the program must exist (a path, or a name on the PATH) -->
+    <Exec Condition="'$(_CC)' != '' And '$(_CCRooted)' != 'true' And '$(OS)' == 'Windows_NT'" Command="where /q &quot;$(_CC)&quot;" IgnoreExitCode="true" EchoOff="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="_CCGiven" />
+    </Exec>
+    <Exec Condition="'$(_CC)' != '' And '$(_CCRooted)' != 'true' And '$(OS)' != 'Windows_NT'" Command="command -v &quot;$(_CC)&quot;" IgnoreExitCode="true" EchoOff="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="_CCGiven" />
+    </Exec>
+    <Error Condition="'$(_CC)' != '' And (('$(_CCRooted)' == 'true' And !Exists('$(_CC)')) Or ('$(_CCRooted)' != 'true' And '$(_CCGiven)' != '0'))"
+           Text="FireCC=$(FireCC) names no program on this machine: forge-c (native/forge/forge.c) cannot be built with it. Give the full path of a C compiler (cl.exe, gcc, clang), leave FireCC out to let the build find one, or build without forge, the VM and ember: -p:BuildForgeDist=false." />
+
+    <!-- Windows: MSVC of a developer prompt -->
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(OS)' == 'Windows_NT' And '$(VCToolsInstallDir)' != '' And '$(INCLUDE)' != '' And Exists('$(VCToolsInstallDir)bin\Hostx64\x64\cl.exe')">
+      <_CC>$(VCToolsInstallDir)bin\Hostx64\x64\cl.exe</_CC>
+      <_CCKind>msvc</_CCKind>
+    </PropertyGroup>
+    <!-- Windows: the newest Visual Studio with the C++ tools (vswhere), its environment from vcvars64.bat -->
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(OS)' == 'Windows_NT'">
+      <_VsWhere>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</_VsWhere>
+    </PropertyGroup>
+    <Exec Condition="'$(_CC)' == '' And '$(OS)' == 'Windows_NT' And Exists('$(_VsWhere)')" Command="&quot;$(_VsWhere)&quot; -nologo -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" EchoOff="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_VsInstall" />
+    </Exec>
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(_VsInstall)' != ''">
+      <_VsInstall>$(_VsInstall.Split(';')[0].Trim())</_VsInstall>
+      <_VcVars>$(_VsInstall)\VC\Auxiliary\Build\vcvars64.bat</_VcVars>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(_VcVars)' != '' And Exists('$(_VcVars)')">
+      <_CC>cl.exe</_CC>
+      <_CCKind>msvc</_CCKind>
+      <_CCSetup>call &quot;$(_VcVars)&quot; &gt;nul &amp;&amp; </_CCSetup>
+    </PropertyGroup>
+    <!-- gcc or clang on the PATH (Windows: MinGW, w64devkit, MSYS2, LLVM; elsewhere cc first) -->
+    <PropertyGroup>
+      <_CCProbe Condition="'$(OS)' == 'Windows_NT'">where /q</_CCProbe>
+      <_CCProbe Condition="'$(OS)' != 'Windows_NT'">command -v</_CCProbe>
+    </PropertyGroup>
+    <Exec Condition="'$(_CC)' == '' And '$(OS)' != 'Windows_NT'" Command="$(_CCProbe) cc" IgnoreExitCode="true" EchoOff="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="_CCProbe_cc" />
+    </Exec>
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(_CCProbe_cc)' == '0'"><_CC>cc</_CC><_CCKind>gcc</_CCKind></PropertyGroup>
+    <Exec Condition="'$(_CC)' == ''" Command="$(_CCProbe) gcc" IgnoreExitCode="true" EchoOff="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="_CCProbe_gcc" />
+    </Exec>
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(_CCProbe_gcc)' == '0'"><_CC>gcc</_CC><_CCKind>gcc</_CCKind></PropertyGroup>
+    <Exec Condition="'$(_CC)' == ''" Command="$(_CCProbe) clang" IgnoreExitCode="true" EchoOff="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="_CCProbe_clang" />
+    </Exec>
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(_CCProbe_clang)' == '0'"><_CC>clang</_CC><_CCKind>gcc</_CCKind></PropertyGroup>
+    <!-- Windows: w64devkit or MSYS2 where they are usually unpacked -->
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(OS)' == 'Windows_NT' And Exists('C:\w64devkit\bin\gcc.exe')"><_CC>C:\w64devkit\bin\gcc.exe</_CC><_CCKind>gcc</_CCKind></PropertyGroup>
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(OS)' == 'Windows_NT' And Exists('$(USERPROFILE)\w64devkit\bin\gcc.exe')"><_CC>$(USERPROFILE)\w64devkit\bin\gcc.exe</_CC><_CCKind>gcc</_CCKind></PropertyGroup>
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(OS)' == 'Windows_NT' And Exists('C:\msys64\ucrt64\bin\gcc.exe')"><_CC>C:\msys64\ucrt64\bin\gcc.exe</_CC><_CCKind>gcc</_CCKind></PropertyGroup>
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(OS)' == 'Windows_NT' And Exists('C:\msys64\mingw64\bin\gcc.exe')"><_CC>C:\msys64\mingw64\bin\gcc.exe</_CC><_CCKind>gcc</_CCKind></PropertyGroup>
+    <PropertyGroup Condition="'$(_CC)' == '' And '$(OS)' == 'Windows_NT' And Exists('C:\mingw64\bin\gcc.exe')"><_CC>C:\mingw64\bin\gcc.exe</_CC><_CCKind>gcc</_CCKind></PropertyGroup>
+
+    <Error Condition="'$(_CC)' == '' And '$(OS)' == 'Windows_NT'"
+           Text="No C compiler was found to build forge-c (native/forge/forge.c) - forge, the VM and ember are C and fire programs that spark needs next to it. Install the workload &quot;Desktop development with C++&quot; of Visual Studio (MSVC: the build finds it with vswhere), or w64devkit (https://github.com/skeeto/w64devkit, unpacked to C:\w64devkit or with its bin on the PATH), or name a compiler with -p:FireCC=&lt;path&gt;. To build only the C# part: -p:BuildForgeDist=false (docs/BUILDING.md)." />
+    <Error Condition="'$(_CC)' == '' And '$(OS)' != 'Windows_NT'"
+           Text="No C compiler was found to build forge-c (native/forge/forge.c) - forge, the VM and ember are C and fire programs that spark needs next to it. Install gcc or clang (e.g. apt install gcc), or name a compiler with -p:FireCC=&lt;path&gt;. To build only the C# part: -p:BuildForgeDist=false (docs/BUILDING.md)." />
+
+    <PropertyGroup>
+      <_ForgeCBuilt>$(_ForgeCObj)forge-c$(FireExeSuffix)</_ForgeCBuilt>
+      <_CCArgs Condition="'$(_CCKind)' == 'msvc'">/nologo /O2 /MT /std:c11 /utf-8 /W1 /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_WARNINGS &quot;$(FireRepo)\native\forge\forge.c&quot; /Fe:&quot;$(_ForgeCBuilt)&quot; /Fo:&quot;$(_ForgeCObj)forge-c.obj&quot;</_CCArgs>
+      <_CCArgs Condition="'$(_CCKind)' != 'msvc' And '$(OS)' == 'Windows_NT'">-O2 &quot;$(FireRepo)/native/forge/forge.c&quot; -o &quot;$(_ForgeCBuilt)&quot; -static</_CCArgs>
+      <_CCArgs Condition="'$(_CCKind)' != 'msvc' And '$(OS)' != 'Windows_NT'">-O2 &quot;$(FireRepo)/native/forge/forge.c&quot; -o &quot;$(_ForgeCBuilt)&quot; -lm -lpthread</_CCArgs>
+    </PropertyGroup>
+    <Message Importance="high" Text="forge-c: compiling native/forge/forge.c with $(_CC) ($(_CCKind))" />
+    <MakeDir Directories="$(_ForgeCObj);$([System.IO.Path]::GetDirectoryName('$(ForgeCExe)'))" />
+    <Delete Files="$(_ForgeCBuilt)" />
+    <Exec Command="$(_CCSetup)&quot;$(_CC)&quot; $(_CCArgs)" StandardOutputImportance="low" />
+    <Copy SourceFiles="$(_ForgeCBuilt)" DestinationFiles="$(ForgeCExe)" />
+    <Message Importance="high" Text="forge-c -&gt; $(ForgeCExe)" />
+  </Target>
+
+  <!-- the path for the projects after this one (src/ember) -->
+  <Target Name="GetForgeCExe" Returns="$(ForgeCExe)" />
+
+  <Target Name="CleanForgeC" AfterTargets="Clean">
+    <Delete Files="$(ForgeCExe)" />
+    <RemoveDir Directories="$(_ForgeCObj)" />
+  </Target>
+</Project>

@@ -1061,8 +1061,23 @@ die Ausgabe und die Fehler über zwei Pipes, die Umgebung - `PATH` mit dem Ordne
 
 ```
 x86_64-w64-mingw32-gcc -O2 native/forge/forge.c -o forge-c.exe -static      (WinHTTP für Schritt 5 wird zur Laufzeit geladen: keine Bibliothek zu linken)
-cl /O2 native\forge\forge.c /Fe:forge-c.exe                                (nicht geprüft: kein MSVC hier)
+cl /nologo /O2 /std:c11 /utf-8 native\forge\forge.c /Fe:forge-c.exe      (src/forge-c in fire.sln; nur statisch geprüft, siehe unten)
 ```
+
+**MSVC** (24.11.2026, [BUILDING.md](../BUILDING.md)): `fire.sln` baut forge-c zuerst (`src/forge-c`: MSVC über `vswhere` und `vcvars64.bat`, sonst gcc/clang,
+sonst w64devkit/MSYS2 - ohne Compiler bricht der Bau mit einer Meldung ab), dann die Distribution und ember (`src/ember`), dann spark. Den Toolchain `msvc` findet
+forge-c jetzt auch ohne Developer Prompt (`nbMsvcEnvironment`, `build/toolchain.c`: ist `cl` nicht auf dem `PATH` oder `INCLUDE` nicht gesetzt, nennt `vswhere`
+das neueste Visual Studio mit den C++-Werkzeugen, und forge-c übernimmt die Umgebung, die dessen `vcvars64.bat` setzt - einmal je Prozess; die Compiler, die es
+startet, erben sie). Die Befehlszeile von `msvc` hat `/utf-8` (sonst liest `cl` die Quellen in der Codepage der Maschine), und `// fire-link: pthread|dl|m` wird
+mit msvc kein `pthread.lib`/`dl.lib`/`m.lib` (die Runtime nimmt Threads und Bibliotheken von Win32), mit MinGW für Windows kein `-ldl`. Geprüft ist das nur
+statisch - kein MSVC hier: clang als MSVC 19.40 (`--target=x86_64-pc-windows-msvc -fms-compatibility`, `_MSC_VER` ohne `__GNUC__` und `__clang__`, `/std:c11`,
+GNU-Erweiterungen, VLAs, Null-Arrays, Fallbereiche, `?:` ohne Mitte als Fehler) gegen die Header des Windows SDK 10.0.26100 (`ucrt`, `um`, `shared` aus dem
+NuGet-Paket `Microsoft.Windows.SDK.CPP`, `vcruntime.h` und wenige andere als Ersatz) über `forge.c`, `vm/fire.c` (mit den Varianten, `FIRE_VM_LIBRARY`,
+`FIRE_DEBUG`), `packages/forge/native/libforge.c`, den Wrapper einer Paketbibliothek (`FIRE_LIBRARY`, `fire_pkg_wrapper.h`) und die mit `--target windows
+--toolchain files` erzeugten Programme (52 Fälle von `tests/cases/native`, je ein Programm mit `#import` jedes der 56 Standardpakete: ohne Fehler); dazu `clang -std=c11 -pedantic -Werror=gnu` und `x86_64-w64-mingw32-gcc -std=c11 -pedantic`.
+Gefunden und behoben: in `unitv.c` ein `long`, das unter Windows 32 Bit hat (der Exponent einer Einheit über 2^31 lief über); die VM und libfirevm unter
+Windows linken jetzt `ws2_32` (`// fire-link: ws2_32` in `build/cvm.c`, `build/embedlib.c` - auch mit MinGW fehlte es: `WSAStartup` undefiniert). Nicht geprüft: ein echtes `cl`
+(seine Grenzen und Warnungen, das Linken), `vswhere`/`vcvars64.bat` und der Bau der Solution in Visual Studio.
 
 Was unter Windows anders ist: die Pfade sind innen UTF-8 mit `/` (`fcFullPath` kennt das Laufwerk, `C:/a/b`; `fcDirectoryName` von `C:/a` ist `C:/`, `fcIsRootDir`
 beendet die Wege nach oben - `.git`, `fire.native.json` -; `nbIsRooted`, `nbDirName`, `nbFileName` auch `\`), die Namen wie in C# (`PackageLibrary.Rid` `win-x64`, die

@@ -772,8 +772,20 @@ einer Standardbibliothek, [FORGE_SERVE.md](spec/FORGE_SERVE.md#dokumente-und-kon
 `unported: PackageException` ohne die Zeile des `#include` - jetzt die `PackageException` des C# mit Datei und Zeile je `#include`, `gen/packages.c`,
 ebenso die beiden anderen `PackageException`s dort.) Von den Lücken der Tests (unten, M3 Schritt 6) die Sonderläufe FreeRTOS, ESP32 und
 Fenster, Scene3D und AI, BIOS/QEMU und DOS; `forge serve` kennt noch keine Prüfung ganzer Projekte im Server (spark
-fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows mit `ForgeDist.targets` (gcc von w64devkit) und der Installer sind nicht geprüft; spark ohne forge (kein
+fragt `diagnose` je Datei; die Fehler eines Projekts im Bericht von `forge bytecode`/`build` nennen ihre Datei nicht, wenn sie aus Resolver oder Compiler kommen); ein Build unter Windows (jetzt `fire.sln` mit `src/forge-c` und `src/ember`, unten) und der Installer sind nicht geprüft; spark ohne forge (kein
 C-Compiler) hat keine Sprachdienste mehr.
+
+**Der Bau mit Visual Studio** (24.11.2026, [BUILDING.md](BUILDING.md)): `fire.sln` baut in dieser Reihenfolge `src/forge-c` (forge-c aus `native/forge/forge.c`
+mit dem C-Compiler der Maschine - unter Windows MSVC über `vswhere` und `vcvars64.bat`, sonst gcc/clang auf dem `PATH`, sonst w64devkit/MSYS2; ohne Compiler
+bricht der Bau mit einer Meldung ab, was zu installieren ist, statt still ein spark ohne forge zu bauen), `src/ember` (`forge-c package-dist` und ember nach
+`src/ember/bin/dist/`) und spark/`fire.Testing`, die den Ordner neben sich kopieren (`ForgeDist.targets`; Publish wie bisher in den Veröffentlichungsordner).
+Beide Schritte laufen nur, wenn sich ihre Eingaben geändert haben; `BuildForgeDist=false` baut nur den C#-Teil. forge-c findet MSVC jetzt auch selbst (ohne
+Developer Prompt: `vswhere`, dann die Umgebung von `vcvars64.bat`), `cl` bekommt `/utf-8`, `pthread`/`dl`/`m` werden mit msvc nicht gelinkt, die VM unter
+Windows linkt `ws2_32` (fehlte auch mit MinGW). Unter Linux geprüft: die Reihenfolge, der zweite Bau ohne forge-c und Distribution, die Meldung ohne Compiler,
+`BuildForgeDist=false`, Publish; forge-c mit gcc und MinGW (Warnungen wie vorher), mit MinGW unter Wine `bytecode` (byte-gleich) und `run`. **Der Weg über MSVC
+ist nur statisch geprüft** - hier gibt es kein MSVC und kein Windows: clang als MSVC 19.40 gegen die Header des Windows SDK über forge-c, die VM (alle Varianten,
+libfirevm), libforge, den Wrapper der Paketbibliotheken und die für `windows` erzeugten Programme (52 Fälle von `native`, ein Programm je Standardpaket); nicht
+geprüft sind ein echtes `cl` und `link`, `vswhere`/`vcvars64.bat`, der Bau in Visual Studio und der Installer.
 
 #### M3 Schritt 6: die Lücken der Tests geschlossen (23.11.2026)
 
@@ -851,8 +863,8 @@ Was der Härtetest an der Sprache und den Packages gefunden hat (nichts davon ge
   bei `take x`, `x.TakeTo(...)`, `return x`, x als Argument eines Aufrufs, einer Property, einem Halter aus demselben Block, auf oberster Ebene des
   Programms). Sie fand einen echten Fehler in `packages/net.channel` (der vergrößerte Puffer von `Feed`). Seit dem 23.11.2026 auch für `var x = M(...)`,
   wenn die Deklaration von M entscheidet, dass der Aufrufer den Wert besitzt (jedes `return` gibt einen neuen Wert oder einen eigenen Lokalen, den M
-  nicht weggibt; keine Überschreibung gibt anderes zurück - [13-ownership.md](language/13-ownership.md)). Offen: `packages/devices` meldet TC036 für
-  `this.pending = fresh`/`joined`/`rest` (`Append`, `CutThrough`: neue Puffer ohne `take` im Feld) - gemeldet, nicht geändert.
+  nicht weggibt; keine Überschreibung gibt anderes zurück - [13-ownership.md](language/13-ownership.md)). `packages/devices` meldete TC036 für
+  `this.pending = fresh`/`joined`/`rest` (`Append`, `CutThrough`: neue Puffer ohne `take` im Feld) - seit dem 24.11.2026 `take` (keine TC036 mehr).
 * Lambdas fangen Kopien: das ist die dokumentierte Regel (12-lambdas.md); dazu jetzt die Redewendung für eine Sortierung nach einer Liste
   (`func (int a, int b) on orders => this[a] - this[b]`, keine Kopie) und was die Kopie kostet.
 * `json`: `JsonNode` (strikt, oder mit `JsonReadOptions(true)` Kommentare und Komma am Ende, auch für `Json.Parse`/`Json.Deserialize`), Schreiben

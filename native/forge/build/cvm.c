@@ -144,6 +144,9 @@ static const char* nvWriteSources(FcCtx* c, const char* folder, int intWidth, in
 #ifndef __APPLE__
     fcBufStr(&sb, "// fire-link: dl\n");
 #endif
+#ifdef _WIN32
+    fcBufStr(&sb, "// fire-link: ws2_32\n");   /* (the sockets of the device host and the debugger: Winsock) */
+#endif
     if (intWidth == 16) fcBufStr(&sb, "#define FIRE_INT16 1\n");
     else if (intWidth == 32) fcBufStr(&sb, "#define FIRE_INT32 1\n");
     if (floatWidth == 32) fcBufStr(&sb, "#define FIRE_FLOAT32 1\n");
