@@ -171,13 +171,13 @@ class Device : IDevice {
         if (old == undefined) {
             var fresh = new byte[more.length]
             for (int i = 0; i < more.length; i++) { fresh[i] = more[i] }
-            this.pending = fresh
+            this.pending = take fresh
             return
         }
         var joined = new byte[old.length + more.length]
         for (int i = 0; i < old.length; i++) { joined[i] = old[i] }
         for (int i = 0; i < more.length; i++) { joined[old.length + i] = more[i] }
-        this.pending = joined
+        this.pending = take joined
     }
 
     // Is `pattern` in the buffer? Then everything up to its end is dropped.
@@ -198,7 +198,7 @@ class Device : IDevice {
                 else {
                     var rest = new byte[restLength]
                     for (int i = 0; i < restLength; i++) { rest[i] = p[start + pattern.length + i] }
-                    this.pending = rest
+                    this.pending = take rest
                 }
                 return true
             }

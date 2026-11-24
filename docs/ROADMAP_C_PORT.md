@@ -839,8 +839,8 @@ Was der Härtetest an der Sprache und den Packages gefunden hat (nichts davon ge
   bei `take x`, `x.TakeTo(...)`, `return x`, x als Argument eines Aufrufs, einer Property, einem Halter aus demselben Block, auf oberster Ebene des
   Programms). Sie fand einen echten Fehler in `packages/net.channel` (der vergrößerte Puffer von `Feed`). Seit dem 23.11.2026 auch für `var x = M(...)`,
   wenn die Deklaration von M entscheidet, dass der Aufrufer den Wert besitzt (jedes `return` gibt einen neuen Wert oder einen eigenen Lokalen, den M
-  nicht weggibt; keine Überschreibung gibt anderes zurück - [13-ownership.md](language/13-ownership.md)). Offen: `packages/devices` meldet TC036 für
-  `this.pending = fresh`/`joined`/`rest` (`Append`, `CutThrough`: neue Puffer ohne `take` im Feld) - gemeldet, nicht geändert.
+  nicht weggibt; keine Überschreibung gibt anderes zurück - [13-ownership.md](language/13-ownership.md)). `packages/devices` meldete TC036 für
+  `this.pending = fresh`/`joined`/`rest` (`Append`, `CutThrough`: neue Puffer ohne `take` im Feld) - seit dem 24.11.2026 `take` (keine TC036 mehr).
 * Lambdas fangen Kopien: das ist die dokumentierte Regel (12-lambdas.md); dazu jetzt die Redewendung für eine Sortierung nach einer Liste
   (`func (int a, int b) on orders => this[a] - this[b]`, keine Kopie) und was die Kopie kostet.
 * `json`: `JsonNode` (strikt, oder mit `JsonReadOptions(true)` Kommentare und Komma am Ende, auch für `Json.Parse`/`Json.Deserialize`), Schreiben
