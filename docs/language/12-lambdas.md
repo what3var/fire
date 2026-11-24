@@ -39,6 +39,8 @@ The type of a lambda is `lambda`, with the parameter types in angle brackets and
 | `lambda` | a lambda without parameters |
 | `lambda<int>` | one `int` parameter |
 | `int lambda<int, int>` | two `int` parameters, returns an `int` |
+| `lambda<int[]>`, `lambda<List<int>>`, `lambda<int[16]>` | an array, a generic class, a width - written as for a parameter |
+| `int lambda<int lambda<string>>` | a lambda type as parameter type, with its own parameters |
 
 ```fire
 int lambda<int, int> mul = (a, b) => a * b      // a and b are ints, from the declaration
@@ -53,9 +55,26 @@ print(new Runner().Apply(n => n * 3, 5))        // 15
 A lambda that goes to a typed parameter, field or variable takes its parameter types from there. The number of parameters is also checked at run time.
 A parameter typed this way is the same as one written with that type: `int lambda<string> g = s => s.length` is `(string s) => s.length`, so `g(12345)`
 makes the number its text (`5`), an `int` parameter takes no `float` and a class parameter no other object (`ArgumentException`), an `int` of the signature
-is unitless like `(int x)`, and a type argument brings its unit (`Box<float : cm>`). This holds for every target with a lambda type - a variable, a field, a parameter, a return value, an assignment,
-an element of `List<int lambda<string>>`, a type argument - but not for a lambda type inside a signature (`lambda<lambda<int>>` only says `lambda`) or
-a type parameter that is still open; there the parameter stays as it is.
+is unitless like `(int x)`, and a type argument brings its unit (`Box<float : cm>`) and its width (`Box<int[16]>`, `Box<byte>`, `Box<float[32]>`). This
+holds for every target with a lambda type - a variable, a field, a parameter, a return value, an assignment, an element of `List<int lambda<string>>`, a
+type argument - and for every parameter type of the signature:
+
+- an array: `lambda<int[]>` is `(int a[])` - the elements are converted or checked (`lambda<Point[]>`: every element a `Point`);
+- a generic class: `lambda<List<int>>` is `(List<int> l)` - a `List<string>` is an `ArgumentException`;
+- a lambda type: `int lambda<lambda<int>> n = g => g(3)` is `(lambda<int> g) => g(3)` - the lambda passed must take one parameter (a plain `lambda`
+  is one without parameters, as everywhere);
+- a type parameter of the place: inside `class Box<T>` (or a method `Run<T>`), `undefined lambda<T> f = x => ...` is `(T x) => ...` and is checked
+  against the type argument the object (or the call) got. A `T` of another class or method, and a lambda bound with `on`, stay as they are.
+
+The names in a lambda type are resolved like every other type at that place: inside `namespace Geo`, `lambda<Point>` and `Point lambda<int>` mean
+`Geo.Point`, and `#using` works for them too.
+
+At an overloaded call the lambda takes the types of the one overload that can take a lambda at that position (its parameter has a lambda type, the
+others an `int`, a `string`, a class, ...): whichever overload the run time picks for a lambda is that one. If another overload could take it as well
+(`any`, no type, a type parameter, a second lambda type), the parameters stay untyped (`TC004`).
+
+The lambdas of `await on`, `fire on` and `fire global` get the values of their arguments themselves: their parameters have the static types of the
+arguments, with no conversion at run time (there is no type to write for them).
 An optional callback is declared `any` (or `lambda` and checked for `undefined`).
 
 ## Captured values
