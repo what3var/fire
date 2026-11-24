@@ -1,0 +1,7 @@
+warning TC037: A number ('int') is passed as text to parameter 1 of the lambda 'f', which is a 'string' - write '"" + x' (or 'x.ToString()') if the text is meant (line 3)
+warning TC037: A number ('int') is passed as text to parameter 1 of the lambda 'g', which is a 'string' - write '"" + x' (or 'x.ToString()') if the text is meant (line 9)
+warning TC037: A number ('int') is passed as text to parameter 1 of the lambda 'typed', which is a 'string' - write '"" + x' (or 'x.ToString()') if the text is meant (line 10)
+warning TC037: A number ('int') is passed as text to parameter 1 of the lambda 'size', which is a 'string' - write '"" + x' (or 'x.ToString()') if the text is meant (line 11)
+warning TC037: A number ('int') is passed as text to parameter 1 of the lambda, which is a 'string' - write '"" + x' (or 'x.ToString()') if the text is meant (line 13)
+warning TC037: A number ('float') is passed as text to parameter 1 of the lambda, which is a 'string' - write '"" + x' (or 'x.ToString()') if the text is meant (line 16)
+warning TC037: A bool is passed as text to parameter 1 of the lambda 'both', which is a 'string' - write '"" + x' (or 'x.ToString()') if the text is meant (line 18)

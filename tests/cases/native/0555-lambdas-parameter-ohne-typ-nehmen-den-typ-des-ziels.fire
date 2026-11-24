@@ -1,0 +1,116 @@
+class Animal {
+    string name
+    construct(string name) { this.name = name }
+}
+class Rock {
+    int weight = 3
+}
+interface IShape { float Area() }
+class Square : IShape {
+    float side = 2.0
+    float Area() { return side * side }
+}
+enum Color { Red, Green }
+class Holder {
+    int lambda<string> size = s => s.length
+    int lambda<string> sizeTyped = (string s) => s.length
+    int lambda<string> later
+    construct(int lambda<string> later) { this.later = take later }
+    static int Apply(int lambda<string> f, any x) { return f(x) }
+    static int lambda<string> Make() { return s => s.length }
+    static int lambda<string> MakeTyped() { return (string s) => s.length }
+}
+class Box<T> {
+    undefined Each(undefined lambda<T> f, any x) { f(x) }
+}
+class Gen {
+    static undefined Run<T>(T x, undefined lambda<T> f, any y) { f(y) }
+}
+any num = 12345
+any text = "42"
+any fl = 2.75
+any one = 1
+any big = 300
+any letter = 'q'
+any rock = new Rock()
+any sq = new Square()
+any metres = 2m
+// string: a typed variable, a field, a constructor, a parameter, a named argument, a return value, an assignment, a list of lambdas
+int lambda<string> v1 = s => s.length
+int lambda<string> v2 = (string s) => s.length
+print(v1(num) + " " + v2(num))
+var h = new Holder(s => s.length + 100)
+print(h.size(num) + " " + h.sizeTyped(num) + " " + h.later(num))
+h.size = s => s.length * 2
+print(h.size(num))
+print(Holder.Apply(s => s.length, num) + " " + Holder.Apply((string s) => s.length, num) + " " + Holder.Apply(x: num, f: s => s.length))
+print(Holder.Make()(num) + " " + Holder.MakeTyped()(num))
+int lambda<string> v3 = undefined
+v3 = s => s.length
+print(v3(num))
+var fs = new List<int lambda<string>>()
+fs.Add(s => s.length)
+fs.Add((string s) => s.length)
+print(fs[0](num) + " " + fs[1](num))
+// int and float
+int lambda<int> i1 = x => x * 2
+int lambda<int> i2 = (int x) => x * 2
+try { print("i1 " + i1(text)) } catch (ArgumentException e) { print("i1 " + e.message) }
+try { print("i2 " + i2(text)) } catch (ArgumentException e) { print("i2 " + e.message) }
+try { print("i1 " + i1(fl)) } catch (ArgumentException e) { print("i1 " + e.message) }
+try { print("i2 " + i2(fl)) } catch (ArgumentException e) { print("i2 " + e.message) }
+float lambda<float> f1 = x => x / 2
+float lambda<float> f2 = (float x) => x / 2
+try { print("f1 " + f1(text)) } catch (ArgumentException e) { print("f1 " + e.message) }
+try { print("f2 " + f2(text)) } catch (ArgumentException e) { print("f2 " + e.message) }
+print("f1 " + f1(one) + " f2 " + f2(one))
+int lambda<byte> b1 = b => b
+int lambda<byte> b2 = (byte b) => b
+print(b1(big) + " " + b2(big))
+// bool and char
+string lambda<bool> o1 = o => "" + o
+string lambda<bool> o2 = (bool o) => "" + o
+try { print(o1(one)) } catch (ArgumentException e) { print("o1 " + e.message) }
+try { print(o2(one)) } catch (ArgumentException e) { print("o2 " + e.message) }
+string lambda<char> c1 = c => "" + c
+string lambda<char> c2 = (char c) => "" + c
+print(c1(letter) + c2(letter))
+// a class, an interface, an enum
+string lambda<Animal> a1 = a => a.name
+string lambda<Animal> a2 = (Animal a) => a.name
+print(a1(new Animal("Rex")) + " " + a2(new Animal("Rex")))
+try { print(a1(rock)) } catch (ArgumentException e) { print("a1 " + e.message) }
+try { print(a2(rock)) } catch (ArgumentException e) { print("a2 " + e.message) }
+float lambda<IShape> s1 = s => s.Area()
+float lambda<IShape> s2 = (IShape s) => s.Area()
+print(s1(sq) + " " + s2(sq))
+try { print(s1(text)) } catch (ArgumentException e) { print("s1 " + e.message) }
+try { print(s2(text)) } catch (ArgumentException e) { print("s2 " + e.message) }
+string lambda<Color> e1 = c => "" + c
+string lambda<Color> e2 = (Color c) => "" + c
+try { print(e1(one)) } catch (ArgumentException e) { print("e1 " + e.message) }
+try { print(e2(one)) } catch (ArgumentException e) { print("e2 " + e.message) }
+// units: an int of the signature is unitless, a type argument brings its unit
+try { print(i1(metres)) } catch (UnitMismatchException e) { print("i1 " + e.message) }
+try { print(i2(metres)) } catch (UnitMismatchException e) { print("i2 " + e.message) }
+new Box<float : cm>().Each(x => print(x), metres)
+new Box<float : cm>().Each((float : cm x) => print(x), metres)
+new Box<int : any>().Each(x => print(x), metres)
+new Box<int : any>().Each((int : any x) => print(x), metres)
+new Box<float : any m>().Each(x => print(x), metres)
+new Box<float : any m>().Each((float : any m x) => print(x), metres)
+try { new Box<int>().Each(x => print(x), metres) } catch (UnitMismatchException e) { print("box " + e.message) }
+try { new Box<int>().Each((int x) => print(x), metres) } catch (UnitMismatchException e) { print("box " + e.message) }
+// type arguments: of a class, of a generic method
+new Box<string>().Each(x => print(x.length), num)
+new Box<string>().Each((string x) => print(x.length), num)
+Gen.Run("a", x => print(x.length), num)
+Gen.Run("a", (string x) => print(x.length), num)
+try { Gen.Run(5, x => print(x * 2), fl) } catch (ArgumentException e) { print("run " + e.message) }
+try { Gen.Run(5, (int x) => print(x * 2), fl) } catch (ArgumentException e) { print("run " + e.message) }
+// two parameters, one of them typed
+int lambda<int, string> t1 = (a, b) => a + b.length
+int lambda<int, string> t2 = (int a, string b) => a + b.length
+int lambda<int, string> t3 = (a, string b) => a + b.length
+print(t1(1, big) + " " + t2(1, big) + " " + t3(1, big))
+//# name: Lambdas: Parameter ohne Typ nehmen den Typ des Ziels (Variable, Feld, Konstruktor, Parameter, Rueckgabe, Zuweisung, Liste, Typargument) - Umwandlung und Pruefung wie mit dem Typ

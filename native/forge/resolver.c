@@ -43,6 +43,7 @@ typedef struct FcResolveResult {
     FcDict* receiverTypeArgs;      /* Expr* -> fc8 */
     FcDict* derivedDefined;        /* LambdaParam* */
     FcDict* derivedStrings;        /* LambdaParam* */
+    FcDict* contextParamTypes;     /* LambdaParam* -> FcTypeRef*: an untyped parameter of a lambda, typed by its target (TypeChecker.InferLambda) */
     FcDict* derivedReturns;        /* BlockStmt* */
     FcDict* derivedDefinedFields;  /* FieldDecl* */
     FcDict* classes;               /* name -> ClassDecl* */
@@ -563,6 +564,7 @@ static FcResolveResult* fcResolve(FcCtx* c, FcList* program, FcDict* nativeNames
     res->receiverTypeArgs = fcDictNew(c, FC_KEY_PTR);
     res->derivedDefined = fcDictNew(c, FC_KEY_PTR);
     res->derivedStrings = fcDictNew(c, FC_KEY_PTR);
+    res->contextParamTypes = fcDictNew(c, FC_KEY_PTR);
     res->derivedReturns = fcDictNew(c, FC_KEY_PTR);
     res->derivedDefinedFields = fcDictNew(c, FC_KEY_PTR);
     return res;

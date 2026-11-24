@@ -80,6 +80,7 @@ typedef struct FcTC {
     FcClassDecl* cls;
     FcList* bodyTypeParams;
     bool inLambda, inBoundLambda;
+    bool lambdaToTarget;          /* the lambda InferLambda gets next goes to a typed target (InferExpected): its untyped parameters take their types from it */
     const FcST* thisType;
     const FcST* returnType;
     FcTypeRef* returnTypeRef;
@@ -203,8 +204,9 @@ static void CheckUnitAssignable(FcTC* t, const FcST* value, const FcST* target, 
 static const char* DemandTextOf(FcTC* t, const FcU* unit);
 
 /* TC037: a number (int, float, word, with a unit or without), a char or a bool given to a parameter of type 'string' - of a method, a constructor,
- * an operator, an indexer, the 'value' of a property's setter, a typed lambda, a default value. The run time makes it its text (DECISIONS D14); a
- * name or a key passed as a number by mistake (`row[0]` for a 'string' indexer) is what it finds. Always a warning, in both modes. Nothing for
+ * an operator, an indexer, the 'value' of a property's setter, a typed lambda, a default value. The run time makes it its text (DECISIONS D14) - at a
+ * lambda also for a parameter without a type of its own, which takes it from the lambda's target (ContextParamType); a name or a key passed as a
+ * number by mistake (`row[0]` for a 'string' indexer) is what it finds. Always a warning, in both modes. Nothing for
  * 'any' or an unknown type; a string, an enum or an object, and storage (a variable, a field, an element, a return value) are TC034 in strict mode. */
 static const char* NumberTextKind(FcTC* t, const FcST* value) {
     if (value == NULL || stIsDynamic(value)) return NULL;
@@ -602,7 +604,13 @@ static const FcST* DeclaredLambda(FcTC* t, const FcLambdaSignature* signature, F
         return stLambdaOf(TC_, -1, NULL, NULL);
     }
     ps = fcListNew(TC_);
-    for (i = 0; i < signature->paramTypeNames->count; i++) fcListAdd(TC_, ps, (void*)FromName(t, (const char*)signature->paramTypeNames->items[i], map));
+    for (i = 0; i < signature->paramTypeNames->count; i++) {
+        const char* name = (const char*)signature->paramTypeNames->items[i];
+        const FcST* param = FromName(t, name, map);
+        /* `lambda<byte>`: a byte, as the parameter `(byte b)` is (raw, unitless) - not any int */
+        if (streq0(name, "byte") && !(map && fcDictHas(map, name))) { FcST* r = stCopy(TC_, param); r->unit = FC_UNITLESS; r->unitIsDimension = false; r->raw = true; param = r; }
+        fcListAdd(TC_, ps, (void*)param);
+    }
     return stLambdaOf(TC_, signature->paramTypeNames->count, signature->returnTypeName ? FromName(t, signature->returnTypeName, map) : NULL, ps);
 }
 
@@ -627,7 +635,7 @@ static const FcST* Declared(FcTC* t, const FcTypeRef* type, int arrayRanks, FcDi
     ranks = arrayRanks + type->arrayRank;
     if (stIsNumber(result) && (ranks == 0 || type->unit != NULL) && !(substituted && type->unit == NULL)) {
         if (type->unit == NULL) result = stWithUnit(TC_, result, FC_UNITLESS, false);
-        else if (streq0(type->unit, "any")) { }
+        else if (streq0(type->unit, "any")) { FcST* r = stCopy(TC_, result); r->anyUnit = true; result = r; }
         else if (fcStartsWith(type->unit, "any ")) result = stWithUnit(TC_, result, fcUParse(TC_, type->unit + 4), true);
         else result = stWithUnit(TC_, result, fcUParse(TC_, type->unit), false);
     }

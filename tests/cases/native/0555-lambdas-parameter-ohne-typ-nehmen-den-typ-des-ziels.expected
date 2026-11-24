@@ -1,0 +1,43 @@
+5 5
+5 5 105
+10
+5 5 5
+5 5
+5
+5 5
+i1 Parameter 'x' is an int, not String.
+i2 Parameter 'x' is an int, not String.
+i1 Parameter 'x' is an int, not Float.
+i2 Parameter 'x' is an int, not Float.
+f1 Parameter 'x' is a float, not String.
+f2 Parameter 'x' is a float, not String.
+f1 0.5 f2 0.5
+44 44
+o1 Parameter 'o' is a bool, not Int.
+o2 Parameter 'o' is a bool, not Int.
+qq
+Rex Rex
+a1 Parameter 'a' is an Animal, not Rock.
+a2 Parameter 'a' is an Animal, not Rock.
+4 4
+s1 Parameter 's' is an IShape, not String.
+s2 Parameter 's' is an IShape, not String.
+e1 Parameter 'c' is a Color, not Int.
+e2 Parameter 'c' is a Color, not Int.
+i1 Expected unit 'unitless', got: m.
+i2 Expected unit 'unitless', got: m.
+200cm
+200cm
+2m
+2m
+2m
+2m
+box Expected unit 'unitless', got: m.
+box Expected unit 'unitless', got: m.
+5
+5
+5
+5
+run Parameter 'x' is an int, not Float.
+run Parameter 'x' is an int, not Float.
+4 4 4

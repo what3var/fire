@@ -36,6 +36,7 @@ struct FcST {
     FcNull nul;
     int bits;
     bool eitherNumber;
+    bool anyUnit;       /* declared with ': any' (a type argument `int : any`): no unit is demanded - what a lambda's parameter typed by it gets (ContextParamType) */
 };
 #define ST_INIT(k) { (k), NULL, NULL, -1, NULL, NULL, NULL, NULL, false, NULL, false, false, 0, NUL_Unknown, 0, false }
 static const FcST fcSTDynamic = ST_INIT(STK_Dynamic);

@@ -567,7 +567,20 @@ static void CompileLambda(FcComp* cm, FcLambdaExpr* lambda) {
     for (i = 0; i < lambda->params->count; i++) fcChunkMarkLocalName(c, inner->chunk, 0, i, ((FcLambdaParam*)lambda->params->items[i])->name);
     if (captureRef && captureRef->kind == RR_LambdaCaptures)
         for (i = 0; i < captureRef->variables->count; i++) fcChunkMarkLocalName(c, inner->chunk, 0, lambda->params->count + i, ((FcIdentifierExpr*)captureRef->variables->items[i])->name);
-    EmitLambdaParamChecks(cm, inner, lambda->params);
+    {   /* an untyped parameter typed by the target of the lambda (`int lambda<string> g = s => ...`) gets the entry of `(string s)` */
+        FcDict* contextTypes = cm->sh->rr->contextParamTypes;
+        FcList* typedParams = lambda->params;
+        if (contextTypes && fcDictCount(contextTypes) > 0) {
+            for (i = 0; i < lambda->params->count; i++) {
+                FcLambdaParam* p = (FcLambdaParam*)lambda->params->items[i];
+                FcTypeRef* contextType;
+                if (p->type != NULL || (contextType = (FcTypeRef*)fcDictGet(contextTypes, p)) == NULL) continue;
+                if (typedParams == lambda->params) { int k; typedParams = fcListNew(c); for (k = 0; k < lambda->params->count; k++) fcListAdd(c, typedParams, lambda->params->items[k]); }
+                { FcLambdaParam* typed = (FcLambdaParam*)fcAlloc(c, sizeof *typed); *typed = *p; typed->type = contextType; typedParams->items[i] = typed; }
+            }
+        }
+        EmitLambdaParamChecks(cm, inner, typedParams);
+    }
     for (i = 0; i < lambda->body->statements->count; i++) CompileStmt(inner, (FcStmt*)lambda->body->statements->items[i]);
     EmitLoadConst(inner, fcMakeUndefined(c));
     E_op(inner, OP_Return);

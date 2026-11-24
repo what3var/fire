@@ -870,6 +870,10 @@ Was der Härtetest an der Sprache und den Packages gefunden hat (nichts davon ge
   Default-Wert) und dort still zu Text wird - in lax und strict, immer eine Warnung; nicht für Verkettung, Interpolation, `print`, `"" + x`,
   `x.ToString()`, `any` und Speicher (Variable, Feld, Element: weiter `TC034` in strict). Anlass: `row[0]` am früheren `operator[](string name)` von
   `Data.Row` fragte nach der Spalte `"0"` (docs/language/02-types.md).
+* Lambdas (24.11.2026): ein Parameter ohne Typ, der seinen Typ vom Ziel nimmt (`int lambda<string> g = s => s.length`: Variable, Feld, Parameter,
+  Rückgabe, Zuweisung, `List<int lambda<string>>`, Typargument), wird jetzt wie `(string s)` übersetzt - mit derselben Umwandlung bzw. Prüfung beim
+  Eintritt (string, int/float, byte, bool, char, Klasse, Interface, Enum, Einheit des Typarguments), in VM und nativ; vorher fehlte sie (`g(12345)`
+  warf statt `5`). TC037 stimmt damit auch für diese Lambdas (Fälle native/0555, types/2793).
 * Lambdas fangen Kopien: das ist die dokumentierte Regel (12-lambdas.md); dazu jetzt die Redewendung für eine Sortierung nach einer Liste
   (`func (int a, int b) on orders => this[a] - this[b]`, keine Kopie) und was die Kopie kostet.
 * `json`: `JsonNode` (strikt, oder mit `JsonReadOptions(true)` Kommentare und Komma am Ende, auch für `Json.Parse`/`Json.Deserialize`), Schreiben

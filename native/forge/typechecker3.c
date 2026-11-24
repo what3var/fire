@@ -566,7 +566,41 @@ static const FcST* InferLambda(FcTC* t, FcLambdaExpr* lam, const FcST* expected)
     t->inLambda = previous; t->inBoundLambda = previousBound; t->thisType = previousThis;
     return r;
 }
+/* ContextParamType: the declaration an untyped parameter of a lambda gets from the lambda type of its target (`int lambda<string> g = s => ...`),
+ * written as the type `(string s)` would be - the compiler gives it the same entry: the conversion of a number or a string, the check of a class or an
+ * enum, the unit. NULL: nothing to check (any, a type parameter, an array, a generic class, a width the type does not keep, a lambda: a signature keeps
+ * only the name of a lambda type in it, `lambda<lambda<int>>` says 'lambda') - the parameter stays as it is. A number without a unit is unitless, as
+ * `(int x)` is, unless it was declared ': any' (`Box<int : any>`). */
+static FcTypeRef* ContextParamType(FcTC* t, const FcST* type) {
+    FcTypeRef* r;
+    const char* name;
+    if (type == NULL) return NULL;
+    switch (type->kind) {
+        case STK_Int: name = "int"; break;
+        case STK_Float: name = "float"; break;
+        case STK_Word: name = "word"; break;
+        case STK_Bool: name = "bool"; break;
+        case STK_Char: name = "char"; break;
+        case STK_String: name = "string"; break;
+        case STK_Enum: name = type->cls; break;
+        case STK_Class: name = type->args == NULL ? type->cls : NULL; break;
+        default: name = NULL; break;
+    }
+    if (name == NULL) return NULL;
+    r = fcTcTypeRef(t, name, FC_NULL_INT);
+    if (type->kind == STK_Int && type->raw) { r->bitWidth = 8; r->isUnsigned = true; }
+    else if (type->kind == STK_Int && (type->wide == 32 || type->wide == 64)) r->bitWidth = type->wide;
+    else if (type->kind == STK_Float && (type->bits == 8 || type->bits == 16 || type->bits == 32)) r->bitWidth = type->bits;
+    if ((type->kind == STK_Int || type->kind == STK_Float) && !type->raw && type->unit != NULL && !fcUIsUnitless(type->unit)) {
+        const char* text = DemandTextOf(t, type->unit);
+        if (text == NULL) return NULL;
+        r->unit = type->unitIsDimension ? TF(t, "any %s", text) : text;
+    } else if ((type->kind == STK_Int || type->kind == STK_Float) && !type->raw && type->unit == NULL && type->anyUnit) r->unit = "any";
+    r->nonNull = type->nul == NUL_Defined && (type->kind == STK_Int || type->kind == STK_Float || type->kind == STK_Bool || type->kind == STK_Word || type->kind == STK_Char);
+    return r;
+}
 static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expected) {
+    bool toTarget = t->lambdaToTarget;
     FcList* context = expected && expected->kind == STK_Lambda && expected->params && expected->params->count == lam->params->count ? expected->params : NULL;
     const FcST* expectedReturn = expected && expected->kind == STK_Lambda && expected->ret && expected->ret->kind != STK_Undefined ? expected->ret : NULL;
     FcList* parameterTypes = fcListNew(TC_);
@@ -582,6 +616,7 @@ static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expec
     const FcST* returned;
     bool anyDefault = false;
     int i;
+    t->lambdaToTarget = false;
     for (i = 0; i < lam->params->count; i++) {
         FcLambdaParam* p = (FcLambdaParam*)lam->params->items[i];
         const FcST* declared = Declared(t, p->type, p->arrayRanks->count, NULL);
@@ -589,11 +624,20 @@ static const FcST* InferLambdaCore(FcTC* t, FcLambdaExpr* lam, const FcST* expec
             if (context && !Assignable(t, (const FcST*)context->items[i], declared))
                 Report(t, TC_ArgumentCode, TF(t, "Parameter '%s' of the lambda is of type '%s', but the lambda is called with '%s'", p->name, S_(t, declared), S_(t, (const FcST*)context->items[i])), lam->h.line);
             fcListAdd(TC_, parameterTypes, (void*)declared);
-        } else if (context) fcListAdd(TC_, parameterTypes, context->items[i]);
-        else {
+        } else if (context) {
+            FcTypeRef* contextType;
+            fcListAdd(TC_, parameterTypes, context->items[i]);
+            /* the type of the target is the parameter's declaration (12-lambdas.md): compiled like `(string s)`; a lambda without a typed target (the
+             * arguments of 'await on', of a post to the globals) keeps its parameters as they are */
+            if (p->type == NULL && !p->byRef && p->arrayRanks->count == 0) {
+                if (toTarget && (contextType = ContextParamType(t, (const FcST*)context->items[i])) != NULL) fcDictPut(t->rr->contextParamTypes, p, contextType);
+                else fcDictRemove(t->rr->contextParamTypes, p);
+            }
+        } else {
             if (!(expected && expected->kind == STK_Lambda))
                 Report(t, TC_UntypedCode, TF(t, "Parameter '%s' of the lambda has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed).", p->name), lam->h.line);
             fcListAdd(TC_, parameterTypes, (void*)ST_DYNAMIC);
+            if (p->type == NULL) fcDictRemove(t->rr->contextParamTypes, p);
         }
     }
     previousReturn = t->returnType;
@@ -837,7 +881,7 @@ static const FcST* CallLambda(FcTC* t, const FcST* lambda, FcList* args, FcCallE
         int i;
         for (i = 0; i < args->count && i < lambda->params->count; i++)
             CheckNumberAsText(t, (const FcST*)args->items[i], (const FcST*)lambda->params->items[i],
-                name ? TF(t, "parameter %d of the lambda '%s'", i + 1, name) : TF(t, "parameter %d of the lambda", i + 1), ((FcExpr*)c->args->items[i])->line);
+                name && !streq0(name, "the lambda") ? TF(t, "parameter %d of the lambda '%s'", i + 1, name) : TF(t, "parameter %d of the lambda", i + 1), ((FcExpr*)c->args->items[i])->line);
     }
     return lambda->ret && lambda->ret->kind != STK_Undefined ? lambda->ret : ST_DYNAMIC;
 }
